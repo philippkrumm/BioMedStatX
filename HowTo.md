@@ -1,142 +1,130 @@
-## Statistical Analyzer How-To Guide
 
-Welcome to the Statistical Analyzer application! This guide walks you through everything you need to know to get started with the standalone `.exe` version of the program, from launching the app to exporting your results to Excel.
+# Statistical Analyzer User Guide (HowTo.md)
 
----
-
-## Table of Contents
-
-1. [Launching the Application](#launching-the-application)
-2. [Main Workflow Overview](#main-workflow-overview)
-3. [Key Functions & Features](#key-functions--features)
-   - Data Import
-   - Data Transformation
-   - Assumption Checks & Test Selection
-   - Statistical Tests
-   - Post-Hoc Analyses
-   - Decision Tree Visualization
-4. [Dialog & Configuration Windows](#dialog--configuration-windows)
-5. [Exporting Results to Excel](#exporting-results-to-excel)
-6. [Visualization & Plots](#visualization--plots)
-7. [Tips & Troubleshooting](#tips--troubleshooting)
+This guide explains how to use the standalone `.exe` for Statistical Analyzer—from launching the app to importing data, running analyses, and exporting results—without needing any Python commands.
 
 ---
 
-## Launching the Application
+## 1. Launching the Application
 
-1. Ensure you have the latest `.exe` file for Statistical Analyzer.
-2. Double-click the `.exe` to launch the GUI. No Python or PowerShell commands are required.
-3. The main window will appear with menus: **File**, **Analysis**, and **Help**.
-
----
-
-## Main Workflow Overview
-
-1. **Import Data**: Use **File → Import** to load CSV or Excel files.
-2. **Select Variables & Groups**:
-   - Choose measurement columns and grouping variables via selection dialogs.
-3. **Configure Tests**:
-   - Pick the type of analysis: two-group comparison, multi-group ANOVA, mixed/repeated-measures, or two-way ANOVA.
-4. **Run Analysis**:
-   - The program automatically checks normality and variance (Shapiro-Wilk, Levene’s tests).
-   - If assumptions fail, you’ll be prompted to apply a transformation (log, Box-Cox) or switch to non-parametric methods.
-5. **View & Customize Plots**:
-   - After tests, inspect generated plots; customize labels, colors, comparisons, and more.
-6. **Export**:
-   - Use **File → Export Results** to save statistical summaries, test details, post-hoc tables, and plots into an Excel workbook.
-7. **Decision Tree**:
-   - Visualize the testing logic path via **Analysis → Show Decision Tree**. A PNG is generated, highlighting which branches were taken.
+- Locate the `StatisticalAnalyzer.exe` file.
+- Double‑click to open. A Qt GUI window appears with the menus: **File**, **Analysis**, and **Help**.
 
 ---
 
-## Key Functions & Features
+## 2. Importing Data
 
-### Data Import
-- **`DataImporter.import_data(path, sheet=None, group_cols=[], value_cols=[])`**
-  - Loads CSV/Excel, combines multiple sheets or files, and returns:
-    - A dict of sample arrays by group
-    - A pandas DataFrame in long format
-- **Helper**: `dict_to_long_format(samples: dict, groups: list) → DataFrame`
+1. In the **File** menu, choose **Browse** to select an Excel (`.xlsx`/`.xls`) or CSV (`.csv`) file.
+2. Upon selection, the file’s sheets (for Excel) populate the **Worksheet** dropdown; CSV skips this step.
+3. Click **Load** (or close the dialog) to read data.
+---
 
-### Data Transformation
-- **`no_transform(data)`**: Leaves data unchanged.
-- **`log_transform(data)`**: Applies natural log.
-- **`boxcox_transform(data)`**: Finds optimal Box-Cox lambda.
+## 3. Selecting Groups & Measurement Columns
 
-### Assumption Checks & Test Selection
-- **Normality**: Shapiro–Wilk test.
-- **Homogeneity of variance**: Levene’s test.
-- **Decision Logic**:
-  - If normality & equal variances pass → parametric tests.
-  - If one or both fail → prompt for transformation or switch to non-parametric.
-
-### Statistical Tests
-- **Two-Group, Independent**: Student’s t-test, Welch’s t-test, Mann–Whitney U.
-- **Multi-Group, Independent**: One-way ANOVA, Welch’s ANOVA, Kruskal–Wallis.
-- **Two-Group, Paired**: Paired t-test, Wilcoxon signed-rank.
-- **Repeated Measures / Mixed**: Repeated-measures ANOVA, mixed-effects models (via Pingouin if installed).
-- **Two-Way ANOVA**: Full factorial analysis.
-
-### Post-Hoc Analyses
-- Available methods:
-  - Tukey’s HSD
-  - Dunn’s test with Bonferroni correction
-  - Dunnett’s test (comparison to control)
-- Automatically invoked when overall test is significant.
-- **Factory**: `PostHocFactory` chooses the appropriate analyzer class.
-
-### Decision Tree Visualization
-- **Class**: `DecisionTreeVisualizer`
-- Shows the sequence of checks and chosen tests as a flowchart.
-- Generates a PNG highlighting the actual path taken.
-- Accessible via **Analysis → Show Decision Tree**.
+* **GroupSelectionDialog**: Pick which factor/column defines your groups.
+* **ColumnSelectionDialog**: Choose one or more numeric columns for analysis. If multiple and **combine\_columns** is enabled, values across columns are merged per group.
 
 ---
 
-## Dialog & Configuration Windows
+## 4. Assumption Checking & Transformations
 
-- **GroupSelectionDialog**: Pick which groups to include.
-- **ColumnSelectionDialog**: Select measurement and grouping columns.
-- **PairwiseComparisonDialog**: Configure two-group tests.
-- **TwoWayAnovaDialog**: Set factors for two-way ANOVA.
-- **AdvancedTestDialog**: Drag-and-drop design for mixed/repeated-measures.
-- **PlotConfigDialog**: Customize plot appearance and significance annotations.
-- **TransformationDialog**: Choose or confirm transformation if assumptions fail.
-- **OutlierDetectionDialog**: Identify and remove outliers.
+* Before any statistical test, the app runs:
 
----
+  * **Shapiro–Wilk test** for normality
+  * **Levene’s test** for homogeneity of variances
+* If either assumption fails, the **TransformationDialog** appears, offering:
 
-## Exporting Results to Excel
-
-- **`ResultsExporter`** compiles:
-  - Raw data tables
-  - Assumption test results
-  - Main test summary with statistics and p-values
-  - Post-hoc tables
-  - Any applied transformations
-  - Embedded plots
-- Generates a multi-sheet Excel file (`.xlsx`) using `xlsxwriter`.
-- Sheets are named for easy navigation (e.g., `Data`, `Assumptions`, `ANOVA`, `PostHoc`).
+  * No transform (switch to non-parametric)
+  * Log₁₀ transform
+  * Box‑Cox transform
+  * Arcsine‑sqrt transform
 
 ---
 
-## Visualization & Plots
+## 5. Statistical Tests
 
-- Boxplots, barplots, violin plots, and error bars via Seaborn/Matplotlib.
-- Customizable via **PlotConfigDialog**:
-  - Axis labels, titles, figure size
-  - Colors, hatches
-  - Annotation of significance (p-values, asterisks)
-  - Reset comparisons or add new ones
+* **Two-Group, Independent**: Student’s t‑test, Welch’s t‑test, Mann–Whitney U
+* **Two-Group, Paired**: Paired t‑test, Wilcoxon signed‑rank
+* **Multi-Group, Independent**: One‑way ANOVA, Welch ANOVA, Kruskal–Wallis
+* **Advanced Analyses**: Two‑Way ANOVA, Repeated Measures ANOVA, Mixed ANOVA via **AdvancedTestDialog** 
 
 ---
 
-## Tips & Troubleshooting
+## 6. Post‑Hoc Comparisons
 
-- **Missing Values**: The importer automatically drops NaNs.
-- **Large Datasets**: Use grouping options to filter out unwanted categories.
-- **Transformations**: Log and Box-Cox can improve normality—experiment if prompted.
-- **Excel Export**: Ensure the target folder is writable; any existing file with the same name will be overwritten.
-- **Error Dialogs**: Detailed messages will help track down issues (e.g., incorrect factor levels).
+When overall tests are significant, **PostHocFactory** dispatches:
+
+* Tukey’s HSD
+* Dunn’s or Bonferroni‑corrected comparisons
+* Dunnett’s test (control vs others)
+
+Results appear in separate sheets and on plots.
 
 ---
+
+## 7. Decision Tree Visualization
+
+Visualize the statistical decision process via **Analysis → Show Decision Tree**, which calls:
+
+Image is saved as a temporary PNG and highlighted path shows actual branches.
+
+---
+
+## 8. Exporting Results to Excel
+
+After analysis, an excel multi-sheet `.xlsx` is created with:
+
+* **Summary** of tests and p‑values
+* **Assumptions** (normality, variance)
+* **Main Results** (statistics, effect sizes)
+* **Descriptive Statistics** per group
+* **Decision Tree**
+* **Raw Data**
+* **Pairwise Comparisons**
+* **Analysis Log** (chronological steps)
+
+Each sheet is clearly named for easy navigation.
+
+---
+
+## 9. Plotting & Customization
+
+Plots are generated with Matplotlib (via Seaborn palettes) and include:
+
+* Bar charts with SD/SEM error bars
+* Overlayed individual data points (and connection lines for paired data)
+* Violin or boxplots when selected
+
+Use **PlotConfigDialog** to adjust:
+
+* Titles & axis labels
+* Figure dimensions
+* Colors & hatches per group
+* Significance annotations or custom comparisons
+
+Plots can be saved automatically as PDF/PNG alongside Excel.
+
+---
+
+## 10. Outlier Detection (Optional)
+
+Under **Analysis → Detect Outliers**, configure and run:
+
+* Modified Z‑Score Test
+* Grubbs’ Test
+* Single‑pass or iterative mode
+
+Results export to a specified Excel file via `OutlierDetectionDialog` and `OutlierDetector` in **stats\_functions.py**. 
+
+
+### Tips & Best Practices
+
+* Ensure your group column has consistent labels.
+* Use Box‑Cox or log transforms when skew is severe.
+* For paired designs, confirm equal sample sizes per group.
+* Consult the **Analysis Log** sheet for troubleshooting and detailed steps.
+
+Happy analyzing!
+
+```
+```
