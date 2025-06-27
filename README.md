@@ -1,77 +1,36 @@
-# Statistical Analyzer for Windows
+# BioMedStatX
 
-This README explains the installation and setup steps for the Statistical Analyzer, a tool for statistical analysis of Excel/CSV data with a graphical user interface.
+BioMedStatX is a novel tool for the statistical analysis of your experiments.
 
-## Prerequisites
+## **Features**
 
-### Python
-- Python 3.7 or higher
-- Required Python packages:
-  - numpy
-  - pandas
-  - matplotlib
-  - seaborn
-  - scipy
-  - statsmodels
-  - xlsxwriter
-  - PyQt5
-  - scikit_posthocs
-  - pingouin
+- **Data Import**  
+  Read CSV and Excel files with multiple sheets and columns.
 
-#### Installation with pip:
-```
-pip install numpy pandas matplotlib seaborn scipy statsmodels xlsxwriter PyQt5 scikit_posthocs pingouin
-```
+- **Assumption Checks**  
+  Automatic Shapiro–Wilk normality tests and Levene’s variance homogeneity tests, with optional log/Box–Cox transformations on failure.
 
-## Project Files
-The following files must be present in the project directory:
+- **Parametric & Non-parametric Tests**  
+  Student’s t-tests, Welch’s t-tests, ANOVA (one-way, two-way, repeated measures, mixed), Mann–Whitney U, Kruskal–Wallis, and more.
 
-- `statistical_analyzer.py` → Main program with UI
-- `stats_functions.py` → Statistical functions and helper functions
-- `StyleSheet.qss` → CSS style for the user interface
-- `Institutslogo.ico` → (optional) Icon for the executable file
+- **Post-Hoc Analyses**  
+  Tukey HSD, Dunnett, Dunn, and dependent-sample analyses via a unified factory interface.
 
-## Running the Program
+- **Visualization**  
+  - Static plots (boxplots, bar graphs, swarm plots) with Seaborn/Matplotlib.  
+  - Interactive decision-tree flowchart highlighting the actual analysis path (via NetworkX & Matplotlib).
 
-### Development Environment
-To run the program directly:
-```
-python statistical_analyzer.py
-```
+- **GUI Front-End**  
+  PyQt5 dialogs for streamlined data/variable selection, plot configuration, and advanced design setups.
 
-### Creating an EXE with PyInstaller
-1. Install PyInstaller:
-   ```
-   pip install pyinstaller
-   ```
+- **Excel Export**  
+  Automated creation of detailed result workbooks (via XlsxWriter).
 
-2. The spec file (StatisticalAnalyzer.spec) should already contain all necessary settings:
-   - Paths to required files
-   - Definition of hidden imports
-   - Icon setting
+## **Installation**
 
-3. Create executable file:
-   ```
-   pyinstaller StatisticalAnalyzer.spec
-   ```
+Simply download the pre-built binary for your operating system:
 
-4. After successful creation, the executable file will be in the dist folder.
+- **Windows**: Download and run the `.exe` installer.  
+- **macOS**: Download the `.app` bundle (packed in a `.zip`).
 
-## Dependent Samples Option
-The Statistical Analyzer supports the analysis of dependent samples. When activating the "Show individual connection lines" option, the following visualizations are created:
-
-- A line graph showing the individual connections between measurements of the same subject
-- The lines connect measured values that belong to the same subject
-- This option is particularly useful for visualizing individual changes across different conditions or time points
-
-## Troubleshooting
-
-### PyInstaller cannot find dependencies:
-- Add missing modules to the hiddenimports list in the spec file
-
-### Errors with dependent samples:
-- Ensure all groups have the same number of measurements
-- The measurements must be in the same order (1st measurement of group A corresponds to 1st measurement of group B)
-
-## Contact
-For problems or questions, please contact the developer.
+_All features are identical across both platforms._  
