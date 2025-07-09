@@ -34,7 +34,6 @@ This guide explains how to use the standalone `.exe` for Statistical Analyzer—
   * **Levene’s test** for homogeneity of variances
 * If either assumption fails, the **TransformationDialog** appears, offering:
 
-  * No transform (switch to non-parametric)
   * Log₁₀ transform
   * Box‑Cox transform
   * Arcsine‑sqrt transform
