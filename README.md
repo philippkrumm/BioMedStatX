@@ -30,7 +30,7 @@ BioMedStatX is a novel tool for the statistical analysis of your experiments.
 
 Simply download the pre-built binary for your operating system:
 
-- **Windows**: Download and run the `.exe` installer.  
+- **Windows**: Download and unpack the .zip file, start the .exe from the unpacked folder. 
 - **macOS**: Download the `.app` bundle (packed in a `.zip`).
 
 _All features are identical across both platforms._  
