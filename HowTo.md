@@ -23,7 +23,9 @@ This guide explains how to use the BioMedStatX application: from launching the p
 
 ![Step 1: Import Data - Browse Button](HowToScreenshots/Bild1.png)
 
-**Step 1 (see number 1 in the picture):** Click the "Browse..." button (highlighted in red, number 1) in the top right to select your Excel or CSV data file. This is the first step in the workflow and starts the data import process.
+**Step 1:** Click the "Browse..." button (highlighted in red, number 1) in the top right to select your Excel or CSV data file. This is the first step in the workflow and starts the data import process.
+
+---
 
 
 
@@ -31,15 +33,15 @@ This guide explains how to use the BioMedStatX application: from launching the p
 
 ![Step 2: Select Worksheet, Group, and Value Columns](HowToScreenshots/Bild2.png)
 
-**Step 2 (see numbers 2 and 3 in the picture):** First, select the worksheet, group column, and value column in the Data Configuration section (number 2 in the picture). Then, click the "Select groups for plot" button (number 3 in the picture) to choose which groups to include in your plot.
+**Step 2:** First, select the worksheet, group column, and value column in the Data Configuration section (number 2 in the picture). Then, click the "Select groups for plot" button (number 3 in the picture) to choose which groups to include in your plot.
 
 ![Step 3: Select Groups for Plot](HowToScreenshots/Bild3.png)
 
-**Step 3 (see number 4 in the picture):** In the group selection dialog, select the groups you want to display in the plot by checking the boxes (number 4 in the picture). Then click "OK" to confirm your selection.
+**Step 3:** In the group selection dialog, select the groups you want to display in the plot by checking the boxes (number 4 in the picture). Then click "OK" to confirm your selection.
 
 ![Statistical Analysis Selection](HowToScreenshots/Bild4.png)
 
-**Step 5:** In the configure plot window, you can set the file name (number 5 in the picture), change the group order, select if the sample are dependent and select if you want to create a plot (number 6 in the picture). If you do not create a plot, the analysis results in the comprehensive excel sheet only.
+**Step 4:** In the configure plot window, you can set the file name (number 5 in the picture), change the group order, select if the sample are dependent and select if you want to create a plot (number 6 in the picture). If you do not create a plot, the analysis results in the comprehensive excel sheet only.
 
 ---
 
@@ -66,11 +68,11 @@ Use the **Plot Settings** dialog to adjust:
 
 ![Plot Customization Settings](HowToScreenshots/Bild5.png)
 
-**Step 9 (see number 11 in the picture):** In the plot settings dialog, adjust titles, axis labels, colors, error bars, and more. Preview changes and save or export the customized plot. All changes are shown in a live preview before saving. 
+**Step 5:** In the plot settings dialog, adjust titles, axis labels, colors, error bars, and more. Preview changes and save or export the customized plot. All changes are shown in a live preview before saving. 
 
 ![Post-Hoc Analysis Results](HowToScreenshots/Bild6.png)
 
-**Step 6 (see number 8 in the picture):** It is possible to create different plots from the same dataset if needed (number 6 in the picture).
+**Step 6:** It is possible to create different plots from the same dataset if needed (number 6 in the picture).
 ---
 
 
@@ -87,7 +89,7 @@ You do not need to choose the test yourself—the software guides you and explai
 
 ![Decision Tree Visualization](HowToScreenshots/Bild7.png)
 
-**Step 7 (see number 9 in the picture):** Click the button (number 9 in the picture) to start the analysis. You can analyse the selected plot or create and analyze all plots.
+**Step 7:** Click the button (number 9 in the picture) to start the analysis. You can analyse the selected plot or create and analyze all plots.
 
 ---
 
@@ -99,7 +101,7 @@ Before any statistical test, the app automatically checks for normal distributio
 
 ![Export Results to Excel](HowToScreenshots/Bild8.png)
 
-**Step 8 (see number 10 in the picture):** If the assumptions for a parametric test are not met, choose one of the three possible transformations (number 10 in the picture).
+**Step 8:** If the assumptions for a parametric test are not met, choose one of the three possible transformations (number 10 in the picture).
 
 ---
 
@@ -111,7 +113,7 @@ If a group comparison is significant, the app automatically performs post-hoc te
 
 ![Export Results to Excel](HowToScreenshots/Bild9.png)
 
-**Step 8 (see number 10 in the picture):** After the parametric or non-parametric test was performed and revealed a significance, you need to choose on of the post-hoc tests (number 11 in the picture).
+**Step 9:** After the parametric or non-parametric test was performed and revealed a significance, you need to choose on of the post-hoc tests (number 11 in the picture).
 
 ---
 
