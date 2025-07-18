@@ -1,7 +1,7 @@
 # BioMedStatX
 
-- **App‑Download:**  
-- [Releases-Seite](https://github.com/philippkrumm/BioMedStatX/releases/latest) 
+# **App‑Download:**  
+- [Releases-Page](https://github.com/philippkrumm/BioMedStatX/releases/latest) 
 
 # [User Guide](HowTo.md)
 
