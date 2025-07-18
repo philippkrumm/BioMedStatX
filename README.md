@@ -2,9 +2,9 @@
  
 - **App‑Download:** [Releases-Seite](https://github.com/philippkrumm/BioMedStatX/releases/latest) 
 
-## 📖 User Guide (online)
-- The full step‑by‑step tutorial with embedded screenshots is now live on our GitHub Pages:
-- [BioMedStatX Documentation & Screenshots](https://philippkrumm.github.io/BioMedStatX/)
+## 📖 User Guide
+- Read the full tutorial (with embedded screenshots) here:
+- [docs/index.md](docs/index.md)
 
 
 ## **Features**
