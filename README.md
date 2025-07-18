@@ -1,4 +1,8 @@
 # BioMedStatX
+
+- **App‑Download:**  
+- [Releases-Seite](https://github.com/philippkrumm/BioMedStatX/releases/latest) 
+
 # [User Guide](HowTo.md)
 
 BioMedStatX is an open-source Python application for biomedical and clinical data analysis. It offers a graphical user interface (GUI) for loading experimental data, performing statistical tests, visualizing results, and exporting publication-ready outputs.
