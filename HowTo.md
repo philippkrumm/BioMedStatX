@@ -73,6 +73,7 @@ Use the **Plot Settings** dialog to adjust:
 ![Post-Hoc Analysis Results](HowToScreenshots/Bild6.png)
 
 **Step 6:** It is possible to create different plots from the same dataset if needed (number 6 in the picture).
+
 ---
 
 
@@ -84,6 +85,7 @@ BioMedStatX automatically selects the appropriate statistical test based on your
 - Two-group comparisons (independent or paired)
 - Multi-group comparisons (one-way, two-way, repeated measures, mixed designs)
 - Parametric and non-parametric alternatives (e.g., t-tests, ANOVA, Mann–Whitney, Kruskal–Wallis)
+- Advanced ANOVAS (TwoWay, Mixed, Repeated-Measures)
 
 You do not need to choose the test yourself—the software guides you and explains the result in plain language.
 
@@ -140,6 +142,10 @@ After your analysis, all the results are exported automatically in a comprehensi
 - A chronological analysis log
 Each sheet is clearly named for easy navigation.
 
+![Complete Workflow Overview](HowToScreenshots/Bild10.png)
+
+**Step 10:** Final message after a successful analysis.
+
 ---
 
 
@@ -155,25 +161,15 @@ Results are exported to Excel for further review.
 
 ---
 
+## 12. Multi-Dataset Analysis
 
-
-## 12. Window Resizing, Scrollability, and Scaling
-
-BioMedStatX is designed to work on all common screen sizes and resolutions:
-- All windows and dialogs can be resized by dragging the edges.
-- Dialogs are scrollable if content does not fit on the screen.
-- The layout adapts to high-DPI screens and multi-monitor setups.
-- Minimum and maximum window sizes ensure usability on both small and large screens.
-
-**Tips:**
-- If you cannot see all content, maximize the window or use the scrollbars.
-- On very high-resolution screens, use your operating system’s scaling settings or adjust the app’s DPI settings (see Help menu).
-- For best results, keep your graphics drivers and system libraries up to date.
-
-If you encounter display issues, please report your OS, screen resolution, and a screenshot to the developer.
+If you load an excel file with a group coloumn and several value coloums (e.g. different genes from a RT-qPCR) is is possible to analyse all the genes in one go. 
+1. Load the data as explained.
+2. Choose the "Multiple columns..." button.
+3. In the Select Measurements Window select the "Separate analysis per dataset with shared excel file" and the datasets you want to compare
+4. Next, click on the Start multi-dataset analysis button and now the application follows the same workflow as for a single analysis
 
 ---
-
 
 ## 13. Quick Workflow
 
@@ -184,10 +180,6 @@ If you encounter display issues, please report your OS, screen resolution, and a
 5. **Check** assumptions; apply transforms if needed.
 6. **Review** plots and decision tree.
 7. **Export** results; locate your results files in your working folder.
-
-![Complete Workflow Overview](HowToScreenshots/Bild10.png)
-
-**Step 10:** Follow the numbered steps in the screenshot to complete a typical analysis workflow: launch the app, load data, select groups and measurements, run analyses, review results, customize plots, and export everything.
 
 ---
 
