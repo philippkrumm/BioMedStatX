@@ -21,7 +21,7 @@ This guide explains how to use the BioMedStatX application: from launching the p
 2. For Excel files, select the worksheet you want to analyze. For CSV, this step is skipped.
 3. Click **Load** to import your data into the application.
 
-![Step 1: Import Data - Browse Button](../assets/HowToScreenshots/Bild1.png)
+![Step 1: Import Data - Browse Button](HowToScreenshots/Bild1.png)
 
 **Step 1 (see number 1 in the picture):** Click the "Browse..." button (highlighted in red, number 1) in the top right to select your Excel or CSV data file. This is the first step in the workflow and starts the data import process.
 
@@ -29,15 +29,15 @@ This guide explains how to use the BioMedStatX application: from launching the p
 
 ## 3. Selecting Groups & Measurement Columns
 
-![Step 2: Select Worksheet, Group, and Value Columns](../assets/HowToScreenshots/Bild2.png)
+![Step 2: Select Worksheet, Group, and Value Columns](HowToScreenshots/Bild2.png)
 
 **Step 2 (see numbers 2 and 3 in the picture):** First, select the worksheet, group column, and value column in the Data Configuration section (number 2 in the picture). Then, click the "Select groups for plot" button (number 3 in the picture) to choose which groups to include in your plot.
 
-![Step 3: Select Groups for Plot](../assets/HowToScreenshots/Bild3.png)
+![Step 3: Select Groups for Plot](HowToScreenshots/Bild3.png)
 
 **Step 3 (see number 4 in the picture):** In the group selection dialog, select the groups you want to display in the plot by checking the boxes (number 4 in the picture). Then click "OK" to confirm your selection.
 
-![Statistical Analysis Selection](../assets/HowToScreenshots/Bild4.png)
+![Statistical Analysis Selection](HowToScreenshots/Bild4.png)
 
 **Step 5:** In the configure plot window, you can set the file name (number 5 in the picture), change the group order, select if the sample are dependent and select if you want to create a plot (number 6 in the picture). If you do not create a plot, the analysis results in the comprehensive excel sheet only.
 
@@ -64,11 +64,11 @@ Use the **Plot Settings** dialog to adjust:
 - Data point style (jitter, strip, swarm)
 - Overlay options (paired lines, custom annotations)
 
-![Plot Customization Settings](../assets/HowToScreenshots/Bild5.png)
+![Plot Customization Settings](HowToScreenshots/Bild5.png)
 
 **Step 9 (see number 11 in the picture):** In the plot settings dialog, adjust titles, axis labels, colors, error bars, and more. Preview changes and save or export the customized plot. All changes are shown in a live preview before saving. 
 
-![Post-Hoc Analysis Results](../assets/HowToScreenshots/Bild6.png)
+![Post-Hoc Analysis Results](HowToScreenshots/Bild6.png)
 
 **Step 6 (see number 8 in the picture):** It is possible to create different plots from the same dataset if needed (number 6 in the picture).
 ---
@@ -85,7 +85,7 @@ BioMedStatX automatically selects the appropriate statistical test based on your
 
 You do not need to choose the test yourself—the software guides you and explains the result in plain language.
 
-![Decision Tree Visualization](../assets/HowToScreenshots/Bild7.png)
+![Decision Tree Visualization](HowToScreenshots/Bild7.png)
 
 **Step 7 (see number 9 in the picture):** Click the button (number 9 in the picture) to start the analysis. You can analyse the selected plot or create and analyze all plots.
 
@@ -97,7 +97,7 @@ You do not need to choose the test yourself—the software guides you and explai
 
 Before any statistical test, the app automatically checks for normal distribution and equal variances. If your data does not meet these assumptions, you will be prompted to apply a transformation (log, Box–Cox, or arcsine–sqrt) to improve suitability for analysis. You can skip or accept the suggested transformation.
 
-![Export Results to Excel](../assets/HowToScreenshots/Bild8.png)
+![Export Results to Excel](HowToScreenshots/Bild8.png)
 
 **Step 8 (see number 10 in the picture):** If the assumptions for a parametric test are not met, choose one of the three possible transformations (number 10 in the picture).
 
@@ -109,7 +109,7 @@ Before any statistical test, the app automatically checks for normal distributio
 
 If a group comparison is significant, the app automatically performs post-hoc tests (e.g., Tukey, Dunn, Bonferroni, or Dunnett) to show which groups differ. Results are clearly displayed in the results table and as annotations on the plots.
 
-![Export Results to Excel](../assets/HowToScreenshots/Bild9.png)
+![Export Results to Excel](HowToScreenshots/Bild9.png)
 
 **Step 8 (see number 10 in the picture):** After the parametric or non-parametric test was performed and revealed a significance, you need to choose on of the post-hoc tests (number 11 in the picture).
 
@@ -183,7 +183,7 @@ If you encounter display issues, please report your OS, screen resolution, and a
 6. **Review** plots and decision tree.
 7. **Export** results; locate your results files in your working folder.
 
-![Complete Workflow Overview](../assets/HowToScreenshots/Bild10.png)
+![Complete Workflow Overview](HowToScreenshots/Bild10.png)
 
 **Step 10:** Follow the numbered steps in the screenshot to complete a typical analysis workflow: launch the app, load data, select groups and measurements, run analyses, review results, customize plots, and export everything.
 
