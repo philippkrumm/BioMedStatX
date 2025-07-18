@@ -78,7 +78,7 @@ Use the **Plot Settings** dialog to adjust:
 
 
 
-## 6. Statistical Analyses
+## 5. Statistical Analyses
 
 BioMedStatX automatically selects the appropriate statistical test based on your data and design. Supported analyses include:
 
@@ -97,7 +97,7 @@ You do not need to choose the test yourself—the software guides you and explai
 
 
 
-## 7. Assumption Checks & Data Transformations
+## 6. Assumption Checks & Data Transformations
 
 Before any statistical test, the app automatically checks for normal distribution and equal variances. If your data does not meet these assumptions, you will be prompted to apply a transformation (log, Box–Cox, or arcsine–sqrt) to improve suitability for analysis. You can skip or accept the suggested transformation.
 
@@ -109,7 +109,7 @@ Before any statistical test, the app automatically checks for normal distributio
 
 
 
-## 8. Post‑Hoc Comparisons
+## 7. Post‑Hoc Comparisons
 
 If a group comparison is significant, the app automatically performs post-hoc tests (e.g., Tukey, Dunn, Bonferroni, or Dunnett) to show which groups differ. Results are clearly displayed in the results table and as annotations on the plots.
 
@@ -121,7 +121,7 @@ If a group comparison is significant, the app automatically performs post-hoc te
 
 
 
-## 9. Decision Tree Visualization
+## 8. Decision Tree Visualization
 
 The statistical decision process is visualized by a decision tree. The app displays a graphical flowchart showing which tests were chosen and why, with the actual path highlighted. The image is included into the excel workbook.
 
@@ -129,7 +129,7 @@ The statistical decision process is visualized by a decision tree. The app displ
 
 
 
-## 10. Exporting Results
+## 9. Exporting Results
 
 After your analysis, all the results are exported automatically in a comprehensive excel file. The exported file contains:
 - A summary of all tests and p-values
@@ -150,7 +150,7 @@ Each sheet is clearly named for easy navigation.
 
 
 
-## 11. Outlier Detection (Optional)
+## 10. Outlier Detection (Optional)
 
 Under **Analysis → Detect Outliers**, you can identify and flag outliers in your data using:
 - Modified Z-Score Test
@@ -161,7 +161,7 @@ Results are exported to Excel for further review.
 
 ---
 
-## 12. Multi-Dataset Analysis
+## 11. Multi-Dataset Analysis
 
 If you load an excel file with a group coloumn and several value coloums (e.g. different genes from a RT-qPCR) is is possible to analyse all the genes in one go. 
 1. Load the data as explained.
@@ -171,7 +171,7 @@ If you load an excel file with a group coloumn and several value coloums (e.g. d
 
 ---
 
-## 13. Quick Workflow
+## 12. Quick Workflow
 
 1. **Launch** the application.
 2. **Browse** and **Load** your data file.
