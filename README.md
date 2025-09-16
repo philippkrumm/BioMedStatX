@@ -4,7 +4,7 @@
 
 ## 📖 User Guide
 - Read the full tutorial (with embedded screenshots) here: [docs/index.md](docs/index.md)
-- Read the advances anovas tutorial here: (ADVANCED_ANOVA_GUIDE.md)
+- Read the advances anovas tutorial here: [ADVANCED_ANOVA_GUIDE.md](ADVANCED_ANOVA_GUIDE.md)
 
 
 ## **Features**
@@ -48,5 +48,6 @@ _All features are identical across both platforms._
 - **Author**: Philipp Krumm
 - **Contact**: pkrumm@ukaachen.de
 - **Keywords**: biomedical statistics, statistical GUI, Python data analysis, ANOVA, t-tests, post-hoc, non-parametric tests
+
 
 
