@@ -16,11 +16,16 @@ import pandas as pd
 
 # Import the DataVisualizer class
 try:
-    from stats_functions import DataVisualizer
+    from datavisualizer import DataVisualizer
 except ImportError:
-    # Fallback if import does not work
-    print("Warning: Could not import DataVisualizer from stats_functions")
-    DataVisualizer = None
+    try:
+        # Fallback: try to get it from stats_functions
+        from stats_functions import get_data_visualizer
+        DataVisualizer = get_data_visualizer()
+    except ImportError:
+        # Final fallback if import does not work
+        print("Warning: Could not import DataVisualizer")
+        DataVisualizer = None
 
 class PlotPreviewWidget(FigureCanvasQTAgg):
     """

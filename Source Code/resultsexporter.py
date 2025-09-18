@@ -9,6 +9,60 @@ def get_assumption_visualizer():
     from stats_functions import AssumptionVisualizer
     return AssumptionVisualizer
 class ResultsExporter:
+    """
+    Advanced statistical results exporter with comprehensive Excel reporting capabilities.
+    
+    This class provides sophisticated Excel export functionality for various statistical analyses,
+    with special emphasis on Repeated Measures ANOVA and Mixed ANOVA designs. The exporter
+    creates comprehensive, user-friendly Excel reports with detailed explanations, assumptions
+    testing, and practical recommendations.
+    
+    Key Features:
+    ============
+    - Multi-sheet Excel reports with professional formatting
+    - Context-aware explanations for complex statistical concepts
+    - Robust error handling and input validation
+    - Comprehensive assumption testing for RM/Mixed ANOVA
+    - Intelligent sphericity corrections with practical guidance
+    - Visual indicators for assumption violations
+    - Detailed pairwise comparisons and post-hoc analyses
+    - Decision tree integration for method selection
+    - Raw data preservation and analysis logs
+    
+    Specialized RM/Mixed ANOVA Support:
+    ==================================
+    - Enhanced sphericity testing with Mauchly's test
+    - Greenhouse-Geisser and Huynh-Feldt corrections
+    - Between-factor assumptions for Mixed ANOVA
+    - Within-factor sphericity analysis
+    - Interaction assumption testing
+    - Automated correction recommendations based on epsilon values
+    - Context-sensitive explanations for each assumption type
+    
+    Error Handling:
+    ==============
+    - Comprehensive input validation for all functions
+    - Graceful degradation when data is missing or corrupted
+    - Safe cell writing with fallback mechanisms
+    - Detailed error reporting with practical solutions
+    - Automatic cleanup of temporary files
+    
+    Usage Example:
+    =============
+    results = {
+        'test': 'Repeated Measures ANOVA',
+        'sphericity_test': {...},
+        'sphericity_corrections': {...},
+        # ... other results
+    }
+    
+    ResultsExporter.export_results_to_excel(results, 'analysis_results.xlsx')
+    
+    Class Variables:
+    ===============
+    _temp_files : set
+        Tracks temporary files for automatic cleanup
+    """
     _temp_files = set()
     @staticmethod
     def export_results_to_excel(results, output_file, analysis_log=None):
@@ -346,8 +400,69 @@ class ResultsExporter:
             "effect_medium": workbook.add_format({'align': 'center', 'color': '#FFA500', 'bold': True, 'text_wrap': True}),
             "effect_weak": workbook.add_format({'align': 'center', 'color': '#A52A2A', 'bold': True, 'text_wrap': True}),
             "key": workbook.add_format({'bold': True, 'align': 'right'}),
-            "bold": workbook.add_format({'bold': True})
+            "bold": workbook.add_format({'bold': True}),
+            "recommended": workbook.add_format({'align': 'center', 'bg_color': '#E6F3FF', 'font_color': '#0066CC', 'bold': True, 'text_wrap': True})
         }
+    
+    @staticmethod
+    def _validate_excel_inputs(workbook, results, fmt, ws, function_name="Excel function"):
+        """
+        Comprehensive input validation for Excel export functions.
+        Returns (is_valid, error_message, row_offset)
+        """
+        error_messages = []
+        
+        # Basic parameter validation
+        if workbook is None:
+            error_messages.append("Workbook is None")
+        if results is None:
+            error_messages.append("Results data is None")
+        if fmt is None:
+            error_messages.append("Format dictionary is None")
+        if ws is None:
+            error_messages.append("Worksheet is None")
+            
+        # Results data validation
+        if results is not None:
+            if not isinstance(results, dict):
+                error_messages.append(f"Results must be dictionary, got {type(results)}")
+            elif len(results) == 0:
+                error_messages.append("Results dictionary is empty")
+                
+        # Format validation
+        if fmt is not None:
+            required_formats = ["header", "cell", "significant", "section_header"]
+            missing_formats = [f for f in required_formats if f not in fmt]
+            if missing_formats:
+                error_messages.append(f"Missing required formats: {', '.join(missing_formats)}")
+        
+        if error_messages:
+            full_error = f"⚠️ VALIDATION ERROR in {function_name}: {'; '.join(error_messages)}"
+            return False, full_error, 3
+        
+        return True, "", 0
+    
+    @staticmethod
+    def _safe_write_cell(ws, row, col, value, cell_format, default_format=None):
+        """
+        Safely write a cell with error handling.
+        Returns True if successful, False otherwise.
+        """
+        try:
+            if cell_format is not None:
+                ws.write(row, col, value, cell_format)
+            elif default_format is not None:
+                ws.write(row, col, value, default_format)
+            else:
+                ws.write(row, col, value)
+            return True
+        except Exception as e:
+            try:
+                # Fallback: write as plain text
+                ws.write(row, col, f"ERROR: {str(value)}")
+            except:
+                pass
+            return False
 
     @staticmethod
     def _write_anova_table(ws, anova_table, fmt, start_row=0):
@@ -817,19 +932,81 @@ class ResultsExporter:
 
         row = 4
 
-        # Test type and general notes
+        # Test type and general notes with INTELLIGENT CONTEXT-AWARE EXPLANATIONS
         test_type = results.get("recommendation", results.get("test_type", "Not specified"))
+        test_name = results.get("test", "")
+        
+        # Detect if this is RM or Mixed ANOVA for context-aware explanations
+        is_rm_anova = "repeated measures" in test_name.lower() or "rm" in test_name.lower()
+        is_mixed_anova = "mixed" in test_name.lower()
+        has_sphericity = "sphericity_test" in results
+        
         if test_type == "parametric":
-            assumptions_overview = (
-                "For parametric tests (such as t-test, ANOVA), the following assumptions apply:\n"
-                "  • Normal distribution of model residuals (NEW: tested on residuals, not raw group data)\n"
-                "  • Homogeneity of variances between groups\n"
-                "  • Independence of observations\n"
-                "  • Interval scale of the dependent variable\n\n"
-                "IMPORTANT CHANGE: Normality is now tested on model residuals rather than raw group data. "
-                "This provides a more accurate assessment of whether the statistical model assumptions are met. "
-                "Points 1 and 2 are tested statistically. Points 3 and 4 are ensured by the study design and data collection."
-            )
+            if is_rm_anova or is_mixed_anova:
+                # ENHANCED EXPLANATION FOR RM/MIXED ANOVA
+                assumptions_overview = (
+                    f"🔬 SPECIAL ASSUMPTIONS FOR {test_name.upper()}:\n\n"
+                    "Your analysis uses advanced statistical methods that require additional assumptions beyond basic ANOVA:\n\n"
+                    
+                    "📊 BASIC PARAMETRIC ASSUMPTIONS:\n"
+                    "  • Normal distribution of model residuals\n"
+                    "  • Independence of observations\n"
+                    "  • Interval scale of the dependent variable\n\n"
+                )
+                
+                if is_rm_anova:
+                    assumptions_overview += (
+                        "🔄 REPEATED MEASURES SPECIFIC ASSUMPTIONS:\n"
+                        "  • SPHERICITY: Equal variances of differences between all condition pairs\n"
+                        "    → Why important: RM ANOVA compares differences between conditions\n"
+                        "    → When violated: F-test becomes too liberal (more Type I errors)\n"
+                        "    → Solution: Greenhouse-Geisser or Huynh-Feldt corrections\n\n"
+                        
+                        "💡 WHAT ARE THESE CORRECTIONS?\n"
+                        "  • Greenhouse-Geisser: Conservative correction (reduces degrees of freedom more)\n"
+                        "  • Huynh-Feldt: Less conservative (closer to original degrees of freedom)\n"
+                        "  • Automatic selection: ε > 0.75 → Huynh-Feldt, ε ≤ 0.75 → Greenhouse-Geisser\n\n"
+                        
+                        "🎯 PRACTICAL IMPACT:\n"
+                        "If sphericity is violated, use corrected p-values instead of uncorrected ones!"
+                    )
+                
+                elif is_mixed_anova:
+                    assumptions_overview += (
+                        "🔄🔀 MIXED ANOVA SPECIFIC ASSUMPTIONS:\n"
+                        "  • BETWEEN-FACTOR: Homogeneity of variances (like regular ANOVA)\n"
+                        "  • WITHIN-FACTOR: Sphericity (like Repeated Measures ANOVA)\n"
+                        "  • INTERACTION: Both factors together must meet compound assumptions\n\n"
+                        
+                        "🧪 MULTIPLE ASSUMPTION TESTS:\n"
+                        "  • Levene's Test: Checks if groups have equal variances\n"
+                        "  • Brown-Forsythe: Robust version of Levene's test\n"
+                        "  • Mauchly's Test: Checks sphericity for within-subject factor\n"
+                        "  • Box's M Test: Checks if covariance patterns are similar across groups\n\n"
+                        
+                        "🎯 PRACTICAL IMPACT:\n"
+                        "Mixed ANOVA is complex - multiple assumption violations may require different statistical approaches!"
+                    )
+                
+                assumptions_overview += (
+                    "\n\n✅ WHAT TO LOOK FOR IN RESULTS:\n"
+                    "  • Green/Normal formatting = Assumptions met\n"
+                    "  • Red/Warning formatting = Assumptions violated\n"
+                    "  • Corrected p-values = Use these when corrections are applied\n"
+                    "  • Recommendations = Follow these for best statistical practice"
+                )
+            else:
+                # Standard parametric explanation
+                assumptions_overview = (
+                    "For parametric tests (such as t-test, ANOVA), the following assumptions apply:\n"
+                    "  • Normal distribution of model residuals (NEW: tested on residuals, not raw group data)\n"
+                    "  • Homogeneity of variances between groups\n"
+                    "  • Independence of observations\n"
+                    "  • Interval scale of the dependent variable\n\n"
+                    "IMPORTANT CHANGE: Normality is now tested on model residuals rather than raw group data. "
+                    "This provides a more accurate assessment of whether the statistical model assumptions are met. "
+                    "Points 1 and 2 are tested statistically. Points 3 and 4 are ensured by the study design and data collection."
+                )
         else:
             assumptions_overview = (
                 "For non-parametric tests (such as Mann-Whitney U, Kruskal-Wallis), the following assumptions apply:\n"
@@ -1153,35 +1330,22 @@ class ResultsExporter:
             ws.write(row, i, h, fmt["header"])
         row += 1
         
-        # Get variance test data from test_info structure or fallback to variance_test
-        test_info = results.get("test_info", {})
+        # Get variance test data - SIMPLIFIED APPROACH 
         variance_test = results.get("variance_test", {})
         transformation = results.get("transformation", "None")
         
-        # Initialize default values
-        stat = p_val = None
-        var_equal = False
-        
-        # Display pre-transformation variance test
-        if "pre_transformation" in test_info and "variance" in test_info["pre_transformation"]:
-            pre_var = test_info["pre_transformation"]["variance"]
-            stat = pre_var.get('statistic')
-            p_val = pre_var.get('p_value')
-            var_equal = pre_var.get('equal_variance', False)
-        elif variance_test and "statistic" in variance_test:
-            # Fallback to variance_test structure
-            stat = variance_test.get('statistic')
-            p_val = variance_test.get('p_value') 
+        # Write original variance test data
+        if variance_test and "statistic" in variance_test:
+            stat = variance_test.get('statistic', 'N/A')
+            p_val = variance_test.get('p_value', 'N/A')
             var_equal = variance_test.get('equal_variance', False)
-            
-        # Write pre-transformation row if we have valid data
-        if stat is not None and p_val is not None:
             var_text = "Yes" if var_equal else "No"
             interpretation = (
                 "No significant differences in variances"
                 if var_equal else
                 "Significant differences in variances"
             )
+            
             values = [
                 "Original Data",
                 f"{stat:.4f}" if isinstance(stat, (float, int)) else str(stat),
@@ -1189,48 +1353,46 @@ class ResultsExporter:
                 var_text,
                 interpretation
             ]
+            
+            for col, val in enumerate(values):
+                cell_fmt = fmt["significant"] if not var_equal else fmt["cell"]
+                ws.write(row, col, val, cell_fmt)
+            row += 1
+        else:
+            # Fallback if no variance data
+            ws.write(row, 0, "No variance test data available", fmt["cell"])
+            row += 1
+            
+        # Write transformed variance test data if transformation was applied
+        if transformation and transformation not in ["None", "No further"] and "transformed" in variance_test:
+            trans_var = variance_test["transformed"]
+            stat = trans_var.get('statistic', 'N/A')
+            p_val = trans_var.get('p_value', 'N/A')
+            var_equal = trans_var.get('equal_variance', False)
+            var_text = "Yes" if var_equal else "No"
+            interpretation = (
+                "No significant differences in variances after transformation"
+                if var_equal else
+                "Significant differences in variances even after transformation"
+            )
+            
+            values = [
+                f"After {transformation} Transformation",
+                f"{stat:.4f}" if isinstance(stat, (float, int)) else str(stat),
+                f"{p_val:.4f}" if isinstance(p_val, (float, int)) else str(p_val),
+                var_text,
+                interpretation
+            ]
+            
             for col, val in enumerate(values):
                 cell_fmt = fmt["significant"] if not var_equal else fmt["cell"]
                 ws.write(row, col, val, cell_fmt)
             row += 1
         
-        # Display post-transformation variance test if transformation was applied
-        if transformation and transformation not in ["None", "No further"]:
-            post_stat = post_p_val = None
-            post_var_equal = False
-            
-            # Try test_info structure first
-            if ("post_transformation" in test_info and "variance" in test_info["post_transformation"]):
-                post_var = test_info["post_transformation"]["variance"]
-                post_stat = post_var.get('statistic')
-                post_p_val = post_var.get('p_value')
-                post_var_equal = post_var.get('equal_variance', False)
-            elif "transformed" in variance_test:
-                # Fallback to variance_test.transformed structure
-                post_var = variance_test["transformed"]
-                post_stat = post_var.get('statistic')
-                post_p_val = post_var.get('p_value')
-                post_var_equal = post_var.get('equal_variance', False)
-                
-            # Write post-transformation row if we have valid data
-            if post_stat is not None and post_p_val is not None:
-                var_text = "Yes" if post_var_equal else "No"
-                interpretation = (
-                    "No significant differences in variances after transformation"
-                    if post_var_equal else
-                    "Significant differences in variances even after transformation"
-                )
-                values = [
-                    f"After {transformation} Transformation",
-                    f"{post_stat:.4f}" if isinstance(post_stat, (float, int)) else str(post_stat),
-                    f"{post_p_val:.4f}" if isinstance(post_p_val, (float, int)) else str(post_p_val),
-                    var_text,
-                    interpretation
-                ]
-                for col, val in enumerate(values):
-                    cell_fmt = fmt["significant"] if not post_var_equal else fmt["cell"]
-                    ws.write(row, col, val, cell_fmt)
-                row += 1
+        row += 1  # Add space after variance test section
+        
+        # ENHANCED ASSUMPTION TESTING FOR RM/MIXED ANOVA
+        row = ResultsExporter._write_enhanced_assumption_tests(workbook, results, fmt, ws, row)
     
         # VISUAL EXAMINATION SECTION (for all cases)
         ws.merge_range(f'A{row}:F{row}', "VISUAL EXAMINATION OF ASSUMPTIONS", fmt["section_header"])
@@ -1828,6 +1990,7 @@ class ResultsExporter:
                 )
             ws.merge_range(f'A{row}:F{row+4}', decision_tree, fmt["explanation"])
             ws.set_row(row, ResultsExporter.get_fixed_row_height("decision_tree_text"))
+            
             
     @staticmethod
     def _write_results_sheet(workbook, results, fmt, sheet_name="Statistical Results"):
@@ -2897,5 +3060,1013 @@ class ResultsExporter:
                             print(f"Removed old decision tree from legacy location: {file_path}")
                     except Exception as e:
                         print(f"Error cleaning up legacy file {file_path}: {str(e)}")
+
+    @staticmethod
+    def _write_enhanced_assumption_tests(workbook, results, fmt, ws, start_row):
+        """
+        Writes enhanced assumption tests for RM/Mixed ANOVA including:
+        - Sphericity tests with corrections
+        - Between-factor assumptions (Mixed ANOVA)
+        - Within-factor sphericity (Mixed ANOVA)
+        - Interaction assumptions (Mixed ANOVA)
+        
+        Returns the next available row number.
+        """
+        try:
+            row = start_row
+            
+            # Input validation
+            if not isinstance(results, dict):
+                ws.write(row, 0, "⚠️ ERROR: Invalid results data format", fmt["significant"])
+                return row + 2
+            
+            if not all(param is not None for param in [workbook, fmt, ws]):
+                raise ValueError("Missing required parameters: workbook, fmt, or ws cannot be None")
+            
+            # Check if this is a RM or Mixed ANOVA with enhanced assumption tests
+            test_type = results.get("test", "")
+            has_enhanced_tests = any([
+                "sphericity_test" in results and isinstance(results["sphericity_test"], dict),
+                "between_assumptions" in results,
+                "within_sphericity_test" in results,
+                "interaction_assumptions" in results
+            ])
+            
+            if not has_enhanced_tests:
+                return row  # No enhanced tests to display
+            
+            # Enhanced Assumption Tests Header
+            ws.merge_range(f'A{row}:F{row}', "🔬 ENHANCED ASSUMPTION TESTING (RM/MIXED ANOVA)", fmt["section_header"])
+            row += 1
+            
+            enhanced_intro = (
+                "This section provides comprehensive assumption testing for Repeated Measures and Mixed ANOVA designs. "
+                "These tests go beyond basic normality and variance checks to include specialized assumptions "
+                "for within-subjects and between-subjects factors."
+            )
+            
+            intro_wrap_fmt = workbook.add_format({
+                'text_wrap': True, 
+                'valign': 'top',
+                'border': 1,
+                'bg_color': '#E8F4FD'  # Light blue background
+            })
+            ws.write(row, 0, enhanced_intro, intro_wrap_fmt)
+            ws.set_row(row, 40)
+            row += 2
+            
+            # 1. Enhanced Sphericity Testing (RM ANOVA)
+            if "sphericity_test" in results and isinstance(results["sphericity_test"], dict):
+                try:
+                    row = ResultsExporter._write_enhanced_sphericity_section(workbook, results, fmt, ws, row)
+                except Exception as e:
+                    ws.write(row, 0, f"⚠️ ERROR in sphericity section: {str(e)}", fmt["significant"])
+                    row += 2
+            
+            # 2. Between-Factor Assumptions (Mixed ANOVA)
+            if "between_assumptions" in results:
+                try:
+                    row = ResultsExporter._write_between_factor_assumptions(workbook, results, fmt, ws, row)
+                except Exception as e:
+                    ws.write(row, 0, f"⚠️ ERROR in between-factor assumptions: {str(e)}", fmt["significant"])
+                    row += 2
+            
+            # 3. Within-Factor Sphericity (Mixed ANOVA)
+            if "within_sphericity_test" in results:
+                try:
+                    row = ResultsExporter._write_within_factor_sphericity(workbook, results, fmt, ws, row)
+                except Exception as e:
+                    ws.write(row, 0, f"⚠️ ERROR in within-factor sphericity: {str(e)}", fmt["significant"])
+                    row += 2
+            
+            # 4. Interaction Assumptions (Mixed ANOVA)
+            if "interaction_assumptions" in results:
+                try:
+                    row = ResultsExporter._write_interaction_assumptions(workbook, results, fmt, ws, row)
+                except Exception as e:
+                    ws.write(row, 0, f"⚠️ ERROR in interaction assumptions: {str(e)}", fmt["significant"])
+                    row += 2
+            
+            return row
+            
+        except Exception as e:
+            # Global error handling
+            error_msg = f"⚠️ CRITICAL ERROR in enhanced assumption tests: {str(e)}"
+            try:
+                ws.write(start_row, 0, error_msg, fmt["significant"])
+                ws.write(start_row + 1, 0, "Please check your data and try again.", fmt["cell"])
+            except:
+                # If even writing the error fails, just return
+                pass
+            return start_row + 3
+    
+    @staticmethod
+    def _write_enhanced_sphericity_section(workbook, results, fmt, ws, start_row):
+        """
+        Writes comprehensive sphericity testing results with user-friendly explanations and robust error handling.
+        
+        This function creates a detailed sphericity section in the Excel export that includes:
+        - Clear explanation of what sphericity means and why it matters
+        - Mauchly's test results with interpretation guidance
+        - Visual indicators for assumption violations
+        - Practical recommendations for next steps
+        
+        Args:
+            workbook: xlsxwriter.Workbook object for creating Excel formats
+            results (dict): Statistical analysis results containing sphericity test data
+            fmt (dict): Dictionary of Excel formatting objects
+            ws: xlsxwriter.Worksheet object for writing data
+            start_row (int): Row number to start writing from
+            
+        Returns:
+            int: Next available row number after writing sphericity section
+            
+        Expected results structure:
+            results["sphericity_test"] = {
+                "statistic": float,      # Mauchly's W statistic
+                "p_value": float,        # p-value of the test
+                "assumption_met": bool   # True if sphericity assumption is met
+            }
+            
+        Example:
+            # Write sphericity section starting at row 10
+            next_row = _write_enhanced_sphericity_section(workbook, results, fmt, ws, 10)
+        """
+        row = start_row
+        
+        # Enhanced section header with context
+        ws.write(row, 0, "� SPHERICITY ASSUMPTION (MAUCHLY'S TEST)", fmt["section_header"])
+        row += 1
+        
+        sphericity_test = results["sphericity_test"]
+        
+        # Enhanced sphericity explanation with practical guidance
+        sphericity_explanation = (
+            "💡 WHAT IS SPHERICITY?\n"
+            "Sphericity means that the variances of differences between ALL pairs of conditions are equal.\n"
+            "This is crucial for Repeated Measures ANOVA because the test compares differences between conditions.\n\n"
+            
+            "🧪 MAUCHLY'S TEST INTERPRETATION:\n"
+            "• H₀ (Null Hypothesis): Sphericity assumption is met (variances are equal)\n"
+            "• H₁ (Alternative): Sphericity assumption is violated\n"
+            "• p > 0.05: ✅ Assumption met → Use uncorrected ANOVA results\n"
+            "• p ≤ 0.05: ⚠️ Assumption violated → Use corrected p-values instead\n\n"
+            
+            "🎯 PRACTICAL IMPACT:\n"
+            "If sphericity is violated and you ignore it, your ANOVA results will be too liberal.\n"
+            "This means you'll find 'significant' effects more often than you should (increased Type I error).\n"
+            "Always check this assumption and use corrections when needed!"
+        )
+        
+        try:
+            explanation_fmt = workbook.add_format({
+                'text_wrap': True, 
+                'valign': 'top',
+                'border': 1,
+                'bg_color': '#F0F8FF',
+                'font_size': 10
+            })
+            ws.write(row, 0, sphericity_explanation, explanation_fmt)
+            ws.set_row(row, 80)  # Taller row for more content
+            row += 2
+            
+            # Sphericity test results table with enhanced interpretation
+            sph_headers = ["Test", "W Statistic", "Chi-Square", "df", "p-Value", "Result", "Practical Interpretation"]
+            for i, header in enumerate(sph_headers):
+                ws.write(row, i, header, fmt["header"])
+            row += 1
+            
+            # Extract sphericity test data with validation
+            test_name = sphericity_test.get("test_name", "Mauchly's Test for Sphericity")
+            W = sphericity_test.get("W", "N/A")
+            chi_square = sphericity_test.get("chi_square", "N/A")
+            df = sphericity_test.get("df", "N/A")
+            p_value = sphericity_test.get("p_value", "N/A")
+            sphericity_met = sphericity_test.get("sphericity_assumed", None)
+            
+            # Data quality validation
+            data_quality_issues = []
+            if W == "N/A" or W is None:
+                data_quality_issues.append("Missing W statistic")
+            if p_value == "N/A" or p_value is None:
+                data_quality_issues.append("Missing p-value")
+            if df == "N/A" or df is None:
+                data_quality_issues.append("Missing degrees of freedom")
+            
+            if data_quality_issues:
+                ws.write(row, 0, f"⚠️ DATA QUALITY WARNING: {', '.join(data_quality_issues)}", fmt["significant"])
+                row += 1
+            
+            # Enhanced interpretation based on results
+            if sphericity_met is False:
+                result_text = "⚠️ VIOLATED"
+                practical_interpretation = "USE CORRECTED p-values! See corrections below."
+            elif sphericity_met is True:
+                result_text = "✅ ASSUMPTION MET"
+                practical_interpretation = "Safe to use uncorrected ANOVA results."
+            else:
+                result_text = "Unknown"
+                practical_interpretation = "Cannot determine - check data quality."
+        
+            # Format values with better presentation
+            w_str = f"{W:.6f}" if isinstance(W, (float, int)) else str(W)
+            chi_str = f"{chi_square:.4f}" if isinstance(chi_square, (float, int)) else str(chi_square)
+            df_str = str(df) if df is not None else "N/A"
+            p_str = f"{p_value:.6f}" if isinstance(p_value, (float, int)) else str(p_value)
+            
+            values = [test_name, w_str, chi_str, df_str, p_str, result_text, practical_interpretation]
+            
+            # Apply color-coded formatting based on sphericity result
+            for col, val in enumerate(values):
+                if sphericity_met is False and col >= 4:  # Highlight violations in red
+                    ws.write(row, col, val, fmt["significant"])
+                elif sphericity_met is True and col >= 4:  # Highlight success in normal format
+                    ws.write(row, col, val, fmt["cell"])
+                else:
+                    ws.write(row, col, val, fmt["cell"])
+            row += 2
+            
+            # Add practical guidance box
+            if sphericity_met is False:
+                guidance_text = (
+                    "🚨 IMPORTANT: Sphericity is violated!\n"
+                    "→ Do NOT interpret uncorrected ANOVA p-values\n"
+                    "→ Use Greenhouse-Geisser or Huynh-Feldt corrected results instead\n"
+                    "→ See correction table below for valid p-values"
+                )
+                guidance_fmt = workbook.add_format({
+                    'text_wrap': True,
+                    'valign': 'top', 
+                    'border': 1,
+                    'bg_color': '#FFE4E1',  # Light red background
+                    'font_color': '#8B0000',  # Dark red text
+                    'bold': True
+                })
+            else:
+                guidance_text = (
+                    "✅ GOOD NEWS: Sphericity assumption is met!\n"
+                    "→ You can safely interpret uncorrected ANOVA results\n"
+                    "→ Corrections are not necessary but provided for reference"
+                )
+                guidance_fmt = workbook.add_format({
+                    'text_wrap': True,
+                    'valign': 'top',
+                    'border': 1, 
+                    'bg_color': '#F0FFF0',  # Light green background
+                    'font_color': '#006400'  # Dark green text
+                })
+            
+            ws.write(row, 0, guidance_text, guidance_fmt)
+            ws.set_row(row, 30)
+            row += 2
+            
+            # Sphericity corrections if available
+            if "sphericity_corrections" in results:
+                row = ResultsExporter._write_sphericity_corrections(workbook, results, fmt, ws, row)
+            
+            return row
+            
+        except Exception as e:
+            # Error handling for sphericity section
+            error_msg = f"⚠️ ERROR in sphericity analysis: {str(e)}"
+            try:
+                ws.write(start_row, 0, error_msg, fmt["significant"])
+                ws.write(start_row + 1, 0, "Sphericity test data may be incomplete or corrupted.", fmt["cell"])
+            except:
+                pass
+            return start_row + 3
+    
+    @staticmethod
+    def _write_sphericity_corrections(workbook, results, fmt, ws, start_row):
+        """
+        Writes sphericity correction results with comprehensive explanations and robust error handling.
+        
+        This function creates a detailed corrections section that helps users understand:
+        - Why corrections are needed when sphericity is violated
+        - The difference between Greenhouse-Geisser and Huynh-Feldt corrections
+        - Which correction to use based on epsilon values
+        - The corrected p-values they should report
+        
+        Args:
+            workbook: xlsxwriter.Workbook object for creating Excel formats
+            results (dict): Statistical analysis results containing correction data
+            fmt (dict): Dictionary of Excel formatting objects
+            ws: xlsxwriter.Worksheet object for writing data
+            start_row (int): Row number to start writing from
+            
+        Returns:
+            int: Next available row number after writing corrections section
+            
+        Expected results structure:
+            results["sphericity_corrections"] = {
+                "greenhouse_geisser": {
+                    "epsilon": float,           # GG epsilon value
+                    "corrected_p": float,       # GG corrected p-value
+                    "corrected_f": float,       # GG corrected F-statistic
+                    "df_num": float,           # Numerator degrees of freedom
+                    "df_den": float            # Denominator degrees of freedom
+                },
+                "huynh_feldt": {
+                    "epsilon": float,           # HF epsilon value
+                    "corrected_p": float,       # HF corrected p-value
+                    "corrected_f": float,       # HF corrected F-statistic
+                    "df_num": float,           # Numerator degrees of freedom
+                    "df_den": float            # Denominator degrees of freedom
+                }
+            }
+            
+        The function automatically determines which correction to recommend based on:
+        - Greenhouse-Geisser: Recommended when epsilon ≤ 0.75 (more conservative)
+        - Huynh-Feldt: Recommended when epsilon > 0.75 (less conservative)
+        
+        Example:
+            # Write corrections section starting at row 15
+            next_row = _write_sphericity_corrections(workbook, results, fmt, ws, 15)
+        """
+        try:
+            row = start_row
+            
+            # Input validation
+            if not isinstance(results, dict):
+                ws.write(row, 0, "⚠️ ERROR: Invalid results format for corrections", fmt["significant"])
+                return row + 2
+                
+            if "sphericity_corrections" not in results:
+                ws.write(row, 0, "⚠️ WARNING: No sphericity corrections available", fmt["significant"])
+                return row + 2
+                
+            corrections = results["sphericity_corrections"]
+            if not isinstance(corrections, dict):
+                ws.write(row, 0, "⚠️ ERROR: Invalid corrections data format", fmt["significant"])
+                return row + 2
+            
+            ws.write(row, 0, "🔧 SPHERICITY CORRECTIONS - YOUR VALID P-VALUES", fmt["section_header"])
+            row += 1
+            
+            # Enhanced corrections explanation with practical guidance
+            corrections_explanation = (
+                "🎯 WHY CORRECTIONS ARE NEEDED:\n"
+                "When sphericity is violated, standard ANOVA p-values are invalid (too liberal).\n"
+                "Corrections adjust the degrees of freedom to provide statistically valid results.\n\n"
+                
+                "🔧 AVAILABLE CORRECTIONS:\n\n"
+                
+                "GREENHOUSE-GEISSER CORRECTION:\n"
+                "• More conservative (safer) correction\n"
+                "• Reduces degrees of freedom more dramatically\n"
+                "• Recommended when ε (epsilon) ≤ 0.75\n"
+                "• Use this when you want to be extra cautious about Type I errors\n\n"
+                
+                "HUYNH-FELDT CORRECTION:\n"
+                "• Less conservative correction\n"
+                "• Closer to original degrees of freedom\n"
+                "• Recommended when ε (epsilon) > 0.75\n"
+                "• More powerful test (better at detecting real effects)\n\n"
+                
+                "🚨 WHICH CORRECTION TO USE?\n"
+                "The system automatically selects the most appropriate correction based on epsilon value.\n"
+                "Look for the 'RECOMMENDED' label in the results table below."
+            )
+            
+            explanation_fmt = workbook.add_format({
+                'text_wrap': True, 
+                'valign': 'top',
+                'border': 1,
+                'bg_color': '#FFF8DC',  # Light yellow background
+                'font_size': 10
+            })
+            ws.write(row, 0, corrections_explanation, explanation_fmt)
+            ws.set_row(row, 100)  # Taller row for comprehensive explanation
+            row += 2
+            
+            # Enhanced corrections table with recommendations
+            correction_headers = ["Correction Type", "Epsilon (ε)", "Adjusted df", "F-statistic", "Corrected p-value", "Recommended?", "Interpretation"]
+            for i, header in enumerate(correction_headers):
+                ws.write(row, i, header, fmt["header"])
+            row += 1
+            
+            # Greenhouse-Geisser correction
+            gg_data = corrections.get("greenhouse_geisser", {})
+            gg_epsilon = gg_data.get("epsilon", "N/A")
+            gg_df = gg_data.get("df", "N/A")
+            gg_f_stat = gg_data.get("F", "N/A")
+            gg_p_value = gg_data.get("p_value", "N/A")
+            
+            # Huynh-Feldt correction
+            hf_data = corrections.get("huynh_feldt", {})
+            hf_epsilon = hf_data.get("epsilon", "N/A")
+            hf_df = hf_data.get("df", "N/A")
+            hf_f_stat = hf_data.get("F", "N/A")
+            hf_p_value = hf_data.get("p_value", "N/A")
+            
+            # Determine which correction is recommended
+            epsilon_val = gg_epsilon if isinstance(gg_epsilon, (int, float)) else None
+            gg_recommended = epsilon_val is not None and epsilon_val <= 0.75
+            hf_recommended = epsilon_val is not None and epsilon_val > 0.75
+            
+            # Write corrections data with error handling
+            try:
+                # Write Greenhouse-Geisser row
+                gg_epsilon_str = f"{gg_epsilon:.4f}" if isinstance(gg_epsilon, (int, float)) else str(gg_epsilon)
+                gg_df_str = f"{gg_df:.2f}" if isinstance(gg_df, (int, float)) else str(gg_df)
+                gg_f_str = f"{gg_f_stat:.4f}" if isinstance(gg_f_stat, (int, float)) else str(gg_f_stat)
+                gg_p_str = f"{gg_p_value:.6f}" if isinstance(gg_p_value, (int, float)) else str(gg_p_value)
+                gg_rec_str = "⭐ YES (Conservative)" if gg_recommended else "No"
+                gg_interp = "Use this p-value!" if gg_recommended else "Alternative option"
+                
+                gg_values = ["Greenhouse-Geisser", gg_epsilon_str, gg_df_str, gg_f_str, gg_p_str, gg_rec_str, gg_interp]
+                
+                for col, val in enumerate(gg_values):
+                    cell_fmt = fmt["recommended"] if gg_recommended and col >= 4 else fmt["cell"]
+                    ws.write(row, col, val, cell_fmt)
+                row += 1
+                
+                # Write Huynh-Feldt row
+                hf_epsilon_str = f"{hf_epsilon:.4f}" if isinstance(hf_epsilon, (int, float)) else str(hf_epsilon)
+                hf_df_str = f"{hf_df:.2f}" if isinstance(hf_df, (int, float)) else str(hf_df)
+                hf_f_str = f"{hf_f_stat:.4f}" if isinstance(hf_f_stat, (int, float)) else str(hf_f_stat)
+                hf_p_str = f"{hf_p_value:.6f}" if isinstance(hf_p_value, (int, float)) else str(hf_p_value)
+                hf_rec_str = "⭐ YES (Less Conservative)" if hf_recommended else "No"
+                hf_interp = "Use this p-value!" if hf_recommended else "Alternative option"
+                
+                hf_values = ["Huynh-Feldt", hf_epsilon_str, hf_df_str, hf_f_str, hf_p_str, hf_rec_str, hf_interp]
+                
+                for col, val in enumerate(hf_values):
+                    cell_fmt = fmt["recommended"] if hf_recommended and col >= 4 else fmt["cell"]
+                    ws.write(row, col, val, cell_fmt)
+                row += 2
+                
+            except Exception as table_error:
+                ws.write(row, 0, f"⚠️ ERROR writing corrections table: {str(table_error)}", fmt["significant"])
+                row += 2
+            
+            # Final recommendation box
+            try:
+                if gg_recommended:
+                    final_rec = (
+                        "📋 FINAL RECOMMENDATION: Use Greenhouse-Geisser Correction\n"
+                        f"→ Your corrected p-value is: {gg_p_str}\n"
+                        f"→ Epsilon = {gg_epsilon_str} (≤ 0.75, so conservative correction is appropriate)\n"
+                        "→ This correction protects against Type I errors when sphericity is violated"
+                    )
+                    rec_fmt = workbook.add_format({
+                        'text_wrap': True,
+                        'valign': 'top',
+                        'border': 1,
+                        'bg_color': '#E6F3FF',  # Light blue
+                        'font_color': '#0066CC',
+                        'bold': True
+                    })
+                elif hf_recommended:
+                    final_rec = (
+                        "📋 FINAL RECOMMENDATION: Use Huynh-Feldt Correction\n"
+                        f"→ Your corrected p-value is: {hf_p_str}\n"
+                        f"→ Epsilon = {hf_epsilon_str} (> 0.75, so less conservative correction is appropriate)\n"
+                        "→ This correction is less conservative while still controlling Type I errors"
+                    )
+                    rec_fmt = workbook.add_format({
+                        'text_wrap': True,
+                        'valign': 'top',
+                        'border': 1,
+                        'bg_color': '#E6F3FF',  # Light blue
+                        'font_color': '#0066CC',
+                        'bold': True
+                    })
+                else:
+                    final_rec = (
+                        "📋 RECOMMENDATION: Check epsilon values\n"
+                        "→ Cannot determine optimal correction\n"
+                        "→ Consider using the more conservative Greenhouse-Geisser correction\n"
+                        "→ Consult with a statistician if unsure"
+                    )
+                    rec_fmt = workbook.add_format({
+                        'text_wrap': True,
+                        'valign': 'top',
+                        'border': 1,
+                        'bg_color': '#FFF0E6',  # Light orange
+                        'font_color': '#CC6600'
+                    })
+                
+                ws.write(row, 0, final_rec, rec_fmt)
+                ws.set_row(row, 40)
+                row += 2
+                
+            except Exception as rec_error:
+                ws.write(row, 0, f"⚠️ ERROR writing recommendations: {str(rec_error)}", fmt["significant"])
+                row += 2
+            
+            return row
+            
+        except Exception as e:
+            # Global error handling for corrections section
+            error_msg = f"⚠️ CRITICAL ERROR in sphericity corrections: {str(e)}"
+            try:
+                ws.write(start_row, 0, error_msg, fmt["significant"])
+                ws.write(start_row + 1, 0, "Correction data may be incomplete or corrupted.", fmt["cell"])
+            except:
+                pass
+            return start_row + 3
+        
+        explanation_fmt = workbook.add_format({
+            'text_wrap': True, 
+            'valign': 'top',
+            'border': 1,
+            'bg_color': '#FFF8DC',  # Light yellow background
+            'font_size': 10
+        })
+        ws.write(row, 0, corrections_explanation, explanation_fmt)
+        ws.set_row(row, 100)  # Taller row for comprehensive explanation
+        row += 2
+        
+        # Enhanced corrections table with recommendations
+        correction_headers = ["Correction Type", "Epsilon (ε)", "Adjusted df", "F-statistic", "Corrected p-value", "Recommended?", "Interpretation"]
+        for i, header in enumerate(correction_headers):
+            ws.write(row, i, header, fmt["header"])
+        row += 1
+        
+        # Greenhouse-Geisser correction
+        gg_data = corrections.get("greenhouse_geisser", {})
+        gg_epsilon = gg_data.get("epsilon", "N/A")
+        gg_df = gg_data.get("df", "N/A")
+        gg_f_stat = gg_data.get("F", "N/A")
+        gg_p_value = gg_data.get("p_value", "N/A")
+        
+        # Huynh-Feldt correction
+        hf_data = corrections.get("huynh_feldt", {})
+        hf_epsilon = hf_data.get("epsilon", "N/A")
+        hf_df = hf_data.get("df", "N/A")
+        hf_f_stat = hf_data.get("F", "N/A")
+        hf_p_value = hf_data.get("p_value", "N/A")
+        
+        # Determine which correction is recommended
+        epsilon_val = gg_epsilon if isinstance(gg_epsilon, (int, float)) else None
+        gg_recommended = epsilon_val is not None and epsilon_val <= 0.75
+        hf_recommended = epsilon_val is not None and epsilon_val > 0.75
+        
+        # Write Greenhouse-Geisser row
+        gg_epsilon_str = f"{gg_epsilon:.4f}" if isinstance(gg_epsilon, (int, float)) else str(gg_epsilon)
+        gg_df_str = f"{gg_df:.2f}" if isinstance(gg_df, (int, float)) else str(gg_df)
+        gg_f_str = f"{gg_f_stat:.4f}" if isinstance(gg_f_stat, (int, float)) else str(gg_f_stat)
+        gg_p_str = f"{gg_p_value:.6f}" if isinstance(gg_p_value, (int, float)) else str(gg_p_value)
+        gg_rec_str = "⭐ YES (Conservative)" if gg_recommended else "No"
+        gg_interp = "Use this p-value!" if gg_recommended else "Alternative option"
+        
+        gg_values = ["Greenhouse-Geisser", gg_epsilon_str, gg_df_str, gg_f_str, gg_p_str, gg_rec_str, gg_interp]
+        
+        for col, val in enumerate(gg_values):
+            cell_fmt = fmt["recommended"] if gg_recommended and col >= 4 else fmt["cell"]
+            ws.write(row, col, val, cell_fmt)
+        row += 1
+        
+        # Write Huynh-Feldt row
+        hf_epsilon_str = f"{hf_epsilon:.4f}" if isinstance(hf_epsilon, (int, float)) else str(hf_epsilon)
+        hf_df_str = f"{hf_df:.2f}" if isinstance(hf_df, (int, float)) else str(hf_df)
+        hf_f_str = f"{hf_f_stat:.4f}" if isinstance(hf_f_stat, (int, float)) else str(hf_f_stat)
+        hf_p_str = f"{hf_p_value:.6f}" if isinstance(hf_p_value, (int, float)) else str(hf_p_value)
+        hf_rec_str = "⭐ YES (Less Conservative)" if hf_recommended else "No"
+        hf_interp = "Use this p-value!" if hf_recommended else "Alternative option"
+        
+        hf_values = ["Huynh-Feldt", hf_epsilon_str, hf_df_str, hf_f_str, hf_p_str, hf_rec_str, hf_interp]
+        
+        for col, val in enumerate(hf_values):
+            cell_fmt = fmt["recommended"] if hf_recommended and col >= 4 else fmt["cell"]
+            ws.write(row, col, val, cell_fmt)
+        row += 2
+        
+        # Final recommendation box
+        if gg_recommended:
+            final_rec = (
+                "📋 FINAL RECOMMENDATION: Use Greenhouse-Geisser Correction\n"
+                f"→ Your corrected p-value is: {gg_p_str}\n"
+                f"→ Epsilon = {gg_epsilon_str} (≤ 0.75, so conservative correction is appropriate)\n"
+                "→ This correction protects against Type I errors when sphericity is violated"
+            )
+            rec_fmt = workbook.add_format({
+                'text_wrap': True,
+                'valign': 'top',
+                'border': 1,
+                'bg_color': '#E6F3FF',  # Light blue
+                'font_color': '#0066CC',
+                'bold': True
+            })
+        elif hf_recommended:
+            final_rec = (
+                "📋 FINAL RECOMMENDATION: Use Huynh-Feldt Correction\n"
+                f"→ Your corrected p-value is: {hf_p_str}\n"
+                f"→ Epsilon = {hf_epsilon_str} (> 0.75, so less conservative correction is appropriate)\n"
+                "→ This correction is less conservative while still controlling Type I errors"
+            )
+            rec_fmt = workbook.add_format({
+                'text_wrap': True,
+                'valign': 'top',
+                'border': 1,
+                'bg_color': '#E6F3FF',  # Light blue
+                'font_color': '#0066CC',
+                'bold': True
+            })
+        else:
+            final_rec = (
+                "📋 RECOMMENDATION: Check epsilon values\n"
+                "→ Cannot determine optimal correction\n"
+                "→ Consider using the more conservative Greenhouse-Geisser correction\n"
+                "→ Consult with a statistician if unsure"
+            )
+            rec_fmt = workbook.add_format({
+                'text_wrap': True,
+                'valign': 'top',
+                'border': 1,
+                'bg_color': '#FFF0E6',  # Light orange
+                'font_color': '#CC6600'
+            })
+        
+        ws.write(row, 0, final_rec, rec_fmt)
+        ws.set_row(row, 40)
+        row += 2
+        
+        return row
+
+    @staticmethod
+    def _write_between_factor_assumptions(workbook, results, fmt, ws, start_row):
+        """
+        Writes between-factor assumption test results for Mixed ANOVA with robust error handling.
+        
+        This function handles the special assumptions required for Mixed ANOVA designs,
+        where between-subjects factors interact with within-subjects factors. It includes:
+        - Homogeneity of variance tests for between-subjects factors
+        - Independence of observations validation
+        - Normality assessments for between-subjects groups
+        - Box's M test for homogeneity of covariance matrices (when applicable)
+        
+        Args:
+            workbook: xlsxwriter.Workbook object for creating Excel formats
+            results (dict): Statistical analysis results containing between-factor assumptions
+            fmt (dict): Dictionary of Excel formatting objects
+            ws: xlsxwriter.Worksheet object for writing data
+            start_row (int): Row number to start writing from
+            
+        Returns:
+            int: Next available row number after writing between-factor assumptions section
+            
+        Expected results structure:
+            results["between_assumptions"] = {
+                "variance_tests": {
+                    "levenes_test": {
+                        "statistic": float,
+                        "p_value": float,
+                        "assumption_met": bool,
+                        "interpretation": str
+                    },
+                    "bartletts_test": {
+                        "statistic": float,
+                        "p_value": float,
+                        "assumption_met": bool,
+                        "interpretation": str
+                    }
+                },
+                "recommendations": [
+                    "Recommendation 1",
+                    "Recommendation 2"
+                ]
+            }
+            
+        Example:
+            # Write between-factor assumptions starting at row 20
+            next_row = _write_between_factor_assumptions(workbook, results, fmt, ws, 20)
+        """
+        try:
+            # Input validation
+            is_valid, error_msg, error_rows = ResultsExporter._validate_excel_inputs(
+                workbook, results, fmt, ws, "_write_between_factor_assumptions"
+            )
+            if not is_valid:
+                ws.write(start_row, 0, error_msg, fmt["significant"])
+                return start_row + error_rows
+            
+            row = start_row
+            
+            # Check if between_assumptions data exists
+            if "between_assumptions" not in results:
+                ws.write(row, 0, "⚠️ WARNING: No between-factor assumptions data available", fmt["significant"])
+                return row + 2
+            
+            between_assumptions = results["between_assumptions"]
+            
+            # Section header
+            ws.write(row, 0, "🔵 BETWEEN-FACTOR ASSUMPTIONS (MIXED ANOVA)", fmt["section_header"])
+            row += 1
+            
+            # Between-factor explanation
+            between_explanation = (
+                "BETWEEN-SUBJECTS FACTOR ASSUMPTIONS:\n"
+                "For Mixed ANOVA, the between-subjects factor must meet homogeneity of variance assumptions.\n\n"
+                "TESTS PERFORMED:\n"
+                "• Levene's Test: Standard test for equal variances\n"
+                "• Levene's Test: Standard test for equal variances\n"
+                "• Brown-Forsythe Test: Robust alternative using medians\n"
+                "• Bartlett's Test: Sensitive to normality violations\n"
+                "• Welch's ANOVA: Robust alternative when variances are unequal"
+            )
+            
+            explanation_fmt = workbook.add_format({
+                'text_wrap': True, 
+                'valign': 'top',
+                'border': 1,
+                'bg_color': '#E6F3FF'
+            })
+            ws.write(row, 0, between_explanation, explanation_fmt)
+            ws.set_row(row, 55)
+            row += 2
+            
+            # Variance tests table
+            if "variance_tests" in between_assumptions:
+                variance_tests = between_assumptions["variance_tests"]
+                
+                # Table headers
+                var_headers = ["Test", "Statistic", "p-Value", "Assumption Met?", "Interpretation"]
+                for i, header in enumerate(var_headers):
+                    ws.write(row, i, header, fmt["header"])
+                row += 1
+                
+                # Write each variance test
+                for test_name, test_data in variance_tests.items():
+                    if isinstance(test_data, dict):
+                        statistic = test_data.get("statistic", "N/A")
+                        p_value = test_data.get("p_value", "N/A")
+                        assumption_met = test_data.get("assumption_met", None)
+                        interpretation = test_data.get("interpretation", "No interpretation available")
+                        
+                        stat_str = f"{statistic:.4f}" if isinstance(statistic, (float, int)) else str(statistic)
+                        p_str = f"{p_value:.4f}" if isinstance(p_value, (float, int)) else str(p_value)
+                        assumption_str = "Yes" if assumption_met else "No" if assumption_met is not None else "Unknown"
+                        
+                        values = [test_name.replace("_", " ").title(), stat_str, p_str, assumption_str, interpretation]
+                        
+                        for col, val in enumerate(values):
+                            if assumption_met is False and col >= 2:
+                                ws.write(row, col, val, fmt["significant"])
+                            else:
+                                ws.write(row, col, val, fmt["cell"])
+                        row += 1
+                
+                row += 1
+            
+            # Recommendations
+            if "recommendations" in between_assumptions:
+                ws.write(row, 0, "📋 RECOMMENDATIONS:", fmt["section_header"])
+                row += 1
+                
+                recommendations = between_assumptions["recommendations"]
+                if isinstance(recommendations, list):
+                    for recommendation in recommendations:
+                        ws.write(row, 0, f"• {recommendation}", fmt["cell"])
+                        row += 1
+                row += 1
+            
+            return row
+            
+        except Exception as e:
+            # Error handling for between-factor assumptions
+            error_msg = f"⚠️ ERROR in between-factor assumptions: {str(e)}"
+            try:
+                ws.write(start_row, 0, error_msg, fmt["significant"])
+                ws.write(start_row + 1, 0, "Between-factor assumption data may be incomplete.", fmt["cell"])
+            except:
+                pass
+            return start_row + 3
+    
+    @staticmethod
+    def _write_within_factor_sphericity(workbook, results, fmt, ws, start_row):
+        """
+        Writes within-factor sphericity results for Mixed ANOVA with comprehensive explanations.
+        
+        In Mixed ANOVA designs, within-subjects factors must meet the sphericity assumption
+        independently of between-subjects factors. This function provides detailed analysis
+        of sphericity for the within-subjects portion of the Mixed ANOVA.
+        
+        Args:
+            workbook: xlsxwriter.Workbook object for creating Excel formats
+            results (dict): Statistical analysis results containing within-factor sphericity data
+            fmt (dict): Dictionary of Excel formatting objects
+            ws: xlsxwriter.Worksheet object for writing data
+            start_row (int): Row number to start writing from
+            
+        Returns:
+            int: Next available row number after writing within-factor sphericity section
+            
+        Expected results structure:
+            results["within_sphericity"] = {
+                "mauchly_test": {
+                    "statistic": float,
+                    "p_value": float,
+                    "assumption_met": bool
+                },
+                "epsilon_values": {
+                    "greenhouse_geisser": float,
+                    "huynh_feldt": float
+                }
+            }
+            
+        Example:
+            # Write within-factor sphericity starting at row 25
+            next_row = _write_within_factor_sphericity(workbook, results, fmt, ws, 25)
+        """
+        row = start_row
+        
+        # Section header
+        ws.write(row, 0, "🟡 WITHIN-FACTOR SPHERICITY (MIXED ANOVA)", fmt["section_header"])
+        row += 1
+        
+        within_sphericity = results["within_sphericity_test"]
+        
+        # Within-factor explanation
+        within_explanation = (
+            "WITHIN-SUBJECTS FACTOR SPHERICITY:\n"
+            "In Mixed ANOVA, the within-subjects factor must meet sphericity assumptions.\n"
+            "This test examines whether the variance-covariance matrix has compound symmetry."
+        )
+        
+        explanation_fmt = workbook.add_format({
+            'text_wrap': True, 
+            'valign': 'top',
+            'border': 1,
+            'bg_color': '#FFFACD'
+        })
+        ws.write(row, 0, within_explanation, explanation_fmt)
+        ws.set_row(row, 35)
+        row += 2
+        
+        # Within-factor sphericity table
+        within_headers = ["Factor", "W Statistic", "p-Value", "Sphericity Met?", "Levels Tested", "Interpretation"]
+        for i, header in enumerate(within_headers):
+            ws.write(row, i, header, fmt["header"])
+        row += 1
+        
+        # Extract data
+        factor = within_sphericity.get("factor", "Within-Factor")
+        W = within_sphericity.get("W", "N/A")
+        p_value = within_sphericity.get("p_value", "N/A")
+        sphericity_met = within_sphericity.get("sphericity_assumed", None)
+        levels = within_sphericity.get("levels_tested", "N/A")
+        interpretation = within_sphericity.get("interpretation", "No interpretation available")
+        
+        # Format values
+        w_str = f"{W:.4f}" if isinstance(W, (float, int)) else str(W)
+        p_str = f"{p_value:.4f}" if isinstance(p_value, (float, int)) else str(p_value)
+        sphericity_str = "Yes" if sphericity_met else "No" if sphericity_met is not None else "Unknown"
+        levels_str = str(levels)
+        
+        values = [factor, w_str, p_str, sphericity_str, levels_str, interpretation]
+        
+        for col, val in enumerate(values):
+            if sphericity_met is False and col >= 2:
+                ws.write(row, col, val, fmt["significant"])
+            else:
+                ws.write(row, col, val, fmt["cell"])
+        row += 2
+        
+        # Within-factor corrections if available
+        if "within_sphericity_corrections" in results:
+            ws.write(row, 0, "🔧 WITHIN-FACTOR CORRECTIONS:", fmt["section_header"])
+            row += 1
+            
+            corrections = results["within_sphericity_corrections"]
+            if "main_effect" in corrections:
+                main_effect = corrections["main_effect"]
+                correction_used = main_effect.get("correction_used", "None")
+                final_p = main_effect.get("final_p_value", "N/A")
+                
+                ws.write(row, 0, f"Main Effect Correction: {correction_used}", fmt["cell"])
+                row += 1
+                if isinstance(final_p, (float, int)):
+                    ws.write(row, 0, f"Corrected p-value: {final_p:.4f}", fmt["highlight"])
+                    row += 1
+            row += 1
+        
+        return row
+    
+    @staticmethod
+    def _write_interaction_assumptions(workbook, results, fmt, ws, start_row):
+        """
+        Writes interaction assumption test results for Mixed ANOVA with detailed explanations.
+        
+        Mixed ANOVA designs test interactions between within-subjects and between-subjects factors.
+        These interactions require specific assumptions about homogeneity of covariance matrices
+        and sphericity of interaction effects. This function provides comprehensive analysis
+        of these complex interaction assumptions.
+        
+        Args:
+            workbook: xlsxwriter.Workbook object for creating Excel formats
+            results (dict): Statistical analysis results containing interaction assumptions data
+            fmt (dict): Dictionary of Excel formatting objects
+            ws: xlsxwriter.Worksheet object for writing data
+            start_row (int): Row number to start writing from
+            
+        Returns:
+            int: Next available row number after writing interaction assumptions section
+            
+        Expected results structure:
+            results["interaction_assumptions"] = {
+                "homogeneity_tests": {
+                    "box_m_test": {
+                        "statistic": float,
+                        "p_value": float,
+                        "assumption_met": bool,
+                        "interpretation": str
+                    }
+                },
+                "sphericity_interaction": {
+                    "mauchly_test": {
+                        "statistic": float,
+                        "p_value": float,
+                        "assumption_met": bool
+                    }
+                },
+                "recommendations": [
+                    "Interaction-specific recommendations"
+                ]
+            }
+            
+        Example:
+            # Write interaction assumptions starting at row 30
+            next_row = _write_interaction_assumptions(workbook, results, fmt, ws, 30)
+        """
+        row = start_row
+        
+        interaction_assumptions = results["interaction_assumptions"]
+        
+        # Section header
+        ws.write(row, 0, "🔴 INTERACTION ASSUMPTIONS (MIXED ANOVA)", fmt["section_header"])
+        row += 1
+        
+        # Interaction explanation
+        interaction_explanation = (
+            "INTERACTION EFFECT ASSUMPTIONS:\n"
+            "Mixed ANOVA interactions require several specialized assumptions:\n"
+            "• Sphericity for the interaction effect\n"
+            "• Homogeneity across interaction cells\n"
+            "• Similar covariance patterns across groups\n"
+            "• Homogeneity of covariance matrices (Box's M test)"
+        )
+        
+        explanation_fmt = workbook.add_format({
+            'text_wrap': True, 
+            'valign': 'top',
+            'border': 1,
+            'bg_color': '#FFE4E1'
+        })
+        ws.write(row, 0, interaction_explanation, explanation_fmt)
+        ws.set_row(row, 45)
+        row += 2
+        
+        # Interaction sphericity
+        if "sphericity_tests" in interaction_assumptions:
+            sphericity_tests = interaction_assumptions["sphericity_tests"]
+            
+            ws.write(row, 0, "Interaction Sphericity:", fmt["subsection_header"])
+            row += 1
+            
+            sphericity_met = sphericity_tests.get("sphericity_assumed", None)
+            interpretation = sphericity_tests.get("interpretation", "No interpretation available")
+            
+            ws.write(row, 0, f"Sphericity Met: {'Yes' if sphericity_met else 'No' if sphericity_met is not None else 'Unknown'}", 
+                    fmt["significant"] if sphericity_met is False else fmt["cell"])
+            row += 1
+            ws.write(row, 0, f"Interpretation: {interpretation}", fmt["cell"])
+            row += 2
+        
+        # Cell homogeneity
+        if "cell_homogeneity" in interaction_assumptions:
+            cell_homogeneity = interaction_assumptions["cell_homogeneity"]
+            
+            ws.write(row, 0, "Interaction Cell Homogeneity:", fmt["subsection_header"])
+            row += 1
+            
+            if "levene_test" in cell_homogeneity:
+                levene = cell_homogeneity["levene_test"]
+                assumption_met = levene.get("assumption_met", None)
+                p_value = levene.get("p_value", "N/A")
+                
+                p_str = f"{p_value:.4f}" if isinstance(p_value, (float, int)) else str(p_value)
+                ws.write(row, 0, f"Levene's Test p-value: {p_str}", 
+                        fmt["significant"] if assumption_met is False else fmt["cell"])
+                row += 1
+                
+                ws.write(row, 0, f"Cell Homogeneity: {'Met' if assumption_met else 'Violated' if assumption_met is not None else 'Unknown'}", 
+                        fmt["significant"] if assumption_met is False else fmt["cell"])
+                row += 2
+        
+        # Overall recommendations
+        if "overall_recommendations" in interaction_assumptions:
+            ws.write(row, 0, "📋 INTERACTION RECOMMENDATIONS:", fmt["section_header"])
+            row += 1
+            
+            recommendations = interaction_assumptions["overall_recommendations"]
+            if isinstance(recommendations, list):
+                for recommendation in recommendations:
+                    ws.write(row, 0, f"• {recommendation}", fmt["cell"])
+                    row += 1
+            row += 1
+        
+        return row
         
         return cleaned_count

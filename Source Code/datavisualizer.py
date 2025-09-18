@@ -136,7 +136,7 @@ class DataVisualizer:
                  width=8, height=6, dpi=300,
                  # Styling and theme
                  theme='default', colors=None, hatches=None, 
-                 color_palette='husl', alpha=0.8,
+                 color_palette='Greys', alpha=0.8,
                  # Bar customization
                  bar_width=0.8, bar_edge_color='black', bar_edge_width=0.5,
                  capsize=0.05, error_type="sd", show_error_bars=True,
@@ -374,7 +374,7 @@ class DataVisualizer:
     def plot_violin(
         groups, samples,
         width=8, height=6, dpi=300,
-        theme='default', colors=None, hatches=None, color_palette='husl', alpha=0.8,
+        theme='default', colors=None, hatches=None, color_palette='Greys', alpha=0.8,
         violin_width=0.8, edge_color='black', edge_width=0.5,
         show_points=True, point_style='jitter', max_points_per_group=None,
         point_size=80, point_alpha=0.8, point_edge_width=0.5,
@@ -564,7 +564,7 @@ class DataVisualizer:
     def plot_box(
         groups, samples,
         width=8, height=6, dpi=300,
-        theme='default', colors=None, hatches=None, color_palette='husl', alpha=0.8,
+        theme='default', colors=None, hatches=None, color_palette='Greys', alpha=0.8,
         box_width=0.8, edge_color='black', edge_width=0.5,
         show_points=True, point_style='jitter', max_points_per_group=None,
         point_size=80, point_alpha=0.8, point_edge_width=0.5,
@@ -775,7 +775,7 @@ class DataVisualizer:
     def plot_raincloud(
         groups, samples,
         width=8, height=6, dpi=300,
-        theme='default', colors=None, hatches=None, color_palette='husl', alpha=0.8,
+        theme='default', colors=None, hatches=None, color_palette='Greys', alpha=0.8,
         violin_width=0.8, box_width=0.2, edge_color='black', edge_width=0.5,
         show_points=True, point_style='jitter', max_points_per_group=None,
         point_size=80, point_alpha=0.8, point_edge_width=0.5,
@@ -1968,7 +1968,7 @@ class DataVisualizer:
             'alpha': alpha,
             # Seaborn styling parameters
             'seaborn_context': config.get('seaborn_context', 'notebook'),
-            'seaborn_palette': config.get('seaborn_palette', 'deep'),
+            'seaborn_palette': config.get('seaborn_palette', 'Greys'),
             'use_seaborn_styling': config.get('use_seaborn_styling', True),
             'save_plot': False,  # NIE speichern in der Preview!
             'file_formats': [],  # NIE speichern in der Preview!

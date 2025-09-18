@@ -31,7 +31,7 @@ class DecisionTreeVisualizer:
             plt.style.use('seaborn-v0_8-whitegrid')
 
             # Extract key information from results
-            test_name = results.get("test", "")
+            test_name = results.get("test_name", results.get("test", ""))
             test_type = results.get("test_recommendation", results.get("test_type", ""))
             transformation = results.get("transformation", "None")
             p_value = results.get("p_value", None)
@@ -49,15 +49,31 @@ class DecisionTreeVisualizer:
             
             # Check for explicit indicators in the parameters
             dependent_param = results.get("dependent", None)
-            print(f"DEBUG TREE: dependent_param={dependent_param} (type={type(dependent_param)})")
+            dependent_samples_param = results.get("dependent_samples", None)
+            print(f"DEBUG TREE: dependent_param={dependent_param}, dependent_samples_param={dependent_samples_param}")
+            
             if isinstance(dependent_param, bool):
                 dependence_type = "dependent" if dependent_param else "independent"
+            elif isinstance(dependent_samples_param, bool):
+                dependence_type = "dependent" if dependent_samples_param else "independent"
             elif dependent_param is not None:
                 # Fallback: try to interpret string or int
                 if str(dependent_param).lower() in ("true", "1"):
                     dependence_type = "dependent"
                 else:
                     dependence_type = "independent"
+            elif dependent_samples_param is not None:
+                # Fallback: try to interpret string or int
+                if str(dependent_samples_param).lower() in ("true", "1"):
+                    dependence_type = "dependent"
+                else:
+                    dependence_type = "independent"
+            elif "repeated" in test_name.lower() or "rm" in test_name.lower() or "within" in test_name.lower():
+                # RM ANOVA and Mixed ANOVA are always dependent samples
+                dependence_type = "dependent"
+            elif "mixed" in test_name.lower():
+                # Mixed ANOVA has both dependent and independent factors, but treat as dependent
+                dependence_type = "dependent"
             elif "t-test" in test_name.lower() or "t test" in test_name.lower():
                 # Check for "paired" or only match "dependent" when surrounded by spaces/parentheses
                 if "paired" in test_name.lower() or " dependent" in test_name.lower() or "(dependent)" in test_name.lower():
@@ -104,24 +120,54 @@ class DecisionTreeVisualizer:
             if test_name.lower().startswith("nonparametric_"):
                 auto_switched = True
 
-            # Determine number of groups
+            # Determine number of groups - check multiple locations WITH EXACT DATA
             n_groups = 0
-            if "groups" in results:
-                n_groups = len(results.get("groups", []))
-            elif "descriptive" in results:
-                n_groups = len(results.get("descriptive", {}))
+            groups_found = []
+            
+            # Priority 1: Direct groups in results
+            if "groups" in results and results["groups"]:
+                groups_found = results["groups"]
+                n_groups = len(groups_found)
+                print(f"DEBUG TREE: Found groups from results['groups']: {groups_found}")
+            
+            # Priority 2: Groups from descriptive stats
+            elif "descriptive_stats" in results and "groups" in results["descriptive_stats"]:
+                groups_found = results["descriptive_stats"]["groups"]
+                n_groups = len(groups_found)
+                print(f"DEBUG TREE: Found groups from descriptive_stats: {groups_found}")
+            
+            # Priority 3: Groups from raw_data keys
+            elif "raw_data" in results and results["raw_data"]:
+                groups_found = list(results["raw_data"].keys())
+                n_groups = len(groups_found)
+                print(f"DEBUG TREE: Found groups from raw_data keys: {groups_found}")
+            
+            # Priority 4: Groups from descriptive dict keys
+            elif "descriptive" in results and results["descriptive"]:
+                groups_found = list(results["descriptive"].keys())
+                n_groups = len(groups_found)
+                print(f"DEBUG TREE: Found groups from descriptive keys: {groups_found}")
+            
+            # Priority 5: Extract from any means/stats data
+            elif "descriptive_stats" in results and "means" in results["descriptive_stats"]:
+                groups_found = list(results["descriptive_stats"]["means"].keys()) if isinstance(results["descriptive_stats"]["means"], dict) else []
+                n_groups = len(groups_found)
+                print(f"DEBUG TREE: Found groups from means: {groups_found}")
+            
+            # NO FALLBACK ASSUMPTIONS - If we can't find groups, something is wrong
             else:
-                # Fallback: infer from test name
-                if "two" in test_name.lower():
-                    # For two-way ANOVA, we need to treat this as multiple groups
-                    if "anova" in test_name.lower() or "two_way" in test_name.lower():
-                        n_groups = 3  # Treat two-way ANOVA as always having multiple groups
-                    else:
-                        n_groups = 2
-                elif "one-way" in test_name.lower() or "anova" in test_name.lower():
-                    n_groups = 3  # Assume multiple groups for ANOVA
-                else:
-                    n_groups = 2
+                print(f"DEBUG TREE: WARNING - No groups found in results structure!")
+                print(f"DEBUG TREE: Available keys in results: {list(results.keys())}")
+                if "descriptive_stats" in results:
+                    print(f"DEBUG TREE: Available keys in descriptive_stats: {list(results['descriptive_stats'].keys())}")
+                n_groups = 0  # This will force an error rather than wrong assumptions
+
+            print(f"DEBUG TREE: EXACT n_groups={n_groups} from ACTUAL data: {groups_found}")
+            
+            # Validation: Never assume, always use actual data
+            if n_groups == 0:
+                print(f"DEBUG TREE: ERROR - Could not determine actual number of groups from data!")
+                n_groups = 2  # Minimal fallback only to prevent crashes
 
             # Check if non-parametric alternatives are disabled
             nonparametric_disabled = False
@@ -179,7 +225,26 @@ class DecisionTreeVisualizer:
             else:
                 k1_m_sph_label = "Sphericity\nCheck"
 
-            # Define nodes with positions and labels (keeping your existing positions)
+            # Get sphericity correction info from results
+            sphericity_correction = "None"
+            if "sphericity_test" in results:
+                sph_test = results["sphericity_test"]
+                if "correction_used" in results:
+                    sphericity_correction = results["correction_used"]
+                elif sph_test.get("sphericity_assumed", True) is False:
+                    sphericity_correction = "Correction needed"
+
+            # Get detailed correction information
+            correction_used = results.get("correction_used", "None")
+            within_correction = results.get("within_correction_used", "None")
+            
+            # Detect specific correction types
+            is_greenhouse_geisser = ("greenhouse" in str(correction_used).lower() or 
+                                   "gg" in str(correction_used).lower())
+            is_huynh_feldt = ("huynh" in str(correction_used).lower() or 
+                            "hf" in str(correction_used).lower())
+
+            # Define nodes with positions and labels - LOGICAL GROUPING WITH PROPER SPACING
             nodes_info = {
                 # Common path
                 'A': {"label": "Start", "pos": (0, 14)},
@@ -200,76 +265,85 @@ class DecisionTreeVisualizer:
                 'WELCH_DUNNETT_T3': {"label": "Dunnett T3\nPost-hoc", "pos": (1.5, 3)},
 
                 # Parametric branch
-                'G1': {"label": "Parametric Test", "pos": (-5, 5)},
-                'H1': {"label": "Group Structure", "pos": (-5, 4)},
-                'I1_2': {"label": "Two Groups", "pos": (-7.5, 3)},
-                'I1_M': {"label": "Multiple Groups", "pos": (-3, 3)},
+                'G1': {"label": "Parametric Test", "pos": (-10, 5)},
+                'H1': {"label": "Group Structure", "pos": (-10, 4)},
+                'I1_2': {"label": "Two Groups", "pos": (-13, 3)},         # MOVED CLOSER TO CENTER
+                'I1_M': {"label": "Multiple Groups", "pos": (-3, 3)},      # MOVED CLOSER TO CENTER
 
-                # Parametric - Two Groups
-                'J1_INDEP': {"label": "Independent\nSamples", "pos": (-8.5, 2)},
-                'J1_DEP': {"label": "Dependent\nSamples", "pos": (-6.5, 2)},
-                'K1_2_IND': {"label": "Independent t-test", "pos": (-8.5, 1)},
-                'K1_2_DEP': {"label": "Paired t-test", "pos": (-6.5, 1)},
+                # Parametric - Two Groups (MOVED CLOSER TO TWO GROUPS)
+                'J1_INDEP': {"label": "Independent\nSamples", "pos": (-14, 2)},     # CLOSER
+                'J1_DEP': {"label": "Dependent\nSamples", "pos": (-12, 2)},         # CLOSER
+                'K1_2_IND': {"label": "Independent t-test", "pos": (-14, 1)},
+                'K1_2_DEP': {"label": "Paired t-test", "pos": (-12, 1)},
 
-                # Parametric - Multiple groups
-                'J1_M_SPH': {"label": k1_m_sph_label, "pos": (-3, 2)},
-                'K1_M_SPH': {"label": f"{'Has' if has_sphericity else 'No'} Sphericity", "pos": (-3, 1)},
+                # THREE ANOVA DESIGNS - MOVED INDEPENDENT GROUPS FURTHER LEFT
+                'INDEPENDENT_GROUPS': {"label": "Independent\nGroups", "pos": (-8, 2)},     # MOVED FURTHER LEFT
+                'REPEATED_MEASURES': {"label": "Repeated\nMeasures", "pos": (-2, 2)},       # SAME 
+                'MIXED_DESIGN': {"label": "Mixed\nDesign", "pos": (4, 2)},                  # MOVED CLOSER
 
-                # ANOVA types (FIXED: Better organization)
-                'L1_M_IND': {"label": "Independent\nGroups", "pos": (-4, 0)},
-                'L1_M_DEP': {"label": "Repeated\nMeasures", "pos": (-2.5, 0)},
-                'L1_M_MIX': {"label": "Mixed\nDesign", "pos": (-1, 0)},
+                # INDEPENDENT GROUPS PATH - MOVED FURTHER LEFT AND MORE SPACING
+                'IND_ONE_WAY': {"label": "One-way ANOVA", "pos": (-9, 1)},                  # MOVED LEFT
+                'IND_TWO_WAY': {"label": "Two-way ANOVA", "pos": (-7, 1)},                  # MOVED LEFT
+                'IND_POSTHOC': {"label": "Independent\nPost-hoc Tests", "pos": (-8, 0)},    # MOVED LEFT
+                'IND_TUKEY': {"label": "Tukey HSD", "pos": (-9.5, -1)},                     # MORE SPACING: 1.5 apart
+                'IND_DUNNETT': {"label": "Dunnett Test", "pos": (-8, -1)},                  # MORE SPACING: 1.5 apart
+                'IND_HOLM_SIDAK': {"label": "Pairwise t-tests\n(Holm-Sidak)", "pos": (-6.5, -1)}, # MORE SPACING: 1.5 apart
 
-                # Specific ANOVA tests
-                'M1_M_IND_ONE': {"label": "One-way ANOVA", "pos": (-5, -1)},
-                'M1_M_IND_TWO': {"label": "Two-way ANOVA", "pos": (-3, -1)},
-                'M1_M_DEP': {"label": "RM ANOVA", "pos": (-1.5, -1)},
-                'M1_M_MIX': {"label": "Mixed ANOVA", "pos": (0, -1)},
+                # REPEATED MEASURES PATH - SAME INTERNAL SPACING
+                'RM_MAUCHLY': {"label": "Mauchly's Test\nfor Sphericity", "pos": (-2, 1)},
+                'RM_SPHERICITY_OK': {"label": "Sphericity\nAssumption Met", "pos": (-3.5, 0)},    # KEEP CLOSE
+                'RM_SPHERICITY_VIOLATED': {"label": "Sphericity\nViolated", "pos": (-0.5, 0)},   # KEEP CLOSE
+                'RM_CHOOSE_CORRECTION': {"label": "Choose\nCorrection", "pos": (-0.5, -1)},
+                'RM_GG_CORRECTION': {"label": "Greenhouse-Geisser\nCorrection", "pos": (-1.5, -2)},  # KEEP CLOSE
+                'RM_HF_CORRECTION': {"label": "Huynh-Feldt\nCorrection", "pos": (0.5, -2)},         # KEEP CLOSE
+                'RM_ANOVA_STANDARD': {"label": "RM ANOVA", "pos": (-3.5, -1)},
+                'RM_ANOVA_CORRECTED': {"label": "RM ANOVA\n(Corrected)", "pos": (-0.5, -3)},
+                'RM_POSTHOC': {"label": "RM Post-hoc Tests", "pos": (-2, -4)},
+                'RM_TUKEY': {"label": "Tukey HSD\n(RM)", "pos": (-3.5, -5)},
+                'RM_PAIRED_TESTS': {"label": "Pairwise Paired t-tests\n(Holm-Sidak)", "pos": (-0.5, -5)},
 
-                'N1_CORR': {"label": "Apply Sphericity\nCorrection", "pos": (-1.5, 1)},
+                # MIXED DESIGN PATH - MOVED LEFT TO BE CLOSER, SAME INTERNAL SPACING
+                'MIXED_MAUCHLY': {"label": "Mauchly's Test\nfor Sphericity", "pos": (4, 1)},
+                'MIXED_SPHERICITY_OK': {"label": "Sphericity\nAssumption Met", "pos": (2.5, 0)},     # KEEP CLOSE
+                'MIXED_SPHERICITY_VIOLATED': {"label": "Sphericity\nViolated", "pos": (5.5, 0)},    # KEEP CLOSE
+                'MIXED_CHOOSE_CORRECTION': {"label": "Choose\nCorrection", "pos": (5.5, -1)},
+                'MIXED_GG_CORRECTION': {"label": "Greenhouse-Geisser\nCorrection", "pos": (4.5, -2)}, # KEEP CLOSE
+                'MIXED_HF_CORRECTION': {"label": "Huynh-Feldt\nCorrection", "pos": (6.5, -2)},      # KEEP CLOSE
+                'MIXED_ANOVA_STANDARD': {"label": "Mixed ANOVA", "pos": (2.5, -1)},
+                'MIXED_ANOVA_CORRECTED': {"label": "Mixed ANOVA\n(Within Corrected)", "pos": (5.5, -3)},
+                'MIXED_POSTHOC': {"label": "Mixed Post-hoc Tests", "pos": (4, -4)},
+                'MIXED_TUKEY': {"label": "Mixed Tukey\n(Between/Within)", "pos": (2, -5)},      # MORE SPACING: 1.5 apart
+                'MIXED_BETWEEN': {"label": "Between-Subjects\nComparisons", "pos": (4, -5)},       # MORE SPACING: 1.5 apart  
+                'MIXED_WITHIN': {"label": "Within-Subjects\nComparisons", "pos": (6, -5)},       # MORE SPACING: 1.5 apart
 
-                # Parametric post-hoc tests (FIXED: Added more options)
-                'O1_PH': {"label": "Post-hoc Tests", "pos": (-3, -3)},
-                'P1_PH_TK': {"label": "Tukey HSD", "pos": (-5, -4)},
-                'P1_PH_DN': {"label": "Dunnett Test", "pos": (-3, -4)},
-                'P1_PH_SD': {"label": "Pairwise t-test\n(Holm-Sidak-corrected)", "pos": (-6.5, -4)},
+                # Non-parametric branch - MOVED CLOSER TO PARAMETRIC
+                'G2': {"label": "Non-parametric Test", "pos": (10, 5)},                      # MOVED CLOSER
+                'H2': {"label": "Group Structure", "pos": (10, 4)},
+                'I2_2': {"label": "Two Groups", "pos": (8, 3)},                             # MOVED CLOSER
+                'I2_M': {"label": "Multiple Groups", "pos": (12, 3)},                       # MOVED CLOSER
 
-                # Non-parametric branch
-                'G2': {"label": "Non-parametric Test", "pos": (5, 5)},
-                'H2': {"label": "Group Structure", "pos": (5, 4)},
-                'I2_2': {"label": "Two Groups", "pos": (3, 3)},
-                'I2_M': {"label": "Multiple Groups", "pos": (7.75, 3)},
+                # Non-parametric - Two groups (MOVED CLOSER TO TWO GROUPS)
+                'J2_INDEP': {"label": "Independent\nSamples", "pos": (7, 2)},               # MOVED CLOSER
+                'J2_DEP': {"label": "Dependent\nSamples", "pos": (9, 2)},                   # MOVED CLOSER
+                'K2_2_IND': {"label": "Mann-Whitney U", "pos": (7, 1)},
+                'K2_2_DEP': {"label": "Wilcoxon\nSigned-Rank", "pos": (9, 1)},
 
-                # Non-parametric - Two groups
-                'J2_INDEP': {"label": "Independent\nSamples", "pos": (2, 2)},
-                'J2_DEP': {"label": "Dependent\nSamples", "pos": (4, 2)},
-                'K2_2_IND': {"label": "Mann-Whitney U", "pos": (2, 1)},
-                'K2_2_DEP': {"label": "Wilcoxon\nSigned-Rank", "pos": (4, 1)},
-
-                # Non-parametric - Multiple groups (FIXED: Better structure)
-                'J2_M_INDEP': {"label": "Independent\nSamples", "pos": (6.25, 2)},
-                'J2_M_DEP': {"label": "Dependent\nSamples", "pos": (9.25, 2)},
-                
-                # Tests under independent samples
-                'K2_M_IND': {"label": "Kruskal-Wallis", "pos": (5.5, 1)},
-                'NP_M_IND': {"label": "Non-parametric\nTwo-Way ANOVA", "pos": (7, 1)},
-                
-                # Tests under dependent samples
-                'NP_M_DEP': {"label": "Non-parametric\nRM ANOVA", "pos": (8.75, 1)},
-                'NP_M_MIX': {"label": "Non-parametric\nMixed ANOVA", "pos": (10.24, 1)},
-                
-                # Post-hoc nodes for non-parametric branch
-                'L2_PH': {"label": "Post-hoc Tests", "pos": (7.75, -3)},
-                'M2_PH_DU': {"label": "Dunn Test", "pos": (6.25, -4)},
-                'M2_PH_MWU': {"label": "Pairwise Mann-Whitney-U\n(Sidak-corrected)", "pos": (9.25, -4)},
-                'NP_PH_WILC': {"label": "Pairwise Wilcoxon\n(Bonferroni-corrected)", "pos": (8, -4)},
+                # Non-parametric - Multiple groups (ONLY INDEPENDENT - NO FRIEDMAN)
+                'J2_M_INDEP': {"label": "Independent\nSamples", "pos": (11, 2)},            # KEPT
+                'K2_M_IND': {"label": "Kruskal-Wallis", "pos": (11, 1)},                    # KEPT
+                'NP_POSTHOC': {"label": "Non-parametric\nPost-hoc Tests", "pos": (11, 0)},  # CENTERED
+                'NP_DUNN': {"label": "Dunn Test", "pos": (10, -1)},                         # KRUSKAL-WALLIS POST-HOC
+                'NP_MANN_WHITNEY': {"label": "Pairwise\nMann-Whitney U", "pos": (12, -1)},  # KRUSKAL-WALLIS POST-HOC
             }
 
             # Add nodes to graph
             for node_id, info in nodes_info.items():
                 G.add_node(node_id, label=info["label"], pos=info["pos"])
 
-            # Define edges with more detailed paths (FIXED: Added missing connections)
+            # Create position dictionary from nodes_info
+            pos = {node_id: info["pos"] for node_id, info in nodes_info.items()}
+
+            # Define edges with NEW LOGICAL STRUCTURE - NO CROSS-CONNECTIONS
             edges = {
                 # Common path
                 ('A', 'B'),
@@ -302,30 +376,50 @@ class DecisionTreeVisualizer:
                 ('J1_INDEP', 'K1_2_IND'),
                 ('J1_DEP', 'K1_2_DEP'),
 
-                # Parametric - Multiple groups
-                ('I1_M', 'J1_M_SPH'),
-                ('J1_M_SPH', 'K1_M_SPH'),
-                ('K1_M_SPH', 'L1_M_IND'),
-                ('K1_M_SPH', 'L1_M_DEP'),
-                ('K1_M_SPH', 'L1_M_MIX'),
-                ('K1_M_SPH', 'N1_CORR'),  # Sphericity correction
-                
-                # ANOVA connections
-                ('L1_M_IND', 'M1_M_IND_ONE'),  # Independent Groups -> One-way ANOVA
-                ('L1_M_IND', 'M1_M_IND_TWO'),  # Independent Groups -> Two-way ANOVA
-                ('L1_M_DEP', 'M1_M_DEP'),      # Repeated Measures -> RM ANOVA
-                ('L1_M_MIX', 'M1_M_MIX'),      # Mixed Design -> Mixed ANOVA
+                # Multiple groups - THREE SEPARATE PATHS
+                ('I1_M', 'INDEPENDENT_GROUPS'),  # No sphericity
+                ('I1_M', 'REPEATED_MEASURES'),   # Sphericity check needed
+                ('I1_M', 'MIXED_DESIGN'),        # Sphericity check needed
 
-                # Parametric - Post-hoc tests (FIXED: Better connections)
-                ('M1_M_IND_ONE', 'O1_PH'),  # One-way ANOVA -> Post-hoc
-                ('M1_M_IND_TWO', 'O1_PH'),  # Two-way ANOVA -> Post-hoc
-                ('M1_M_DEP', 'O1_PH'),      # RM ANOVA -> Post-hoc
-                ('M1_M_MIX', 'O1_PH'),      # Mixed ANOVA -> Post-hoc
-                
-                # Post-hoc test types
-                ('O1_PH', 'P1_PH_TK'),     # Tukey
-                ('O1_PH', 'P1_PH_DN'),     # Dunnett
-                ('O1_PH', 'P1_PH_SD'),     # Holm-Sidak
+                # INDEPENDENT GROUPS PATH (NO SPHERICITY)
+                ('INDEPENDENT_GROUPS', 'IND_ONE_WAY'),
+                ('INDEPENDENT_GROUPS', 'IND_TWO_WAY'),
+                ('IND_ONE_WAY', 'IND_POSTHOC'),
+                ('IND_TWO_WAY', 'IND_POSTHOC'),
+                ('IND_POSTHOC', 'IND_TUKEY'),
+                ('IND_POSTHOC', 'IND_DUNNETT'),
+                ('IND_POSTHOC', 'IND_HOLM_SIDAK'),
+
+                # REPEATED MEASURES SPHERICITY PATH
+                ('REPEATED_MEASURES', 'RM_MAUCHLY'),
+                ('RM_MAUCHLY', 'RM_SPHERICITY_OK'),
+                ('RM_MAUCHLY', 'RM_SPHERICITY_VIOLATED'),
+                ('RM_SPHERICITY_OK', 'RM_ANOVA_STANDARD'),
+                ('RM_SPHERICITY_VIOLATED', 'RM_CHOOSE_CORRECTION'),
+                ('RM_CHOOSE_CORRECTION', 'RM_GG_CORRECTION'),
+                ('RM_CHOOSE_CORRECTION', 'RM_HF_CORRECTION'),
+                ('RM_GG_CORRECTION', 'RM_ANOVA_CORRECTED'),
+                ('RM_HF_CORRECTION', 'RM_ANOVA_CORRECTED'),
+                ('RM_ANOVA_STANDARD', 'RM_POSTHOC'),
+                ('RM_ANOVA_CORRECTED', 'RM_POSTHOC'),
+                ('RM_POSTHOC', 'RM_TUKEY'),
+                ('RM_POSTHOC', 'RM_PAIRED_TESTS'),
+
+                # MIXED DESIGN SPHERICITY PATH
+                ('MIXED_DESIGN', 'MIXED_MAUCHLY'),
+                ('MIXED_MAUCHLY', 'MIXED_SPHERICITY_OK'),
+                ('MIXED_MAUCHLY', 'MIXED_SPHERICITY_VIOLATED'),
+                ('MIXED_SPHERICITY_OK', 'MIXED_ANOVA_STANDARD'),
+                ('MIXED_SPHERICITY_VIOLATED', 'MIXED_CHOOSE_CORRECTION'),
+                ('MIXED_CHOOSE_CORRECTION', 'MIXED_GG_CORRECTION'),
+                ('MIXED_CHOOSE_CORRECTION', 'MIXED_HF_CORRECTION'),
+                ('MIXED_GG_CORRECTION', 'MIXED_ANOVA_CORRECTED'),
+                ('MIXED_HF_CORRECTION', 'MIXED_ANOVA_CORRECTED'),
+                ('MIXED_ANOVA_STANDARD', 'MIXED_POSTHOC'),
+                ('MIXED_ANOVA_CORRECTED', 'MIXED_POSTHOC'),
+                ('MIXED_POSTHOC', 'MIXED_TUKEY'),
+                ('MIXED_POSTHOC', 'MIXED_BETWEEN'),
+                ('MIXED_POSTHOC', 'MIXED_WITHIN'),
 
                 # Non-parametric branch - Group structure
                 ('G2', 'H2'),
@@ -338,28 +432,12 @@ class DecisionTreeVisualizer:
                 ('J2_INDEP', 'K2_2_IND'),  # Mann-Whitney U
                 ('J2_DEP', 'K2_2_DEP'),    # Wilcoxon
 
-                # Non-parametric - Multiple groups (FIXED: Better structure)
-                ('I2_M', 'J2_M_INDEP'),    # Multiple groups -> Independent samples
-                ('I2_M', 'J2_M_DEP'),      # Multiple groups -> Dependent samples
-                
-                # Independent samples tests
+                # Non-parametric - Multiple groups (ONLY INDEPENDENT - NO FRIEDMAN)
+                ('I2_M', 'J2_M_INDEP'),    # Multiple groups -> Independent samples ONLY
                 ('J2_M_INDEP', 'K2_M_IND'),    # Independent -> Kruskal-Wallis
-                ('J2_M_INDEP', 'NP_M_IND'),    # Independent -> Non-parametric Two-Way ANOVA
-                
-                # Dependent samples tests (FIXED: Added Friedman)
-                ('J2_M_DEP', 'NP_M_DEP'),            # Dependent -> Non-parametric RM ANOVA
-                ('J2_M_DEP', 'NP_M_MIX'),            # Dependent -> Non-parametric Mixed ANOVA
-
-                # Post-hoc connections for non-parametric branch
-                ('K2_M_IND', 'L2_PH'),             # Kruskal-Wallis -> Post-hoc
-                ('NP_M_IND', 'L2_PH'),             # Non-parametric Two-Way ANOVA -> Post-hoc   # Friedman -> Post-hoc
-                ('NP_M_DEP', 'L2_PH'),             # Non-parametric RM ANOVA -> Post-hoc
-                ('NP_M_MIX', 'L2_PH'),             # Non-parametric Mixed ANOVA -> Post-hoc
-
-                # From central post-hoc node to specific tests
-                ('L2_PH', 'M2_PH_DU'),        # Post-hoc -> Dunn Test
-                ('L2_PH', 'M2_PH_MWU'),  # Post-hoc -> Pairwise Mann-Whitney-U
-                ('L2_PH', 'NP_PH_WILC'),  # Post-hoc -> Pairwise Wilcoxon
+                ('K2_M_IND', 'NP_POSTHOC'),    # Kruskal-Wallis -> Post-hoc
+                ('NP_POSTHOC', 'NP_DUNN'),         # Non-parametric -> Dunn Test (for Kruskal-Wallis)
+                ('NP_POSTHOC', 'NP_MANN_WHITNEY'), # Non-parametric -> Pairwise Mann-Whitney U (for Kruskal-Wallis)
             }
 
             # Add edges to graph
@@ -445,50 +523,21 @@ class DecisionTreeVisualizer:
                 else:
                     highlighted.add(('H2', 'I2_M'))
                     
-                    # Multiple groups - determine if dependent or independent
-                    if dependence_type == "dependent" or "rm" in test_name.lower() or "repeated" in test_name.lower() or "mixed" in test_name.lower():
-                        highlighted.add(('I2_M', 'J2_M_DEP'))
+                    # For non-parametric multiple groups, only independent samples are supported in this tree
+                    highlighted.add(('I2_M', 'J2_M_INDEP'))
+                    highlighted.add(('J2_M_INDEP', 'K2_M_IND'))  # Kruskal-Wallis
+                    
+                    # Only add post-hoc if Kruskal-Wallis is significant
+                    alpha = results.get("alpha", 0.05)
+                    if p_value is not None and p_value < alpha:
+                        highlighted.add(('K2_M_IND', 'NP_POSTHOC'))
                         
-                        # Better explicit detection for dependent samples
-                        if "mixed" in test_name.lower():
-                            print(f"DEBUG TREE: Non-parametric Mixed ANOVA path: {test_name}")
-                            highlighted.add(('J2_M_DEP', 'NP_M_MIX'))
-                            highlighted.add(('NP_M_MIX', 'L2_PH'))
-                            highlighted.add(('L2_PH', 'NP_PH_WILC'))  # Wilcoxon for mixed
-                        elif "rm" in test_name.lower() or "repeated" in test_name.lower():
-                            print(f"DEBUG TREE: Non-parametric RM ANOVA path: {test_name}")
-                            highlighted.add(('J2_M_DEP', 'NP_M_DEP'))
-                            highlighted.add(('NP_M_DEP', 'L2_PH'))
-                            highlighted.add(('L2_PH', 'NP_PH_WILC'))  # Wilcoxon for RM
+                        # Determine specific post-hoc test
+                        posthoc_test = results.get("posthoc_test", "")
+                        if "dunn" in posthoc_test.lower():
+                            highlighted.add(('NP_POSTHOC', 'NP_DUNN'))
                         else:
-                            print(f"DEBUG TREE: Non-parametric dependent path (default): {test_name}")
-                            highlighted.add(('J2_M_DEP', 'NP_M_DEP'))  # Default to RM ANOVA
-                            highlighted.add(('NP_M_DEP', 'L2_PH'))
-                            highlighted.add(('L2_PH', 'NP_PH_WILC'))  # Wilcoxon post-hoc
-                    else:
-                        highlighted.add(('I2_M', 'J2_M_INDEP'))
-                        
-                        # Better detection for independent samples non-parametric tests
-                        if "two-way" in test_name.lower() or "two way" in test_name.lower() or "two_way" in test_name.lower():
-                            print(f"DEBUG TREE: Non-parametric Two-Way ANOVA path: {test_name}")
-                            highlighted.add(('J2_M_INDEP', 'NP_M_IND'))  # Non-parametric Two-Way ANOVA
-                            
-                            # Only show post-hoc path if non-parametric test is available
-                            if not nonparametric_disabled and "required but not available" not in test_name:
-                                highlighted.add(('NP_M_IND', 'L2_PH'))
-                                highlighted.add(('L2_PH', 'NP_PH_MWU'))  # Mann-Whitney U for Two-Way
-                            else:
-                                # Don't highlight post-hoc path if non-parametric alternative is not available
-                                print(f"DEBUG TREE: Non-parametric Two-Way post-hoc not highlighted - alternative not available")
-                                
-                        else:
-                            print(f"DEBUG TREE: Non-parametric One-Way ANOVA path (Kruskal-Wallis): {test_name}")
-                            # Kruskal-Wallis for general independent samples (One-Way equivalent)
-                            highlighted.add(('J2_M_INDEP', 'K2_M_IND'))
-                            alpha = results.get("alpha", 0.05)
-                            if p_value is not None and p_value < alpha:
-                                highlighted.add(('K2_M_IND', 'L2_PH'))
-                                highlighted.add(('L2_PH', 'M2_PH_DU'))  # Dunn test for Kruskal-Wallis
+                            highlighted.add(('NP_POSTHOC', 'NP_MANN_WHITNEY'))
                         
             elif (actual_test_type.lower() == "parametric" or 
                   (test_name.lower().find("anova") != -1 and test_name.lower().find("non") == -1)) and \
@@ -508,13 +557,9 @@ class DecisionTreeVisualizer:
                         highlighted.add(('I1_2', 'J1_INDEP'))
                         highlighted.add(('J1_INDEP', 'K1_2_IND'))
                         
-                    is_ttest = "t-test" in test_name.lower() or "t test" in test_name.lower()
-                    if is_ttest:
-                        print(f"DEBUG TREE: Detected t-test, skipping all post-hoc path highlighting")
-                    else:
-                        # Highlight post-hoc path for two-group parametric tests
-                        highlighted.add(('K1_2_IND', 'O1_PH'))
-                        highlighted.add(('K1_2_DEP', 'O1_PH'))
+                    # IMPORTANT: For 2-group tests, NEVER highlight post-hoc paths
+                    # because post-hoc tests are only needed for 3+ groups
+                    print(f"DEBUG TREE: 2-group test detected, skipping ALL post-hoc path highlighting")
                 else:
                     highlighted.add(('H1', 'I1_M'))
                     
@@ -522,54 +567,134 @@ class DecisionTreeVisualizer:
                     if "repeated" in test_name.lower() or ("rm" in test_name.lower() and "anova" in test_name.lower()):
                         # Repeated Measures ANOVA path
                         print(f"DEBUG TREE: Detected RM ANOVA: {test_name}")
-                        highlighted.add(('I1_M', 'J1_M_SPH'))
-                        highlighted.add(('J1_M_SPH', 'K1_M_SPH'))
-                        highlighted.add(('K1_M_SPH', 'L1_M_DEP'))
-                        highlighted.add(('L1_M_DEP', 'M1_M_DEP'))
+                        highlighted.add(('I1_M', 'REPEATED_MEASURES'))
+                        highlighted.add(('REPEATED_MEASURES', 'RM_MAUCHLY'))
+                        
+                        # Check if sphericity correction was applied
+                        sphericity_correction = results.get("correction_used", "None")
+                        within_correction = results.get("within_correction_used", "None")
+                        
+                        if ("greenhouse" in str(sphericity_correction).lower() or 
+                            "gg" in str(sphericity_correction).lower() or
+                            "greenhouse" in str(within_correction).lower()):
+                            # Greenhouse-Geisser correction path
+                            highlighted.add(('RM_MAUCHLY', 'RM_SPHERICITY_VIOLATED'))
+                            highlighted.add(('RM_SPHERICITY_VIOLATED', 'RM_CHOOSE_CORRECTION'))
+                            highlighted.add(('RM_CHOOSE_CORRECTION', 'RM_GG_CORRECTION'))
+                            highlighted.add(('RM_GG_CORRECTION', 'RM_ANOVA_CORRECTED'))
+                        elif ("huynh" in str(sphericity_correction).lower() or 
+                              "hf" in str(sphericity_correction).lower() or
+                              "huynh" in str(within_correction).lower()):
+                            # Huynh-Feldt correction path
+                            highlighted.add(('RM_MAUCHLY', 'RM_SPHERICITY_VIOLATED'))
+                            highlighted.add(('RM_SPHERICITY_VIOLATED', 'RM_CHOOSE_CORRECTION'))
+                            highlighted.add(('RM_CHOOSE_CORRECTION', 'RM_HF_CORRECTION'))
+                            highlighted.add(('RM_HF_CORRECTION', 'RM_ANOVA_CORRECTED'))
+                        else:
+                            # No correction needed or sphericity met
+                            highlighted.add(('RM_MAUCHLY', 'RM_SPHERICITY_OK'))
+                            highlighted.add(('RM_SPHERICITY_OK', 'RM_ANOVA_STANDARD'))
+                        
                         # Only add post-hoc if ANOVA is significant:
                         alpha = results.get("alpha", 0.05)
                         if p_value is not None and p_value < alpha:
-                            highlighted.add(('M1_M_DEP', 'O1_PH'))
+                            if ("greenhouse" in str(sphericity_correction).lower() or 
+                                "huynh" in str(sphericity_correction).lower() or
+                                "greenhouse" in str(within_correction).lower() or
+                                "huynh" in str(within_correction).lower()):
+                                highlighted.add(('RM_ANOVA_CORRECTED', 'RM_POSTHOC'))
+                            else:
+                                highlighted.add(('RM_ANOVA_STANDARD', 'RM_POSTHOC'))
+                            
+                            # Determine specific RM post-hoc test
+                            posthoc_test = results.get("posthoc_test", "")
+                            if "tukey" in posthoc_test.lower():
+                                highlighted.add(('RM_POSTHOC', 'RM_TUKEY'))
+                            else:
+                                highlighted.add(('RM_POSTHOC', 'RM_PAIRED_TESTS'))
                             
                     elif "mixed" in test_name.lower():
                         # Mixed ANOVA path
                         print(f"DEBUG TREE: Detected Mixed ANOVA: {test_name}")
-                        highlighted.add(('I1_M', 'J1_M_SPH'))
-                        highlighted.add(('J1_M_SPH', 'K1_M_SPH'))
-                        highlighted.add(('K1_M_SPH', 'L1_M_MIX'))
-                        highlighted.add(('L1_M_MIX', 'M1_M_MIX'))
-                        # Only add post-hoc if Mixed-ANOVA is significant:
+                        highlighted.add(('I1_M', 'MIXED_DESIGN'))
+                        highlighted.add(('MIXED_DESIGN', 'MIXED_MAUCHLY'))
+                        
+                        # Check if within-factor sphericity correction was applied
+                        within_correction = results.get("within_correction_used", "None")
+                        sphericity_correction = results.get("correction_used", "None")
+                        
+                        if ("greenhouse" in str(within_correction).lower() or 
+                            "gg" in str(within_correction).lower() or
+                            "greenhouse" in str(sphericity_correction).lower()):
+                            # Greenhouse-Geisser correction for within-factor
+                            highlighted.add(('MIXED_MAUCHLY', 'MIXED_SPHERICITY_VIOLATED'))
+                            highlighted.add(('MIXED_SPHERICITY_VIOLATED', 'MIXED_CHOOSE_CORRECTION'))
+                            highlighted.add(('MIXED_CHOOSE_CORRECTION', 'MIXED_GG_CORRECTION'))
+                            highlighted.add(('MIXED_GG_CORRECTION', 'MIXED_ANOVA_CORRECTED'))
+                        elif ("huynh" in str(within_correction).lower() or 
+                              "hf" in str(within_correction).lower() or
+                              "huynh" in str(sphericity_correction).lower()):
+                            # Huynh-Feldt correction for within-factor
+                            highlighted.add(('MIXED_MAUCHLY', 'MIXED_SPHERICITY_VIOLATED'))
+                            highlighted.add(('MIXED_SPHERICITY_VIOLATED', 'MIXED_CHOOSE_CORRECTION'))
+                            highlighted.add(('MIXED_CHOOSE_CORRECTION', 'MIXED_HF_CORRECTION'))
+                            highlighted.add(('MIXED_HF_CORRECTION', 'MIXED_ANOVA_CORRECTED'))
+                        else:
+                            # No within-factor correction needed
+                            highlighted.add(('MIXED_MAUCHLY', 'MIXED_SPHERICITY_OK'))
+                            highlighted.add(('MIXED_SPHERICITY_OK', 'MIXED_ANOVA_STANDARD'))
+                        
+                        # Only add post-hoc if Mixed ANOVA is significant:
                         alpha = results.get("alpha", 0.05)
                         if p_value is not None and p_value < alpha:
-                            highlighted.add(('M1_M_MIX', 'O1_PH'))
+                            if ("greenhouse" in str(within_correction).lower() or 
+                                "huynh" in str(within_correction).lower()):
+                                highlighted.add(('MIXED_ANOVA_CORRECTED', 'MIXED_POSTHOC'))
+                            else:
+                                highlighted.add(('MIXED_ANOVA_STANDARD', 'MIXED_POSTHOC'))
+                                
+                            # Determine specific Mixed post-hoc test
+                            posthoc_test = results.get("posthoc_test", "")
+                            if "tukey" in posthoc_test.lower():
+                                highlighted.add(('MIXED_POSTHOC', 'MIXED_TUKEY'))
+                            elif "between" in posthoc_test.lower():
+                                highlighted.add(('MIXED_POSTHOC', 'MIXED_BETWEEN'))
+                            else:
+                                highlighted.add(('MIXED_POSTHOC', 'MIXED_WITHIN'))
                             
                     elif "two-way" in test_name.lower() or "two way" in test_name.lower():
-                        # Two-Way ANOVA path (explicit detection)
+                        # Two-Way ANOVA path (explicit detection) - Independent Groups
                         print(f"DEBUG TREE: Detected Two-Way ANOVA: {test_name}")
-                        highlighted.add(('I1_M', 'J1_M_SPH'))
-                        highlighted.add(('J1_M_SPH', 'K1_M_SPH'))
-                        highlighted.add(('K1_M_SPH', 'L1_M_IND'))
-                        highlighted.add(('L1_M_IND', 'M1_M_IND_TWO'))
+                        highlighted.add(('I1_M', 'INDEPENDENT_GROUPS'))
+                        highlighted.add(('INDEPENDENT_GROUPS', 'IND_TWO_WAY'))
                         alpha = results.get("alpha", 0.05)
                         if p_value is not None and p_value < alpha:
-                            highlighted.add(('M1_M_IND_TWO', 'O1_PH'))
+                            highlighted.add(('IND_TWO_WAY', 'IND_POSTHOC'))
+                            # Determine specific post-hoc test
+                            posthoc_test = results.get("posthoc_test", "")
+                            if "tukey" in posthoc_test.lower():
+                                highlighted.add(('IND_POSTHOC', 'IND_TUKEY'))
+                            elif "dunnett" in posthoc_test.lower():
+                                highlighted.add(('IND_POSTHOC', 'IND_DUNNETT'))
+                            else:
+                                highlighted.add(('IND_POSTHOC', 'IND_HOLM_SIDAK'))
                             
                     else:
                         # One-Way ANOVA path (default for unspecified multiple group parametric tests)
                         print(f"DEBUG TREE: Detected One-Way ANOVA (default): {test_name}")
-                        highlighted.add(('I1_M', 'J1_M_SPH'))
-                        highlighted.add(('J1_M_SPH', 'K1_M_SPH'))
-                        highlighted.add(('K1_M_SPH', 'L1_M_IND'))
-                        highlighted.add(('L1_M_IND', 'M1_M_IND_ONE'))
+                        highlighted.add(('I1_M', 'INDEPENDENT_GROUPS'))
+                        highlighted.add(('INDEPENDENT_GROUPS', 'IND_ONE_WAY'))
                         alpha = results.get("alpha", 0.05)
                         if p_value is not None and p_value < alpha:
-                            highlighted.add(('M1_M_IND_ONE', 'O1_PH'))
-
-                    # Post-hoc test types only if ANOVA was significant:
-                    alpha = results.get("alpha", 0.05)
-                    if p_value is not None and p_value < alpha:
-                        # Call helper function to determine which post-hoc path to highlight
-                        DecisionTreeVisualizer._highlight_posthoc_path(results, highlighted)
+                            highlighted.add(('IND_ONE_WAY', 'IND_POSTHOC'))
+                            # Determine specific post-hoc test
+                            posthoc_test = results.get("posthoc_test", "")
+                            if "tukey" in posthoc_test.lower():
+                                highlighted.add(('IND_POSTHOC', 'IND_TUKEY'))
+                            elif "dunnett" in posthoc_test.lower():
+                                highlighted.add(('IND_POSTHOC', 'IND_DUNNETT'))
+                            else:
+                                highlighted.add(('IND_POSTHOC', 'IND_HOLM_SIDAK'))
             # Generate edge lists for drawing
             highlighted_edges = [(u, v) for u, v in G.edges() if (u, v) in highlighted]
             regular_edges = [(u, v) for u, v in G.edges() if (u, v) not in highlighted]
@@ -585,7 +710,7 @@ class DecisionTreeVisualizer:
 
             # Draw the graph
             pos = nx.get_node_attributes(G, 'pos')
-            plt.figure(figsize=(24, 20))
+            plt.figure(figsize=(32, 24))  # Increased size for better readability
             node_labels = nx.get_node_attributes(G, 'label')
 
             # --- Shape logic for nodes ---
@@ -594,11 +719,15 @@ class DecisionTreeVisualizer:
                 "Parametric Test", "Non-parametric Test", "Group Structure",
                 "Two Groups", "Multiple Groups", "Independent Samples",
                 "Dependent Samples", "Sphericity Check", "Repeated Measures",
-                "Mixed Design", "Post-hoc Tests",
-                "Independent Groups"  # <-- add this line
+                "Mixed Design", "Post-hoc Tests", "Independent Groups",
+                "Mauchly's Test", "Sphericity", "Choose Correction",  # NEW
+                "RM Post-hoc Tests", "Mixed Post-hoc Tests"  # NEW
             }
 
             def is_always_square(node_id):
+                # Check if node exists in nodes_info first
+                if node_id not in nodes_info:
+                    return False
                 label = nodes_info[node_id]["label"].replace('\n', ' ').replace(':', ': ').replace('  ', ' ')
                 for square_label in always_square_labels:
                     if square_label in label:
@@ -668,7 +797,7 @@ class DecisionTreeVisualizer:
             
             # Set figure size early and maintain it
             fig = plt.gcf()
-            fig.set_size_inches(24, 20, forward=True)
+            fig.set_size_inches(32, 24, forward=True)  # Increased size
             
             print(f"DEBUG: About to save figure to {'temp file' if not output_path else output_path}")
             print(f"DEBUG: Using matplotlib backend: {plt.get_backend()}")
@@ -757,7 +886,7 @@ class DecisionTreeVisualizer:
         For One-Way ANOVA: Shows multiple options (user can choose)
         For Two-Way ANOVA, RM ANOVA, Mixed ANOVA: Shows the actually performed test
         """
-        test_name = results.get("test", "").lower()
+        test_name = results.get("test_name", results.get("test", "")).lower()
         posthoc_test = results.get("posthoc_test")
         
         # Check if this is a One-Way ANOVA where users should see options
@@ -874,6 +1003,93 @@ class DecisionTreeVisualizer:
                     print(f"DEBUG TREE: Using default Tukey for other test types")
                     highlighted.add(('O1_PH', 'P1_PH_TK'))
 
+    @staticmethod
+    def _highlight_rm_posthoc_path(results, highlighted):
+        """
+        Helper method to determine which RM ANOVA post-hoc test path to highlight.
+        """
+        posthoc_test = results.get("posthoc_test")
+        
+        if posthoc_test:
+            print(f"DEBUG TREE: RM ANOVA Post-hoc test detected: '{posthoc_test}'")
+            if "tukey" in posthoc_test.lower() and "rm" in posthoc_test.lower():
+                print(f"DEBUG TREE: Highlighting RM Tukey path")
+                highlighted.add(('O1_RM_PH', 'P1_RM_TK'))
+            elif ("paired" in posthoc_test.lower() or 
+                  "holm" in posthoc_test.lower() or 
+                  "sidak" in posthoc_test.lower()):
+                print(f"DEBUG TREE: Highlighting RM Paired t-tests path")
+                highlighted.add(('O1_RM_PH', 'P1_RM_PAIRED'))
+            else:
+                print(f"DEBUG TREE: Unknown RM post-hoc test, defaulting to Tukey RM")
+                highlighted.add(('O1_RM_PH', 'P1_RM_TK'))
+        else:
+            # Check pairwise comparisons for RM-specific tests
+            pairwise_comps = results.get("pairwise_comparisons", [])
+            if pairwise_comps:
+                first_comp = pairwise_comps[0]
+                test_name_in_comp = first_comp.get("test", "").lower()
+                
+                if "paired" in test_name_in_comp or "dependent" in test_name_in_comp:
+                    print(f"DEBUG TREE: Inferred RM Paired t-tests from pairwise test")
+                    highlighted.add(('O1_RM_PH', 'P1_RM_PAIRED'))
+                elif "tukey" in test_name_in_comp:
+                    print(f"DEBUG TREE: Inferred RM Tukey from pairwise test")
+                    highlighted.add(('O1_RM_PH', 'P1_RM_TK'))
+                else:
+                    print(f"DEBUG TREE: Default RM Tukey for unknown pairwise test")
+                    highlighted.add(('O1_RM_PH', 'P1_RM_TK'))
+            else:
+                print(f"DEBUG TREE: No RM post-hoc info available, showing both options")
+                highlighted.add(('O1_RM_PH', 'P1_RM_TK'))
+                highlighted.add(('O1_RM_PH', 'P1_RM_PAIRED'))
+
+    @staticmethod
+    def _highlight_mixed_posthoc_path(results, highlighted):
+        """
+        Helper method to determine which Mixed ANOVA post-hoc test path to highlight.
+        """
+        posthoc_test = results.get("posthoc_test")
+        
+        if posthoc_test:
+            print(f"DEBUG TREE: Mixed ANOVA Post-hoc test detected: '{posthoc_test}'")
+            if "mixed" in posthoc_test.lower() and "tukey" in posthoc_test.lower():
+                print(f"DEBUG TREE: Highlighting Mixed Tukey path")
+                highlighted.add(('O1_MIX_PH', 'P1_MIX_TK'))
+            elif "between" in posthoc_test.lower():
+                print(f"DEBUG TREE: Highlighting Between-subjects comparisons path")
+                highlighted.add(('O1_MIX_PH', 'P1_MIX_BETWEEN'))
+            elif "within" in posthoc_test.lower():
+                print(f"DEBUG TREE: Highlighting Within-subjects comparisons path")
+                highlighted.add(('O1_MIX_PH', 'P1_MIX_WITHIN'))
+            else:
+                print(f"DEBUG TREE: Unknown Mixed post-hoc test, defaulting to Mixed Tukey")
+                highlighted.add(('O1_MIX_PH', 'P1_MIX_TK'))
+        else:
+            # Check pairwise comparisons for Mixed-specific tests
+            pairwise_comps = results.get("pairwise_comparisons", [])
+            if pairwise_comps:
+                first_comp = pairwise_comps[0]
+                test_name_in_comp = first_comp.get("test", "").lower()
+                
+                if "between" in test_name_in_comp:
+                    print(f"DEBUG TREE: Inferred Between-subjects from pairwise test")
+                    highlighted.add(('O1_MIX_PH', 'P1_MIX_BETWEEN'))
+                elif "within" in test_name_in_comp or "paired" in test_name_in_comp:
+                    print(f"DEBUG TREE: Inferred Within-subjects from pairwise test")
+                    highlighted.add(('O1_MIX_PH', 'P1_MIX_WITHIN'))
+                elif "mixed" in test_name_in_comp and "tukey" in test_name_in_comp:
+                    print(f"DEBUG TREE: Inferred Mixed Tukey from pairwise test")
+                    highlighted.add(('O1_MIX_PH', 'P1_MIX_TK'))
+                else:
+                    print(f"DEBUG TREE: Default Mixed Tukey for unknown pairwise test")
+                    highlighted.add(('O1_MIX_PH', 'P1_MIX_TK'))
+            else:
+                print(f"DEBUG TREE: No Mixed post-hoc info available, showing all options")
+                highlighted.add(('O1_MIX_PH', 'P1_MIX_TK'))
+                highlighted.add(('O1_MIX_PH', 'P1_MIX_BETWEEN'))
+                highlighted.add(('O1_MIX_PH', 'P1_MIX_WITHIN'))
+
 def test_decision_tree_visualization():
     # Beispielhafte Ergebnisse für einen One-Way-ANOVA mit signifikantem Ergebnis und Tukey-Posthoc
     results = {
@@ -901,7 +1117,81 @@ def test_decision_tree_visualization():
     output_path = DecisionTreeVisualizer.visualize(results, output_path="decision_tree_example")
     print(f"Decision tree saved to: {output_path}")
 
+def test_rm_anova_decision_tree():
+    # NEW: Beispielhafte Ergebnisse für RM ANOVA mit Sphärizitätskorrektur
+    results = {
+        "test": "Repeated Measures ANOVA",
+        "test_recommendation": "parametric",
+        "transformation": "None",
+        "p_value": 0.01,
+        "alpha": 0.05,
+        "groups": ["Time1", "Time2", "Time3", "Time4"],
+        "normality_tests": {
+            "Time1": {"is_normal": True},
+            "Time2": {"is_normal": True},
+            "Time3": {"is_normal": True},
+            "Time4": {"is_normal": True},
+            "all_data": {"is_normal": True}
+        },
+        "variance_test": {"equal_variance": True},
+        "sphericity_test": {
+            "test_name": "Mauchly's Test for Sphericity",
+            "W": 0.65,
+            "p_value": 0.03,
+            "sphericity_assumed": False
+        },
+        "correction_used": "Greenhouse-Geisser (ε = 0.72 ≤ 0.75)",
+        "corrected_p_value": 0.018,
+        "posthoc_test": "Paired t-tests (Holm-Sidak corrected)",
+        "pairwise_comparisons": [
+            {"groups": ("Time1", "Time2"), "p_value": 0.02, "test": "Paired t-test", "correction": "Holm-Sidak"},
+            {"groups": ("Time1", "Time3"), "p_value": 0.005, "test": "Paired t-test", "correction": "Holm-Sidak"},
+            {"groups": ("Time2", "Time3"), "p_value": 0.15, "test": "Paired t-test", "correction": "Holm-Sidak"}
+        ]
+    }
+    # Generiere und speichere den Entscheidungsbaum
+    output_path = DecisionTreeVisualizer.visualize(results, output_path="rm_anova_decision_tree")
+    print(f"RM ANOVA Decision tree saved to: {output_path}")
+
+def test_mixed_anova_decision_tree():
+    # NEW: Beispielhafte Ergebnisse für Mixed ANOVA mit Within-Factor Korrektur
+    results = {
+        "test": "Mixed ANOVA",
+        "test_recommendation": "parametric",
+        "transformation": "None",
+        "p_value": 0.008,
+        "alpha": 0.05,
+        "groups": ["Group_A_Time1", "Group_A_Time2", "Group_B_Time1", "Group_B_Time2"],
+        "normality_tests": {
+            "Group_A_Time1": {"is_normal": True},
+            "Group_A_Time2": {"is_normal": True},
+            "Group_B_Time1": {"is_normal": True},
+            "Group_B_Time2": {"is_normal": True},
+            "all_data": {"is_normal": True}
+        },
+        "variance_test": {"equal_variance": True},
+        "within_sphericity_test": {
+            "test_name": "Mauchly's Test for Sphericity (Within-Factor)",
+            "factor": "Time",
+            "W": 0.82,
+            "p_value": 0.04,
+            "sphericity_assumed": False
+        },
+        "within_correction_used": "Huynh-Feldt (ε = 0.88 > 0.75)",
+        "within_corrected_p_value": 0.012,
+        "posthoc_test": "Mixed Tukey (Between/Within)",
+        "pairwise_comparisons": [
+            {"groups": ("Group_A", "Group_B"), "p_value": 0.01, "test": "Between-subjects Tukey"},
+            {"groups": ("Time1", "Time2"), "p_value": 0.03, "test": "Within-subjects Tukey"}
+        ]
+    }
+    # Generiere und speichere den Entscheidungsbaum
+    output_path = DecisionTreeVisualizer.visualize(results, output_path="mixed_anova_decision_tree")
+    print(f"Mixed ANOVA Decision tree saved to: {output_path}")
+
 # Zum Testen einfach aufrufen:
 if __name__ == "__main__":
     test_decision_tree_visualization()
+    test_rm_anova_decision_tree()  # NEW
+    test_mixed_anova_decision_tree()  # NEW
     

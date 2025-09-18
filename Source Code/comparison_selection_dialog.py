@@ -30,6 +30,21 @@ class ComparisonSelectionDialog(QDialog):
             scroll_layout.addWidget(cb)
         scroll_content.setLayout(scroll_layout)
         scroll.setWidget(scroll_content)
+        
+        # Limit maximum height to prevent dialog from becoming too large
+        # Calculate dynamic height: max 400px or 60% of screen height, whichever is smaller
+        from PyQt5.QtWidgets import QApplication
+        if QApplication.instance():
+            screen = QApplication.instance().primaryScreen()
+            if screen:
+                screen_height = screen.geometry().height()
+                max_height = min(400, int(screen_height * 0.6))
+                scroll.setMaximumHeight(max_height)
+            else:
+                scroll.setMaximumHeight(400)  # Fallback
+        else:
+            scroll.setMaximumHeight(400)  # Fallback
+            
         layout.addWidget(scroll)
 
         # Select/Deselect All buttons

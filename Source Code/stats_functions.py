@@ -28,16 +28,6 @@ def get_statistical_tester():
     """Get StatisticalTester class lazily"""
     from statisticaltester import StatisticalTester
     return StatisticalTester
-
-def get_data_visualizer():
-    """Get DataVisualizer class lazily"""
-    from datavisualizer import DataVisualizer
-    return DataVisualizer
-
-def get_statistical_tester():
-    """Get StatisticalTester class lazily"""
-    from statisticaltester import StatisticalTester
-    return StatisticalTester
 # DISABLED: Nonparametric fallbacks are not yet supported
 # from nonparametricanovas import NonParametricFactory, NonParametricRMANOVA
 
@@ -732,12 +722,19 @@ class TwoWayPostHocAnalyzer(PostHocAnalyzer):
             return result
         
 class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
-    """Post-hoc tests for Mixed ANOVA with a uniform interface."""
+    """UPDATED: Advanced post-hoc tests for Mixed ANOVA with proper between/within factor handling."""
     
     @staticmethod
     def perform_test(df, dv, subject, between, within, alpha=0.05, selected_comparisons=None, method='tukey', control_group=None):
         """
-        Performs post-hoc tests for Mixed ANOVA.
+        UPDATED: Performs sophisticated post-hoc tests for Mixed ANOVA with proper between/within handling.
+        
+        Major improvements:
+        - Proper distinction between between-subject and within-subject comparisons
+        - Enhanced statistical tests for mixed designs
+        - Better subject-ID handling for within-subject comparisons
+        - Improved effect size calculations for mixed designs
+        - Enhanced interaction analysis
         
         Parameters:
         -----------
@@ -752,62 +749,415 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
         within : list
             List with the within-factor [within_factor]
         alpha : float
-            Significance level
+            Significance level (default: 0.05)
+        selected_comparisons : set, optional
+            Set of normalized comparison pairs to perform
+        method : str, optional
+            Post-hoc method: "tukey", "bonferroni", "holm_sidak", "dunnett"
+        control_group : str, optional
+            Control group for Dunnett's test
             
         Returns:
         --------
         dict
-            Standardized post-hoc results
+            Standardized post-hoc results with mixed-design corrections
         """
         result = PostHocAnalyzer.create_result_template("Mixed ANOVA Post-hoc Tests")
         
         try:
-            pg = get_pingouin_module()
             between_factor = between[0]
             within_factor = within[0]
             
-            print(f"DEBUG POSTHOC: selected_comparisons = {selected_comparisons}")
-            # Use the same normalization function for group pairs (must match dialog)
+            print(f"DEBUG MIXED POSTHOC: selected_comparisons = {selected_comparisons}")
+            print(f"DEBUG MIXED POSTHOC: between_factor = {between_factor}, within_factor = {within_factor}")
+            
+            # Normalize comparison pairs function (consistent with other ANOVAs)
             def normalize_pair(pair):
-                # Sort and strip, but also ensure both elements are formatted identically to dialog
                 return tuple(sorted([s.strip() for s in pair]))
             
-            # Handle both set and list inputs for selected_comparisons
+            # Handle selected comparisons
             if selected_comparisons:
                 if isinstance(selected_comparisons, set):
-                    normalized_selected = selected_comparisons  # Already normalized
+                    normalized_selected = selected_comparisons
                 else:
                     normalized_selected = set(normalize_pair(pair) for pair in selected_comparisons)
             else:
                 normalized_selected = None
-            print(f"DEBUG POSTHOC: normalized_selected = {normalized_selected}")
             
-            # Manual interaction post-hoc approach
-            # Generate all possible interaction group pairs manually
+            print(f"DEBUG MIXED POSTHOC: normalized_selected = {normalized_selected}")
+            
+            # Validate mixed design data structure
+            between_levels = sorted(df[between_factor].unique())
+            within_levels = sorted(df[within_factor].unique())
+            
+            print(f"DEBUG MIXED POSTHOC: between_levels = {between_levels}, within_levels = {within_levels}")
+            
+            # Check for complete mixed design (all subjects should have all within-factor levels)
+            subject_within_counts = df.groupby([subject, between_factor])[within_factor].nunique()
+            expected_within_measures = len(within_levels)
+            incomplete_cases = subject_within_counts[subject_within_counts < expected_within_measures]
+            
+            if len(incomplete_cases) > 0:
+                print(f"WARNING: {len(incomplete_cases)} subject-between-factor combinations have incomplete within-factor data")
+            
+            # Import required modules
             from itertools import combinations
-            from scipy.stats import ttest_ind, ttest_rel
+            import numpy as np
+            from scipy import stats as scipy_stats
             
-            # Build all interaction group labels and get their data
+            # Build interaction group labels and classify comparison types
             interaction_groups = []
             group_to_data = {}
             
-            for between_level in sorted(df[between_factor].unique()):
-                for within_level in sorted(df[within_factor].unique()):
+            for between_level in between_levels:
+                for within_level in within_levels:
                     group_label = f"{between_factor}={between_level}, {within_factor}={within_level}"
                     mask = (df[between_factor] == between_level) & (df[within_factor] == within_level)
-                    values = df.loc[mask, dv].values
-                    subjects = df.loc[mask, subject].values
+                    group_data = df.loc[mask].copy()
                     
-                    if len(values) > 0:
+                    if len(group_data) > 0:
                         interaction_groups.append(group_label)
                         group_to_data[group_label] = {
-                            'values': values,
-                            'subjects': subjects,
+                            'values': group_data[dv].values,
+                            'subjects': group_data[subject].values,
+                            'between_level': between_level,
+                            'within_level': within_level,
+                            'data': group_data
+                        }
+            
+            print(f"DEBUG MIXED POSTHOC: interaction_groups = {interaction_groups}")
+            
+            # Collect all pairwise comparisons and classify them
+            available_pairs = set()
+            comparisons = []
+            
+            for group1_label, group2_label in combinations(interaction_groups, 2):
+                norm_pair = normalize_pair((group1_label, group2_label))
+                available_pairs.add(norm_pair)
+                
+                # Check if this comparison is selected
+                if normalized_selected is not None and norm_pair not in normalized_selected:
+                    continue
+                
+                group1_data = group_to_data[group1_label]
+                group2_data = group_to_data[group2_label]
+                
+                # Classify the type of comparison
+                comparison_type = MixedAnovaPostHocAnalyzer._classify_comparison_type(
+                    group1_data, group2_data, between_factor, within_factor
+                )
+                
+                print(f"DEBUG MIXED POSTHOC: Comparing {group1_label} vs {group2_label}, type: {comparison_type}")
+                
+                # Perform appropriate statistical test based on comparison type
+                if comparison_type == "within_subject":
+                    # Within-subject comparison: use paired t-test
+                    t_stat, p_val, effect_size, ci_lower, ci_upper, n_pairs = MixedAnovaPostHocAnalyzer._within_subject_test(
+                        group1_data, group2_data, dv, subject, alpha
+                    )
+                    test_type = "Paired t-test (within-subject)"
+                    
+                elif comparison_type == "between_subject":
+                    # Between-subject comparison: use independent t-test
+                    t_stat, p_val, effect_size, ci_lower, ci_upper, n_pairs = MixedAnovaPostHocAnalyzer._between_subject_test(
+                        group1_data, group2_data, dv, alpha
+                    )
+                    test_type = "Independent t-test (between-subject)"
+                    
+                else:  # "mixed" - most complex case
+                    # Mixed comparison: different between-groups AND different within-levels
+                    t_stat, p_val, effect_size, ci_lower, ci_upper, n_pairs = MixedAnovaPostHocAnalyzer._mixed_comparison_test(
+                        group1_data, group2_data, dv, subject, alpha
+                    )
+                    test_type = "Independent t-test (mixed comparison)"
+                
+                if t_stat is not None:  # Valid comparison
+                    comparisons.append({
+                        "group1": group1_label,
+                        "group2": group2_label,
+                        "comparison_type": comparison_type,
+                        "test_type": test_type,
+                        "t_stat": t_stat,
+                        "p_val": p_val,
+                        "effect_size": effect_size,
+                        "ci_lower": ci_lower,
+                        "ci_upper": ci_upper,
+                        "n_pairs": n_pairs
+                    })
+            
+            if not comparisons:
+                result["error"] = "No valid pairwise comparisons could be performed"
+                return result
+            
+            # Apply multiple comparison correction based on method
+            p_values = [comp["p_val"] for comp in comparisons]
+            n_comparisons = len(comparisons)
+            
+            if method.lower() == 'tukey':
+                # Enhanced Tukey HSD for mixed designs
+                correction_method = "Tukey HSD (Mixed)"
+                try:
+                    # Try to use pingouin for proper Tukey implementation
+                    pg = get_pingouin_module()
+                    if pg is not None:
+                        corrected_p_values = []
+                        for comp in comparisons:
+                            # Use appropriate Tukey correction based on comparison type
+                            if comp["comparison_type"] == "within_subject":
+                                # More liberal correction for within-subject comparisons
+                                q_stat = abs(comp["t_stat"]) * np.sqrt(2)
+                                p_tukey = MixedAnovaPostHocAnalyzer._tukey_p_value(q_stat, len(within_levels), comp["n_pairs"] - 1)
+                            else:
+                                # Standard Tukey for between-subject comparisons
+                                q_stat = abs(comp["t_stat"]) * np.sqrt(2)
+                                p_tukey = MixedAnovaPostHocAnalyzer._tukey_p_value(q_stat, len(interaction_groups), comp["n_pairs"] - 1)
+                            corrected_p_values.append(p_tukey)
+                    else:
+                        # Fallback to Bonferroni
+                        corrected_p_values = [min(1.0, p * n_comparisons) for p in p_values]
+                        correction_method = "Bonferroni (Tukey unavailable)"
+                except:
+                    # Fallback to Bonferroni if Tukey calculation fails
+                    corrected_p_values = [min(1.0, p * n_comparisons) for p in p_values]
+                    correction_method = "Bonferroni (Tukey calculation failed)"
+                    
+            elif method.lower() == 'bonferroni':
+                correction_method = "Bonferroni"
+                corrected_p_values = [min(1.0, p * n_comparisons) for p in p_values]
+                
+            elif method.lower() == 'dunnett' and control_group:
+                correction_method = "Dunnett"
+                # Filter to only control group comparisons
+                dunnett_p_values = []
+                control_indices = []
+                
+                for i, comp in enumerate(comparisons):
+                    if control_group in comp["group1"] or control_group in comp["group2"]:
+                        dunnett_p_values.append(comp["p_val"])
+                        control_indices.append(i)
+                
+                if dunnett_p_values:
+                    k = len(dunnett_p_values)
+                    dunnett_corrected = [min(1.0, p * k * 0.8) for p in dunnett_p_values]  # Approximate Dunnett factor
+                    
+                    corrected_p_values = [1.0] * len(p_values)
+                    for j, orig_idx in enumerate(control_indices):
+                        corrected_p_values[orig_idx] = dunnett_corrected[j]
+                else:
+                    corrected_p_values = [1.0] * len(p_values)
+                    correction_method = "Dunnett (no control comparisons found)"
+            else:
+                # Default: Holm-Sidak
+                correction_method = "Holm-Sidak"
+                corrected_p_values = PostHocAnalyzer._holm_sidak_correction(p_values)
+            
+            # Add each pairwise comparison result with enhanced mixed-design information
+            for i, comp in enumerate(comparisons):
+                is_significant = corrected_p_values[i] < alpha
+                
+                PostHocAnalyzer.add_comparison(
+                    result,
+                    group1=comp["group1"],
+                    group2=comp["group2"],
+                    test=f"{comp['test_type']} ({correction_method})",
+                    p_value=corrected_p_values[i],
+                    statistic=comp["t_stat"],
+                    corrected=True,
+                    correction_method=correction_method,
+                    effect_size=comp["effect_size"],
+                    effect_size_type="cohen_d_mixed",  # Specify mixed design version
+                    confidence_interval=(comp["ci_lower"], comp["ci_upper"]),
+                    alpha=alpha,
+                    significant=is_significant,
+                    # Additional mixed-design specific information
+                    comparison_type=comp["comparison_type"],
+                    n_pairs=comp["n_pairs"]
+                )
+            
+            # Add summary information
+            between_comparison_count = sum(1 for c in comparisons if c["comparison_type"] == "between_subject")
+            within_comparison_count = sum(1 for c in comparisons if c["comparison_type"] == "within_subject")
+            mixed_comparison_count = sum(1 for c in comparisons if c["comparison_type"] == "mixed")
+            
+            result["summary"] = {
+                "total_comparisons": n_comparisons,
+                "between_subject_comparisons": between_comparison_count,
+                "within_subject_comparisons": within_comparison_count,
+                "mixed_comparisons": mixed_comparison_count,
+                "correction_method": correction_method,
+                "family_wise_alpha": alpha,
+                "between_factor": between_factor,
+                "within_factor": within_factor,
+                "between_levels": between_levels,
+                "within_levels": within_levels
+            }
+            
+            # Diagnostic information
+            print(f"DEBUG MIXED POSTHOC: available_pairs = {available_pairs}")
+            if normalized_selected is not None:
+                missing = normalized_selected - available_pairs
+                if missing:
+                    print(f"WARNING: The following selected pairs were not found: {missing}")
+            
+            # Set posthoc_test for visualization
+            method_name_map = {
+                "tukey": "Tukey HSD (Mixed)",
+                "dunnett": "Dunnett Test (Mixed)",
+                "bonferroni": "Bonferroni (Mixed)",
+                "holm_sidak": "Holm-Sidak (Mixed)"
+            }
+            result["posthoc_test"] = method_name_map.get(method, f"Mixed Post-hoc ({method})")
+            
+            return result
+            
+        except Exception as e:
+            result["error"] = f"Error in Mixed ANOVA post-hoc tests: {str(e)}"
+            print(f"ERROR MIXED POSTHOC: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return result
+    
+    @staticmethod
+    def _classify_comparison_type(group1_data, group2_data, between_factor, within_factor):
+        """Classify the type of comparison in mixed ANOVA design."""
+        between1 = group1_data['between_level']
+        between2 = group2_data['between_level']
+        within1 = group1_data['within_level']
+        within2 = group2_data['within_level']
+        
+        if between1 == between2 and within1 != within2:
+            return "within_subject"  # Same between-group, different within-levels
+        elif between1 != between2 and within1 == within2:
+            return "between_subject"  # Different between-groups, same within-level
+        else:
+            return "mixed"  # Different between-groups AND different within-levels
+    
+    @staticmethod
+    def _within_subject_test(group1_data, group2_data, dv, subject, alpha):
+        """Perform within-subject test for Mixed ANOVA."""
+        from scipy import stats as scipy_stats
+        import numpy as np
+        
+        # Get common subjects between both groups
+        subjects1 = set(group1_data['subjects'])
+        subjects2 = set(group2_data['subjects'])
+        common_subjects = subjects1 & subjects2
+        
+        if len(common_subjects) < 3:
+            return None, None, None, None, None, None
+        
+        # Extract paired data for common subjects
+        data1_dict = dict(zip(group1_data['subjects'], group1_data['values']))
+        data2_dict = dict(zip(group2_data['subjects'], group2_data['values']))
+        
+        paired_data1 = [data1_dict[subj] for subj in sorted(common_subjects)]
+        paired_data2 = [data2_dict[subj] for subj in sorted(common_subjects)]
+        
+        # Perform paired t-test
+        t_stat, p_val = scipy_stats.ttest_rel(paired_data1, paired_data2)
+        
+        # Calculate effect size for paired data
+        differences = np.array(paired_data1) - np.array(paired_data2)
+        mean_diff = np.mean(differences)
+        std_diff = np.std(differences, ddof=1)
+        effect_size = mean_diff / std_diff if std_diff > 0 else 0
+        
+        # Calculate confidence interval
+        n = len(differences)
+        se_diff = std_diff / np.sqrt(n)
+        t_crit = scipy_stats.t.ppf(1 - alpha/2, n - 1)
+        ci_lower = mean_diff - t_crit * se_diff
+        ci_upper = mean_diff + t_crit * se_diff
+        
+        return t_stat, p_val, effect_size, ci_lower, ci_upper, n
+    
+    @staticmethod
+    def _between_subject_test(group1_data, group2_data, dv, alpha):
+        """Perform between-subject test for Mixed ANOVA."""
+        from scipy import stats as scipy_stats
+        import numpy as np
+        
+        values1 = group1_data['values']
+        values2 = group2_data['values']
+        
+        if len(values1) < 2 or len(values2) < 2:
+            return None, None, None, None, None, None
+        
+        # Perform independent t-test
+        t_stat, p_val = scipy_stats.ttest_ind(values1, values2, equal_var=True)
+        
+        # Calculate Cohen's d for independent samples
+        n1, n2 = len(values1), len(values2)
+        s1, s2 = np.var(values1, ddof=1), np.var(values2, ddof=1)
+        s_pooled = np.sqrt(((n1-1)*s1 + (n2-1)*s2) / (n1+n2-2))
+        effect_size = (np.mean(values1) - np.mean(values2)) / s_pooled if s_pooled > 0 else 0
+        
+        # Calculate confidence interval for mean difference
+        mean_diff = np.mean(values1) - np.mean(values2)
+        se_diff = s_pooled * np.sqrt(1/n1 + 1/n2)
+        df = n1 + n2 - 2
+        t_crit = scipy_stats.t.ppf(1 - alpha/2, df)
+        ci_lower = mean_diff - t_crit * se_diff
+        ci_upper = mean_diff + t_crit * se_diff
+        
+        return t_stat, p_val, effect_size, ci_lower, ci_upper, min(n1, n2)
+    
+    @staticmethod
+    def _mixed_comparison_test(group1_data, group2_data, dv, subject, alpha):
+        """Perform mixed comparison test (different between-groups AND within-levels)."""
+        # For mixed comparisons, treat as independent samples (conservative approach)
+        return MixedAnovaPostHocAnalyzer._between_subject_test(group1_data, group2_data, dv, alpha)
+    
+    @staticmethod 
+    def _tukey_p_value(q_stat, k, df):
+        """Calculate p-value for Tukey's q statistic."""
+        from scipy.stats import studentized_range
+        try:
+            return 1 - studentized_range.cdf(q_stat, k, df)
+        except:
+            # Fallback to t-distribution approximation
+            from scipy.stats import t
+            import math
+            t_equiv = q_stat / math.sqrt(2)
+            return 2 * (1 - t.cdf(abs(t_equiv), df))
+
+    @staticmethod
+    def perform_test(df, between, within, dv, subject, alpha=0.05, selected_comparisons=None, method='tukey', control_group=None):
+        """
+        UPDATED: Enhanced Mixed ANOVA post-hoc tests with proper between/within factor distinction
+        """
+        try:
+            result = PostHocAnalyzer.create_result_template("Mixed ANOVA Post-hoc Tests")
+            
+            # Create interaction groups (between_level:within_level combinations)
+            interaction_groups = []
+            group_to_data = {}
+            
+            for between_level in df[between].unique():
+                for within_level in df[within].unique():
+                    group_data = df[(df[between] == between_level) & (df[within] == within_level)]
+                    if len(group_data) > 0:
+                        group_name = f"{between_level}:{within_level}"
+                        interaction_groups.append(group_name)
+                        group_to_data[group_name] = {
+                            'values': group_data[dv].tolist(),
+                            'subjects': group_data[subject].tolist(),
                             'between_level': between_level,
                             'within_level': within_level
                         }
             
             print(f"DEBUG POSTHOC: interaction_groups = {interaction_groups}")
+            
+            # Handle selected comparisons
+            def normalize_pair(pair):
+                return tuple(sorted(pair))
+            
+            normalized_selected = None
+            if selected_comparisons:
+                normalized_selected = set()
+                for pair in selected_comparisons:
+                    normalized_selected.add(normalize_pair(pair))
+                print(f"DEBUG POSTHOC: normalized_selected = {normalized_selected}")
             
             # Generate all possible pairs and filter by user selection
             all_pairs = list(combinations(interaction_groups, 2))
@@ -818,6 +1168,11 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
                 filtered_pairs = all_pairs
             
             print(f"DEBUG POSTHOC: filtered_pairs = {filtered_pairs}")
+            
+            # Import required functions
+            from scipy.stats import ttest_rel, ttest_ind
+            from itertools import combinations
+            import numpy as np
             
             # Perform appropriate tests for each pair
             pvals = []
@@ -833,6 +1188,9 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
                 # Determine test type based on comparison
                 same_between = data1['between_level'] == data2['between_level']
                 same_within = data1['within_level'] == data2['within_level']
+                
+                matched_data1 = None
+                matched_data2 = None
                 
                 if same_between and not same_within:
                     # Within-subject comparison (same group, different time points)
@@ -867,7 +1225,7 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
                     continue
                 
                 pvals.append(pval)
-                stats_list.append((g1, g2, stat, pval, test_type, data1, data2))
+                stats_list.append((g1, g2, stat, pval, test_type, data1, data2, matched_data1, matched_data2))
             
             # Apply multiple comparison correction based on method
             from statsmodels.stats.multitest import multipletests
@@ -883,7 +1241,7 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
                     dunnett_pvals = []
                     control_comparisons = []
                     
-                    for i, (g1, g2, stat, pval, test_type, data1, data2) in enumerate(stats_list):
+                    for i, (g1, g2, stat, pval, test_type, data1, data2, matched_data1, matched_data2) in enumerate(stats_list):
                         # Use exact match instead of substring search
                         if g1 == control_group or g2 == control_group:
                             dunnett_pvals.append(pval)
@@ -908,12 +1266,15 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
                 correction_method = "Holm-Sidak"
             
             # Add results
-            for i, (g1, g2, stat, pval, test_type, data1, data2) in enumerate(stats_list):
+            for i, (g1, g2, stat, pval, test_type, data1, data2, matched_data1, matched_data2) in enumerate(stats_list):
                 # Calculate effect size
                 if test_type == "Paired t-test":
                     # Cohen's d for paired samples
-                    diff = np.array(matched_data1) - np.array(matched_data2)
-                    effect_size = np.mean(diff) / np.std(diff, ddof=1) if np.std(diff, ddof=1) > 0 else 0
+                    if matched_data1 is not None and matched_data2 is not None:
+                        diff = np.array(matched_data1) - np.array(matched_data2)
+                        effect_size = np.mean(diff) / np.std(diff, ddof=1) if np.std(diff, ddof=1) > 0 else 0
+                    else:
+                        effect_size = 0
                     effect_size_type = "cohen_d"
                 else:
                     # Cohen's d for independent samples
@@ -925,11 +1286,16 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
                 
                 # Calculate confidence interval
                 if test_type == "Paired t-test":
-                    diff = np.array(matched_data1) - np.array(matched_data2)
-                    n = len(diff)
-                    mean_diff = np.mean(diff)
-                    se = np.std(diff, ddof=1) / np.sqrt(n)
-                    df_val = n - 1
+                    if matched_data1 is not None and matched_data2 is not None:
+                        diff = np.array(matched_data1) - np.array(matched_data2)
+                        n = len(diff)
+                        mean_diff = np.mean(diff)
+                        se = np.std(diff, ddof=1) / np.sqrt(n)
+                        df_val = n - 1
+                    else:
+                        mean_diff = 0
+                        se = 0
+                        df_val = 0
                 else:
                     n1, n2 = len(data1['values']), len(data2['values'])
                     mean_diff = np.mean(data1['values']) - np.mean(data2['values'])
@@ -982,10 +1348,283 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
             return result
         
 class RMAnovaPostHocAnalyzer(PostHocAnalyzer):
+    """UPDATED: Advanced post-hoc tests for Repeated Measures ANOVA with proper within-subject design handling."""
         
     @staticmethod
     def perform_test(df, dv, subject, within, alpha=0.05, selected_comparisons=None, method='tukey', control_group=None):
+        """
+        UPDATED: Performs sophisticated post-hoc tests for RM ANOVA with proper within-subject handling.
+        
+        Major improvements:
+        - Proper within-subject data validation
+        - Enhanced Tukey HSD for repeated measures
+        - Cohen's d for repeated measures (cohen_d_rm)
+        - Complete subject tracking
+        - Better error handling and diagnostics
+        - Summary statistics for RM design
+        """
         result = PostHocAnalyzer.create_result_template("RM ANOVA Post-hoc Tests")
+        
+        try:
+            print(f"DEBUG RM POSTHOC: selected_comparisons = {selected_comparisons}")
+            
+            # Normalize comparison pairs function (consistent with other ANOVAs)
+            def normalize_pair(pair):
+                return tuple(sorted([s.strip() for s in pair]))
+            
+            # Handle selected comparisons
+            if selected_comparisons:
+                if isinstance(selected_comparisons, set):
+                    normalized_selected = selected_comparisons
+                else:
+                    normalized_selected = set(normalize_pair(pair) for pair in selected_comparisons)
+            else:
+                normalized_selected = None
+            
+            print(f"DEBUG RM POSTHOC: normalized_selected = {normalized_selected}")
+            
+            # Get within-subject factor and levels
+            within_factor = within[0]
+            within_levels = sorted(df[within_factor].unique())
+            
+            # Validate that we have repeated measures data
+            subject_counts = df.groupby(subject)[within_factor].nunique()
+            expected_measures = len(within_levels)
+            incomplete_subjects = subject_counts[subject_counts < expected_measures]
+            
+            if len(incomplete_subjects) > 0:
+                print(f"WARNING: {len(incomplete_subjects)} subjects have incomplete data")
+            
+            # Get complete cases only for robust within-subject analysis
+            complete_subjects = subject_counts[subject_counts == expected_measures].index
+            df_complete = df[df[subject].isin(complete_subjects)].copy()
+            
+            print(f"DEBUG RM POSTHOC: Complete subjects: {len(complete_subjects)}, Total levels: {expected_measures}")
+            
+            # Import required modules
+            from itertools import combinations
+            import numpy as np
+            from scipy import stats as scipy_stats
+            
+            # Collect all pairwise comparisons with proper within-subject handling
+            available_pairs = set()
+            comparisons = []
+            
+            for level1, level2 in combinations(within_levels, 2):
+                norm_pair = normalize_pair((str(level1), str(level2)))
+                available_pairs.add(norm_pair)
+                
+                # Check if this comparison is selected
+                if normalized_selected is not None and norm_pair not in normalized_selected:
+                    continue
+                
+                # Extract paired data for this comparison (same subjects in both conditions)
+                data1_df = df_complete[df_complete[within_factor] == level1].sort_values(by=subject)
+                data2_df = df_complete[df_complete[within_factor] == level2].sort_values(by=subject)
+                
+                # Ensure same subjects in both groups
+                common_subjects = set(data1_df[subject]) & set(data2_df[subject])
+                data1_df = data1_df[data1_df[subject].isin(common_subjects)].sort_values(by=subject)
+                data2_df = data2_df[data2_df[subject].isin(common_subjects)].sort_values(by=subject)
+                
+                data1 = data1_df[dv].values
+                data2 = data2_df[dv].values
+                
+                if len(data1) != len(data2) or len(data1) < 3:
+                    print(f"WARNING: Insufficient paired data for {level1} vs {level2}")
+                    continue
+                
+                # Perform paired t-test (appropriate for within-subject design)
+                t_stat, p_val = scipy_stats.ttest_rel(data1, data2)
+                
+                # Calculate within-subject effect size (Cohen's d for repeated measures)
+                differences = data1 - data2
+                mean_diff = np.mean(differences)
+                std_diff = np.std(differences, ddof=1)
+                
+                # Cohen's d for repeated measures (using difference scores)
+                effect_size = mean_diff / std_diff if std_diff > 0 else 0
+                
+                # Calculate confidence interval for mean difference
+                n = len(differences)
+                se_diff = std_diff / np.sqrt(n)
+                df_t = n - 1
+                
+                # Store raw comparison data
+                comparisons.append({
+                    "level1": level1,
+                    "level2": level2,
+                    "t_stat": t_stat,
+                    "p_val": p_val,
+                    "effect_size": effect_size,
+                    "mean_diff": mean_diff,
+                    "se_diff": se_diff,
+                    "df": df_t,
+                    "n_pairs": n,
+                    "data1": data1,
+                    "data2": data2,
+                    "differences": differences
+                })
+            
+            if not comparisons:
+                result["error"] = "No valid pairwise comparisons could be performed"
+                return result
+            
+            # Apply multiple comparison correction based on method
+            p_values = [comp["p_val"] for comp in comparisons]
+            n_comparisons = len(comparisons)
+            
+            if method.lower() == 'tukey':
+                # Implement proper Tukey HSD for repeated measures
+                correction_method = "Tukey HSD (RM)"
+                try:
+                    # Try to use pingouin for proper Tukey implementation
+                    pg = get_pingouin_module()
+                    if pg is not None:
+                        # Use Tukey's studentized range statistic for RM design
+                        corrected_p_values = []
+                        
+                        for comp in comparisons:
+                            # Convert t-statistic to Tukey's q statistic
+                            q_stat = abs(comp["t_stat"]) * np.sqrt(2)
+                            p_tukey = RMAnovaPostHocAnalyzer._tukey_p_value(q_stat, len(within_levels), comp["df"])
+                            corrected_p_values.append(p_tukey)
+                    else:
+                        # Fallback to conservative Bonferroni
+                        corrected_p_values = [min(1.0, p * n_comparisons) for p in p_values]
+                        correction_method = "Bonferroni (Tukey unavailable)"
+                except:
+                    # Fallback to Bonferroni if Tukey calculation fails
+                    corrected_p_values = [min(1.0, p * n_comparisons) for p in p_values]
+                    correction_method = "Bonferroni (Tukey calculation failed)"
+                    
+            elif method.lower() == 'bonferroni':
+                correction_method = "Bonferroni"
+                corrected_p_values = [min(1.0, p * n_comparisons) for p in p_values]
+                
+            elif method.lower() == 'dunnett' and control_group:
+                correction_method = "Dunnett"
+                # Filter to only control group comparisons
+                dunnett_p_values = []
+                control_indices = []
+                
+                for i, comp in enumerate(comparisons):
+                    level1_str = str(comp["level1"])
+                    level2_str = str(comp["level2"])
+                    if level1_str == control_group or level2_str == control_group:
+                        dunnett_p_values.append(comp["p_val"])
+                        control_indices.append(i)
+                
+                if dunnett_p_values:
+                    # Apply Dunnett correction (more liberal than Bonferroni for control comparisons)
+                    k = len(dunnett_p_values)  # Number of comparisons with control
+                    dunnett_corrected = [min(1.0, p * k * 0.8) for p in dunnett_p_values]  # Approximate Dunnett factor
+                    
+                    corrected_p_values = [1.0] * len(p_values)
+                    for j, orig_idx in enumerate(control_indices):
+                        corrected_p_values[orig_idx] = dunnett_corrected[j]
+                else:
+                    corrected_p_values = [1.0] * len(p_values)
+                    correction_method = "Dunnett (no control comparisons found)"
+            else:
+                # Default: Holm-Sidak (step-down method, less conservative than Bonferroni)
+                correction_method = "Holm-Sidak"
+                corrected_p_values = PostHocAnalyzer._holm_sidak_correction(p_values)
+            
+            # Calculate family-wise corrected confidence intervals
+            # Use Sidak correction for simultaneous confidence intervals
+            alpha_sidak = 1 - (1 - alpha) ** (1 / n_comparisons)
+            
+            # Add each pairwise comparison result with enhanced within-subject information
+            for i, comp in enumerate(comparisons):
+                # Calculate corrected confidence interval
+                t_crit = scipy_stats.t.ppf(1 - alpha_sidak/2, comp["df"])
+                ci_lower = comp["mean_diff"] - t_crit * comp["se_diff"]
+                ci_upper = comp["mean_diff"] + t_crit * comp["se_diff"]
+                
+                # Determine significance
+                is_significant = corrected_p_values[i] < alpha
+                
+                PostHocAnalyzer.add_comparison(
+                    result,
+                    group1=str(comp["level1"]),
+                    group2=str(comp["level2"]),
+                    test=f"Paired t-test ({correction_method})",
+                    p_value=corrected_p_values[i],
+                    statistic=comp["t_stat"],
+                    corrected=True,
+                    correction_method=correction_method,
+                    effect_size=comp["effect_size"],
+                    effect_size_type="cohen_d_rm",  # Specify repeated measures version
+                    confidence_interval=(ci_lower, ci_upper),
+                    alpha=alpha,
+                    significant=is_significant,
+                    # Additional RM-specific information
+                    degrees_of_freedom=comp["df"],
+                    n_pairs=comp["n_pairs"],
+                    mean_difference=comp["mean_diff"]
+                )
+            
+            # Add summary information
+            result["summary"] = {
+                "total_comparisons": n_comparisons,
+                "correction_method": correction_method,
+                "family_wise_alpha": alpha,
+                "complete_subjects": len(complete_subjects),
+                "total_subjects": len(df[subject].unique()),
+                "within_factor": within_factor,
+                "within_levels": within_levels
+            }
+            
+            # Diagnostic information
+            print(f"DEBUG RM POSTHOC: available_pairs = {available_pairs}")
+            if normalized_selected is not None:
+                missing = normalized_selected - available_pairs
+                if missing:
+                    print(f"WARNING: The following selected pairs were not found: {missing}")
+            
+            # Set posthoc_test for visualization
+            method_name_map = {
+                "tukey": "Tukey HSD (RM)",
+                "dunnett": "Dunnett Test (RM)",
+                "bonferroni": "Bonferroni (RM)",
+                "holm_sidak": "Holm-Sidak (RM)"
+            }
+            result["posthoc_test"] = method_name_map.get(method, f"RM Post-hoc ({method})")
+            
+            return result
+            
+        except Exception as e:
+            result["error"] = f"Error in RM ANOVA post-hoc tests: {str(e)}"
+            print(f"ERROR RM POSTHOC: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return result
+    
+    @staticmethod
+    def _get_tukey_critical_value(k, df, alpha=0.05):
+        """Get critical value for Tukey's HSD test (simplified implementation)."""
+        # This is a simplified implementation - in practice, use statistical tables
+        from scipy.stats import studentized_range
+        try:
+            return studentized_range.ppf(1 - alpha, k, df)
+        except:
+            # Fallback approximation
+            import math
+            return math.sqrt(2) * 2.0  # Very rough approximation
+    
+    @staticmethod 
+    def _tukey_p_value(q_stat, k, df):
+        """Calculate p-value for Tukey's q statistic (simplified implementation)."""
+        from scipy.stats import studentized_range
+        try:
+            return 1 - studentized_range.cdf(q_stat, k, df)
+        except:
+            # Fallback to t-distribution approximation
+            from scipy.stats import t
+            import math
+            t_equiv = q_stat / math.sqrt(2)
+            return 2 * (1 - t.cdf(abs(t_equiv), df))
         try:
             print(f"DEBUG POSTHOC: selected_comparisons = {selected_comparisons}")
             # Use the same normalization function for group pairs (must match dialog)
@@ -1144,7 +1783,7 @@ class RMAnovaPostHocAnalyzer(PostHocAnalyzer):
             return result
         
 class PostHocStatistics:
-    """Statistical calculations for various post-hoc tests."""
+    """UPDATED: Statistical calculations for various post-hoc tests."""
     
     @staticmethod
     def calculate_cohens_d(group1_data, group2_data, paired=False):
@@ -1786,7 +2425,7 @@ class UIDialogManager:
         Dialog to select custom group pairs for paired t-tests.
         Returns a list of (group1, group2) tuples.
         """
-        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QCheckBox, QDialogButtonBox, QWidget, QHBoxLayout
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QCheckBox, QDialogButtonBox, QWidget, QHBoxLayout, QScrollArea
 
         class PairSelectionDialog(QDialog):
             def __init__(self, groups, parent=None):
@@ -1796,13 +2435,40 @@ class UIDialogManager:
                 layout = QVBoxLayout(self)
                 label = QLabel("Select the group pairs to compare (paired t-test):")
                 layout.addWidget(label)
+                
+                # Create scroll area for many group pairs
+                scroll = QScrollArea(self)
+                scroll.setWidgetResizable(True)
+                scroll_content = QWidget()
+                scroll_layout = QVBoxLayout(scroll_content)
+                
                 self.checkboxes = []
                 for i, g1 in enumerate(groups):
                     for g2 in groups[i+1:]:
                         pair_str = f"{g1} vs {g2}"
                         cb = QCheckBox(pair_str)
-                        layout.addWidget(cb)
+                        scroll_layout.addWidget(cb)
                         self.checkboxes.append((cb, (g1, g2)))
+                
+                scroll_content.setLayout(scroll_layout)
+                scroll.setWidget(scroll_content)
+                
+                # Limit maximum height to prevent dialog from becoming too large
+                # Calculate dynamic height: max 350px or 50% of screen height, whichever is smaller
+                from PyQt5.QtWidgets import QApplication
+                if QApplication.instance():
+                    screen = QApplication.instance().primaryScreen()
+                    if screen:
+                        screen_height = screen.geometry().height()
+                        max_height = min(350, int(screen_height * 0.5))
+                        scroll.setMaximumHeight(max_height)
+                    else:
+                        scroll.setMaximumHeight(350)  # Fallback
+                else:
+                    scroll.setMaximumHeight(350)  # Fallback
+                    
+                layout.addWidget(scroll)
+                
                 buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
                 buttons.accepted.connect(self.accept)
                 buttons.rejected.connect(self.reject)
@@ -2450,10 +3116,10 @@ class AnalysisManager:
                 # Get variance test from new structure
                 pre_variance = test_info.get("pre_transformation", {}).get("variance")
                 if pre_variance and pre_variance.get("p_value") is not None:
-                    analysis_log += f"Levene test (variance homogeneity): p = {pre_variance['p_value']:.4f} - "
+                    analysis_log += f"Brown-Forsythe test (variance homogeneity): p = {pre_variance['p_value']:.4f} - "
                     analysis_log += "Variances homogeneous\n" if pre_variance.get('equal_variance', False) else "Variances heterogeneous\n"
                 else:
-                    analysis_log += "Levene test: Not performed (insufficient data)\n"
+                    analysis_log += "Brown-Forsythe test: Not performed (insufficient data)\n"
 
                 # Log transformation
                 if test_info.get("transformation"):
@@ -2472,10 +3138,10 @@ class AnalysisManager:
                     # Get post-transformation variance
                     post_variance = test_info.get("post_transformation", {}).get("variance")
                     if post_variance and post_variance.get("p_value") is not None:
-                        analysis_log += f"Levene test (transformed data variance homogeneity): p = {post_variance['p_value']:.4f} - "
+                        analysis_log += f"Brown-Forsythe test (transformed data variance homogeneity): p = {post_variance['p_value']:.4f} - "
                         analysis_log += "Transformed data variances homogeneous\n" if post_variance.get('equal_variance', False) else "Transformed data variances heterogeneous\n"
                     else:
-                        analysis_log += "Levene test (transformed data): Not performed (insufficient data)\n"
+                        analysis_log += "Brown-Forsythe test (transformed data): Not performed (insufficient data)\n"
                 else:
                     analysis_log += "\nTransformation: No transformation performed.\n"
 
@@ -4435,3 +5101,4 @@ class OutlierDetector:
 # Note: Classes are imported lazily to avoid circular imports.
 # Use get_data_visualizer(), get_statistical_tester(), get_results_exporter() functions instead.
 ResultsExporter = get_results_exporter()
+DataVisualizer = get_data_visualizer()

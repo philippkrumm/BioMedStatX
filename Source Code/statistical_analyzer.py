@@ -249,6 +249,8 @@ class ColumnSelectionDialog(QDialog):
             scroll_layout.addWidget(check)
         
         scroll_area.setWidget(scroll_content)
+        # Limit height for many columns
+        scroll_area.setMaximumHeight(300)
         layout.addWidget(scroll_area)
         
         # Buttons
@@ -552,6 +554,8 @@ class AdvancedTestDialog(QDialog):
                     self.withinList.item(i).setSelected(True)
                     
         self.withinList.setSelectionMode(QAbstractItemView.MultiSelection)
+        # Limit height for many columns
+        self.withinList.setMaximumHeight(120)
         columnsLayout.addRow("Within factors:", self.withinList)
         
         # Between factors (multiple possible)
@@ -564,6 +568,8 @@ class AdvancedTestDialog(QDialog):
                     self.betweenList.item(i).setSelected(True)
                     
         self.betweenList.setSelectionMode(QAbstractItemView.MultiSelection)
+        # Limit height for many columns
+        self.betweenList.setMaximumHeight(120)
         columnsLayout.addRow("Between factors:", self.betweenList)
         
         self.columnsGroup.setLayout(columnsLayout)
@@ -699,6 +705,8 @@ class PlotConfigDialog(QDialog):
         order_layout = QVBoxLayout(order_group)
         self.order_list = QListWidget()
         self.order_list.setDragDropMode(QListWidget.InternalMove)
+        # Limit height for many groups
+        self.order_list.setMaximumHeight(150)
         for group in groups:
             self.order_list.addItem(str(group))
         order_layout.addWidget(self.order_list)
@@ -961,9 +969,24 @@ class PlotConfigDialog(QDialog):
             QMessageBox.critical(self, "Error", "Plot without groups is not possible!")
             return None
         try:
-            colors_dict = {}
-            for i, g in enumerate(self.groups):
-                colors_dict[g] = DEFAULT_COLORS[i % len(DEFAULT_COLORS)]
+            # Use Greys palette by default instead of the bright default colors
+            try:
+                import seaborn as sns
+                # Generate Greys palette colors for groups
+                greys_colors = sns.color_palette('Greys', n_colors=len(self.groups))
+                colors_dict = {}
+                for i, g in enumerate(self.groups):
+                    # Convert RGB tuple to hex
+                    rgb = greys_colors[i]
+                    hex_color = "#{:02x}{:02x}{:02x}".format(
+                        int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255)
+                    )
+                    colors_dict[g] = hex_color
+            except ImportError:
+                # Fallback to default colors if seaborn is not available
+                colors_dict = {}
+                for i, g in enumerate(self.groups):
+                    colors_dict[g] = DEFAULT_COLORS[i % len(DEFAULT_COLORS)]
             hatches_dict = {}
             for g in self.groups:
                 hatches_dict[g] = ""  # Default: no hatch
@@ -980,7 +1003,11 @@ class PlotConfigDialog(QDialog):
                 'error_type': 'sd',  # Default to standard deviation (handled by PlotAestheticsDialog)
                 'dependent': self.dependent_check.isChecked(),
                 'show_individual_lines': self.show_individual_lines.isChecked() if self.dependent_check.isChecked() else False,
-                'needs_subject_selection': self.dependent_check.isChecked()
+                'needs_subject_selection': self.dependent_check.isChecked(),
+                # Add default Seaborn palette settings
+                'seaborn_palette': 'Greys',
+                'use_seaborn_styling': True,
+                'seaborn_context': 'paper'
             }
             # Always add appearance_settings from PlotAestheticsDialog if present
             parent_app = self.parent()
@@ -991,6 +1018,22 @@ class PlotConfigDialog(QDialog):
             print(f"Error in get_config: {str(e)}")
             traceback.print_exc()
             # Return a minimal config to prevent crashes
+            try:
+                import seaborn as sns
+                # Generate Greys palette colors for groups
+                greys_colors = sns.color_palette('Greys', n_colors=len(self.groups))
+                colors_dict = {}
+                for i, g in enumerate(self.groups):
+                    # Convert RGB tuple to hex
+                    rgb = greys_colors[i]
+                    hex_color = "#{:02x}{:02x}{:02x}".format(
+                        int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255)
+                    )
+                    colors_dict[g] = hex_color
+            except ImportError:
+                # Fallback to default colors if seaborn is not available
+                colors_dict = {g: DEFAULT_COLORS[i % len(DEFAULT_COLORS)] for i, g in enumerate(self.groups)}
+            
             return {
                 'groups': [self.order_list.item(i).text() for i in range(self.order_list.count())],
                 'group_order': [self.order_list.item(i).text() for i in range(self.order_list.count())],
@@ -1000,12 +1043,16 @@ class PlotConfigDialog(QDialog):
                 'file_name': None,
                 'width': 12,
                 'height': 10,
-                'colors': {g: DEFAULT_COLORS[i % len(DEFAULT_COLORS)] for i, g in enumerate(self.groups)},
+                'colors': colors_dict,
                 'hatches': {g: "" for g in self.groups},
                 'dependent': False,
                 'create_plot': True,
                 # REMOVED: 'comparisons': [],  # Not needed - post-hoc tests provide comparisons
-                'error_type': 'sd'
+                'error_type': 'sd',
+                # Add default Seaborn palette settings
+                'seaborn_palette': 'Greys',
+                'use_seaborn_styling': True,
+                'seaborn_context': 'paper'
             }
     
     # COMMENTED OUT: Manual comparison reset - not needed as post-hoc tests provide all comparisons
@@ -1948,6 +1995,8 @@ class StatisticalAnalyzerApp(QMainWindow):
         # Enable multi-selection for comparing groups
         self.groups_list.setSelectionMode(QListWidget.ExtendedSelection)
         self.groups_list.setToolTip("Select groups to preview (Ctrl+Click for multiple selection)")
+        # Limit height for many groups
+        self.groups_list.setMaximumHeight(200)
         # Connection for automatic preview updates when group selection changes
         self.groups_list.itemSelectionChanged.connect(self.update_preview_on_selection_change)
         groups_layout.addWidget(self.groups_list)
@@ -1972,6 +2021,8 @@ class StatisticalAnalyzerApp(QMainWindow):
         
         self.plots_list = QListWidget()
         self.plots_list.setObjectName("lstPlotConfigurations")
+        # Limit height for many plot configurations
+        self.plots_list.setMaximumHeight(200)
         self.plots_list.itemDoubleClicked.connect(self.edit_plot_config)
         plots_layout.addWidget(self.plots_list)
         

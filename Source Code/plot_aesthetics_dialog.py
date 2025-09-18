@@ -269,12 +269,12 @@ class ColorsTab(QWidget):
         self.palette_combo = QComboBox()
         # Professional palettes - excluding rainbow/childish ones
         professional_palettes = [
-            'deep', 'muted', 'bright', 'pastel', 'dark', 'colorblind',
-            'viridis', 'plasma', 'inferno', 'magma', 'rocket', 'mako',
-            'Set2', 'Set3', 'Paired', 'tab10'
+            'deep', 'muted', 'dark', 'colorblind',
+            'viridis', 'plasma', 'inferno', 'magma', 'mako',
+            'Greys', 'Paired', 'tab10'
         ]
         self.palette_combo.addItems(professional_palettes)
-        self.palette_combo.setCurrentText(self.config.get('seaborn_palette', 'deep'))
+        self.palette_combo.setCurrentText(self.config.get('seaborn_palette', 'Greys'))
         self.palette_combo.currentTextChanged.connect(self.on_seaborn_settings_changed)
         seaborn_layout.addWidget(self.palette_combo, 1, 1)
         
@@ -399,7 +399,7 @@ class ColorsTab(QWidget):
                 palette_name = self.palette_combo.currentText()
                 
                 # Get colors from the selected palette
-                if palette_name in ['viridis', 'plasma', 'inferno', 'magma', 'rocket', 'mako']:
+                if palette_name in ['viridis', 'plasma', 'inferno', 'magma', 'mako', 'Greys']:
                     # For continuous palettes, sample discrete colors
                     palette_colors = sns.color_palette(palette_name, n_colors=len(self.groups))
                 else:
