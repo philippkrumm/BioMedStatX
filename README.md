@@ -36,6 +36,7 @@ Designed for researchers and students in the life sciences, BioMedStatX streamli
 ## **Installation**
 
 Simply download the pre-built binary for your operating system:
+**This is a one-folder build. Therefore, the BioMedStatX folder must remain in the same folder as the _internal folder.**
 
 - **Windows**: Download and unpack the .zip file, start the .exe from the unpacked folder. 
 - **macOS**: Download the `.app` bundle (packed in a `.zip`).
@@ -48,6 +49,8 @@ _All features are identical across both platforms._
 - **Author**: Philipp Krumm
 - **Contact**: pkrumm@ukaachen.de
 - **Keywords**: biomedical statistics, statistical GUI, Python data analysis, ANOVA, t-tests, post-hoc, non-parametric tests
+- **Citation**: Krumm, Philipp and Böttcher, Nicole and Ottermanns, Richard and Pufe, Thomas and Fragoulis, Athanassios, BioMedStatX – Statistical Workflows for Reliable Biomedical Data Analysis. Available at SSRN: https://ssrn.com/abstract=5407324 or http://dx.doi.org/10.2139/ssrn.5407324
+
 
 
 
