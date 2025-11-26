@@ -46,7 +46,7 @@ BioMedStatX is distributed as a standalone application for end users and as sour
 1. Go to the GitHub Releases page:  
    ➡️ https://github.com/philippkrumm/BioMedStatX/releases
 2. Download the latest release (e.g. a `.zip` file containing `BioMedStatX.exe`).
-3. Extract the archive to a folder of your choice.
+3. Extract the archive to a folder of your choice. **Please note that this is a one-folder packaging and the BioMedStatX.exe stays always together with the _internal file in one folder**
 4. Start the application by double-clicking `BioMedStatX.exe`.
 
 That’s it – no Python installation or command line usage is required for running the app.
