@@ -1,0 +1,11 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "shell",
+			"label": "Run all tests",
+			"command": "pytest --maxfail=5 --disable-warnings -v",
+			"group": "test"
+		}
+	]
+}
