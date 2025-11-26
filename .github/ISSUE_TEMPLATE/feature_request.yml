@@ -1,0 +1,44 @@
+name: Feature request
+about: Suggest an idea for this project
+title: "[FEATURE] short description"
+labels: enhancement
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for proposing a feature! Please provide as much context as possible.
+  - type: input
+    id: use-case
+    attributes:
+      label: Use case
+      description: Who will benefit and why is this feature important?
+      placeholder: Describe the scenario and why it matters.
+  - type: input
+    id: proposed-solution
+    attributes:
+      label: Proposed solution
+      description: Describe your idea and how it might work. Include examples or pseudo-code if helpful.
+      placeholder: API suggestion or UX description
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Are there other ways to address this need?
+      placeholder: Integrate with SciPy, add wrapper, ...
+  - type: input
+    id: related
+    attributes:
+      label: Related issues or references
+      description: Link related issues, papers, or external references.
+      placeholder: Link to related issue or DOI
+  - type: attachments
+    id: attachments
+    attributes:
+      label: Attachments (optional)
+      description: Mockups, example files, or other assets.
+  - type: markdown
+    attributes:
+      value: |
+        After filing a feature request, maintainers may ask follow-up questions and request a design discussion or small prototype before development.

@@ -1,0 +1,56 @@
+name: Bug report
+about: Create a report to help us investigate and fix a bug
+title: "[BUG] short description"
+labels: bug
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please fill in as much detail as possible.
+  - type: input
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Describe the steps to reproduce the behavior. Provide minimal reproducible example if possible (code snippet, file, or dataset).
+      placeholder: 1. Go to ... 2. Click ... 3. Observe ...
+  - type: input
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen?
+      placeholder: The output should be ...
+  - type: input
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What actually happened (screenshots, error messages, stack traces)?
+      placeholder: Error: ...
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Please include OS, Python version, BioMedStatX version/releases tag (or how you installed), and any other relevant environment details.
+      placeholder: OS: macOS 13.3, Python: 3.10, BioMedStatX: v1.2.3 (installed from release)
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / tracebacks
+      description: Paste relevant logs or error messages here (if any).
+      placeholder: Traceback (most recent call last): ...
+  - type: attachments
+    id: attachments
+    attributes:
+      label: Attachments (optional)
+      description: Upload screenshots, data files, or small example projects to help reproduce the issue.
+  - type: checkbox
+    id: reproducible
+    attributes:
+      label: Reproducible example included
+      options:
+        - label: I've included a reproducible example
+  - type: markdown
+    attributes:
+      value: |
+        Optionally include anything else you think could help (related issues, recent changes, etc).
