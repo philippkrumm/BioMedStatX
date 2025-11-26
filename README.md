@@ -1,90 +1,219 @@
 # BioMedStatX
 
-- **App‑Download:** [Releases-Seite](https://github.com/philippkrumm/BioMedStatX/releases/latest) 
+A comprehensive, GUI-based tool for statistical analysis of experimental data.  
+Users can import Excel or CSV files, define groups, and let BioMedStatX handle the rest – from outlier detection and assumption checks, to guided data transformations, selection of appropriate tests (parametric / non-parametric), post-hoc analyses, and generation of fully documented reports.
 
-## Table of contents
+> **Repository:** [philippkrumm/BioMedStatX](https://github.com/philippkrumm/BioMedStatX)  
+> **License:** [MIT License](./LICENSE)
 
-- [User Guide](#user-guide)
-- [Features](#features)
-- [Installation](#installation)
-- [Open-Source Development Workflow](#open-source-development-workflow)
-- [Contributing](#contributing)
-- [Reporting Issues](#reporting-issues)
-- [Citation & Metadata](#citation--metadata)
-- [Licensing](#licensing)
-- [Links](#links)
-
-## User Guide
-- Read the full tutorial (with embedded screenshots) here: [docs/HowTo.md](docs/HowTo.md)
-- Read the advanced ANOVAs tutorial here: [ADVANCED_ANOVA_GUIDE.md](ADVANCED_ANOVA_GUIDE.md)
+---
 
 ## Features
-BioMedStatX is an open-source Python application for biomedical and clinical data analysis. It offers a graphical user interface (GUI) for loading experimental data and performing statistical tests. Designed for researchers and students in the life sciences, BioMedStatX streamlines statistical workflows without requiring coding skills.
 
-- **Data Import**  
-  Read CSV and Excel files with multiple sheets and columns.
+BioMedStatX is designed for experimental and biomedical research workflows:
 
-- **Assumption Checks**  
-  Automatic Shapiro–Wilk normality tests and Levene’s variance homogeneity tests, with optional log/Box–Cox transformations on failure.
+- **Intuitive GUI**  
+  Load data, select groups and variables, and trigger analyses without writing code.
 
-- **Parametric & Non-parametric Tests**  
-  Student’s t-tests, Welch’s t-tests, ANOVA (one-way, two-way, repeated measures, mixed), Mann–Whitney U, Kruskal–Wallis, and more.
+- **Automated statistical pipeline**  
+  - Outlier detection  
+  - Assumption checks (normality, variance homogeneity, etc.)  
+  - Guided data transformations where appropriate  
+  - Automatic selection of parametric vs. non-parametric tests  
+  - Guided post-hoc analyses when needed
 
-- **Post-Hoc Analyses**  
-  Tukey HSD, Dunnett, Dunn, and dependent-sample analyses via a unified factory interface.
+- **Rich output**  
+  - Publication-ready plots  
+  - Detailed Excel report with all intermediate steps, assumptions, and test decisions  
+  - Clear documentation of which test was selected and why
 
-- **Visualization**  
-  - Static plots (boxplots, bar graphs, swarm plots) with Seaborn/Matplotlib.  
-  - Interactive decision-tree flowchart highlighting the actual analysis path (via NetworkX & Matplotlib).
+- **Excel/CSV support**  
+  - Direct import of `.xlsx` and `.csv` files  
+  - Provided template: [`StatisticalAnalyzer_Excel_Template.xlsx`](./StatisticalAnalyzer_Excel_Template.xlsx)
 
-- **GUI Front-End**  
-  PyQt5 dialogs for streamlined data/variable selection, plot configuration, and advanced design setups.
+- **Transparent methodology**  
+  - Advanced explanations for ANOVA workflows: see [Advanced ANOVA Guide](./docs/ADVANCED_ANOVA_GUIDE.md)
 
-- **Excel Export**  
-  Automated creation of detailed result workbooks (via XlsxWriter).
+---
 
 ## Installation
 
-Simply download the pre-built binary for your operating system:
-**This is a one-folder build. Therefore, the BioMedStatX folder must remain in the same folder as the _internal folder.**
+BioMedStatX is implemented in Python.
 
-- **Windows**: Download and unpack the .zip file, start the .exe from the unpacked folder. 
-- **macOS**: Download the `.app` bundle (packed in a `.zip`).
+> **Note:** Adjust this section if you provide a packaged release or installer.
 
-_All features are identical across both platforms._  
+### 1. Clone the repository
 
-## Open-Source Development Workflow
+```bash
+git clone https://github.com/philippkrumm/BioMedStatX.git
+cd BioMedStatX
+```
 
-We welcome issues and contributions. To get involved:
+### 2. (Recommended) Create and activate a virtual environment
 
-- Reporting issues: When reporting problems please use the provided issue templates (Bug report and Feature request) — GitHub will automatically suggest them when creating a new issue. Use the Bug report template for reproducible problems and include environment details and steps to reproduce.
-- Fork-and-pull-request workflow: Fork the repository, create a topic branch (see CONTRIBUTING.md for naming conventions), implement your changes, run tests and formatters locally, then open a Pull Request against the main repository. Link to the relevant issue if one exists.
-- Contribution guide: See [CONTRIBUTING.md](CONTRIBUTING.md) for full contribution instructions including PR structure, code style, and testing expectations.
+```bash
+python -m venv .venv
+source .venv/bin/activate  # on Windows: .venv\Scripts\activate
+```
 
-## Contributing
+### 3. Install dependencies
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for how to contribute, coding style, testing expectations and branch naming conventions.
+If you provide a `requirements.txt` or similar, list it here, for example:
 
-## Reporting Issues
+```bash
+pip install -r requirements.txt
+```
 
-To report a bug or request a feature, click "New issue" on GitHub — the platform will prompt you to use one of the provided templates:
+---
 
-- Bug report — include steps to reproduce, expected vs actual behavior, environment (OS, Python version, BioMedStatX version) and optional attachments.
-- Feature request — describe the use case, proposed solution and related references.
+## Quick Start
 
-## Citation & Metadata
+BioMedStatX provides a GUI-based workflow for statistical analysis.  
+A detailed, step-by-step **User Guide with screenshots and numbered button references** is available here:
 
-- **Repository**: https://github.com/philippkrumm/BioMedStatX
-- **Author**: Philipp Krumm
-- **Contact**: pkrumm@ukaachen.de
-- **Keywords**: biomedical statistics, statistical GUI, Python data analysis, ANOVA, t-tests, post-hoc, non-parametric tests
-- **Citation**: Krumm, Philipp and Böttcher, Nicole and Ottermanns, Richard and Pufe, Thomas and Fragoulis, Athanassios, BioMedStatX – Statistical Workflows for Reliable Biomedical Data Analysis...
+➡️ [How to use BioMedStatX (User Guide with screenshots)](./docs/HowTo.md)
 
-## Licensing
+### Basic workflow (short version)
 
-BioMedStatX is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+1. **Start BioMedStatX**  
+   Launch the main application (e.g., via your Python entry point or executable — see the User Guide for details).
 
-## Links
+2. **Load your dataset**  
+   - Import an Excel or CSV file.  
+   - Optionally use the provided template: [`StatisticalAnalyzer_Excel_Template.xlsx`](./StatisticalAnalyzer_Excel_Template.xlsx).
 
-- Contribution guidelines: [CONTRIBUTING.md](CONTRIBUTING.md)
-- Issue templates: use the GitHub "New issue" dialog to access the Bug report and Feature request templates (stored under `.github/ISSUE_TEMPLATE/`).
+3. **Define groups and variables**  
+   - Select the sheet (for Excel files).  
+   - Choose grouping variables and measurement columns.  
+   - Specify which groups you want to compare.
+
+4. **Configure analysis options (optional)**  
+   - Choose plots and statistics to generate.  
+   - Adjust settings as needed (see the [User Guide](./docs/HowTo.md) for screenshots).
+
+5. **Run the analysis**  
+   - Start the analysis and let BioMedStatX automatically:
+     - detect outliers,
+     - check assumptions,
+     - select parametric / non-parametric tests,
+     - run post-hoc tests when needed.
+
+6. **Inspect the output**  
+   - Review plots and statistical results.  
+   - Open the generated Excel report for a fully documented analysis pipeline.
+
+For a complete, screenshot-based walkthrough, including which button to click at each step, see the [User Guide](./docs/HowTo.md).
+
+---
+
+## Documentation & Guides
+
+- **User Guide (GUI, step-by-step with screenshots):**  
+  ➡️ [docs/HowTo.md](./docs/HowTo.md)
+
+- **Advanced ANOVA methodology and interpretation:**  
+  ➡️ [docs/ADVANCED_ANOVA_GUIDE.md](./docs/ADVANCED_ANOVA_GUIDE.md)
+
+Additional documentation can be added to the [`docs/`](./docs) folder.
+
+---
+
+## Repository Structure
+
+A brief overview of the repository layout:
+
+```text
+BioMedStatX/
+├─ README.md                      # Landing page (this file)
+├─ LICENSE                        # MIT License
+├─ CONTRIBUTING.md                # Detailed contributing guidelines
+├─ CODE_OF_CONDUCT.md             # Contributor Covenant Code of Conduct
+├─ StatisticalAnalyzer_Excel_Template.xlsx
+├─ Source Code/                   # Main application source code
+├─ docs/                          # User-facing documentation
+│  ├─ HowTo.md                    # Screenshot-based user guide (GUI)
+│  └─ ADVANCED_ANOVA_GUIDE.md     # Advanced ANOVA explanations
+└─ .github/
+   └─ ISSUE_TEMPLATE/
+      ├─ bug_report.yml           # Bug report issue template
+      └─ feature_request.yml      # Feature request issue template
+```
+
+> Note: The exact contents of `Source Code/` may evolve; see the folder for details.
+
+---
+
+## Contributing & Issue Reporting
+
+BioMedStatX is developed as an open-source academic project.  
+We welcome bug reports, feature requests, and code contributions.
+
+- Contribution workflow and coding guidelines: [CONTRIBUTING.md](./CONTRIBUTING.md)  
+- Community rules: [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)  
+- License: [LICENSE](./LICENSE)
+
+### Reporting bugs and requesting features
+
+Please use the structured issue templates on GitHub:
+
+➡️ [Create a new issue](https://github.com/philippkrumm/BioMedStatX/issues/new/choose)
+
+This will guide you through our predefined templates for:
+
+- Bug reports
+- Feature requests
+- (Any additional templates you may add in the future)
+
+Using the templates helps us reproduce issues more easily and keep the project maintainable.
+
+### Contributing code
+
+If you plan to contribute code:
+
+1. Fork the repository and create a feature branch.
+2. Implement your changes and add tests where applicable.
+3. Ensure code style and formatting follow the guidelines.
+4. Open a Pull Request (PR) with a clear description of your changes.
+
+For full details, including branch naming conventions, commit message guidelines, testing expectations, and how to add new statistical functions, please read:
+
+➡️ [CONTRIBUTING.md](./CONTRIBUTING.md)
+
+---
+
+## License
+
+BioMedStatX is released under the **MIT License**.
+
+➡️ See the full license text in [LICENSE](./LICENSE).
+
+---
+
+## Citation
+
+If you use BioMedStatX in a scientific publication, please cite:
+
+> **TODO:** Add formal citation here (authors, title, journal, year, DOI).  
+> Example:  
+> _Krumm P, et al. BioMedStatX: A comprehensive tool for statistical analysis of experimental data. Journal/Platform, Year, DOI._
+
+You can update this section once the paper is published and you have the final reference and DOI.
+
+---
+
+## Paper
+
+> **TODO:** Add a direct link to the published paper here once available.  
+> Example:  
+> [Publication describing BioMedStatX (Journal, Year, DOI)](https://doi.org/xxxxxx)
+
+---
+
+## Contact
+
+For questions regarding the software, collaboration requests, or feedback, you can reach the maintainer at:
+
+- **Email:** pkrumm@ukaachen.de  
+- **GitHub:** [@philippkrumm](https://github.com/philippkrumm)
+
+Please use [GitHub Issues](https://github.com/philippkrumm/BioMedStatX/issues/new/choose) for bug reports and feature requests so that the discussion remains transparent and searchable.
