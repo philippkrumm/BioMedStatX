@@ -4,6 +4,7 @@ A comprehensive, GUI-based tool for statistical analysis of experimental data.
 Users can import Excel or CSV files, define groups, and let BioMedStatX handle the rest – from outlier detection and assumption checks, to guided data transformations, selection of appropriate tests (parametric / non-parametric), post-hoc analyses, and generation of fully documented reports.
 
 > **Repository:** [philippkrumm/BioMedStatX](https://github.com/philippkrumm/BioMedStatX)  
+> **Releases (Download ready-to-use app):** https://github.com/philippkrumm/BioMedStatX/releases  
 > **License:** [MIT License](./LICENSE)
 
 ---
@@ -38,30 +39,30 @@ BioMedStatX is designed for experimental and biomedical research workflows:
 
 ## Installation
 
-BioMedStatX is implemented in Python.
+BioMedStatX is distributed as a standalone application for end users and as source code for developers.
 
-> **Note:** Adjust this section if you provide a packaged release or installer.
+### Option 1: Recommended for most users – Download from Releases
 
-### 1. Clone the repository
+1. Go to the GitHub Releases page:  
+   ➡️ https://github.com/philippkrumm/BioMedStatX/releases
+2. Download the latest release (e.g. a `.zip` file containing `BioMedStatX.exe`).
+3. Extract the archive to a folder of your choice.
+4. Start the application by double-clicking `BioMedStatX.exe`.
 
-```bash
-git clone https://github.com/philippkrumm/BioMedStatX.git
-cd BioMedStatX
-```
+That’s it – no Python installation or command line usage is required for running the app.
 
-### 2. (Recommended) Create and activate a virtual environment
+For a step-by-step walkthrough of the GUI (with screenshots), see:  
+➡️ [How to use BioMedStatX (User Guide with screenshots)](./docs/HowTo.md)
 
-```bash
-python -m venv .venv
-source .venv/bin/activate  # on Windows: .venv\Scripts\activate
-```
+### Option 2: For developers and contributors – Run from source
 
-### 3. Install dependencies
+If you want to inspect or modify the source code, or contribute to the project:
 
-If you provide a `requirements.txt` or similar, list it here, for example:
+1. **Clone the repository**
 
-```bash
-pip install -r requirements.txt
+   ```bash
+   git clone https://github.com/philippkrumm/BioMedStatX.git
+   cd BioMedStatX
 ```
 
 ---
@@ -138,8 +139,6 @@ BioMedStatX/
       ├─ bug_report.yml           # Bug report issue template
       └─ feature_request.yml      # Feature request issue template
 ```
-
-> Note: The exact contents of `Source Code/` may evolve; see the folder for details.
 
 ---
 
