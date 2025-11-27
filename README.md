@@ -60,9 +60,9 @@ If you want to inspect or modify the source code, or contribute to the project:
 
 1. **Clone the repository**
 
-   ```bash
-   git clone https://github.com/philippkrumm/BioMedStatX.git
-   cd BioMedStatX
+```bash
+git clone https://github.com/philippkrumm/BioMedStatX.git
+cd BioMedStatX
 ```
 
 ---
@@ -216,3 +216,12 @@ For questions regarding the software, collaboration requests, or feedback, you c
 - **GitHub:** [@philippkrumm](https://github.com/philippkrumm)
 
 Please use [GitHub Issues](https://github.com/philippkrumm/BioMedStatX/issues/new/choose) for bug reports and feature requests so that the discussion remains transparent and searchable.
+
+## ToDos
+
+In this section, we provide some ideas that we think should be implemented, but the maintainers, have not had the time to. If you have the resources to fulfill any of these ToDos, we would love your contribution.
+
+➡️ [Contributing & Issue Reporting](#contributing--issue-reporting)
+
+- Add support for Linux (non-Excel)
+
