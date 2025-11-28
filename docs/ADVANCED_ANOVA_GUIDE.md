@@ -1,4 +1,4 @@
-# ---
+---
 title: "Advanced ANOVA Configuration Guide"
 author: "BioMedStatX"
 lang: en

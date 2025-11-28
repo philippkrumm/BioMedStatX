@@ -1,4 +1,3 @@
-
 ---
 title: "BioMedStatX User Guide"
 author: "BioMedStatX"
