@@ -1,7 +1,7 @@
 # BioMedStatX
 
 A comprehensive, GUI-based tool for statistical analysis of experimental data.  
-Users can import Excel or CSV files, define groups, and let BioMedStatX handle the rest – from outlier detection and assumption checks, to guided data transformations, selection of appropriate tests (parametric / non-parametric), post-hoc analyses, and generation of fully documented reports.
+Users can import Excel or CSV files, define groups, and let BioMedStatX handle the rest - from outlier detection and assumption checks, to guided data transformations, selection of appropriate tests (parametric / non-parametric), post-hoc analyses, and generation of fully documented reports.
 
 > **Repository:** [philippkrumm/BioMedStatX](https://github.com/philippkrumm/BioMedStatX)  
 > **Releases (Download ready-to-use app):** https://github.com/philippkrumm/BioMedStatX/releases  
@@ -41,18 +41,18 @@ BioMedStatX is designed for experimental and biomedical research workflows:
 
 BioMedStatX is distributed as a standalone application for end users and as source code for developers.
 
-### Option 1: Recommended for most users – Download from Releases
+### Option 1: Recommended for most users - Download from Releases
 
 1. Go to the GitHub Releases page:  
-   ➡️ https://github.com/philippkrumm/BioMedStatX/releases
+   -> https://github.com/philippkrumm/BioMedStatX/releases
 2. Download the latest release (e.g. a `.zip` file containing `BioMedStatX.exe`).
 3. Extract the archive to a folder of your choice. **Please note that this is a one-folder packaging and the BioMedStatX.exe stays always together with the _internal file in one folder**
 4. Start the application by double-clicking `BioMedStatX.exe`.
 
-That’s it – no Python installation or command line usage is required for running the app.
+That's it - no Python installation or command line usage is required for running the app.
 
 For a step-by-step walkthrough of the GUI (with screenshots), see:  
-➡️ [How to use BioMedStatX (User Guide with screenshots)](./docs/HowTo.md)
+-> [How to use BioMedStatX (User Guide with screenshots)](./docs/HowTo.md)
 
 ### Option 2: For developers and contributors – Run from source
 
@@ -72,12 +72,12 @@ cd BioMedStatX
 BioMedStatX provides a GUI-based workflow for statistical analysis.  
 A detailed, step-by-step **User Guide with screenshots and numbered button references** is available here:
 
-➡️ [How to use BioMedStatX (User Guide with screenshots)](./docs/HowTo.md)
+-> [How to use BioMedStatX (User Guide with screenshots)](./docs/HowTo.md)
 
 ### Basic workflow (short version)
 
 1. **Start BioMedStatX**  
-   Launch the main application (e.g., via your Python entry point or executable — see the User Guide for details).
+   Launch the main application (e.g., via your Python entry point or executable - see the User Guide for details).
 
 2. **Load your dataset**  
    - Import an Excel or CSV file.  
@@ -109,11 +109,11 @@ For a complete, screenshot-based walkthrough, including which button to click at
 
 ## Documentation & Guides
 
-- **User Guide (GUI, step-by-step with screenshots):**  
-  ➡️ [docs/HowTo.md](./docs/HowTo.md)
+-- **User Guide (GUI, step-by-step with screenshots):**  
+   -> [docs/HowTo.md](./docs/HowTo.md)
 
-- **Advanced ANOVA methodology and interpretation:**  
-  ➡️ [docs/ADVANCED_ANOVA_GUIDE.md](./docs/ADVANCED_ANOVA_GUIDE.md)
+-- **Advanced ANOVA methodology and interpretation:**  
+   -> [docs/ADVANCED_ANOVA_GUIDE.md](./docs/ADVANCED_ANOVA_GUIDE.md)
 
 Additional documentation can be added to the [`docs/`](./docs) folder.
 
@@ -155,7 +155,7 @@ We welcome bug reports, feature requests, and code contributions.
 
 Please use the structured issue templates on GitHub:
 
-➡️ [Create a new issue](https://github.com/philippkrumm/BioMedStatX/issues/new/choose)
+-> [Create a new issue](https://github.com/philippkrumm/BioMedStatX/issues/new/choose)
 
 This will guide you through our predefined templates for:
 
@@ -176,7 +176,7 @@ If you plan to contribute code:
 
 For full details, including branch naming conventions, commit message guidelines, testing expectations, and how to add new statistical functions, please read:
 
-➡️ [CONTRIBUTING.md](./CONTRIBUTING.md)
+-> [CONTRIBUTING.md](./CONTRIBUTING.md)
 
 ---
 
@@ -184,7 +184,7 @@ For full details, including branch naming conventions, commit message guidelines
 
 BioMedStatX is released under the **MIT License**.
 
-➡️ See the full license text in [LICENSE](./LICENSE).
+-> See the full license text in [LICENSE](./LICENSE).
 
 ---
 

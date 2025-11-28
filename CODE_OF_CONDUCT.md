@@ -1,3 +1,5 @@
+# Code of Conduct
+
 Contributor Covenant Code of Conduct
 Version 2.1, December 2017
 https://www.contributor-covenant.org/version/2/1/code_of_conduct.html

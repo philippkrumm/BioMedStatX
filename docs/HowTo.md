@@ -1,8 +1,16 @@
-
+---
+title: "BioMedStatX User Guide"
+author: "BioMedStatX"
+lang: en
+geometry: "margin=1in"
+# Note: `mainfont` requires using `--pdf-engine=xelatex` or `lualatex` with pandoc
+mainfont: "DejaVu Serif"
+fontsize: 11pt
+---
 
 # BioMedStatX User Guide
 
-This guide explains how to use the BioMedStatX application: from launching the program, importing data, running statistical analyses, customizing plots, and exporting results. All information is focused on the user interface, available statistics, and practical workflow—no programming or code knowledge required.
+This guide explains how to use the BioMedStatX application: from launching the program, importing data, running statistical analyses, customizing plots, and exporting results. All information is focused on the user interface, available statistics, and practical workflow - no programming or code knowledge required.
 
 ---
 
@@ -12,6 +20,12 @@ This guide explains how to use the BioMedStatX application: from launching the p
 - Locate the `BioMedStatX.exe` file in your installation directory.
 - Double-click to start. A Qt-based GUI window will open with the menus: **File**, **Analysis**, and **Help**.
 ---
+
+> Note for Linux/macOS users: A convenient launcher script is available at the repository root: `start.sh` (UNIX) and `start.bat` (Windows). On Linux/macOS the script will prefer a native binary if present and otherwise will run the Python source `Source_Code/statistical_analyzer.py`.
+
+> Example: from the repo root run `./start.sh` (make executable with `chmod +x start.sh` if necessary).
+
+-> Example Excel template: the sample spreadsheet is included in the repository docs as `docs/StatisticalAnalyzer_Excel_Template.xlsx` (or run `./scripts/move_template.sh` / `scripts\move_template.bat` to move it into `docs/` if it's still in the repo root).
 
 
 
@@ -84,7 +98,7 @@ BioMedStatX automatically selects the appropriate statistical test based on your
 
 - Two-group comparisons (independent or paired)
 - Multi-group comparisons (one-way, two-way, repeated measures, mixed designs)
-- Parametric and non-parametric alternatives (e.g., t-tests, ANOVA, Mann–Whitney, Kruskal–Wallis)
+- Parametric and non-parametric alternatives (e.g., t-tests, ANOVA, Mann-Whitney, Kruskal-Wallis)
 - Advanced ANOVAS (TwoWay, Mixed, Repeated-Measures)
 
 You do not need to choose the test yourself—the software guides you and explains the result in plain language.
@@ -99,7 +113,7 @@ You do not need to choose the test yourself—the software guides you and explai
 
 ## 6. Assumption Checks & Data Transformations
 
-Before any statistical test, the app automatically checks for normal distribution and equal variances. If your data does not meet these assumptions, you will be prompted to apply a transformation (log, Box–Cox, or arcsine–sqrt) to improve suitability for analysis. You can skip or accept the suggested transformation.
+Before any statistical test, the app automatically checks for normal distribution and equal variances. If your data does not meet these assumptions, you will be prompted to apply a transformation (log, Box-Cox, or arcsine-sqrt) to improve suitability for analysis. You can skip or accept the suggested transformation.
 
 ![Export Results to Excel](HowToScreenshots/Bild8.png)
 
@@ -152,9 +166,9 @@ Each sheet is clearly named for easy navigation.
 
 ## 10. Outlier Detection (Optional)
 
-Under **Analysis → Detect Outliers**, you can identify and flag outliers in your data using:
+Under **Analysis -> Detect Outliers**, you can identify and flag outliers in your data using:
 - Modified Z-Score Test
-- Grubbs’ Test
+- Grubbs' Test
 - Single-pass or iterative mode
 
 Results are exported to Excel for further review.
