@@ -65,6 +65,9 @@ git clone https://github.com/philippkrumm/BioMedStatX.git
 cd BioMedStatX
 ```
 
+For information about the helper scripts included in this repository (how to run `start.sh`, `start.bat`, `tools/generate_pdfs.bat`, and more), see: [docs/SCRIPTS.md](./docs/SCRIPTS.md)
+
+
 ---
 
 ## Quick Start
