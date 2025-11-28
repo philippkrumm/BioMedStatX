@@ -6,7 +6,7 @@
 
 This guide explains how to properly configure different types of ANOVA tests in BioMedStatX. Choosing the correct ANOVA type and variable assignments is crucial for obtaining valid statistical results.
 
-## 📊 ANOVA Types Available
+## ANOVA Types Available
 
 ### 1. Mixed ANOVA (Between + Within)
 ### 2. Repeated Measures ANOVA (Within only)  
@@ -14,7 +14,7 @@ This guide explains how to properly configure different types of ANOVA tests in 
 
 ---
 
-## 🔬 Mixed ANOVA (Between + Within)
+## Mixed ANOVA (Between + Within)
 
 **Use when:** You have both repeated measurements over time/conditions AND different groups
 
@@ -45,7 +45,7 @@ S003      | Placebo| Post     | 123
 
 ---
 
-## 🔄 Repeated Measures ANOVA (Within only)
+## Repeated Measures ANOVA (Within only)
 
 **Use when:** You have repeated measurements but ALL participants are in the same group
 
@@ -76,7 +76,7 @@ S002      | Week3     | 91
 
 ---
 
-## 📈 Two-Way ANOVA (Between only)
+## Two-Way ANOVA (Between only)
 
 **Use when:** You have two independent factors but NO repeated measurements
 
@@ -107,21 +107,21 @@ S006      | Placebo   | Female | 128
 
 ---
 
-## 🎯 Decision Tree: Which ANOVA to Choose?
+## Decision Tree: Which ANOVA to Choose?
 
 ```
 Do you have repeated measurements? 
-├── YES → Do you also have different groups?
-│   ├── YES → Mixed ANOVA (Between + Within)
-│   └── NO → Repeated Measures ANOVA (Within only)
-└── NO → Do you have two independent factors?
-    ├── YES → Two-Way ANOVA (Between only)
-    └── NO → One-Way ANOVA (not covered in advanced tests)
+|-- YES -> Do you also have different groups?
+|   |-- YES -> Mixed ANOVA (Between + Within)
+|   |-- NO -> Repeated Measures ANOVA (Within only)
+|-- NO -> Do you have two independent factors?
+   |-- YES -> Two-Way ANOVA (Between only)
+   |-- NO -> One-Way ANOVA (not covered in advanced tests)
 ```
 
 ---
 
-## ⚠️ Common Configuration Errors
+## Common Configuration Errors
 
 ### ❌ **Don't Do This:**
 
@@ -143,7 +143,7 @@ Do you have repeated measurements?
 
 ---
 
-## 📋 Variable Assignment Checklist
+## Variable Assignment Checklist
 
 ### Dependent Variable:
 - ✅ Your outcome measure (continuous data)
@@ -166,7 +166,7 @@ Do you have repeated measurements?
 
 ---
 
-## 🔍 Assumptions and Requirements
+## Assumptions and Requirements
 
 ### All ANOVA Types:
 - **Normality:** Residuals should be normally distributed
@@ -185,7 +185,7 @@ Do you have repeated measurements?
 
 ---
 
-## 📊 Example Outputs to Expect
+## Example Outputs to Expect
 
 ### Main Effects:
 - **Significant main effect of Time:** Change occurs over time/conditions
@@ -203,7 +203,7 @@ Do you have repeated measurements?
 
 ---
 
-## 🎯 Best Practices
+## Best Practices
 
 1. **Plan your analysis before data collection**
 2. **Check your data structure matches your ANOVA type**

@@ -1,3 +1,49 @@
+# BioMedStatX User Guide
+
+This guide explains how to use the BioMedStatX application: from launching the program, importing data, running statistical analyses, customizing plots, and exporting results. All information is focused on the user interface, available statistics, and practical workflow - no programming or code knowledge required.
+
+---
+
+## 1. Launching the Application
+
+- Locate the `BioMedStatX.exe` file in your installation directory.
+- Double-click to start. A Qt-based GUI window will open with the menus: **File**, **Analysis**, and **Help**.
+---
+
+## 2. Importing Data
+
+1. In the **File** menu, select **Browse** to choose your data file (Excel `.xlsx`/`.xls` or CSV `.csv`).
+2. For Excel files, select the worksheet you want to analyze. For CSV, this step is skipped.
+3. Click **Load** to import your data into the application.
+
+![Step 1: Import Data - Browse Button](HowToScreenshots/Bild1.png)
+
+**Step 1:** Click the "Browse..." button (highlighted in red, number 1) in the top right to select your Excel or CSV data file. This is the first step in the workflow and starts the data import process.
+
+---
+
+## 3. Selecting Groups & Measurement Columns
+
+![Step 2: Select Worksheet, Group, and Value Columns](HowToScreenshots/Bild2.png)
+
+**Step 2:** First, select the worksheet, group column, and value column in the Data Configuration section (number 2 in the picture). Then, click the "Select groups for plot" button (number 3 in the picture) to choose which groups to include in your plot.
+
+![Step 3: Select Groups for Plot](HowToScreenshots/Bild3.png)
+
+**Step 3:** In the group selection dialog, select the groups you want to display in the plot by checking the boxes (number 4 in the picture). Then click "OK" to confirm your selection.
+
+![Statistical Analysis Selection](HowToScreenshots/Bild4.png)
+
+**Step 4:** In the configure plot window, you can set the file name (number 5 in the picture), change the group order, select if the sample are dependent and select if you want to create a plot (number 6 in the picture). If you do not create a plot, the analysis results in the comprehensive excel sheet only.
+
+**Step 5:** In the plot settings dialog, adjust titles, axis labels, colors, error bars, and more. Preview changes and save or export the customized plot. All changes are shown in a live preview before saving. 
+
+![Post-Hoc Analysis Results](HowToScreenshots/Bild6.png)
+
+**Step 6:** It is possible to create different plots from the same dataset if needed (number 6 in the picture). 
+
+---
+
 
 
 # BioMedStatX User Guide
