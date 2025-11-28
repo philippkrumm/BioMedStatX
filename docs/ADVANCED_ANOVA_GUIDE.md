@@ -1,6 +1,15 @@
+# ---
+title: "Advanced ANOVA Configuration Guide"
+author: "BioMedStatX"
+lang: en
+geometry: "margin=1in"
+mainfont: "DejaVu Serif"
+fontsize: 11pt
+---
+
 # Advanced ANOVA Configuration Guide
 
--> Example Excel template: the sample spreadsheet is included in the repository docs as `docs/StatisticalAnalyzer_Excel_Template.xlsx`. If you don't see it yet, run `./scripts/move_template.sh` (or `scripts\move_template.bat` on Windows) from the repo root to move the file into `docs/`.
+-> Example Excel template: the sample spreadsheet is included in the repository docs as `docs/StatisticalAnalyzer_Excel_Template.xlsx`. If you don't see it yet, run `./scripts/move_template.sh` (or `scripts\\move_template.bat` on Windows) from the repo root to move the file into `docs`.
 
 ## Overview
 
@@ -20,11 +29,11 @@ This guide explains how to properly configure different types of ANOVA tests in 
 
 ### Configuration:
 ```
-✅ Select test: Mixed ANOVA (Between + Within)
-✅ Dependent variable: Value (your outcome measure)
-✅ Subject/ID variable: SubjectID (unique identifier for each participant)
-✅ Within factors: Timepoint, Condition, Session (repeated measurements)
-✅ Between factors: Group, Treatment, Gender (independent groups)
+- Select test: Mixed ANOVA (Between + Within)
+- Dependent variable: Value (your outcome measure)
+- Subject/ID variable: SubjectID (unique identifier for each participant)
+- Within factors: Timepoint, Condition, Session (repeated measurements)
+- Between factors: Group, Treatment, Gender (independent groups)
 ```
 
 ### Example Scenarios:
@@ -51,11 +60,11 @@ S003      | Placebo| Post     | 123
 
 ### Configuration:
 ```
-✅ Select test: Repeated Measures ANOVA (Within only)
-✅ Dependent variable: Value (your outcome measure)
-✅ Subject/ID variable: SubjectID (unique identifier)
-✅ Within factors: Timepoint, Condition, Trial (repeated factor)
-✅ Between factors: [LEAVE EMPTY!]
+- Select test: Repeated Measures ANOVA (Within only)
+- Dependent variable: Value (your outcome measure)
+- Subject/ID variable: SubjectID (unique identifier)
+- Within factors: Timepoint, Condition, Trial (repeated factor)
+- Between factors: [LEAVE EMPTY!]
 ```
 
 ### Example Scenarios:
@@ -82,11 +91,11 @@ S002      | Week3     | 91
 
 ### Configuration:
 ```
-✅ Select test: Two-Way ANOVA (Between only)
-✅ Dependent variable: Value (your outcome measure)
-✅ Subject/ID variable: [Can be empty or SubjectID]
-✅ Within factors: [LEAVE EMPTY!]
-✅ Between factors: Factor1, Factor2 (two independent factors)
+- Select test: Two-Way ANOVA (Between only)
+- Dependent variable: Value (your outcome measure)
+- Subject/ID variable: [Can be empty or SubjectID]
+- Within factors: [LEAVE EMPTY!]
+- Between factors: Factor1, Factor2 (two independent factors)
 ```
 
 ### Example Scenarios:
@@ -109,21 +118,21 @@ S006      | Placebo   | Female | 128
 
 ## Decision Tree: Which ANOVA to Choose?
 
-```
-Do you have repeated measurements? 
-|-- YES -> Do you also have different groups?
-|   |-- YES -> Mixed ANOVA (Between + Within)
-|   |-- NO -> Repeated Measures ANOVA (Within only)
-|-- NO -> Do you have two independent factors?
-   |-- YES -> Two-Way ANOVA (Between only)
-   |-- NO -> One-Way ANOVA (not covered in advanced tests)
-```
+Do you have repeated measurements?
+
+- YES: Do you also have different groups?
+   - YES: Mixed ANOVA (Between + Within)
+   - NO: Repeated Measures ANOVA (Within only)
+
+- NO: Do you have two independent factors?
+   - YES: Two-Way ANOVA (Between only)
+   - NO: One-Way ANOVA (not covered in advanced tests)
 
 ---
 
 ## Common Configuration Errors
 
-### ❌ **Don't Do This:**
+### Don't Do This:
 
 1. **Mixed ANOVA without Subject/ID:**
    - Will treat repeated measurements as independent
@@ -138,31 +147,31 @@ Do you have repeated measurements?
    - Use Mixed or RM ANOVA instead
 
 4. **Wrong factor assignment:**
-   - Don't put grouping variables in "Within factors"
-   - Don't put time/condition variables in "Between factors"
+   - Do not put grouping variables in "Within factors"
+   - Do not put time/condition variables in "Between factors"
 
 ---
 
 ## Variable Assignment Checklist
 
 ### Dependent Variable:
-- ✅ Your outcome measure (continuous data)
-- ✅ Examples: score, time, concentration, rating
+- Your outcome measure (continuous data)
+- Examples: score, time, concentration, rating
 
 ### Subject/ID Variable:
-- ✅ Unique identifier for each participant
-- ✅ Required for any repeated measures design
-- ✅ Examples: SubjectID, ParticipantNumber, PatientID
+- Unique identifier for each participant
+- Required for any repeated measures design
+- Examples: SubjectID, ParticipantNumber, PatientID
 
 ### Within Factors (Repeated):
-- ✅ Variables measured multiple times on same subjects
-- ✅ Examples: Time, Session, Condition, Trial, Dose
-- ✅ Values: Pre/Post, Week1/Week2/Week3, Low/Medium/High
+- Variables measured multiple times on same subjects
+- Examples: Time, Session, Condition, Trial, Dose
+- Values: Pre/Post, Week1/Week2/Week3, Low/Medium/High
 
 ### Between Factors (Independent):
-- ✅ Variables that differ between subjects
-- ✅ Examples: Group, Treatment, Gender, Age_Category
-- ✅ Values: Control/Treatment, Male/Female, Young/Old
+- Variables that differ between subjects
+- Examples: Group, Treatment, Gender, Age_Category
+- Values: Control/Treatment, Male/Female, Young/Old
 
 ---
 
