@@ -1,5 +1,7 @@
 # Advanced ANOVA Configuration Guide
 
+-> Example Excel template: the sample spreadsheet is included in the repository docs as `docs/StatisticalAnalyzer_Excel_Template.xlsx`. If you don't see it yet, run `./scripts/move_template.sh` (or `scripts\move_template.bat` on Windows) from the repo root to move the file into `docs/`.
+
 ## Overview
 
 This guide explains how to properly configure different types of ANOVA tests in BioMedStatX. Choosing the correct ANOVA type and variable assignments is crucial for obtaining valid statistical results.

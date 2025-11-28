@@ -13,6 +13,12 @@ This guide explains how to use the BioMedStatX application: from launching the p
 - Double-click to start. A Qt-based GUI window will open with the menus: **File**, **Analysis**, and **Help**.
 ---
 
+> Note for Linux/macOS users: A convenient launcher script is available at the repository root: `start.sh` (UNIX) and `start.bat` (Windows). On Linux/macOS the script will prefer a native binary if present and otherwise will run the Python source `Source_Code/statistical_analyzer.py`.
+
+> Example: from the repo root run `./start.sh` (make executable with `chmod +x start.sh` if necessary).
+
+-> Example Excel template: the sample spreadsheet is included in the repository docs as `docs/StatisticalAnalyzer_Excel_Template.xlsx` (or run `./scripts/move_template.sh` / `scripts\move_template.bat` to move it into `docs/` if it's still in the repo root).
+
 
 
 ## 2. Importing Data
