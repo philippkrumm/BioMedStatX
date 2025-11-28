@@ -9,6 +9,8 @@ statsmodels
 scikit-posthocs
 pingouin
 PyQt5
+xlrd
+pillow
 
 # Optional / alternatives:
 # PySide2  # use instead of PyQt5 if preferred
