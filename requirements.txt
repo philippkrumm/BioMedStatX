@@ -11,6 +11,9 @@ pingouin
 PyQt5
 xlrd
 pillow
+networkx
+requests
+packaging
 
 # Optional / alternatives:
 # PySide2  # use instead of PyQt5 if preferred
