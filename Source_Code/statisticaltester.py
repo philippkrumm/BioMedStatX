@@ -6,7 +6,7 @@ from scipy import stats
 from lazy_imports import get_pingouin, get_scipy_stats, get_statsmodels_multitest
 from stats_functions import UIDialogManager, PostHocFactory, get_pingouin_module, get_output_path, PostHocAnalyzer, PostHocStatistics
 from resultsexporter import ResultsExporter
-from nonparametricanovas import GLMMTwoWayANOVA, GEERMANOVA, GLMMMixedANOVA, auto_anova_decision
+from nonparametricanovas import GLMMTwoWayANOVA, GEERMANOVA, GLMMMixedANOVA, auto_anova_decision, fallback_modern_models, posthoc_marginaleffects
 
 class StatisticalTester:
     @staticmethod
@@ -27,6 +27,8 @@ class StatisticalTester:
         """
         standard_keys = {
             "test": None,
+            "final_test_label": None,
+            "tested_against": None,
             "p_value": None,
             "statistic": None,
             "posthoc_test": None,
@@ -52,6 +54,11 @@ class StatisticalTester:
         
         # Copy all existing values first
         standardized = dict(results)
+
+        if standardized.get("test") and not standardized.get("final_test_label"):
+            standardized["final_test_label"] = standardized["test"]
+        if standardized.get("final_test_label") and not standardized.get("tested_against"):
+            standardized["tested_against"] = standardized["final_test_label"]
         
         # Fill in any missing top-level keys with default values (without overwriting existing ones)
         for key, default_value in standard_keys.items():
@@ -353,13 +360,16 @@ class StatisticalTester:
             test_recommendation = "parametric"
         elif post_norm and not post_var and model_type == "ttest" and len(valid_groups) == 2:
             test_recommendation = "parametric"  # Welch-Test
-            test_info["note"] = "Residuen normal, Varianzen ungleich – Welch-Test wird verwendet"
+            test_info["note"] = "Residuals are normal but variances are unequal - Welch's t-test will be used."
         elif post_norm and not post_var and model_type == "oneway" and len(valid_groups) > 2:
             test_recommendation = "parametric"  # Welch-ANOVA
-            test_info["note"] = "Residuen normal, Varianzen ungleich – Welch-ANOVA wird verwendet"
+            test_info["note"] = "Residuals are normal but variances are unequal - Welch's ANOVA will be used."
         elif post_norm and not post_var and model_type in ["twoway", "mixed", "rm"]:
             test_recommendation = "parametric"  # Advanced ANOVAs can often handle unequal variances
-            test_info["note"] = f"Residuen normal, Varianzen ungleich – {model_type.upper()}-ANOVA wird trotzdem verwendet (robust gegen Varianzheterogenität)"
+            test_info["note"] = (
+                f"Residuals are normal but variances are unequal - {model_type.upper()} ANOVA will still be used "
+                f"(robust to variance heterogeneity)."
+            )
         elif post_norm and not post_var and len(valid_groups) == 2:
             test_recommendation = "parametric"  # Welch-Test
             test_info["note"] = "Normal distribution but unequal variances – Welch's t-test will be used."
@@ -1798,89 +1808,215 @@ class StatisticalTester:
                     print("DEBUG: Results dict before Excel export:", res)  # <--- Add this line
                     ResultsExporter.export_results_to_excel(res, excel_file, res.get("analysis_log", None))
                     res["excel_file"] = excel_file
+                if res.get("test") and not res.get("final_test_label"):
+                    res["final_test_label"] = res["test"]
+                if res.get("final_test_label") and not res.get("tested_against"):
+                    res["tested_against"] = res["final_test_label"]
                 return res
 
             elif recommendation == 'non_parametric':
-                # Non-parametric alternative is needed but not available
-                print(f"DEBUG: Non-parametric alternative required for {test}")
-                
-                # Create comprehensive results indicating non-parametric alternative is needed
-                test_name_map = {
-                    'two_way_anova': 'Non-parametric Two-Way ANOVA',
-                    'mixed_anova': 'Non-parametric Mixed ANOVA', 
-                    'repeated_measures_anova': 'Non-parametric Repeated Measures ANOVA'
-                }
-                
-                suggested_alternatives = {
-                    'two_way_anova': 'Rank transformation + permutation test or Friedman test with blocking',
-                    'mixed_anova': 'Mixed effects model with robust methods or rank-based approach',
-                    'repeated_measures_anova': 'Friedman test or rank-based repeated measures analysis'
-                }
-                
-                res = {
-                    "test": test_name_map.get(test, f"Non-parametric {test.replace('_', ' ').title()}") + " (required but not available)",
-                    "recommendation": "non_parametric",
-                    "parametric_assumptions_violated": True,
-                    "test_info": test_info,
-                    "raw_data": original_samples,
-                    "message": f"Parametric assumptions not met even after transformation. {test_name_map.get(test, 'Non-parametric alternative')} is recommended.",
-                    "suggested_alternative": suggested_alternatives.get(test, "Non-parametric alternative"),
-                    "p_value": None,
-                    "statistic": None,
-                    "error": f"Non-parametric alternatives for {test} are not implemented in this version.",
-                    "analysis_note": "The data transformation was attempted but parametric assumptions still could not be met. A non-parametric approach would be appropriate for this dataset."
-                }
-                
-                # Include transformation information
+                print(f"DEBUG: Modern-model fallback required for {test}")
+
+                if test == 'two_way_anova':
+                    formula = f"{dv} ~ C({between[0]}) * C({between[1]})"
+                    design_type = "two_way"
+                    subject_col = None
+                elif test == 'repeated_measures_anova':
+                    formula = f"{dv} ~ C({within[0]})"
+                    design_type = "rm"
+                    subject_col = subject
+                elif test == 'mixed_anova':
+                    formula = f"{dv} ~ C({between[0]}) * C({within[0]})"
+                    design_type = "mixed"
+                    subject_col = subject
+                else:
+                    formula = f"{dv} ~ 1"
+                    design_type = test
+                    subject_col = subject
+
+                res = fallback_modern_models(
+                    data=df_original.copy(),
+                    dependent_var=dv,
+                    formula=formula,
+                    design_type=design_type,
+                    subject_col=subject_col
+                )
+
+                res["test_info"] = test_info
+                res["parametric_assumptions_violated"] = True
+                res["raw_data"] = original_samples
+
                 if transformation_type and transformation_type not in ["none", "None", "Keine"]:
                     res["transformation"] = transformation_type
                     res["raw_data_transformed"] = transformed_samples
-                
-                # Ensure test_info is accessible at top level for Excel export
+
                 if test_info:
-                    for key in ["normality_tests", "variance_test", "transformation", "boxcox_lambda"]:
-                        if key in test_info and key not in res:
-                            res[key] = test_info[key]
-                
-                # Create analysis log
+                    if "test_info" not in res:
+                        res["test_info"] = test_info
+
+                    if "normality_tests" in test_info and "normality_tests" not in res:
+                        res["normality_tests"] = test_info["normality_tests"]
+                    if "variance_test" in test_info and "variance_test" not in res:
+                        res["variance_test"] = test_info["variance_test"]
+                    if "transformation" in test_info and "transformation" not in res:
+                        res["transformation"] = test_info["transformation"]
+                    if "boxcox_lambda" in test_info and "boxcox_lambda" not in res:
+                        res["boxcox_lambda"] = test_info["boxcox_lambda"]
+
+                    if "pre_transformation" in test_info and "post_transformation" in test_info and "normality_tests" not in res:
+                        normality_tests = {"all_data": {}, "transformed_data": {}}
+                        if "residuals_normality" in test_info["pre_transformation"]:
+                            pre_norm = test_info["pre_transformation"]["residuals_normality"]
+                            normality_tests["all_data"] = {
+                                "statistic": pre_norm.get("statistic") if pre_norm.get("statistic") is not None else "N/A",
+                                "p_value": pre_norm.get("p_value") if pre_norm.get("p_value") is not None else "N/A",
+                                "is_normal": pre_norm.get("is_normal", False)
+                            }
+                        if "residuals_normality" in test_info["post_transformation"]:
+                            post_norm = test_info["post_transformation"]["residuals_normality"]
+                            normality_tests["transformed_data"] = {
+                                "statistic": post_norm.get("statistic") if post_norm.get("statistic") is not None else "N/A",
+                                "p_value": post_norm.get("p_value") if post_norm.get("p_value") is not None else "N/A",
+                                "is_normal": post_norm.get("is_normal", False)
+                            }
+                        res["normality_tests"] = normality_tests
+
+                    if "pre_transformation" in test_info and "post_transformation" in test_info and "variance_test" not in res:
+                        variance_test = {}
+                        if "variance" in test_info["pre_transformation"]:
+                            pre_var = test_info["pre_transformation"]["variance"]
+                            variance_test.update({
+                                "statistic": pre_var.get("statistic") if pre_var.get("statistic") is not None else "N/A",
+                                "p_value": pre_var.get("p_value") if pre_var.get("p_value") is not None else "N/A",
+                                "equal_variance": pre_var.get("equal_variance", False)
+                            })
+                        if "variance" in test_info["post_transformation"]:
+                            post_var = test_info["post_transformation"]["variance"]
+                            variance_test["transformed"] = {
+                                "statistic": post_var.get("statistic") if post_var.get("statistic") is not None else "N/A",
+                                "p_value": post_var.get("p_value") if post_var.get("p_value") is not None else "N/A",
+                                "equal_variance": post_var.get("equal_variance", False)
+                            }
+                        res["variance_test"] = variance_test
+
+                if res.get("error") is None and res.get("p_value") is not None and res["p_value"] < alpha:
+                    fallback_posthoc = None
+                    marginaleffects_error = None
+                    if test == "two_way_anova" and res.get("model_class") == "GLM":
+                        fallback_posthoc = StatisticalTester._run_two_way_marginaleffects_posthoc(
+                            res,
+                            between,
+                            alpha=alpha
+                        )
+                    elif test == "repeated_measures_anova" and within:
+                        fallback_posthoc = StatisticalTester._run_rm_marginaleffects_posthoc(
+                            res,
+                            within[0],
+                            alpha=alpha
+                        )
+                    elif test == "mixed_anova" and between and within:
+                        fallback_posthoc = StatisticalTester._run_mixed_marginaleffects_posthoc(
+                            res,
+                            between,
+                            within,
+                            alpha=alpha
+                        )
+
+                    if fallback_posthoc and fallback_posthoc.get("error"):
+                        marginaleffects_error = fallback_posthoc["error"]
+                        warnings_list = res.setdefault("warnings", [])
+                        if marginaleffects_error not in warnings_list:
+                            warnings_list.append(marginaleffects_error)
+
+                    if not fallback_posthoc or (
+                        not fallback_posthoc.get("pairwise_comparisons") and fallback_posthoc.get("error")
+                    ):
+                        fallback_posthoc = StatisticalTester._run_modern_fallback_posthoc(
+                            df_original.copy(),
+                            test,
+                            dv,
+                            subject=subject,
+                            between=between,
+                            within=within,
+                            alpha=alpha
+                        )
+                        if marginaleffects_error:
+                            fallback_note = (
+                                " Post-hoc comparisons used a robust non-parametric fallback "
+                                "because the marginaleffects step failed. See warnings for details."
+                            )
+                            analysis_note = res.get("analysis_note", "")
+                            if fallback_note.strip() not in analysis_note:
+                                res["analysis_note"] = f"{analysis_note}{fallback_note}".strip()
+
+                    if fallback_posthoc.get("pairwise_comparisons"):
+                        res["pairwise_comparisons"] = fallback_posthoc["pairwise_comparisons"]
+                        res["posthoc_test"] = fallback_posthoc.get("posthoc_test")
+                    if fallback_posthoc.get("error"):
+                        warnings_list = res.setdefault("warnings", [])
+                        if fallback_posthoc["error"] not in warnings_list:
+                            warnings_list.append(fallback_posthoc["error"])
+
                 analysis_log = []
                 analysis_log.append(f"Advanced Test Analysis: {test}")
                 analysis_log.append(f"Dataset: {dv}")
-                analysis_log.append("Assumption Check Results:")
+                analysis_log.append("Fallback path: statsmodels modern model")
                 if test_info:
-                    # Add normality test results
+                    analysis_log.append("Assumption Check Results:")
                     if "pre_transformation" in test_info:
                         pre_norm = test_info["pre_transformation"].get("residuals_normality", {})
-                        if "p_value" in pre_norm and pre_norm['p_value'] is not None:
-                            analysis_log.append(f"- Original data normality: p = {pre_norm['p_value']:.4f} ({'Normal' if pre_norm.get('is_normal', False) else 'Not normal'})")
-                    
+                        if pre_norm.get("p_value") is not None:
+                            analysis_log.append(
+                                f"- Original data normality: p = {pre_norm['p_value']:.4f} "
+                                f"({'Normal' if pre_norm.get('is_normal', False) else 'Not normal'})"
+                            )
                     if "post_transformation" in test_info:
                         post_norm = test_info["post_transformation"].get("residuals_normality", {})
-                        if "p_value" in post_norm and post_norm['p_value'] is not None:
-                            analysis_log.append(f"- After transformation normality: p = {post_norm['p_value']:.4f} ({'Normal' if post_norm.get('is_normal', False) else 'Not normal'})")
-                    
-                    # Add variance test results
-                    if "variance_test" in test_info:
-                        var_test = test_info["variance_test"]
-                        if "p_value" in var_test and var_test['p_value'] is not None:
-                            analysis_log.append(f"- Variance homogeneity: p = {var_test['p_value']:.4f} ({'Equal' if var_test.get('equal_variance', False) else 'Not equal'})")
-                
-                if transformation_type:
-                    analysis_log.append(f"Applied transformation: {transformation_type}")
-                
-                analysis_log.append(f"CONCLUSION: {res['message']}")
-                analysis_log.append(f"RECOMMENDED: {res['suggested_alternative']}")
-                
+                        if post_norm.get("p_value") is not None:
+                            analysis_log.append(
+                                f"- After transformation normality: p = {post_norm['p_value']:.4f} "
+                                f"({'Normal' if post_norm.get('is_normal', False) else 'Not normal'})"
+                            )
+                if transformation_type and transformation_type not in ["none", "None", "Keine"]:
+                    analysis_log.append(f"Applied transformation before fallback: {transformation_type}")
+                if res.get("analysis_note"):
+                    analysis_log.append(res["analysis_note"])
+                if res.get("model_class") or res.get("model_family"):
+                    analysis_log.append(
+                        f"Model used: {res.get('model_class', 'Unknown')} with family {res.get('model_family', 'Unknown')}"
+                    )
+                if res.get("error"):
+                    analysis_log.append(f"Error: {res['error']}")
+                    if res.get("analysis_note"):
+                        res["analysis_note"] = f"{res['analysis_note']} Error: {res['error']}"
+                elif res.get("p_value") is not None:
+                    analysis_log.append(f"Fallback result p-value: {res['p_value']:.4f}")
+                else:
+                    analysis_log.append("Fallback result: No p-value available")
+                if res.get("posthoc_test"):
+                    analysis_log.append(f"Post-hoc tests: {res['posthoc_test']}")
+                    analysis_log.append(
+                        f"Pairwise comparisons generated: {len(res.get('pairwise_comparisons', []))}"
+                    )
+
+                res.pop("fitted_model", None)
                 res["analysis_log"] = "\n".join(analysis_log)
-                
-                # Excel export
+                res = StatisticalTester._standardize_results(res)
+
                 if not skip_excel:
                     print(f"DEBUG: Current working directory before export: {os.getcwd()}")
-                    excel_file = file_name if file_name else get_output_path(f"{test}_nonparametric_needed_{datetime.now().strftime('%Y%m%d_%H%M%S')}", "xlsx")
+                    excel_file = file_name if file_name else get_output_path(
+                        f"{test}_modern_model_fallback_{datetime.now().strftime('%Y%m%d_%H%M%S')}", "xlsx"
+                    )
                     ResultsExporter.export_results_to_excel(res, excel_file, res.get("analysis_log", None))
                     res["excel_file"] = excel_file
-                    print(f"DEBUG: Excel file created with non-parametric recommendation: {excel_file}")
-                
+                    print(f"DEBUG: Excel file created with modern-model fallback: {excel_file}")
+
+                if res.get("test") and not res.get("final_test_label"):
+                    res["final_test_label"] = res["test"]
+                if res.get("final_test_label") and not res.get("tested_against"):
+                    res["tested_against"] = res["final_test_label"]
+
                 return res
 
             else:  # robust fallback path (GLMM/GEE-based)
@@ -3162,6 +3298,382 @@ class StatisticalTester:
                 results["df1"] = fv.get("df1")
                 results["df2"] = fv.get("df2")
         return StatisticalTester._standardize_results(results)
+
+    @staticmethod
+    def _prefix_pairwise_labels(pairwise_comparisons, prefix):
+        updated = []
+        for comparison in pairwise_comparisons or []:
+            comp = dict(comparison)
+            comp["group1"] = f"{prefix}{comp.get('group1', '')}"
+            comp["group2"] = f"{prefix}{comp.get('group2', '')}"
+            updated.append(comp)
+        return updated
+
+    @staticmethod
+    def _build_rm_aligned_samples(df, dv, subject, within_factor):
+        samples = {}
+        complete_subjects = []
+        within_levels = sorted(df[within_factor].dropna().unique())
+
+        subject_level_counts = df.groupby(subject)[within_factor].nunique()
+        expected_levels = len(within_levels)
+        complete_subjects = sorted(subject_level_counts[subject_level_counts == expected_levels].index.tolist())
+
+        if not complete_subjects:
+            return [], {}
+
+        df_complete = df[df[subject].isin(complete_subjects)].copy()
+        for level in within_levels:
+            level_df = df_complete[df_complete[within_factor] == level].sort_values(by=subject)
+            samples[str(level)] = level_df[dv].tolist()
+
+        valid_groups = [group for group in within_levels if str(group) in samples and len(samples[str(group)]) > 0]
+        return [str(group) for group in valid_groups], samples
+
+    @staticmethod
+    def _map_marginaleffects_to_exporter(comparisons_df, alpha=0.05, by_cols=None, test_label="Marginal Effects (Robust GLM)"):
+        mapped = []
+        by_cols = by_cols or []
+        excluded_columns = {
+            "term", "contrast", "estimate", "statistic", "p.value", "p_value", "pvalue",
+            "s.e.", "std.error", "std_error", "conf.low", "conf.high", "conf_low", "conf_high",
+            "z", "t", "df", "rowid", "predicted"
+        }
+
+        p_col = next((col for col in ["p.value", "p_value", "pvalue"] if col in comparisons_df.columns), None)
+        stat_col = next((col for col in ["statistic", "z", "t"] if col in comparisons_df.columns), None)
+        ci_low_col = next((col for col in ["conf.low", "conf_low"] if col in comparisons_df.columns), None)
+        ci_high_col = next((col for col in ["conf.high", "conf_high"] if col in comparisons_df.columns), None)
+
+        if p_col is None:
+            return mapped
+
+        if not by_cols:
+            by_cols = [col for col in comparisons_df.columns if col not in excluded_columns]
+
+        for _, row in comparisons_df.iterrows():
+            raw_contrast = str(row.get("contrast", "N/A"))
+            if " - " in raw_contrast:
+                contrast_parts = [part.strip() for part in raw_contrast.split(" - ", 1)]
+                group1, group2 = (contrast_parts + ["N/A"])[:2]
+            else:
+                group1, group2 = "N/A", "N/A"
+
+            prefix_parts = []
+            for col in by_cols:
+                if col in row and pd.notna(row[col]):
+                    prefix_parts.append(f"{col}={row[col]}")
+            prefix = " | ".join(prefix_parts)
+
+            p_value = row.get(p_col)
+            statistic = row.get(stat_col) if stat_col else None
+            ci_low = row.get(ci_low_col) if ci_low_col else None
+            ci_high = row.get(ci_high_col) if ci_high_col else None
+
+            try:
+                p_value = float(p_value) if pd.notna(p_value) else None
+            except Exception:
+                p_value = None
+
+            try:
+                statistic = float(statistic) if statistic is not None and pd.notna(statistic) else None
+            except Exception:
+                statistic = None
+
+            confidence_interval = None
+            if ci_low is not None and ci_high is not None and pd.notna(ci_low) and pd.notna(ci_high):
+                try:
+                    confidence_interval = (float(ci_low), float(ci_high))
+                except Exception:
+                    confidence_interval = None
+
+            mapped.append({
+                "group1": f"{prefix} | {group1}" if prefix else group1,
+                "group2": f"{prefix} | {group2}" if prefix else group2,
+                "test": test_label,
+                "p_value": p_value,
+                "statistic": statistic,
+                "significant": bool(p_value is not None and p_value < alpha),
+                "corrected": False,
+                "correction": None,
+                "effect_size": None,
+                "effect_size_type": None,
+                "confidence_interval": confidence_interval
+            })
+
+        return mapped
+
+    @staticmethod
+    def _run_two_way_marginaleffects_posthoc(results, between, alpha=0.05):
+        fitted_model = results.get("fitted_model")
+        if fitted_model is None or not between or len(between) < 2:
+            return None
+
+        primary_factor = between[0]
+        by_factor = between[1]
+
+        try:
+            posthoc = posthoc_marginaleffects(
+                fitted_model,
+                variables=primary_factor,
+                by=[by_factor],
+                to_pandas=True
+            )
+            comparisons_df = posthoc.get("comparisons")
+            if comparisons_df is None or getattr(comparisons_df, "empty", True):
+                return None
+
+            mapped = StatisticalTester._map_marginaleffects_to_exporter(
+                comparisons_df,
+                alpha=alpha,
+                by_cols=[by_factor],
+                test_label="Marginal Effects (Robust GLM)"
+            )
+            if not mapped:
+                return None
+
+            return {
+                "posthoc_test": "Marginal Effects Pairwise Comparisons",
+                "pairwise_comparisons": mapped,
+                "error": None
+            }
+        except Exception as exc:
+            return {
+                "posthoc_test": None,
+                "pairwise_comparisons": [],
+                "error": f"Marginal effects post-hoc failed: {str(exc)}"
+            }
+
+    @staticmethod
+    def _run_rm_marginaleffects_posthoc(results, within_factor, alpha=0.05):
+        fitted_model = results.get("fitted_model")
+        if fitted_model is None or not within_factor:
+            return None
+        if results.get("model_class") != "GEE":
+            return None
+
+        try:
+            posthoc = posthoc_marginaleffects(
+                fitted_model,
+                variables=within_factor,
+                by=None,
+                to_pandas=True
+            )
+            comparisons_df = posthoc.get("comparisons")
+            if comparisons_df is None or getattr(comparisons_df, "empty", True):
+                return None
+
+            mapped = StatisticalTester._map_marginaleffects_to_exporter(
+                comparisons_df,
+                alpha=alpha,
+                by_cols=[],
+                test_label="Marginal Effects (RM)"
+            )
+            if not mapped:
+                return None
+
+            return {
+                "posthoc_test": "Marginal Effects Pairwise Comparisons (GEE-based)",
+                "pairwise_comparisons": mapped,
+                "error": None
+            }
+        except Exception as exc:
+            return {
+                "posthoc_test": None,
+                "pairwise_comparisons": [],
+                "error": f"Marginal effects RM post-hoc failed: {str(exc)}"
+            }
+
+    @staticmethod
+    def _run_mixed_marginaleffects_posthoc(results, between, within, alpha=0.05):
+        fitted_model = results.get("fitted_model")
+        if fitted_model is None or not between or not within:
+            return None
+        if results.get("model_class") != "GEE":
+            return None
+
+        between_factor = between[0]
+        within_factor = within[0]
+        pairwise_comparisons = []
+        errors = []
+
+        # Pass 1: Between-factor comparisons at fixed within levels
+        try:
+            posthoc_between = posthoc_marginaleffects(
+                fitted_model,
+                variables=between_factor,
+                by=[within_factor],
+                to_pandas=True
+            )
+            comparisons_df = posthoc_between.get("comparisons")
+            if comparisons_df is not None and not getattr(comparisons_df, "empty", True):
+                mapped = StatisticalTester._map_marginaleffects_to_exporter(
+                    comparisons_df,
+                    alpha=alpha,
+                    by_cols=[within_factor],
+                    test_label="Marginal Effects (Mixed: Between at fixed Within)"
+                )
+                pairwise_comparisons.extend(mapped)
+        except Exception as exc:
+            error_msg = f"Mixed marginaleffects between-pass failed: {str(exc)}"
+            errors.append(error_msg)
+            warnings_list = results.setdefault("warnings", [])
+            if error_msg not in warnings_list:
+                warnings_list.append(error_msg)
+
+        # Pass 2: Within-factor comparisons at fixed between levels
+        try:
+            posthoc_within = posthoc_marginaleffects(
+                fitted_model,
+                variables=within_factor,
+                by=[between_factor],
+                to_pandas=True
+            )
+            comparisons_df = posthoc_within.get("comparisons")
+            if comparisons_df is not None and not getattr(comparisons_df, "empty", True):
+                mapped = StatisticalTester._map_marginaleffects_to_exporter(
+                    comparisons_df,
+                    alpha=alpha,
+                    by_cols=[between_factor],
+                    test_label="Marginal Effects (Mixed: Within at fixed Between)"
+                )
+                pairwise_comparisons.extend(mapped)
+        except Exception as exc:
+            error_msg = f"Mixed marginaleffects within-pass failed: {str(exc)}"
+            errors.append(error_msg)
+            warnings_list = results.setdefault("warnings", [])
+            if error_msg not in warnings_list:
+                warnings_list.append(error_msg)
+
+        if not pairwise_comparisons:
+            if errors:
+                return {
+                    "posthoc_test": None,
+                    "pairwise_comparisons": [],
+                    "error": " | ".join(errors)
+                }
+            return None
+
+        return {
+            "posthoc_test": "Marginal Effects Pairwise Comparisons (Mixed GEE-based)",
+            "pairwise_comparisons": pairwise_comparisons,
+            "error": " | ".join(errors) if errors else None
+        }
+
+    @staticmethod
+    def _run_modern_fallback_posthoc(df, test, dv, subject=None, between=None, within=None, alpha=0.05):
+        result = {
+            "posthoc_test": "Non-parametric pairwise tests (Holm-Sidak corrected)",
+            "pairwise_comparisons": [],
+            "error": None
+        }
+
+        try:
+            if test == "two_way_anova":
+                factor_a, factor_b = between
+                samples = {}
+                group_labels = []
+                for a_val in sorted(df[factor_a].dropna().unique()):
+                    for b_val in sorted(df[factor_b].dropna().unique()):
+                        label = f"{factor_a}={a_val}, {factor_b}={b_val}"
+                        subset = df[(df[factor_a] == a_val) & (df[factor_b] == b_val)][dv].dropna().tolist()
+                        if subset:
+                            samples[label] = subset
+                            group_labels.append(label)
+
+                if len(group_labels) > 1:
+                    posthoc = StatisticalTester.perform_refactored_posthoc_testing(
+                        group_labels,
+                        samples,
+                        "non_parametric",
+                        alpha=alpha,
+                        posthoc_choice="dunn"
+                    )
+                    if posthoc:
+                        result["pairwise_comparisons"].extend(posthoc.get("pairwise_comparisons", []))
+                        if posthoc.get("error"):
+                            result["error"] = posthoc["error"]
+
+            elif test == "repeated_measures_anova":
+                within_factor = within[0]
+                valid_groups, samples = StatisticalTester._build_rm_aligned_samples(df, dv, subject, within_factor)
+                if len(valid_groups) > 1:
+                    posthoc = StatisticalTester.perform_dependent_posthoc_tests(
+                        samples,
+                        valid_groups,
+                        alpha=alpha,
+                        parametric=False
+                    )
+                    if posthoc:
+                        result["pairwise_comparisons"].extend(posthoc.get("pairwise_comparisons", []))
+                        if posthoc.get("error"):
+                            result["error"] = posthoc["error"]
+
+            elif test == "mixed_anova":
+                between_factor = between[0]
+                within_factor = within[0]
+
+                # Between-subject comparisons within each within-factor level
+                for within_level in sorted(df[within_factor].dropna().unique()):
+                    subset = df[df[within_factor] == within_level].copy()
+                    samples = {}
+                    groups = []
+                    for between_level in sorted(subset[between_factor].dropna().unique()):
+                        label = str(between_level)
+                        values = subset[subset[between_factor] == between_level][dv].dropna().tolist()
+                        if values:
+                            samples[label] = values
+                            groups.append(label)
+
+                    if len(groups) > 1:
+                        posthoc = StatisticalTester.perform_refactored_posthoc_testing(
+                            groups,
+                            samples,
+                            "non_parametric",
+                            alpha=alpha,
+                            posthoc_choice="dunn"
+                        )
+                        if posthoc:
+                            prefixed = StatisticalTester._prefix_pairwise_labels(
+                                posthoc.get("pairwise_comparisons", []),
+                                f"{within_factor}={within_level} | "
+                            )
+                            result["pairwise_comparisons"].extend(prefixed)
+                            if posthoc.get("error") and result["error"] is None:
+                                result["error"] = posthoc["error"]
+
+                # Within-subject comparisons within each between-factor level
+                for between_level in sorted(df[between_factor].dropna().unique()):
+                    subset = df[df[between_factor] == between_level].copy()
+                    valid_groups, samples = StatisticalTester._build_rm_aligned_samples(
+                        subset,
+                        dv,
+                        subject,
+                        within_factor
+                    )
+                    if len(valid_groups) > 1:
+                        posthoc = StatisticalTester.perform_dependent_posthoc_tests(
+                            samples,
+                            valid_groups,
+                            alpha=alpha,
+                            parametric=False
+                        )
+                        if posthoc:
+                            prefixed = StatisticalTester._prefix_pairwise_labels(
+                                posthoc.get("pairwise_comparisons", []),
+                                f"{between_factor}={between_level} | "
+                            )
+                            result["pairwise_comparisons"].extend(prefixed)
+                            if posthoc.get("error") and result["error"] is None:
+                                result["error"] = posthoc["error"]
+
+            if not result["pairwise_comparisons"] and result["error"] is None:
+                result["error"] = "No valid non-parametric pairwise comparisons could be performed."
+
+            return result
+        except Exception as exc:
+            result["error"] = f"Error performing fallback post-hoc tests: {str(exc)}"
+            return result
     
     @staticmethod
     def perform_dependent_posthoc_tests(data_dict, groups, alpha=0.05, parametric=True):

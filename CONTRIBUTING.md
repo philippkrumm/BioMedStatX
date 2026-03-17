@@ -162,6 +162,16 @@ When adding statistical procedures (e.g., new tests, estimators, post-hoc analys
 
 - Update `docs/` when introducing user-facing behavior.
 - Add examples to the HowTo guide where appropriate.
+- If a feature is partial, experimental, or intentionally disabled, document that status explicitly in user-facing documentation instead of implying full support.
+
+## Known Functional Gaps
+
+- Automatic nonparametric fallback workflows for advanced ANOVA designs are not yet considered production-ready.
+- Contributions in this area should include:
+  - clear statistical rationale,
+  - reproducible validation cases,
+  - tests against trusted reference implementations or published examples,
+  - documentation updates describing exactly which designs are supported.
 
 ---
 

@@ -135,10 +135,10 @@ def get_statsmodels_multitest():
             return reject, pvals_corrected, alpha, alphacBonf
         
         print("\n" + "="*80)
-        print("⚠️  WARNUNG: STATSMODELS NICHT VERFÜGBAR!")
+        print("⚠️  WARNING: STATSMODELS IS NOT AVAILABLE!")
         print("="*80)
-        print("Das Programm verwendet jetzt einen einfachen Bonferroni-Fallback.")
-        print("Für bessere statistische Korrekturen installiere statsmodels:")
+        print("The program will now use a simple Bonferroni fallback.")
+        print("For improved statistical corrections, install statsmodels:")
         print("   pip install statsmodels")
         print("="*80 + "\n")
         return multipletests_fallback

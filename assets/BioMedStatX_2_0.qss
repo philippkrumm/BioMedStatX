@@ -1,0 +1,225 @@
+QWidget#autoPilotRoot {
+    background: #eef5fb;
+    color: #17324d;
+    font-family: "Avenir Next", "Segoe UI", sans-serif;
+    font-size: 13px;
+}
+
+QFrame#dashboardPanel,
+QFrame#decisionTreePanel,
+QFrame#resultCockpit {
+    background: #fcfeff;
+    border: 1px solid #d5e6f5;
+    border-radius: 18px;
+}
+
+QLabel#heroTitle {
+    font-size: 28px;
+    font-weight: 700;
+    color: #0f3150;
+}
+
+QLabel#heroSubtitle,
+QLabel#panelDescription,
+QLabel#mappingBucketPlaceholder,
+QLabel#columnCardPreview,
+QLabel#columnCardMeta {
+    color: #5b748f;
+}
+
+QLabel#panelTitle,
+QLabel#sectionLabel {
+    color: #15395b;
+    font-weight: 700;
+}
+
+QLabel#panelTitle {
+    font-size: 18px;
+}
+
+QLabel#sectionLabel {
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+QLabel#analysisStatusBadge {
+    background: #d9eef7;
+    color: #0c5070;
+    border-radius: 14px;
+    padding: 8px 14px;
+    font-weight: 600;
+}
+
+QFrame#pipelineStepChip {
+    background: #f7fbfe;
+    border: 1px solid #cfe2f3;
+    border-radius: 16px;
+}
+
+QFrame#pipelineStepChip[state="active"],
+QFrame#pipelineStepChip[state="running"] {
+    background: #dff2fb;
+    border: 1px solid #69b9dc;
+}
+
+QFrame#pipelineStepChip[state="completed"] {
+    background: #e3f6ef;
+    border: 1px solid #7ac8a0;
+}
+
+QLabel#pipelineStepIcon {
+    font-size: 16px;
+    font-weight: 700;
+    color: #0f5270;
+}
+
+QLabel#pipelineStepTitle,
+QLabel#pipelineConnector {
+    color: #52708f;
+    font-weight: 600;
+}
+
+QPushButton {
+    background: #edf5fb;
+    border: 1px solid #cfe0ee;
+    border-radius: 12px;
+    padding: 10px 14px;
+    color: #17324d;
+    font-weight: 600;
+}
+
+QPushButton:hover {
+    background: #e0eef9;
+}
+
+QPushButton#primaryButton {
+    background: #1c7ea4;
+    color: #ffffff;
+    border: 1px solid #1c7ea4;
+    padding: 12px 18px;
+}
+
+QPushButton#primaryButton:hover {
+    background: #176b8b;
+}
+
+QPushButton:disabled {
+    background: #eef2f6;
+    color: #8ca0b3;
+    border-color: #d6e0e8;
+}
+
+QFrame#columnCard {
+    background: #ffffff;
+    border: 1px solid #d7e5f2;
+    border-radius: 16px;
+}
+
+QFrame#columnCard:hover {
+    border: 1px solid #7ab5d1;
+    background: #f5fbff;
+}
+
+QLabel#columnCardTitle {
+    color: #17324d;
+    font-weight: 700;
+}
+
+QFrame#mappingBucket {
+    background: #f9fcff;
+    border: 1px dashed #a8c7da;
+    border-radius: 16px;
+}
+
+QFrame#mappingBucket[dragHover="true"] {
+    background: #e4f4fb;
+    border: 1px solid #5da9cb;
+}
+
+QLabel#mappingBucketTitle {
+    color: #174667;
+    font-weight: 700;
+}
+
+QFrame#bucketChip {
+    background: #dff0fa;
+    border: 1px solid #9ac9df;
+    border-radius: 12px;
+}
+
+QLabel#bucketChipLabel {
+    color: #124764;
+    font-weight: 600;
+}
+
+QToolButton#bucketChipRemove {
+    background: transparent;
+    border: none;
+    color: #356c88;
+    font-weight: 700;
+}
+
+QFrame#resultCard {
+    background: #ffffff;
+    border: 1px solid #d8e7f4;
+    border-radius: 16px;
+}
+
+QLabel#resultCardTitle {
+    color: #56728f;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+QLabel#resultCardValue {
+    color: #183957;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+QLabel#filePathLabel {
+    color: #214665;
+    padding: 8px 10px;
+    background: #f6fbff;
+    border: 1px solid #d8e7f4;
+    border-radius: 12px;
+}
+
+QLabel#decisionTreeImage {
+    background: #f5fafe;
+    border: 1px solid #d8e7f4;
+    border-radius: 16px;
+    color: #6a849b;
+    padding: 14px;
+}
+
+QHeaderView::section {
+    background: #ddebf7;
+    color: #17324d;
+    border: none;
+    padding: 6px;
+    font-weight: 700;
+}
+
+QTableWidget {
+    background: #ffffff;
+    border: 1px solid #d8e7f4;
+    border-radius: 14px;
+    gridline-color: #e6eef5;
+    alternate-background-color: #f7fbff;
+}
+
+QRadioButton {
+    color: #214665;
+    spacing: 8px;
+}
+
+QComboBox,
+QScrollArea {
+    background: #ffffff;
+    border: 1px solid #d8e7f4;
+    border-radius: 12px;
+    padding: 6px 8px;
+}

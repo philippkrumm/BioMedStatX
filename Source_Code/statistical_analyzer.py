@@ -9,9 +9,10 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QFileDialog, QWidget, QV
                            QHBoxLayout, QLabel, QComboBox, QPushButton, QListWidget, 
                            QTabWidget, QGroupBox, QCheckBox, QSpinBox, QColorDialog, 
                            QMessageBox, QScrollArea, QListWidgetItem, QDialog, QDialogButtonBox,
-                           QGridLayout, QLineEdit, QRadioButton, QAction, QFormLayout, QAbstractItemView, QDoubleSpinBox, QButtonGroup)
-from PyQt5.QtGui import QColor, QIcon, QPixmap
-from PyQt5.QtCore import Qt
+                           QGridLayout, QLineEdit, QRadioButton, QAction, QFormLayout, QAbstractItemView, QDoubleSpinBox, QButtonGroup,
+                           QFrame, QTableWidget, QTableWidgetItem, QSplitter, QToolButton, QGraphicsOpacityEffect)
+from PyQt5.QtGui import QColor, QIcon, QPixmap, QDrag, QDesktopServices
+from PyQt5.QtCore import Qt, QMimeData, QPoint, pyqtSignal, QPropertyAnimation, QEasingCurve, QSequentialAnimationGroup, QTimer, QUrl
 
 # Initialize lazy loading system
 from lazy_imports import preload_critical_modules
@@ -45,6 +46,7 @@ from stats_functions import (
 )
 from resultsexporter import ResultsExporter
 from datavisualizer import DataVisualizer
+from decisiontreevisualizer import DecisionTreeVisualizer
 from statisticaltester import StatisticalTester
 # Import updater for auto-update functionality
 try:
@@ -4176,6 +4178,1273 @@ class StatisticalAnalyzerApp(QMainWindow):
                 "https://github.com/philippkrumm/BioMedStatX---Code"
             )
 
+
+AUTO_PILOT_STEP_ORDER = ["load", "map", "analyze", "results"]
+
+
+def _safe_file_slug(text):
+    cleaned = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in str(text))
+    cleaned = "_".join(part for part in cleaned.split("_") if part)
+    return cleaned or "analysis"
+
+
+def _infer_column_kind(series):
+    if pd.api.types.is_numeric_dtype(series):
+        return "numeric"
+    if pd.api.types.is_datetime64_any_dtype(series):
+        return "datetime"
+    return "categorical"
+
+
+def _looks_like_subject(column_name):
+    lowered = str(column_name).strip().lower()
+    keywords = ("subject", "subjekt", "patient", "participant", "animal", "mouse", "id", "sample")
+    return any(keyword in lowered for keyword in keywords)
+
+
+def _sorted_unique(values):
+    unique_values = []
+    for value in values:
+        if pd.isna(value):
+            continue
+        if value not in unique_values:
+            unique_values.append(value)
+    return sorted(unique_values, key=lambda item: str(item))
+
+
+class PipelineStepChip(QFrame):
+    def __init__(self, icon_text, title, parent=None):
+        super().__init__(parent)
+        self.setObjectName("pipelineStepChip")
+        self.setProperty("state", "idle")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(4)
+
+        self.icon_label = QLabel(icon_text)
+        self.icon_label.setAlignment(Qt.AlignCenter)
+        self.icon_label.setObjectName("pipelineStepIcon")
+        layout.addWidget(self.icon_label)
+
+        self.title_label = QLabel(title)
+        self.title_label.setAlignment(Qt.AlignCenter)
+        self.title_label.setObjectName("pipelineStepTitle")
+        layout.addWidget(self.title_label)
+
+    def set_state(self, state):
+        self.setProperty("state", state)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+
+class PipelineTrackerWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.steps = {}
+        self._pulse_effect = None
+        self._pulse_animation = None
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+
+        step_specs = [
+            ("load", "Load", "L"),
+            ("map", "Map", "M"),
+            ("analyze", "Analyze", "A"),
+            ("results", "Results", "R"),
+        ]
+
+        for index, (step_key, title, icon_text) in enumerate(step_specs):
+            chip = PipelineStepChip(icon_text, title)
+            self.steps[step_key] = chip
+            layout.addWidget(chip, 1)
+            if index < len(step_specs) - 1:
+                connector = QLabel("···")
+                connector.setAlignment(Qt.AlignCenter)
+                connector.setObjectName("pipelineConnector")
+                layout.addWidget(connector)
+
+        self._pulse_effect = QGraphicsOpacityEffect(self.steps["analyze"])
+        self.steps["analyze"].setGraphicsEffect(self._pulse_effect)
+        self._pulse_animation = QPropertyAnimation(self._pulse_effect, b"opacity", self)
+        self._pulse_animation.setDuration(850)
+        self._pulse_animation.setStartValue(1.0)
+        self._pulse_animation.setEndValue(0.45)
+        self._pulse_animation.setEasingCurve(QEasingCurve.InOutQuad)
+        self._pulse_animation.setLoopCount(-1)
+
+        self.set_stage("load", running=False)
+
+    def set_stage(self, stage, running=False):
+        current_index = AUTO_PILOT_STEP_ORDER.index(stage)
+        for index, step_key in enumerate(AUTO_PILOT_STEP_ORDER):
+            if index < current_index:
+                state = "completed"
+            elif index == current_index:
+                state = "running" if running else "active"
+            else:
+                state = "idle"
+            self.steps[step_key].set_state(state)
+
+        if stage == "analyze" and running:
+            self._pulse_animation.start()
+        else:
+            self._pulse_animation.stop()
+            self._pulse_effect.setOpacity(1.0)
+
+
+class DraggableColumnCard(QFrame):
+    def __init__(self, column_name, column_kind, preview_text, parent=None):
+        super().__init__(parent)
+        self.column_name = column_name
+        self.column_kind = column_kind
+        self._drag_start_position = QPoint()
+        self.setObjectName("columnCard")
+        self.setCursor(Qt.OpenHandCursor)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(3)
+
+        title = QLabel(str(column_name))
+        title.setObjectName("columnCardTitle")
+        layout.addWidget(title)
+
+        meta = QLabel(f"{column_kind.title()} column")
+        meta.setObjectName("columnCardMeta")
+        layout.addWidget(meta)
+
+        preview = QLabel(preview_text)
+        preview.setObjectName("columnCardPreview")
+        preview.setWordWrap(True)
+        layout.addWidget(preview)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_start_position = event.pos()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if not (event.buttons() & Qt.LeftButton):
+            return
+        if (event.pos() - self._drag_start_position).manhattanLength() < QApplication.startDragDistance():
+            return
+
+        drag = QDrag(self)
+        mime_data = QMimeData()
+        mime_data.setText(f"{self.column_name}\t{self.column_kind}")
+        drag.setMimeData(mime_data)
+        drag.setPixmap(self.grab())
+        drag.exec_(Qt.CopyAction)
+
+
+class BucketChip(QFrame):
+    removed = pyqtSignal(str)
+
+    def __init__(self, column_name, parent=None):
+        super().__init__(parent)
+        self.column_name = column_name
+        self.setObjectName("bucketChip")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 6, 10, 6)
+        layout.setSpacing(8)
+
+        label = QLabel(str(column_name))
+        label.setObjectName("bucketChipLabel")
+        layout.addWidget(label)
+
+        remove_button = QToolButton()
+        remove_button.setText("x")
+        remove_button.setObjectName("bucketChipRemove")
+        remove_button.clicked.connect(lambda: self.removed.emit(self.column_name))
+        layout.addWidget(remove_button)
+
+
+class MappingBucketWidget(QFrame):
+    changed = pyqtSignal()
+
+    def __init__(self, title, placeholder, accepted_kinds=None, allow_multiple=False, parent=None):
+        super().__init__(parent)
+        self.setObjectName("mappingBucket")
+        self.setAcceptDrops(True)
+        self.accepted_kinds = set(accepted_kinds or [])
+        self.allow_multiple = allow_multiple
+        self._assignments = []
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(8)
+
+        self.title_label = QLabel(title)
+        self.title_label.setObjectName("mappingBucketTitle")
+        layout.addWidget(self.title_label)
+
+        self.placeholder_label = QLabel(placeholder)
+        self.placeholder_label.setObjectName("mappingBucketPlaceholder")
+        self.placeholder_label.setWordWrap(True)
+        layout.addWidget(self.placeholder_label)
+
+        self.chip_container = QWidget()
+        self.chip_layout = QVBoxLayout(self.chip_container)
+        self.chip_layout.setContentsMargins(0, 0, 0, 0)
+        self.chip_layout.setSpacing(6)
+        layout.addWidget(self.chip_container)
+
+    def set_allow_multiple(self, allow_multiple):
+        self.allow_multiple = allow_multiple
+        if not allow_multiple and len(self._assignments) > 1:
+            first_assignment = self._assignments[0]
+            self.clear_assignments()
+            self.assign_column(first_assignment[0], first_assignment[1])
+
+    def _can_accept_kind(self, column_kind):
+        return not self.accepted_kinds or column_kind in self.accepted_kinds
+
+    def dragEnterEvent(self, event):
+        payload = event.mimeData().text().split("\t")
+        if len(payload) == 2 and self._can_accept_kind(payload[1]):
+            self.setProperty("dragHover", True)
+            self.style().unpolish(self)
+            self.style().polish(self)
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event):
+        self.setProperty("dragHover", False)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event):
+        self.setProperty("dragHover", False)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+        payload = event.mimeData().text().split("\t")
+        if len(payload) != 2:
+            event.ignore()
+            return
+        column_name, column_kind = payload
+        if self.assign_column(column_name, column_kind):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def assign_column(self, column_name, column_kind):
+        if not self._can_accept_kind(column_kind):
+            return False
+        if not self.allow_multiple:
+            self.clear_assignments()
+        elif any(existing_name == column_name for existing_name, _, _ in self._assignments):
+            return True
+
+        chip = BucketChip(column_name)
+        chip.removed.connect(self.remove_column)
+        self.chip_layout.addWidget(chip)
+        self._assignments.append((column_name, column_kind, chip))
+        self._refresh_placeholder()
+        self.changed.emit()
+        return True
+
+    def remove_column(self, column_name):
+        remaining = []
+        for existing_name, existing_kind, chip in self._assignments:
+            if existing_name == column_name:
+                chip.setParent(None)
+                chip.deleteLater()
+                continue
+            remaining.append((existing_name, existing_kind, chip))
+        self._assignments = remaining
+        self._refresh_placeholder()
+        self.changed.emit()
+
+    def clear_assignments(self):
+        for _, _, chip in self._assignments:
+            chip.setParent(None)
+            chip.deleteLater()
+        self._assignments = []
+        self._refresh_placeholder()
+        self.changed.emit()
+
+    def get_assigned_columns(self):
+        return [column_name for column_name, _, _ in self._assignments]
+
+    def _refresh_placeholder(self):
+        self.placeholder_label.setVisible(len(self._assignments) == 0)
+
+
+class DecisionTreePanel(QFrame):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("decisionTreePanel")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+
+        title = QLabel("Decision Tree Dashboard")
+        title.setObjectName("panelTitle")
+        layout.addWidget(title)
+
+        self.status_label = QLabel("The statistical decision path will appear here after the analysis.")
+        self.status_label.setObjectName("panelDescription")
+        self.status_label.setWordWrap(True)
+        layout.addWidget(self.status_label)
+
+        self.image_label = QLabel("Decision tree preview")
+        self.image_label.setObjectName("decisionTreeImage")
+        self.image_label.setAlignment(Qt.AlignCenter)
+        self.image_label.setMinimumHeight(280)
+        self.image_label.setWordWrap(True)
+        layout.addWidget(self.image_label, 1)
+
+        self.last_render_path = None
+
+    def show_placeholder(self, text):
+        self.status_label.setText(text)
+        self.image_label.setPixmap(QPixmap())
+        self.image_label.setText("Decision tree preview")
+
+    def update_results(self, results):
+        try:
+            import tempfile
+
+            output_base = os.path.join(tempfile.gettempdir(), f"biomedstatx_tree_{int(time.time() * 1000)}")
+            rendered_path = DecisionTreeVisualizer.visualize(results, output_path=output_base)
+            pixmap = QPixmap(rendered_path)
+            if pixmap.isNull():
+                raise ValueError("Decision tree image could not be loaded.")
+            self.last_render_path = rendered_path
+            self.status_label.setText(results.get("tested_against", results.get("test", "Decision path ready.")))
+            self.image_label.setText("")
+            self.image_label.setPixmap(pixmap.scaled(
+                self.image_label.size(),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation
+            ))
+        except Exception as exc:
+            self.show_placeholder(f"Decision tree could not be rendered: {exc}")
+
+    def resizeEvent(self, event):
+        if self.last_render_path and os.path.exists(self.last_render_path):
+            pixmap = QPixmap(self.last_render_path)
+            if not pixmap.isNull():
+                self.image_label.setPixmap(pixmap.scaled(
+                    self.image_label.size(),
+                    Qt.KeepAspectRatio,
+                    Qt.SmoothTransformation
+                ))
+        super().resizeEvent(event)
+
+
+class ResultCardWidget(QFrame):
+    def __init__(self, title, parent=None):
+        super().__init__(parent)
+        self.setObjectName("resultCard")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(8)
+
+        self.title_label = QLabel(title)
+        self.title_label.setObjectName("resultCardTitle")
+        layout.addWidget(self.title_label)
+
+        self.value_label = QLabel("Waiting for analysis")
+        self.value_label.setObjectName("resultCardValue")
+        self.value_label.setWordWrap(True)
+        layout.addWidget(self.value_label)
+
+    def set_value(self, text):
+        self.value_label.setText(text)
+
+
+class ResultCockpitWidget(QFrame):
+    configure_plot_requested = pyqtSignal()
+    open_output_requested = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("resultCockpit")
+        self._animation_group = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        title = QLabel("Result Cockpit")
+        title.setObjectName("panelTitle")
+        layout.addWidget(title)
+
+        self.subtitle = QLabel("Run an analysis to populate the cockpit.")
+        self.subtitle.setObjectName("panelDescription")
+        self.subtitle.setWordWrap(True)
+        layout.addWidget(self.subtitle)
+
+        self.cards = {
+            "detected_test": ResultCardWidget("Detected Test"),
+            "tested_against": ResultCardWidget("Tested Against"),
+            "assumptions": ResultCardWidget("Assumptions"),
+            "rationale": ResultCardWidget("Why This Path"),
+            "posthoc": ResultCardWidget("Post-hoc Status"),
+        }
+        for card in self.cards.values():
+            layout.addWidget(card)
+
+        buttons_row = QHBoxLayout()
+        self.configure_plot_button = QPushButton("Configure Plot...")
+        self.configure_plot_button.clicked.connect(self.configure_plot_requested.emit)
+        self.configure_plot_button.setEnabled(False)
+        buttons_row.addWidget(self.configure_plot_button)
+
+        self.open_output_button = QPushButton("Open Output Folder")
+        self.open_output_button.clicked.connect(self.open_output_requested.emit)
+        self.open_output_button.setEnabled(False)
+        buttons_row.addWidget(self.open_output_button)
+        layout.addLayout(buttons_row)
+
+        self.clear()
+
+    def clear(self):
+        self.subtitle.setText("Run an analysis to populate the cockpit.")
+        defaults = {
+            "detected_test": "The app will infer the design from your mapping.",
+            "tested_against": "The final calculated model path will appear here.",
+            "assumptions": "Assumption checks will be summarized after the run.",
+            "rationale": "The decision rationale will be explained here.",
+            "posthoc": "Transformation and post-hoc remain user-guided when needed.",
+        }
+        for key, text in defaults.items():
+            self.cards[key].set_value(text)
+        self.configure_plot_button.setEnabled(False)
+        self.open_output_button.setEnabled(False)
+
+    def set_summary(self, summary, enable_plot=False, enable_output=False):
+        self.subtitle.setText(summary.get("subtitle", "Analysis complete."))
+        for key, card in self.cards.items():
+            card.set_value(summary.get(key, "N/A"))
+
+        self.configure_plot_button.setEnabled(enable_plot)
+        self.open_output_button.setEnabled(enable_output)
+        self._animate_cards()
+
+    def _animate_cards(self):
+        self._animation_group = QSequentialAnimationGroup(self)
+        for card in self.cards.values():
+            effect = QGraphicsOpacityEffect(card)
+            card.setGraphicsEffect(effect)
+            effect.setOpacity(0.0)
+            animation = QPropertyAnimation(effect, b"opacity", self)
+            animation.setDuration(180)
+            animation.setStartValue(0.0)
+            animation.setEndValue(1.0)
+            animation.setEasingCurve(QEasingCurve.OutCubic)
+            self._animation_group.addAnimation(animation)
+        self._animation_group.start()
+
+
+def _load_auto_pilot_stylesheet():
+    stylesheet_paths = [
+        resource_path("assets/BioMedStatX_2_0.qss"),
+        resource_path("assets/StyleSheet.qss"),
+    ]
+    for path in stylesheet_paths:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as handle:
+                return handle.read()
+    return ""
+
+
+def _ap_init_ui(self):
+    central_widget = QWidget()
+    central_widget.setObjectName("autoPilotRoot")
+    root_layout = QVBoxLayout(central_widget)
+    root_layout.setContentsMargins(24, 18, 24, 18)
+    root_layout.setSpacing(16)
+
+    self.pipeline_tracker = PipelineTrackerWidget()
+    root_layout.addWidget(self.pipeline_tracker)
+
+    headline_row = QHBoxLayout()
+    headline_row.setSpacing(12)
+    title_block = QVBoxLayout()
+    title = QLabel("BioMedStatX 2.0")
+    title.setObjectName("heroTitle")
+    title_block.addWidget(title)
+    subtitle = QLabel("Auto-pilot statistical analysis with guided mapping and transparent decisions.")
+    subtitle.setObjectName("heroSubtitle")
+    subtitle.setWordWrap(True)
+    title_block.addWidget(subtitle)
+    headline_row.addLayout(title_block, 1)
+
+    self.analysis_status_badge = QLabel("Waiting for a dataset")
+    self.analysis_status_badge.setObjectName("analysisStatusBadge")
+    headline_row.addWidget(self.analysis_status_badge, 0, Qt.AlignTop)
+    root_layout.addLayout(headline_row)
+
+    splitter = QSplitter(Qt.Horizontal)
+    splitter.setChildrenCollapsible(False)
+    root_layout.addWidget(splitter, 1)
+
+    # Left panel
+    left_panel = QFrame()
+    left_panel.setObjectName("dashboardPanel")
+    left_layout = QVBoxLayout(left_panel)
+    left_layout.setContentsMargins(18, 18, 18, 18)
+    left_layout.setSpacing(14)
+
+    left_title = QLabel("Data Source")
+    left_title.setObjectName("panelTitle")
+    left_layout.addWidget(left_title)
+
+    file_row = QHBoxLayout()
+    self.auto_file_label = QLabel("No file selected")
+    self.auto_file_label.setObjectName("filePathLabel")
+    file_row.addWidget(self.auto_file_label, 1)
+    browse_button = QPushButton("Load Excel / CSV")
+    browse_button.clicked.connect(self.browse_file)
+    file_row.addWidget(browse_button)
+    left_layout.addLayout(file_row)
+
+    mode_row = QHBoxLayout()
+    self.single_mode_button = QRadioButton("Single Analysis")
+    self.multi_mode_button = QRadioButton("Multi-Dataset Analysis")
+    self.single_mode_button.setChecked(True)
+    self.single_mode_button.toggled.connect(self.update_mode_constraints)
+    self.multi_mode_button.toggled.connect(self.update_mode_constraints)
+    mode_row.addWidget(self.single_mode_button)
+    mode_row.addWidget(self.multi_mode_button)
+    left_layout.addLayout(mode_row)
+
+    self.auto_mode_hint = QLabel("Single mode expects exactly one dependent variable.")
+    self.auto_mode_hint.setObjectName("panelDescription")
+    self.auto_mode_hint.setWordWrap(True)
+    left_layout.addWidget(self.auto_mode_hint)
+
+    sheet_label = QLabel("Worksheet")
+    sheet_label.setObjectName("sectionLabel")
+    left_layout.addWidget(sheet_label)
+    self.auto_sheet_combo = QComboBox()
+    self.auto_sheet_combo.currentIndexChanged.connect(self.load_sheet)
+    left_layout.addWidget(self.auto_sheet_combo)
+    self.sheet_combo = self.auto_sheet_combo
+
+    preview_label = QLabel("Table Preview")
+    preview_label.setObjectName("sectionLabel")
+    left_layout.addWidget(preview_label)
+    self.preview_table = QTableWidget(0, 0)
+    self.preview_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+    self.preview_table.setSelectionMode(QAbstractItemView.NoSelection)
+    self.preview_table.setAlternatingRowColors(True)
+    left_layout.addWidget(self.preview_table, 1)
+
+    cards_label = QLabel("Excel Headers")
+    cards_label.setObjectName("sectionLabel")
+    left_layout.addWidget(cards_label)
+    cards_scroll = QScrollArea()
+    cards_scroll.setWidgetResizable(True)
+    cards_scroll.setObjectName("headerCardScroll")
+    self.header_cards_widget = QWidget()
+    self.header_cards_layout = QVBoxLayout(self.header_cards_widget)
+    self.header_cards_layout.setContentsMargins(0, 0, 0, 0)
+    self.header_cards_layout.setSpacing(10)
+    self.header_cards_layout.addStretch()
+    cards_scroll.setWidget(self.header_cards_widget)
+    left_layout.addWidget(cards_scroll, 1)
+
+    splitter.addWidget(left_panel)
+
+    # Center panel
+    center_panel = QFrame()
+    center_panel.setObjectName("dashboardPanel")
+    center_layout = QVBoxLayout(center_panel)
+    center_layout.setContentsMargins(18, 18, 18, 18)
+    center_layout.setSpacing(14)
+
+    center_title = QLabel("Smart Mapping")
+    center_title.setObjectName("panelTitle")
+    center_layout.addWidget(center_title)
+
+    center_description = QLabel("Drag header cards into the buckets. The auto-pilot will infer the test design from this mapping.")
+    center_description.setObjectName("panelDescription")
+    center_description.setWordWrap(True)
+    center_layout.addWidget(center_description)
+
+    self.dv_bucket = MappingBucketWidget(
+        "Dependent Variable",
+        "Drop one numeric measurement column here. In multi mode, multiple DVs are allowed.",
+        accepted_kinds={"numeric"},
+        allow_multiple=False
+    )
+    self.factor1_bucket = MappingBucketWidget(
+        "Factor 1",
+        "Drop the primary grouping factor here.",
+        accepted_kinds={"numeric", "categorical", "datetime"}
+    )
+    self.factor2_bucket = MappingBucketWidget(
+        "Factor 2",
+        "Optional: drop a second factor here for Two-Way or Mixed ANOVA.",
+        accepted_kinds={"numeric", "categorical", "datetime"}
+    )
+    self.subject_bucket = MappingBucketWidget(
+        "Subject ID",
+        "Optional: drop a subject identifier here for paired / repeated-measures designs.",
+        accepted_kinds={"numeric", "categorical", "datetime"}
+    )
+    for bucket in (self.dv_bucket, self.factor1_bucket, self.factor2_bucket, self.subject_bucket):
+        bucket.changed.connect(self.on_mapping_changed)
+        center_layout.addWidget(bucket)
+
+    self.mapping_feedback_label = QLabel("Load a file to activate the mapping workflow.")
+    self.mapping_feedback_label.setObjectName("panelDescription")
+    self.mapping_feedback_label.setWordWrap(True)
+    center_layout.addWidget(self.mapping_feedback_label)
+
+    self.start_analysis_button = QPushButton("Start Auto Analysis")
+    self.start_analysis_button.setObjectName("primaryButton")
+    self.start_analysis_button.clicked.connect(self.determine_and_run_test)
+    self.start_analysis_button.setEnabled(False)
+    center_layout.addWidget(self.start_analysis_button)
+    center_layout.addStretch()
+
+    splitter.addWidget(center_panel)
+
+    # Right panel
+    right_panel = QFrame()
+    right_panel.setObjectName("dashboardPanel")
+    right_layout = QVBoxLayout(right_panel)
+    right_layout.setContentsMargins(18, 18, 18, 18)
+    right_layout.setSpacing(14)
+
+    self.decision_tree_panel = DecisionTreePanel()
+    right_layout.addWidget(self.decision_tree_panel, 1)
+
+    self.result_cockpit = ResultCockpitWidget()
+    self.result_cockpit.configure_plot_requested.connect(self.configure_plot_from_result)
+    self.result_cockpit.open_output_requested.connect(self.open_current_output_folder)
+    right_layout.addWidget(self.result_cockpit, 1)
+
+    splitter.addWidget(right_panel)
+    splitter.setSizes([450, 430, 520])
+
+    self.setCentralWidget(central_widget)
+
+    self.file_path_label = self.auto_file_label
+    self.current_analysis_context = None
+    self.current_analysis_result = None
+    self.current_output_dir = None
+    self.current_multi_results = {}
+    self.current_rendered_dataset = None
+
+
+def _ap_refresh_preview_table(self):
+    if self.df is None:
+        self.preview_table.clear()
+        self.preview_table.setRowCount(0)
+        self.preview_table.setColumnCount(0)
+        return
+
+    preview_df = self.df.head(12).copy()
+    self.preview_table.clear()
+    self.preview_table.setColumnCount(len(preview_df.columns))
+    self.preview_table.setHorizontalHeaderLabels([str(column) for column in preview_df.columns])
+    self.preview_table.setRowCount(len(preview_df.index))
+    for row_index in range(len(preview_df.index)):
+        for column_index, column_name in enumerate(preview_df.columns):
+            value = preview_df.iloc[row_index, column_index]
+            item = QTableWidgetItem("" if pd.isna(value) else str(value))
+            self.preview_table.setItem(row_index, column_index, item)
+    self.preview_table.resizeColumnsToContents()
+
+
+def _ap_rebuild_column_cards(self):
+    while self.header_cards_layout.count():
+        item = self.header_cards_layout.takeAt(0)
+        widget = item.widget()
+        if widget is not None:
+            widget.deleteLater()
+
+    if self.df is None:
+        self.header_cards_layout.addStretch()
+        return
+
+    for column_name in self.df.columns:
+        series = self.df[column_name]
+        column_kind = _infer_column_kind(series)
+        preview_values = [str(value) for value in series.dropna().head(3).tolist()]
+        preview_text = "Preview: " + (", ".join(preview_values) if preview_values else "No preview values")
+        card = DraggableColumnCard(column_name, column_kind, preview_text)
+        self.header_cards_layout.addWidget(card)
+    self.header_cards_layout.addStretch()
+
+
+def _ap_apply_mapping_heuristics(self):
+    for bucket in (self.dv_bucket, self.factor1_bucket, self.factor2_bucket, self.subject_bucket):
+        bucket.clear_assignments()
+
+    if self.df is None:
+        return
+
+    columns = list(self.df.columns)
+    subject_column = next((column for column in columns if _looks_like_subject(column)), None)
+    if subject_column:
+        self.subject_bucket.assign_column(subject_column, _infer_column_kind(self.df[subject_column]))
+
+    numeric_columns = [
+        column for column in columns
+        if pd.api.types.is_numeric_dtype(self.df[column]) and column != subject_column
+    ]
+    factor_candidates = []
+    for column in columns:
+        if column == subject_column or column in numeric_columns:
+            continue
+        unique_count = self.df[column].dropna().nunique()
+        if 1 < unique_count < max(len(self.df) * 0.75, 5):
+            factor_candidates.append(column)
+
+    if not factor_candidates:
+        factor_candidates = [
+            column for column in columns
+            if column not in numeric_columns and column != subject_column
+        ]
+
+    if numeric_columns:
+        if self.multi_mode_button.isChecked() and len(numeric_columns) > 1:
+            for column in numeric_columns:
+                self.dv_bucket.assign_column(column, _infer_column_kind(self.df[column]))
+        else:
+            self.dv_bucket.assign_column(numeric_columns[0], _infer_column_kind(self.df[numeric_columns[0]]))
+
+    if factor_candidates:
+        self.factor1_bucket.assign_column(factor_candidates[0], _infer_column_kind(self.df[factor_candidates[0]]))
+    if len(factor_candidates) > 1:
+        self.factor2_bucket.assign_column(factor_candidates[1], _infer_column_kind(self.df[factor_candidates[1]]))
+
+
+def _ap_update_mode_constraints(self):
+    allow_multiple_dv = self.multi_mode_button.isChecked()
+    self.dv_bucket.set_allow_multiple(allow_multiple_dv)
+    if allow_multiple_dv:
+        self.auto_mode_hint.setText("Multi mode analyzes several dependent variables with the same factor mapping. It remains restricted to ANOVA-capable designs.")
+    else:
+        self.auto_mode_hint.setText("Single mode expects exactly one dependent variable.")
+    self.on_mapping_changed()
+
+
+def _ap_set_workflow_state(self, stage, message, running=False):
+    self.pipeline_tracker.set_stage(stage, running=running)
+    self.analysis_status_badge.setText(message)
+
+
+def _ap_on_mapping_changed(self):
+    if self.df is None:
+        self.start_analysis_button.setEnabled(False)
+        self.mapping_feedback_label.setText("Load a file to activate the mapping workflow.")
+        return
+
+    dv_columns = self.dv_bucket.get_assigned_columns()
+    factor_columns = [column for column in [
+        *self.factor1_bucket.get_assigned_columns(),
+        *self.factor2_bucket.get_assigned_columns(),
+    ] if column]
+    subject_columns = self.subject_bucket.get_assigned_columns()
+
+    if not dv_columns:
+        self.mapping_feedback_label.setText("Assign at least one dependent variable.")
+        self.start_analysis_button.setEnabled(False)
+        return
+    if not factor_columns:
+        self.mapping_feedback_label.setText("Assign at least one factor column.")
+        self.start_analysis_button.setEnabled(False)
+        return
+    if not self.multi_mode_button.isChecked() and len(dv_columns) != 1:
+        self.mapping_feedback_label.setText("Single mode requires exactly one dependent variable.")
+        self.start_analysis_button.setEnabled(False)
+        return
+    if self.multi_mode_button.isChecked() and len(dv_columns) < 2:
+        self.mapping_feedback_label.setText("Multi mode requires at least two dependent variables.")
+        self.start_analysis_button.setEnabled(False)
+        return
+    if len(factor_columns) > 2:
+        self.mapping_feedback_label.setText("Auto-pilot currently supports at most two factor columns.")
+        self.start_analysis_button.setEnabled(False)
+        return
+    if len(subject_columns) > 1:
+        self.mapping_feedback_label.setText("Only one subject-ID column is supported.")
+        self.start_analysis_button.setEnabled(False)
+        return
+
+    self.mapping_feedback_label.setText("Mapping looks valid. Start the analysis when you are ready.")
+    self.start_analysis_button.setEnabled(True)
+
+
+def _ap_browse_file(self):
+    file_path, _ = QFileDialog.getOpenFileName(
+        self, "Open Excel or CSV file", "",
+        "Excel files (*.xlsx *.xls);;CSV files (*.csv);;All files (*.*)"
+    )
+    if file_path:
+        self.file_path = file_path
+        self.load_file()
+
+
+def _ap_load_file(self):
+    if not self.file_path:
+        return
+    try:
+        if self.file_path.endswith('.csv'):
+            self.df = pd.read_csv(self.file_path)
+            self.sheet_names = ["CSV"]
+            self.auto_sheet_combo.clear()
+            self.auto_sheet_combo.addItem("CSV")
+            self.auto_sheet_combo.setEnabled(False)
+        else:
+            excel = pd.ExcelFile(self.file_path)
+            self.sheet_names = excel.sheet_names
+            self.auto_sheet_combo.blockSignals(True)
+            self.auto_sheet_combo.clear()
+            self.auto_sheet_combo.addItems(self.sheet_names)
+            self.auto_sheet_combo.blockSignals(False)
+            self.auto_sheet_combo.setEnabled(True)
+            first_sheet = self.sheet_names[0] if self.sheet_names else 0
+            self.df = pd.read_excel(self.file_path, sheet_name=first_sheet)
+
+        self.auto_file_label.setText(os.path.basename(self.file_path))
+        self.selected_columns = []
+        self.combine_columns = False
+        self.numeric_columns = [column for column in self.df.columns if pd.api.types.is_numeric_dtype(self.df[column])]
+        self._refresh_preview_table()
+        self._rebuild_column_cards()
+        self._apply_mapping_heuristics()
+        self._set_workflow_state("map", "Dataset loaded")
+        self.result_cockpit.clear()
+        self.decision_tree_panel.show_placeholder("Map the columns, then run the auto-pilot analysis.")
+        self.current_analysis_context = None
+        self.current_analysis_result = None
+        self.current_multi_results = {}
+        self.current_output_dir = None
+        self.on_mapping_changed()
+    except Exception as exc:
+        self.df = None
+        QMessageBox.critical(self, "Error", f"Error loading file: {exc}")
+
+
+def _ap_load_sheet(self, index):
+    if self.file_path is None or self.file_path.endswith(".csv"):
+        return
+    if index < 0:
+        return
+    try:
+        self.df = pd.read_excel(self.file_path, sheet_name=self.auto_sheet_combo.itemText(index))
+        self.numeric_columns = [column for column in self.df.columns if pd.api.types.is_numeric_dtype(self.df[column])]
+        self._refresh_preview_table()
+        self._rebuild_column_cards()
+        self._apply_mapping_heuristics()
+        self._set_workflow_state("map", "Worksheet loaded")
+        self.on_mapping_changed()
+    except Exception as exc:
+        QMessageBox.critical(self, "Error", f"Error loading worksheet: {exc}")
+
+
+def _ap_build_analysis_context(self):
+    dv_columns = self.dv_bucket.get_assigned_columns()
+    factor_columns = [column for column in [
+        *self.factor1_bucket.get_assigned_columns(),
+        *self.factor2_bucket.get_assigned_columns(),
+    ] if column]
+    subject_columns = self.subject_bucket.get_assigned_columns()
+    subject_column = subject_columns[0] if subject_columns else None
+
+    if len(set(dv_columns + factor_columns + ([subject_column] if subject_column else []))) != len(dv_columns + factor_columns + ([subject_column] if subject_column else [])):
+        raise ValueError("Each mapped role must use a distinct column.")
+
+    if len(factor_columns) == 0 or len(factor_columns) > 2:
+        raise ValueError("Auto-pilot currently supports one or two factor columns.")
+
+    context = {
+        "mode": "multi" if self.multi_mode_button.isChecked() else "single",
+        "dv_columns": dv_columns,
+        "factor_columns": factor_columns,
+        "subject_column": subject_column,
+        "between_factors": [],
+        "within_factors": [],
+        "dependent": bool(subject_column),
+        "group_labels": [],
+        "display_group_col": factor_columns[0],
+        "inferred_test": None,
+    }
+
+    if len(factor_columns) == 1:
+        factor = factor_columns[0]
+        levels = _sorted_unique(self.df[factor].tolist())
+        if len(levels) < 2:
+            raise ValueError(f"Factor '{factor}' needs at least two levels.")
+        context["group_labels"] = levels
+        if subject_column:
+            subject_span = self.df.groupby(subject_column)[factor].nunique(dropna=True)
+            if not subject_span.empty and subject_span.max() <= 1:
+                raise ValueError("The selected Subject ID does not create a repeated-measures structure for Factor 1.")
+            context["within_factors"] = [factor]
+            context["inferred_test"] = "paired_ttest" if len(levels) == 2 else "repeated_measures_anova"
+        else:
+            context["inferred_test"] = "independent_ttest" if len(levels) == 2 else "one_way_anova"
+    else:
+        factor_a, factor_b = factor_columns
+        combinations = []
+        seen_pairs = set()
+        for _, row in self.df[[factor_a, factor_b]].dropna().iterrows():
+            pair = (row[factor_a], row[factor_b])
+            if pair in seen_pairs:
+                continue
+            seen_pairs.add(pair)
+            combinations.append(f"{factor_a}={row[factor_a]}, {factor_b}={row[factor_b]}")
+        context["group_labels"] = sorted(combinations, key=lambda item: str(item))
+        context["display_group_col"] = "__AUTO_GROUP__"
+
+        if subject_column:
+            role_by_factor = {}
+            for factor in factor_columns:
+                per_subject = self.df.groupby(subject_column)[factor].nunique(dropna=True)
+                role_by_factor[factor] = "between" if not per_subject.empty and per_subject.max() <= 1 else "within"
+            between_factors = [factor for factor, role in role_by_factor.items() if role == "between"]
+            within_factors = [factor for factor, role in role_by_factor.items() if role == "within"]
+            if len(between_factors) != 1 or len(within_factors) != 1:
+                raise ValueError(
+                    "With Subject ID plus two factors, auto-pilot requires exactly one between-subject factor and one within-subject factor."
+                )
+            context["between_factors"] = between_factors
+            context["within_factors"] = within_factors
+            context["inferred_test"] = "mixed_anova"
+        else:
+            context["between_factors"] = factor_columns[:2]
+            context["inferred_test"] = "two_way_anova"
+            context["dependent"] = False
+
+    if context["mode"] == "single" and len(dv_columns) != 1:
+        raise ValueError("Single mode requires exactly one dependent variable.")
+    if context["mode"] == "multi" and len(dv_columns) < 2:
+        raise ValueError("Multi mode requires at least two dependent variables.")
+    if context["mode"] == "multi" and context["inferred_test"] in {"independent_ttest", "paired_ttest"}:
+        raise ValueError("Multi mode is restricted to ANOVA-capable designs, not two-level t-test designs.")
+
+    return context
+
+
+def _ap_detected_test_label(self, context):
+    labels = {
+        "independent_ttest": "Independent t-test",
+        "paired_ttest": "Paired t-test",
+        "one_way_anova": "One-Way ANOVA",
+        "repeated_measures_anova": "Repeated Measures ANOVA",
+        "two_way_anova": "Two-Way ANOVA",
+        "mixed_anova": "Mixed ANOVA",
+    }
+    return labels.get(context["inferred_test"], context["inferred_test"])
+
+
+def _ap_execute_single_analysis(self, context, dv_column, output_dir, skip_plots=True, title_suffix=None):
+    if not self.file_path:
+        raise ValueError("No input file selected.")
+
+    base_name = os.path.splitext(os.path.basename(self.file_path))[0]
+    file_base = os.path.join(output_dir, f"{_safe_file_slug(base_name)}_{_safe_file_slug(dv_column)}")
+    group_labels = context.get("group_labels", [])
+    colors = [DEFAULT_COLORS[index % len(DEFAULT_COLORS)] for index, _ in enumerate(group_labels)]
+    hatches = [DEFAULT_HATCHES[index % len(DEFAULT_HATCHES)] for index, _ in enumerate(group_labels)]
+    single_context = dict(context)
+    single_context["dv_columns"] = [dv_column]
+    single_context["current_dv"] = dv_column
+
+    result = AnalysisManager.analyze(
+        file_path=self.file_path,
+        group_col=context.get("display_group_col", context["factor_columns"][0]),
+        groups=group_labels,
+        sheet_name=self.auto_sheet_combo.currentText() if self.auto_sheet_combo.isEnabled() else 0,
+        value_cols=[dv_column],
+        dependent=context.get("dependent", False),
+        compare=None,
+        colors=colors,
+        hatches=hatches,
+        title=title_suffix or dv_column,
+        x_label=", ".join(context["factor_columns"]),
+        y_label=dv_column,
+        file_name=file_base,
+        save_plot=True,
+        skip_plots=skip_plots,
+        error_type="sd",
+        skip_excel=False,
+        analysis_context=single_context,
+        subject_column=context.get("subject_column"),
+    )
+    return result
+
+
+def _ap_format_assumptions(self, results):
+    normality = "Normality not available"
+    variance = "Variance check not available"
+
+    normality_tests = results.get("normality_tests", {})
+    if "model_residuals_transformed" in normality_tests:
+        is_normal = normality_tests["model_residuals_transformed"].get("is_normal")
+        normality = "Normality OK after transformation" if is_normal else "Normality still violated after transformation"
+    elif "model_residuals" in normality_tests:
+        is_normal = normality_tests["model_residuals"].get("is_normal")
+        normality = "Normality OK" if is_normal else "Normality violated"
+    elif "transformed_data" in normality_tests:
+        is_normal = normality_tests["transformed_data"].get("is_normal")
+        normality = "Normality OK after transformation" if is_normal else "Normality violated"
+    elif "all_data" in normality_tests:
+        is_normal = normality_tests["all_data"].get("is_normal")
+        normality = "Normality OK" if is_normal else "Normality violated"
+
+    variance_test = results.get("variance_test", {})
+    variance_source = variance_test.get("transformed", variance_test)
+    if variance_source and isinstance(variance_source, dict) and variance_source.get("equal_variance") is not None:
+        variance = "Variance homogeneous" if variance_source.get("equal_variance") else "Variance heterogeneous"
+
+    return f"{normality}. {variance}."
+
+
+def _ap_format_rationale(self, context, results):
+    reasons = [f"Structure inferred as {self._detected_test_label(context)}."]
+    if context.get("subject_column"):
+        reasons.append(f"Subject ID detected via '{context['subject_column']}'.")
+    if results.get("transformation"):
+        reasons.append(f"Transformation chosen by user: {results['transformation']}.")
+    if results.get("analysis_note"):
+        reasons.append(results["analysis_note"])
+    elif results.get("note"):
+        reasons.append(results["note"])
+    elif results.get("recommendation") == "non_parametric":
+        reasons.append("Parametric assumptions failed, so a robust fallback model path was used.")
+    else:
+        reasons.append("Auto-pilot stayed on the default supported path for this design.")
+    return " ".join(reasons)
+
+
+def _ap_format_posthoc_status(self, results):
+    if results.get("posthoc_test"):
+        return f"{results['posthoc_test']}."
+    if results.get("p_value") is not None and results["p_value"] < 0.05 and len(results.get("groups", [])) > 2:
+        return "Significant omnibus result, but no post-hoc result was stored."
+    if results.get("p_value") is not None and results["p_value"] >= 0.05:
+        return "No post-hoc required because the omnibus test was not significant."
+    return "No post-hoc performed."
+
+
+def _ap_render_result_summary(self, context, results, output_dir, subtitle):
+    tested_against = results.get("tested_against") or results.get("final_test_label") or results.get("test") or "Not available"
+    summary = {
+        "subtitle": subtitle,
+        "detected_test": self._detected_test_label(context),
+        "tested_against": tested_against,
+        "assumptions": self._format_assumptions(results),
+        "rationale": self._format_rationale(context, results),
+        "posthoc": self._format_posthoc_status(results),
+    }
+    self.result_cockpit.set_summary(summary, enable_plot=True, enable_output=bool(output_dir))
+    self.decision_tree_panel.update_results(results)
+    self._set_workflow_state("results", "Results ready")
+    self.current_output_dir = output_dir
+    self.current_analysis_context = context
+    self.current_analysis_result = results
+    self.current_rendered_dataset = context.get("current_dv") or context["dv_columns"][0]
+    self.samples = results.get("raw_data") or results.get("samples")
+    self.available_groups = list((self.samples or {}).keys())
+
+
+def _ap_determine_and_run_test(self):
+    if self.df is None:
+        QMessageBox.warning(self, "Error", "Please load a dataset first.")
+        return
+
+    try:
+        context = self._build_analysis_context()
+    except Exception as exc:
+        QMessageBox.warning(self, "Invalid Mapping", str(exc))
+        return
+
+    output_dir = QFileDialog.getExistingDirectory(self, "Select output directory for analysis")
+    if not output_dir:
+        return
+
+    self._set_workflow_state("analyze", "Running analysis", running=True)
+    self.mapping_feedback_label.setText("Auto-pilot is analyzing the mapped design.")
+    self.decision_tree_panel.show_placeholder("Analyzing data and tracing the statistical decision path...")
+    QApplication.processEvents()
+
+    try:
+        if context["mode"] == "single":
+            result = self._execute_single_analysis(context, context["dv_columns"][0], output_dir, skip_plots=True)
+            self._render_result_summary(
+                context,
+                result,
+                output_dir,
+                subtitle=f"Analysis completed for '{context['dv_columns'][0]}'."
+            )
+            self.current_multi_results = {}
+        else:
+            all_results = {}
+            for dv_column in context["dv_columns"]:
+                per_dv_context = dict(context)
+                per_dv_context["dv_columns"] = [dv_column]
+                per_dv_context["current_dv"] = dv_column
+                QApplication.processEvents()
+                all_results[dv_column] = self._execute_single_analysis(per_dv_context, dv_column, output_dir, skip_plots=True)
+
+            base_name = _safe_file_slug(os.path.splitext(os.path.basename(self.file_path))[0])
+            combined_excel = os.path.join(output_dir, f"{base_name}_multi_dataset_results.xlsx")
+            ResultsExporter.export_multi_dataset_results(all_results, combined_excel)
+
+            lead_dv = context["dv_columns"][0]
+            lead_result = all_results[lead_dv]
+            lead_context = dict(context)
+            lead_context["dv_columns"] = [lead_dv]
+            lead_context["current_dv"] = lead_dv
+            self._render_result_summary(
+                lead_context,
+                lead_result,
+                output_dir,
+                subtitle=f"Multi-dataset analysis completed for {len(all_results)} dependent variables. Combined Excel: {os.path.basename(combined_excel)}"
+            )
+            self.current_multi_results = all_results
+            self.current_analysis_result["combined_excel"] = combined_excel
+
+    except Exception as exc:
+        self._set_workflow_state("map", "Analysis failed")
+        self.decision_tree_panel.show_placeholder(f"Analysis failed: {exc}")
+        QMessageBox.critical(self, "Analysis Error", str(exc))
+
+
+def _ap_configure_plot_from_result(self):
+    if not self.current_analysis_result or not self.current_analysis_context:
+        QMessageBox.information(self, "No Result", "Run an analysis before configuring a plot.")
+        return
+
+    groups = list((self.current_analysis_result.get("raw_data") or self.current_analysis_result.get("samples") or {}).keys())
+    if not groups:
+        QMessageBox.warning(self, "Plot Configuration", "No group data are available for plot configuration.")
+        return
+
+    self.samples = self.current_analysis_result.get("raw_data") or self.current_analysis_result.get("samples")
+    self.available_groups = groups
+
+    default_filename = os.path.splitext(os.path.basename(self.file_path))[0]
+    if self.current_rendered_dataset:
+        default_filename = f"{default_filename}_{_safe_file_slug(self.current_rendered_dataset)}"
+
+    dialog = PlotConfigDialog(groups, parent=self, default_filename=default_filename)
+    dialog.dependent_check.setChecked(self.current_analysis_context.get("dependent", False))
+    dialog.create_plot_check.setChecked(True)
+
+    if dialog.exec_() != dialog.Accepted:
+        return
+
+    plot_config = dialog.get_config()
+    if not plot_config:
+        return
+
+    output_dir = self.current_output_dir or QFileDialog.getExistingDirectory(self, "Select output directory for plot export")
+    if not output_dir:
+        return
+
+    try:
+        self._set_workflow_state("analyze", "Rendering plot", running=True)
+        QApplication.processEvents()
+
+        context = dict(self.current_analysis_context)
+        if self.current_rendered_dataset:
+            context["dv_columns"] = [self.current_rendered_dataset]
+            context["current_dv"] = self.current_rendered_dataset
+        context["group_labels"] = plot_config["groups"]
+
+        file_base = os.path.join(
+            output_dir,
+            plot_config.get("file_name") or f"{_safe_file_slug(os.path.splitext(os.path.basename(self.file_path))[0])}_{_safe_file_slug(context['dv_columns'][0])}_plot"
+        )
+        appearance = plot_config.get("appearance_settings", {})
+        plot_result = AnalysisManager.analyze(
+            file_path=self.file_path,
+            group_col=context.get("display_group_col", context["factor_columns"][0]),
+            groups=plot_config["groups"],
+            sheet_name=self.auto_sheet_combo.currentText() if self.auto_sheet_combo.isEnabled() else 0,
+            value_cols=context["dv_columns"],
+            dependent=context.get("dependent", False),
+            compare=None,
+            colors=[plot_config["colors"].get(group, DEFAULT_COLORS[index % len(DEFAULT_COLORS)]) for index, group in enumerate(plot_config["groups"])],
+            hatches=[plot_config["hatches"].get(group, "") for group in plot_config["groups"]],
+            title=plot_config.get("title") or context["dv_columns"][0],
+            x_label=plot_config.get("x_label"),
+            y_label=plot_config.get("y_label"),
+            file_name=file_base,
+            save_plot=True,
+            skip_plots=not plot_config.get("create_plot", True),
+            error_type=plot_config.get("error_type", "sd"),
+            skip_excel=False,
+            analysis_context=context,
+            subject_column=context.get("subject_column"),
+            plot_type=appearance.get("plot_type", "Bar"),
+            dpi=appearance.get("dpi", 300),
+            colors_override=plot_config["colors"],
+        )
+
+        files = []
+        for ext in ("xlsx", "pdf", "png"):
+            candidate = f"{file_base}.{ext}"
+            if os.path.exists(candidate):
+                files.append(candidate)
+        self.show_analysis_success_dialog("Configured plot export", files, output_dir)
+        self.current_analysis_result = plot_result
+        self._set_workflow_state("results", "Results ready")
+    except Exception as exc:
+        self._set_workflow_state("results", "Plot export failed")
+        QMessageBox.critical(self, "Plot Error", str(exc))
+
+
+def _ap_open_current_output_folder(self):
+    if self.current_output_dir and os.path.isdir(self.current_output_dir):
+        QDesktopServices.openUrl(QUrl.fromLocalFile(self.current_output_dir))
+
+
+def _ap_reset_application_state(self):
+    self.current_analysis_context = None
+    self.current_analysis_result = None
+    self.current_multi_results = {}
+    self.current_output_dir = None
+    self.current_rendered_dataset = None
+    self.temp_plot_appearance_settings = None
+    self.result_cockpit.clear()
+    self.decision_tree_panel.show_placeholder("Map the columns, then run the auto-pilot analysis.")
+    self._set_workflow_state("map" if self.df is not None else "load", "Ready for the next analysis")
+    if self.df is not None:
+        self._apply_mapping_heuristics()
+        self.on_mapping_changed()
+
+
+StatisticalAnalyzerApp.init_ui = _ap_init_ui
+StatisticalAnalyzerApp.browse_file = _ap_browse_file
+StatisticalAnalyzerApp.load_file = _ap_load_file
+StatisticalAnalyzerApp.load_sheet = _ap_load_sheet
+StatisticalAnalyzerApp._refresh_preview_table = _ap_refresh_preview_table
+StatisticalAnalyzerApp._rebuild_column_cards = _ap_rebuild_column_cards
+StatisticalAnalyzerApp._apply_mapping_heuristics = _ap_apply_mapping_heuristics
+StatisticalAnalyzerApp.update_mode_constraints = _ap_update_mode_constraints
+StatisticalAnalyzerApp.on_mapping_changed = _ap_on_mapping_changed
+StatisticalAnalyzerApp._set_workflow_state = _ap_set_workflow_state
+StatisticalAnalyzerApp._build_analysis_context = _ap_build_analysis_context
+StatisticalAnalyzerApp._detected_test_label = _ap_detected_test_label
+StatisticalAnalyzerApp._execute_single_analysis = _ap_execute_single_analysis
+StatisticalAnalyzerApp._format_assumptions = _ap_format_assumptions
+StatisticalAnalyzerApp._format_rationale = _ap_format_rationale
+StatisticalAnalyzerApp._format_posthoc_status = _ap_format_posthoc_status
+StatisticalAnalyzerApp._render_result_summary = _ap_render_result_summary
+StatisticalAnalyzerApp.determine_and_run_test = _ap_determine_and_run_test
+StatisticalAnalyzerApp.configure_plot_from_result = _ap_configure_plot_from_result
+StatisticalAnalyzerApp.open_current_output_folder = _ap_open_current_output_folder
+StatisticalAnalyzerApp.reset_application_state = _ap_reset_application_state
+
 if __name__ == "__main__":
     try:
         # Timer-Warnungen unterdrücken
@@ -4184,9 +5453,8 @@ if __name__ == "__main__":
         
         # Apply stylesheet if available
         try:
-            with open(resource_path("assets/StyleSheet.qss"), "r", encoding="utf-8") as f:
-                stylesheet = f.read()
-                print("Stylesheet loaded successfully")
+            stylesheet = _load_auto_pilot_stylesheet()
+            print("Stylesheet loaded successfully" if stylesheet else "No stylesheet found")
         except:
             stylesheet = ""
             print("No stylesheet found")

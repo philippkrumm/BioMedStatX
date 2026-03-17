@@ -674,6 +674,15 @@ class ResultsExporter:
             else:
                 key_value_pairs.append(("Statistical power:", "Not calculated/available"))
 
+        if results.get("model_class"):
+            key_value_pairs.append(("Model class:", str(results["model_class"])))
+
+        if results.get("model_family"):
+            key_value_pairs.append(("Model family:", str(results["model_family"])))
+
+        if results.get("analysis_note"):
+            key_value_pairs.append(("Analysis note:", str(results["analysis_note"])))
+
         for key, value in key_value_pairs:
             ws.write(row, 0, key, fmt["key"])
             current_format = fmt["cell"]

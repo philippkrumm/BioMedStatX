@@ -2658,6 +2658,102 @@ class AnalysisManager:
                 title, x_label, y_label, file_name, save_plot, skip_plots,
                 error_type, skip_excel, additional_factors, show_individual_lines, **kwargs
             )
+
+    @staticmethod
+    def _load_dataframe(file_path, sheet_name=0):
+        if file_path.endswith('.csv'):
+            return pd.read_csv(file_path)
+        return pd.read_excel(file_path, sheet_name=sheet_name)
+
+    @staticmethod
+    def _prepare_contextual_inputs(file_path, sheet_name, group_col, groups, value_cols,
+                                   combine_columns, dependent, additional_factors, kwargs):
+        analysis_context = kwargs.get("analysis_context")
+        if not analysis_context:
+            samples, df = DataImporter.import_data(
+                file_path,
+                sheet_name=sheet_name,
+                group_col=group_col,
+                value_cols=value_cols,
+                combine_columns=combine_columns
+            )
+            filtered_samples = {g: samples[g] for g in groups if g in samples}
+            return {
+                "df": df,
+                "samples": samples,
+                "filtered_samples": filtered_samples,
+                "groups": groups,
+                "group_col": group_col,
+                "value_cols": value_cols,
+                "dependent": dependent,
+                "additional_factors": additional_factors,
+            }
+
+        df = AnalysisManager._load_dataframe(file_path, sheet_name=sheet_name).copy()
+        context_value_cols = analysis_context.get("dv_columns") or value_cols
+        if not context_value_cols:
+            raise ValueError("Auto-pilot analysis requires at least one dependent variable.")
+
+        factor_columns = analysis_context.get("factor_columns", [])
+        if not factor_columns:
+            raise ValueError("Auto-pilot analysis requires at least one factor column.")
+
+        display_group_col = factor_columns[0]
+        groups_to_use = analysis_context.get("group_labels") or groups
+        working_df = df.copy()
+
+        if len(factor_columns) == 2:
+            factor_a, factor_b = factor_columns
+            display_group_col = "__AUTO_GROUP__"
+            working_df[display_group_col] = working_df.apply(
+                lambda row: f"{factor_a}={row[factor_a]}, {factor_b}={row[factor_b]}",
+                axis=1
+            )
+            if not groups_to_use:
+                groups_to_use = sorted(working_df[display_group_col].dropna().unique(), key=lambda item: str(item))
+        else:
+            if not groups_to_use:
+                groups_to_use = sorted(working_df[display_group_col].dropna().unique(), key=lambda item: str(item))
+
+        primary_dv = context_value_cols[0]
+        samples = {}
+        for group_name in groups_to_use:
+            subset = working_df[working_df[display_group_col] == group_name]
+            samples[group_name] = subset[primary_dv].dropna().tolist()
+
+        local_kwargs = dict(kwargs)
+        inferred_test = analysis_context.get("inferred_test")
+        if inferred_test in {"two_way_anova", "mixed_anova", "repeated_measures_anova"}:
+            local_kwargs["test"] = inferred_test
+        if analysis_context.get("subject_column"):
+            local_kwargs["subject_column"] = analysis_context.get("subject_column")
+
+        resolved_additional_factors = additional_factors
+        if inferred_test == "two_way_anova":
+            resolved_additional_factors = factor_columns[:2]
+        elif inferred_test == "mixed_anova":
+            resolved_additional_factors = [
+                *(analysis_context.get("between_factors") or []),
+                *(analysis_context.get("within_factors") or []),
+            ]
+        elif inferred_test == "repeated_measures_anova":
+            resolved_additional_factors = analysis_context.get("within_factors") or factor_columns[:1]
+
+        if resolved_additional_factors is not None:
+            local_kwargs["additional_factors"] = resolved_additional_factors
+        local_kwargs["analysis_context"] = analysis_context
+
+        return {
+            "df": working_df,
+            "samples": samples,
+            "filtered_samples": samples,
+            "groups": list(groups_to_use),
+            "group_col": display_group_col,
+            "value_cols": context_value_cols,
+            "dependent": analysis_context.get("dependent", dependent),
+            "additional_factors": resolved_additional_factors,
+            "kwargs": local_kwargs,
+        }
             
     @staticmethod
     def _analyze_multiple_datasets(file_path, group_col, groups, selected_datasets, value_cols,
@@ -2793,10 +2889,26 @@ class AnalysisManager:
         analysis_log += "\n--- ANALYSIS ---\n\n"
 
         try:
-            # Import and filter data
-            samples, df = DataImporter.import_data(file_path, sheet_name=sheet_name, group_col=group_col, 
-                                                  value_cols=value_cols, combine_columns=combine_columns)
-            filtered_samples = {g: samples[g] for g in groups if g in samples}
+            prepared_inputs = AnalysisManager._prepare_contextual_inputs(
+                file_path=file_path,
+                sheet_name=sheet_name,
+                group_col=group_col,
+                groups=groups,
+                value_cols=value_cols,
+                combine_columns=combine_columns,
+                dependent=dependent,
+                additional_factors=additional_factors,
+                kwargs=kwargs
+            )
+            samples = prepared_inputs["samples"]
+            df = prepared_inputs["df"]
+            filtered_samples = prepared_inputs["filtered_samples"]
+            groups = prepared_inputs["groups"]
+            group_col = prepared_inputs["group_col"]
+            value_cols = prepared_inputs["value_cols"]
+            dependent = prepared_inputs["dependent"]
+            additional_factors = prepared_inputs["additional_factors"]
+            kwargs = prepared_inputs.get("kwargs", kwargs)
 
             # Validations and logging
             if not filtered_samples:
@@ -2860,8 +2972,10 @@ class AnalysisManager:
                         print(f"WARNING: {error_message}")
                         analysis_log += "\nAnalysis continues with warning, results may be unreliable."
                         
-            # Adjust test type based on recommendation if auto-selection is enabled
-            if kwargs.get('auto_nonparametric', True) and test_recommendation == 'non_parametric':
+            # Legacy non-parametric switching is disabled by default.
+            # Advanced ANOVAs now stay on the advanced path and let perform_advanced_test()
+            # decide between parametric and robust fallback models internally.
+            if kwargs.get('force_legacy_nonparametric', False) and test_recommendation == 'non_parametric':
                 if kwargs.get('test') == 'two_way_anova':
                     kwargs['test'] = 'nonparametric_two_way_anova'
                     analysis_log += "\nSwitching to nonparametric two-way ANOVA based on assumption check.\n"
@@ -2875,13 +2989,14 @@ class AnalysisManager:
             # Perform the appropriate statistical test - only call ONCE
             if kwargs.get('test') == 'mixed_anova':
                 additional_factors = kwargs.get('additional_factors', [])
+                subject_column = kwargs.get('subject_column') or kwargs.get('analysis_context', {}).get('subject_column') or 'Subject'
                 if len(additional_factors) >= 2:
                     between_factor, within_factor = additional_factors[0], additional_factors[1]
                 else:
                     return {"error": "Mixed ANOVA requires two factors (between and within)"}
                 # Step 3: Call prepare_advanced_test first
                 prep = StatisticalTester.prepare_advanced_test(
-                    df, 'mixed_anova', value_cols[0], 'Subject', [between_factor], [within_factor]
+                    df, 'mixed_anova', value_cols[0], subject_column, [between_factor], [within_factor]
                 )
                 if "error" in prep:
                     return prep  # or handle error
@@ -2891,7 +3006,7 @@ class AnalysisManager:
                     df=df,
                     test='mixed_anova',
                     dv=value_cols[0],
-                    subject='Subject',
+                    subject=subject_column,
                     between=[between_factor],
                     within=[within_factor],
                     alpha=0.05,
@@ -2899,7 +3014,9 @@ class AnalysisManager:
                     recommendation=prep["recommendation"],
                     test_info=prep["test_info"],
                     transform_fn=None,
-                    force_parametric=kwargs.get('force_parametric', False)
+                    force_parametric=kwargs.get('force_parametric', False),
+                    skip_excel=True,
+                    file_name=file_name
                 )
                 # Get the transformation type from the test_info
                 requested_transform = prep["test_info"].get("transformation", "None")
@@ -2933,7 +3050,9 @@ class AnalysisManager:
                     recommendation=prep["recommendation"],
                     test_info=prep["test_info"],
                     transform_fn=None,
-                    force_parametric=kwargs.get('force_parametric', False)
+                    force_parametric=kwargs.get('force_parametric', False),
+                    skip_excel=True,
+                    file_name=file_name
                 )
                 # Get the transformation type from the test_info
                 requested_transform = prep["test_info"].get("transformation", "None")
@@ -2947,13 +3066,14 @@ class AnalysisManager:
                 transformed_samples = prep["transformed_samples"]
             elif kwargs.get('test') == 'repeated_measures_anova':
                 additional_factors = kwargs.get('additional_factors', [])
+                subject_column = kwargs.get('subject_column') or kwargs.get('analysis_context', {}).get('subject_column') or 'Subject'
                 if len(additional_factors) >= 1:
                     within_factor = additional_factors[0]  # RM-ANOVA uses within factor
                 else:
                     return {"error": "Repeated measures ANOVA requires at least one within factor"}
                 # Step 3: Call prepare_advanced_test first
                 prep = StatisticalTester.prepare_advanced_test(
-                    df, 'repeated_measures_anova', value_cols[0], 'Subject', None, [within_factor]
+                    df, 'repeated_measures_anova', value_cols[0], subject_column, None, [within_factor]
                 )
                 if "error" in prep:
                     return prep  # or handle error
@@ -2963,7 +3083,7 @@ class AnalysisManager:
                     df=df,
                     test='repeated_measures_anova',
                     dv=value_cols[0],
-                    subject='Subject',
+                    subject=subject_column,
                     between=None,
                     within=[within_factor],
                     alpha=0.05,
@@ -2971,7 +3091,9 @@ class AnalysisManager:
                     recommendation=prep["recommendation"],
                     test_info=prep["test_info"],
                     transform_fn=None,
-                    force_parametric=kwargs.get('force_parametric', False)
+                    force_parametric=kwargs.get('force_parametric', False),
+                    skip_excel=True,
+                    file_name=file_name
                 )
                 # Get the transformation type from the test_info
                 requested_transform = prep["test_info"].get("transformation", "None")
@@ -3338,7 +3460,18 @@ class AnalysisManager:
                 "transformation": test_info.get("transformation") if test_info else None,
                 "test_type": test_recommendation
             })
-            
+
+            final_test_label = (
+                results.get("final_test_label")
+                or results.get("tested_against")
+                or results.get("test")
+                or test_results.get("test")
+                or kwargs.get("test")
+            )
+            if final_test_label:
+                results["final_test_label"] = final_test_label
+                results["tested_against"] = final_test_label
+
             # Restore the correctly formatted test data (don't overwrite with empty data!)
             if preserved_normality:
                 results["normality_tests"] = preserved_normality
@@ -3695,6 +3828,11 @@ class AnalysisManager:
 
 def get_output_path(file_base, ext):
     """Get an absolute path to save output files on desktop."""
+    if os.path.isabs(file_base):
+        abs_path = os.path.abspath(f"{file_base}.{ext}")
+        print(f"DEBUG: get_output_path returns absolute path from absolute base: {abs_path}")
+        return abs_path
+
     desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
     if not os.path.isdir(desktop_path):
         # Fallback: current working directory

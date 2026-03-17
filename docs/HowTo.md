@@ -21,11 +21,11 @@ This guide explains how to use the BioMedStatX application: from launching the p
 - Double-click to start. A Qt-based GUI window will open with the menus: **File**, **Analysis**, and **Help**.
 ---
 
-> Note for Linux/macOS users: A convenient launcher script is available at the repository root: `start.sh` (UNIX) and `start.bat` (Windows). On Linux/macOS the script will prefer a native binary if present and otherwise will run the Python source `Source_Code/statistical_analyzer.py`.
+> Note for source-based usage: launcher scripts are available at the repository root as `Start_BioMedStatX_on_Linux.sh` for Linux/macOS and `start.bat` for Windows. They prefer a native binary if present and otherwise run the Python source `Source_Code/statistical_analyzer.py`.
 
-> Example: from the repo root run `./start.sh` (make executable with `chmod +x start.sh` if necessary).
+> Example on Linux/macOS: from the repo root run `chmod +x ./Start_BioMedStatX_on_Linux.sh` and then `./Start_BioMedStatX_on_Linux.sh`.
 
--> Example Excel template: the sample spreadsheet is included in the repository docs as `docs/StatisticalAnalyzer_Excel_Template.xlsx` (or run `./scripts/move_template.sh` / `scripts\move_template.bat` to move it into `docs/` if it's still in the repo root).
+-> Example Excel template: the sample spreadsheet is included in the repository docs as `docs/StatisticalAnalyzer_Excel_Template.xlsx`.
 
 
 
@@ -98,14 +98,16 @@ BioMedStatX automatically selects the appropriate statistical test based on your
 
 - Two-group comparisons (independent or paired)
 - Multi-group comparisons (one-way, two-way, repeated measures, mixed designs)
-- Parametric and non-parametric alternatives (e.g., t-tests, ANOVA, Mann-Whitney, Kruskal-Wallis)
-- Advanced ANOVAS (TwoWay, Mixed, Repeated-Measures)
+- Parametric and nonparametric alternatives for supported simple designs (for example t-tests, ANOVA, Mann-Whitney, Kruskal-Wallis)
+- Advanced ANOVAs (Two-Way, Mixed, Repeated Measures)
+
+At the moment, advanced nonparametric fallback workflows for Two-Way ANOVA, Mixed ANOVA, and Repeated Measures ANOVA should be considered experimental and not fully supported in the production workflow.
 
 You do not need to choose the test yourself—the software guides you and explains the result in plain language.
 
 ![Decision Tree Visualization](HowToScreenshots/Bild7.png)
 
-**Step 7:** Click the button (number 9 in the picture) to start the analysis. You can analyse the selected plot or create and analyze all plots.
+**Step 7:** Click the button (number 9 in the picture) to start the analysis. You can analyze the selected plot or create and analyze all plots.
 
 ---
 
@@ -129,7 +131,7 @@ If a group comparison is significant, the app automatically performs post-hoc te
 
 ![Export Results to Excel](HowToScreenshots/Bild9.png)
 
-**Step 9:** After the parametric or non-parametric test was performed and revealed a significance, you need to choose on of the post-hoc tests (number 11 in the picture).
+**Step 9:** After the statistical test has been performed and a significant result is detected, choose one of the available post-hoc tests (number 11 in the picture).
 
 ---
 
@@ -137,7 +139,7 @@ If a group comparison is significant, the app automatically performs post-hoc te
 
 ## 8. Decision Tree Visualization
 
-The statistical decision process is visualized by a decision tree. The app displays a graphical flowchart showing which tests were chosen and why, with the actual path highlighted. The image is included into the excel workbook.
+The statistical decision process is visualized by a decision tree. The app displays a graphical flowchart showing which tests were chosen and why, with the actual path highlighted. The image is included in the Excel workbook.
 
 ---
 
@@ -145,7 +147,7 @@ The statistical decision process is visualized by a decision tree. The app displ
 
 ## 9. Exporting Results
 
-After your analysis, all the results are exported automatically in a comprehensive excel file. The exported file contains:
+After your analysis, all results are exported automatically to a comprehensive Excel file. The exported file contains:
 - A summary of all tests and p-values
 - Assumption checks
 - Main results and effect sizes
@@ -177,7 +179,7 @@ Results are exported to Excel for further review.
 
 ## 11. Multi-Dataset Analysis
 
-If you load an excel file with a group coloumn and several value coloums (e.g. different genes from a RT-qPCR) is is possible to analyse all the genes in one go. 
+If you load an Excel file with one group column and several value columns, for example different genes from an RT-qPCR experiment, it is possible to analyze all datasets in one run.
 1. Load the data as explained.
 2. Choose the "Multiple columns..." button.
 3. In the Select Measurements Window select the "Separate analysis per dataset with shared excel file" and the datasets you want to compare

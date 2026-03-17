@@ -1,7 +1,7 @@
 # BioMedStatX
 
 A comprehensive, GUI-based tool for statistical analysis of experimental data.  
-Users can import Excel or CSV files, define groups, and let BioMedStatX handle the rest - from outlier detection and assumption checks, to guided data transformations, selection of appropriate tests (parametric / non-parametric), post-hoc analyses, and generation of fully documented reports.
+Users can import Excel or CSV files, define groups, and let BioMedStatX handle the rest - from outlier detection and assumption checks, to guided data transformations, selection of appropriate tests, post-hoc analyses, and generation of fully documented reports.
 
 > **Repository:** [philippkrumm/BioMedStatX](https://github.com/philippkrumm/BioMedStatX)  
 > **Releases (Download ready-to-use app):** https://github.com/philippkrumm/BioMedStatX/releases  
@@ -20,7 +20,7 @@ BioMedStatX is designed for experimental and biomedical research workflows:
   - Outlier detection  
   - Assumption checks (normality, variance homogeneity, etc.)  
   - Guided data transformations where appropriate  
-  - Automatic selection of parametric vs. non-parametric tests  
+  - Automatic selection of parametric vs. nonparametric tests for supported designs  
   - Guided post-hoc analyses when needed
 
 - **Rich output**  
@@ -30,7 +30,7 @@ BioMedStatX is designed for experimental and biomedical research workflows:
 
 - **Excel/CSV support**  
   - Direct import of `.xlsx` and `.csv` files  
-  - Provided template: [`StatisticalAnalyzer_Excel_Template.xlsx`](./StatisticalAnalyzer_Excel_Template.xlsx)
+  - Provided template: [`StatisticalAnalyzer_Excel_Template.xlsx`](./docs/StatisticalAnalyzer_Excel_Template.xlsx)
 
 - **Transparent methodology**  
   - Advanced explanations for ANOVA workflows: see [Advanced ANOVA Guide](./docs/ADVANCED_ANOVA_GUIDE.md)
@@ -65,7 +65,7 @@ git clone https://github.com/philippkrumm/BioMedStatX.git
 cd BioMedStatX
 ```
 
-For information about the helper scripts included in this repository (how to run `start.sh`, `start.bat`, `tools/generate_pdfs.bat`, and more), see: [docs/SCRIPTS.md](./docs/SCRIPTS.md)
+For information about the helper scripts included in this repository, including [`Start_BioMedStatX_on_Linux.sh`](./Start_BioMedStatX_on_Linux.sh) and [`start.bat`](./start.bat), see: [docs/SCRIPTS.md](./docs/SCRIPTS.md)
 
 
 ---
@@ -84,7 +84,7 @@ A detailed, step-by-step **User Guide with screenshots and numbered button refer
 
 2. **Load your dataset**  
    - Import an Excel or CSV file.  
-   - Optionally use the provided template: [`StatisticalAnalyzer_Excel_Template.xlsx`](./StatisticalAnalyzer_Excel_Template.xlsx).
+   - Optionally use the provided template: [`StatisticalAnalyzer_Excel_Template.xlsx`](./docs/StatisticalAnalyzer_Excel_Template.xlsx).
 
 3. **Define groups and variables**  
    - Select the sheet (for Excel files).  
@@ -99,7 +99,7 @@ A detailed, step-by-step **User Guide with screenshots and numbered button refer
    - Start the analysis and let BioMedStatX automatically:
      - detect outliers,
      - check assumptions,
-     - select parametric / non-parametric tests,
+     - select the appropriate supported test,
      - run post-hoc tests when needed.
 
 6. **Inspect the output**  
@@ -122,6 +122,15 @@ Additional documentation can be added to the [`docs/`](./docs) folder.
 
 ---
 
+## Current Support Notes
+
+- Standard nonparametric workflows are available for common one-factor designs such as Mann-Whitney, Wilcoxon, Kruskal-Wallis, Friedman, and related post-hoc analyses.
+- Advanced parametric workflows are available for Two-Way ANOVA, Repeated Measures ANOVA, and Mixed ANOVA.
+- Automatic nonparametric fallbacks for advanced ANOVA designs are not yet production-ready in the current codebase and should be treated as a known limitation.
+- For Windows and macOS end users, the recommended path is to use the packaged application from the GitHub Releases page. The repository launcher scripts are mainly intended for source-based usage.
+
+---
+
 ## Repository Structure
 
 A brief overview of the repository layout:
@@ -132,8 +141,9 @@ BioMedStatX/
 ├─ LICENSE                        # MIT License
 ├─ CONTRIBUTING.md                # Detailed contributing guidelines
 ├─ CODE_OF_CONDUCT.md             # Contributor Covenant Code of Conduct
-├─ StatisticalAnalyzer_Excel_Template.xlsx
-├─ Source Code/                   # Main application source code
+├─ Start_BioMedStatX_on_Linux.sh  # Launcher for Linux/macOS source/binary startup
+├─ start.bat                      # Launcher for Windows source/binary startup
+├─ Source_Code/                   # Main application source code
 ├─ docs/                          # User-facing documentation
 │  ├─ HowTo.md                    # Screenshot-based user guide (GUI)
 │  └─ ADVANCED_ANOVA_GUIDE.md     # Advanced ANOVA explanations
@@ -193,21 +203,13 @@ BioMedStatX is released under the **MIT License**.
 
 ## Citation
 
-If you use BioMedStatX in a scientific publication, please cite:
-
-> **TODO:** Add formal citation here (authors, title, journal, year, DOI).  
-> Example:  
-> _Krumm P, et al. BioMedStatX: A comprehensive tool for statistical analysis of experimental data. Journal/Platform, Year, DOI._
-
-You can update this section once the paper is published and you have the final reference and DOI.
+If you use BioMedStatX in a scientific publication, please cite the software repository or the published paper once a formal citation is available. This section will be updated when the final reference and DOI are available.
 
 ---
 
 ## Paper
 
-> **TODO:** Add a direct link to the published paper here once available.  
-> Example:  
-> [Publication describing BioMedStatX (Journal, Year, DOI)](https://doi.org/xxxxxx)
+A direct publication link will be added here once the corresponding paper is publicly available.
 
 ---
 
@@ -226,5 +228,4 @@ In this section, we provide some ideas that we think should be implemented, but 
 
 ➡️ [Contributing & Issue Reporting](#contributing--issue-reporting)
 
-- Add support for Linux (non-Excel)
-
+- Improve support for running from source on Linux, especially for workflows that depend on Excel-specific behavior.

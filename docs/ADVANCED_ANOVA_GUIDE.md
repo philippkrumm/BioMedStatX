@@ -9,11 +9,13 @@ fontsize: 11pt
 
 # Advanced ANOVA Configuration Guide
 
--> Example Excel template: the sample spreadsheet is included in the repository docs as `docs/StatisticalAnalyzer_Excel_Template.xlsx`. If you don't see it yet, run `./scripts/move_template.sh` (or `scripts\\move_template.bat` on Windows) from the repo root to move the file into `docs`.
+-> Example Excel template: the sample spreadsheet is included in the repository docs as `docs/StatisticalAnalyzer_Excel_Template.xlsx`.
 
 ## Overview
 
 This guide explains how to properly configure different types of ANOVA tests in BioMedStatX. Choosing the correct ANOVA type and variable assignments is crucial for obtaining valid statistical results.
+
+This guide describes the advanced parametric ANOVA workflows currently implemented in the main application. Automatic nonparametric fallback workflows for advanced ANOVA designs are not yet fully supported in the production workflow and should be treated as a known limitation.
 
 ## ANOVA Types Available
 
@@ -191,6 +193,24 @@ Do you have repeated measurements?
 - **Between-factor homogeneity:** Equal variances across between-subjects groups
 - **Within-factor sphericity:** For the repeated measures component
 - **Compound symmetry:** More stringent assumption than sphericity
+
+---
+
+## Current Limitation: Advanced Nonparametric Fallbacks
+
+BioMedStatX currently supports the advanced ANOVA user interface and the main parametric workflows for:
+
+- Mixed ANOVA
+- Repeated Measures ANOVA
+- Two-Way ANOVA
+
+However, if the assumptions for these advanced designs are violated, the automatic nonparametric fallback path is not yet fully production-ready. In practice, this means:
+
+- assumption checks and transformation guidance are available,
+- the advanced parametric analysis path is implemented,
+- but automatic nonparametric substitution for these advanced ANOVA designs should not yet be relied on as a finalized feature.
+
+If your design requires a robust nonparametric alternative for an advanced factorial or repeated-measures setup, review the output carefully and validate the analysis strategy independently before reporting results.
 
 ---
 

@@ -88,6 +88,437 @@ except ImportError:
     # The posthoc_marginaleffects function will raise an error if called without marginaleffects
 import warnings
 
+
+def fallback_modern_models(data, dependent_var, formula, design_type, subject_col=None):
+    import re
+    import warnings
+    import numpy as np
+    import pandas as pd
+    import statsmodels.api as sm
+    import statsmodels.formula.api as smf
+    from pandas.api.types import is_numeric_dtype
+    from statsmodels.tools.sm_exceptions import ConvergenceWarning
+
+    def _base_result(test_label):
+        if design_type in ["rm", "mixed"]:
+            analysis_note = (
+                "Computed via Generalized Estimating Equations (GEE) due to "
+                "violated parametric assumptions."
+            )
+        else:
+            analysis_note = (
+                "Computed via Generalized Linear Model (GLM) due to "
+                "violated parametric assumptions."
+            )
+        return {
+            "test": test_label,
+            "p_value": None,
+            "statistic": None,
+            "posthoc_test": None,
+            "pairwise_comparisons": [],
+            "descriptive": {},
+            "descriptive_transformed": {},
+            "alpha": 0.05,
+            "null_hypothesis": "The means/medians of all groups are equal.",
+            "alternative_hypothesis": "At least one mean/median differs from the others.",
+            "confidence_interval": None,
+            "ci_level": 0.95,
+            "power": None,
+            "effect_size": None,
+            "effect_size_type": None,
+            "error": None,
+            "df1": None,
+            "df2": None,
+            "factors": [],
+            "interactions": [],
+            "anova_table": None,
+            "analysis_note": analysis_note,
+            "recommendation": "modern_model_fallback",
+            "fallback_model_used": True,
+            "model_class": None,
+            "model_family": None,
+        }
+
+    def _as_float(value):
+        if value is None:
+            return None
+        if isinstance(value, (float, int, np.floating, np.integer)):
+            return float(value)
+        if hasattr(value, "item"):
+            try:
+                return float(value.item())
+            except Exception:
+                return None
+        if isinstance(value, (list, tuple, np.ndarray)) and len(value) > 0:
+            try:
+                return float(np.asarray(value).ravel()[0])
+            except Exception:
+                return None
+        return None
+
+    def _as_int(value):
+        value = _as_float(value)
+        if value is None or np.isnan(value):
+            return None
+        return int(value)
+
+    def _extract_factor_order(formula_text):
+        factor_matches = re.findall(r"C\(\s*`?([^`)]+?)`?\s*\)", formula_text)
+        cleaned = []
+        for factor_name in factor_matches:
+            factor_name = factor_name.strip()
+            if factor_name not in cleaned:
+                cleaned.append(factor_name)
+        return cleaned
+
+    def _sanitize_dataframe(df):
+        rename_map = {}
+        used_names = set()
+
+        for col in df.columns:
+            safe_name = re.sub(r"\W+", "_", str(col)).strip("_")
+            if not safe_name:
+                safe_name = "col"
+            if safe_name[0].isdigit():
+                safe_name = f"col_{safe_name}"
+
+            candidate = safe_name
+            suffix = 1
+            while candidate in used_names:
+                suffix += 1
+                candidate = f"{safe_name}_{suffix}"
+
+            rename_map[col] = candidate
+            used_names.add(candidate)
+
+        return df.rename(columns=rename_map).copy(), rename_map
+
+    def _sanitize_formula(formula_text, rename_map):
+        lhs, rhs = [part.strip() for part in formula_text.split("~", 1)]
+        lhs = lhs.strip("`")
+        sanitized_lhs = rename_map.get(lhs, lhs)
+        sanitized_rhs = rhs
+
+        for original, safe in sorted(rename_map.items(), key=lambda item: len(str(item[0])), reverse=True):
+            original_escaped = re.escape(str(original))
+            sanitized_rhs = re.sub(
+                rf"C\(\s*`?{original_escaped}`?\s*\)",
+                f"C({safe})",
+                sanitized_rhs,
+            )
+
+        return f"{sanitized_lhs} ~ {sanitized_rhs}"
+
+    def _restore_term(term_name, reverse_map):
+        restored = str(term_name)
+        for safe, original in sorted(reverse_map.items(), key=lambda item: len(item[0]), reverse=True):
+            restored = restored.replace(f"`{safe}`", str(original))
+            restored = restored.replace(safe, str(original))
+        return restored
+
+    def _term_factors(term_name, reverse_map):
+        restored = _restore_term(term_name, reverse_map)
+        factors = re.findall(r"C\(([^)]+)\)", restored)
+        factors = [factor.replace("`", "").strip() for factor in factors]
+        if factors:
+            return factors
+
+        if ":" in restored:
+            return [part.strip() for part in restored.split(":")]
+
+        restored = restored.replace("`", "").strip()
+        if restored and restored.lower() not in ["intercept", "const"]:
+            return [restored]
+        return []
+
+    def _term_type(factor_name, factor_order):
+        if design_type == "two_way":
+            return "between"
+        if design_type == "rm":
+            return "within"
+        if design_type == "mixed" and len(factor_order) >= 2:
+            between_factor = factor_order[0]
+            within_factor = factor_order[1]
+            if factor_name == within_factor:
+                return "within"
+            if factor_name == between_factor:
+                return "between"
+        return None
+
+    def _build_descriptive(df, factor_order, dv):
+        descriptive = {}
+
+        if design_type in ["two_way", "mixed"] and len(factor_order) >= 2:
+            factor_a, factor_b = factor_order[0], factor_order[1]
+            for a_val in df[factor_a].dropna().unique():
+                for b_val in df[factor_b].dropna().unique():
+                    subset = df[(df[factor_a] == a_val) & (df[factor_b] == b_val)][dv].dropna()
+                    key = f"{factor_a}={a_val}, {factor_b}={b_val}"
+                    if len(subset) == 0:
+                        descriptive[key] = {
+                            "n": 0,
+                            "mean": None,
+                            "sd": None,
+                            "stderr": None,
+                            "ci_lower": None,
+                            "ci_upper": None,
+                            "min": None,
+                            "max": None,
+                            "median": None
+                        }
+                        continue
+
+                    n = len(subset)
+                    mean = float(np.mean(subset))
+                    sd = float(np.std(subset, ddof=1)) if n > 1 else 0.0
+                    stderr = float(sd / np.sqrt(n)) if n > 0 else None
+                    descriptive[key] = {
+                        "n": n,
+                        "mean": mean,
+                        "sd": sd,
+                        "stderr": stderr,
+                        "ci_lower": None,
+                        "ci_upper": None,
+                        "min": float(np.min(subset)),
+                        "max": float(np.max(subset)),
+                        "median": float(np.median(subset))
+                    }
+
+        elif design_type == "rm" and factor_order:
+            within_factor = factor_order[0]
+            for level in df[within_factor].dropna().unique():
+                subset = df[df[within_factor] == level][dv].dropna()
+                key = f"{within_factor}={level}"
+                if len(subset) == 0:
+                    descriptive[key] = {
+                        "n": 0,
+                        "mean": None,
+                        "sd": None,
+                        "stderr": None,
+                        "ci_lower": None,
+                        "ci_upper": None,
+                        "min": None,
+                        "max": None,
+                        "median": None
+                    }
+                    continue
+
+                n = len(subset)
+                mean = float(np.mean(subset))
+                sd = float(np.std(subset, ddof=1)) if n > 1 else 0.0
+                stderr = float(sd / np.sqrt(n)) if n > 0 else None
+                descriptive[key] = {
+                    "n": n,
+                    "mean": mean,
+                    "sd": sd,
+                    "stderr": stderr,
+                    "ci_lower": None,
+                    "ci_upper": None,
+                    "min": float(np.min(subset)),
+                    "max": float(np.max(subset)),
+                    "median": float(np.median(subset))
+                }
+
+        return descriptive
+
+    factor_order = _extract_factor_order(formula)
+    if design_type == "two_way" and len(factor_order) >= 2:
+        test_label = f"Two-Way ANOVA ({factor_order[0]} * {factor_order[1]}) [GLM Fallback]"
+    elif design_type == "rm" and factor_order:
+        test_label = f"Repeated Measures ANOVA ({factor_order[0]}) [GEE Fallback]"
+    elif design_type == "mixed" and len(factor_order) >= 2:
+        test_label = f"Mixed ANOVA ({factor_order[1]} * {factor_order[0]}) [GEE Fallback]"
+    else:
+        test_label = f"{design_type} [Fallback]"
+
+    results = _base_result(test_label)
+
+    try:
+        if dependent_var not in data.columns:
+            results["error"] = f"Dependent variable '{dependent_var}' not found."
+            return results
+        if not is_numeric_dtype(data[dependent_var]):
+            results["error"] = f"Dependent variable '{dependent_var}' must be numeric."
+            return results
+
+        required_columns = [dependent_var] + factor_order
+        if subject_col:
+            required_columns.append(subject_col)
+        missing_columns = [column for column in required_columns if column not in data.columns]
+        if missing_columns:
+            results["error"] = f"Missing required columns: {', '.join(missing_columns)}"
+            return results
+
+        model_data = data[required_columns].copy()
+        model_data[dependent_var] = pd.to_numeric(model_data[dependent_var], errors="coerce")
+
+        categorical_columns = list(factor_order)
+        if subject_col:
+            categorical_columns.append(subject_col)
+        for column in categorical_columns:
+            if column in model_data.columns:
+                model_data[column] = model_data[column].astype("category")
+
+        model_data = model_data.dropna(subset=required_columns)
+
+        if model_data.empty:
+            results["error"] = "No valid data available for fallback model."
+            return results
+
+        dependent_values = model_data[dependent_var].to_numpy(dtype=float)
+        if np.any(~np.isfinite(dependent_values)):
+            results["error"] = "Dependent variable contains non-finite values."
+            return results
+
+        is_integer_like = np.all(np.isclose(dependent_values, np.round(dependent_values)))
+        if is_integer_like:
+            if np.any(dependent_values < 0):
+                results["error"] = "Negative binomial fallback is not possible: count data must not contain negative values."
+                return results
+            family = sm.families.NegativeBinomial()
+            results["model_family"] = "NegativeBinomial"
+        else:
+            if np.any(dependent_values <= 0):
+                results["error"] = "Gamma fallback is not possible: continuous data must be strictly greater than 0."
+                return results
+            family = sm.families.Gamma(link=sm.families.links.Log())
+            results["model_family"] = "Gamma(log)"
+
+        sanitized_df, rename_map = _sanitize_dataframe(model_data)
+        reverse_map = {safe: original for original, safe in rename_map.items()}
+        sanitized_formula = _sanitize_formula(formula, rename_map)
+        sanitized_subject = rename_map.get(subject_col) if subject_col else None
+
+        with warnings.catch_warnings(record=True) as caught_warnings:
+            warnings.simplefilter("always")
+
+            if design_type == "two_way":
+                model = smf.glm(formula=sanitized_formula, data=sanitized_df, family=family)
+                fitted = model.fit()
+                results["model_class"] = "GLM"
+            elif design_type in ["rm", "mixed"]:
+                if sanitized_subject is None:
+                    results["error"] = "subject_col is required for rm/mixed fallback models."
+                    return results
+                model = smf.gee(
+                    formula=sanitized_formula,
+                    groups=sanitized_df[sanitized_subject],
+                    data=sanitized_df,
+                    family=family,
+                    cov_struct=sm.cov_struct.Exchangeable()
+                )
+                fitted = model.fit()
+                results["model_class"] = "GEE"
+            else:
+                results["error"] = f"Unknown design_type '{design_type}'."
+                return results
+
+        convergence_messages = []
+        for warning in caught_warnings:
+            warning_text = str(warning.message).lower()
+            if issubclass(warning.category, ConvergenceWarning) or "converg" in warning_text:
+                convergence_messages.append(str(warning.message))
+
+        if convergence_messages or getattr(fitted, "converged", True) is False:
+            results["error"] = "Model could not converge"
+            return results
+
+        try:
+            wald = fitted.wald_test_terms()
+            wald_table = wald.table.copy()
+        except Exception as exc:
+            results["error"] = f"Wald test could not be computed: {exc}"
+            return results
+
+        statistic_column = "statistic" if "statistic" in wald_table.columns else None
+        pvalue_column = "pvalue" if "pvalue" in wald_table.columns else None
+        df1_column = "df_constraint" if "df_constraint" in wald_table.columns else None
+
+        if statistic_column is None or pvalue_column is None:
+            results["error"] = "Wald test table does not contain the expected columns."
+            return results
+
+        factor_entries = {}
+        interaction_entries = []
+        anova_rows = []
+
+        for term_name, row in wald_table.iterrows():
+            restored_term = _restore_term(term_name, reverse_map)
+            if restored_term.lower() in ["intercept", "const"]:
+                continue
+
+            statistic = _as_float(row.get(statistic_column))
+            p_value = _as_float(row.get(pvalue_column))
+            df1 = _as_int(row.get(df1_column))
+            term_factors = _term_factors(term_name, reverse_map)
+
+            anova_rows.append({
+                "Source": restored_term,
+                "F": statistic,
+                "p-unc": p_value,
+                "DF1": df1,
+                "DF2": None,
+                "StatisticType": "Wald Chi-square"
+            })
+
+            if len(term_factors) == 1:
+                factor_name = term_factors[0]
+                factor_entries[factor_name] = {
+                    "factor": factor_name,
+                    "type": _term_type(factor_name, factor_order),
+                    "F": statistic,
+                    "p_value": p_value,
+                    "df1": df1,
+                    "df2": None,
+                    "effect_size": None,
+                    "effect_size_type": None
+                }
+            elif len(term_factors) >= 2:
+                interaction_entries.append({
+                    "factors": term_factors,
+                    "F": statistic,
+                    "p_value": p_value,
+                    "df1": df1,
+                    "df2": None,
+                    "effect_size": None,
+                    "effect_size_type": None
+                })
+
+        if design_type == "mixed" and len(factor_order) >= 2:
+            ordered_factor_names = [factor_order[1], factor_order[0]]
+        else:
+            ordered_factor_names = factor_order
+
+        results["factors"] = [
+            factor_entries[name] for name in ordered_factor_names if name in factor_entries
+        ]
+        results["interactions"] = interaction_entries
+        results["anova_table"] = pd.DataFrame(anova_rows)
+        results["descriptive"] = _build_descriptive(model_data, factor_order, dependent_var)
+        results["fitted_model"] = fitted
+
+        if design_type in ["two_way", "mixed"] and results["interactions"]:
+            primary_effect = results["interactions"][0]
+        elif results["factors"]:
+            primary_effect = results["factors"][0]
+        else:
+            primary_effect = None
+
+        if primary_effect is not None:
+            results["p_value"] = primary_effect.get("p_value")
+            results["statistic"] = primary_effect.get("F")
+            results["df1"] = primary_effect.get("df1")
+            results["df2"] = primary_effect.get("df2")
+
+        return results
+
+    except ConvergenceWarning:
+        results["error"] = "Model could not converge"
+        return results
+    except Exception as exc:
+        results["error"] = f"Error in modern-model fallback: {exc}"
+        return results
+
 def check_normality(residuals):
     """
     Perform Shapiro–Wilk test for normality on residuals.
@@ -622,4 +1053,3 @@ def fit_bayesian_glmm_binomial(df, formula, group):
             return {'error': self.error}
         else:
             return {'error': 'Model not fit yet.'}
-
