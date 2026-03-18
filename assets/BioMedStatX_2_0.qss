@@ -195,6 +195,36 @@ QLabel#decisionTreeImage {
     padding: 14px;
 }
 
+QPushButton#decisionTreeMaximizeButton {
+    padding: 8px 12px;
+}
+
+QFrame#decisionTreeOverlay {
+    background: rgba(12, 26, 40, 0.94);
+}
+
+QFrame#decisionTreeOverlay QLabel#panelTitle {
+    color: #e8f4ff;
+}
+
+QFrame#decisionTreeOverlay QLabel#panelDescription {
+    color: #bfd8ee;
+}
+
+QScrollArea#decisionTreeOverlayScroll {
+    background: #0f2538;
+    border: 1px solid #2e4a64;
+    border-radius: 14px;
+}
+
+QLabel#decisionTreeOverlayImage {
+    background: #142b41;
+    border: 1px solid #2e4a64;
+    border-radius: 12px;
+    color: #9fb9cf;
+    padding: 12px;
+}
+
 QHeaderView::section {
     background: #ddebf7;
     color: #17324d;

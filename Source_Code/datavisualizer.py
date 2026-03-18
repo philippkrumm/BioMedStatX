@@ -166,7 +166,16 @@ class StylingManager:
             # Palette setzen (aber nicht forcieren - manuelle Farben haben Vorrang)
             palette = config.get('seaborn_palette', 'deep')
             if palette and palette != 'none':
-                sns.set_palette(palette)
+                journal_palettes = {
+                    'Nature': ['#4E79A7', '#F28E2B', '#E15759', '#76B7B2', '#59A14F', '#EDC948', '#B07AA1', '#FF9DA7'],
+                    'Science': ['#0072B2', '#D55E00', '#009E73', '#CC79A7', '#56B4E9', '#E69F00', '#999999'],
+                    'NEJM': ['#BC3C29', '#0072B5', '#E18727', '#20854E', '#7876B1', '#6F99AD', '#FFDC91'],
+                    'Lancet': ['#00468B', '#ED0000', '#42B540', '#0099B4', '#925E9F', '#FDAF91', '#AD002A']
+                }
+                if palette in journal_palettes:
+                    sns.set_palette(journal_palettes[palette])
+                else:
+                    sns.set_palette(palette)
                 
         except Exception as e:
             print(f"Warning: Seaborn styling failed: {e}")
@@ -192,6 +201,9 @@ class StylingManager:
         
         # Spine-Einstellungen
         despine = config.get('despine', True)
+        prism_look = config.get('prism_look', False)
+        offset_axes = config.get('offset_axes', False) or prism_look
+        axis_offset_points = config.get('axis_offset_points', 10)
         axis_thickness = config.get('axis_thickness', 0.7)
         
         if despine:
@@ -206,11 +218,24 @@ class StylingManager:
             for spine in ax.spines.values():
                 spine.set_visible(True)
                 spine.set_linewidth(axis_thickness)
+
+        if offset_axes:
+            StylingManager._apply_axis_offset(ax, axis_offset_points)
         
         # Tick-Parameter
-        ax.tick_params(axis='both', which='major', width=axis_thickness)
+        tick_direction = config.get('tick_direction', 'out')
+        ax.tick_params(axis='both', which='major', width=axis_thickness, direction=tick_direction)
         if config.get('minor_ticks', False):
-            ax.tick_params(axis='both', which='minor', width=axis_thickness * 0.7)
+            ax.tick_params(axis='both', which='minor', width=axis_thickness * 0.7, direction=tick_direction)
+
+    @staticmethod
+    def _apply_axis_offset(ax, offset_points):
+        """Apply outward offset to primary axes for publication-friendly separation."""
+        try:
+            ax.spines['left'].set_position(('outward', offset_points))
+            ax.spines['bottom'].set_position(('outward', offset_points))
+        except Exception as e:
+            print(f"Warning: Could not apply axis offset: {e}")
     
     @staticmethod
     def _apply_final_styling(ax, config):
@@ -332,6 +357,7 @@ class DataVisualizer:
         vertical_fraction = config.get('bracket_vertical_fraction', 0.25)
         bracket_color = '#000000'  # Always black, ignore config
         line_height = config.get('bracket_spacing', 0.1)
+        p_value_style = config.get('p_value_style', 'Fixed stars')
 
         group_pos = {g: i for i, g in enumerate(compare)}
         
@@ -345,8 +371,41 @@ class DataVisualizer:
         # Brackets zeichnen
         for bracket in brackets:
             DataVisualizer._draw_single_bracket(
-                ax, bracket, line_width, font_size, bracket_color, vertical_fraction
+                ax, bracket, line_width, font_size, bracket_color, vertical_fraction, p_value_style
             )
+
+    @staticmethod
+    def _format_p_value_label(p_value, style='Fixed stars'):
+        """Format p-value labels for publication-ready significance annotations."""
+        if p_value is None:
+            return ''
+
+        if style == 'Exact p-value':
+            if p_value < 1e-4:
+                return 'p < 0.0001'
+            return f"p = {p_value:.4f}"
+
+        if style == 'GP: 0.0332 (*)':
+            if p_value < 0.001:
+                stars = '***'
+            elif p_value < 0.01:
+                stars = '**'
+            elif p_value < 0.05:
+                stars = '*'
+            else:
+                stars = 'n.s.'
+            if p_value < 1e-4:
+                return f"GP: <0.0001 ({stars})"
+            return f"GP: {p_value:.4f} ({stars})"
+
+        # Default: Fixed stars
+        if p_value < 0.001:
+            return '***'
+        if p_value < 0.01:
+            return '**'
+        if p_value < 0.05:
+            return '*'
+        return 'n.s.'
 
     @staticmethod
     def _get_group_extents(ax, n_groups):
@@ -527,7 +586,7 @@ class DataVisualizer:
         return False
 
     @staticmethod
-    def _draw_single_bracket(ax, bracket, line_width, font_size, bracket_color, vertical_fraction):
+    def _draw_single_bracket(ax, bracket, line_width, font_size, bracket_color, vertical_fraction, p_value_style='Fixed stars'):
         """
         Zeichnet einen einzelnen Bracket
         """
@@ -552,14 +611,7 @@ class DataVisualizer:
         
         # Text (Sternchen oder p-Wert)
         if p_value is not None:
-            if p_value < 0.001:
-                text = '***'
-            elif p_value < 0.01:
-                text = '**'
-            elif p_value < 0.05:
-                text = '*'
-            else:
-                text = 'n.s.'
+            text = DataVisualizer._format_p_value_label(p_value, p_value_style)
             
             # Text über der horizontalen Linie
             ax.text((x1 + x2) / 2, height + vert, text, 
@@ -638,11 +690,11 @@ class DataVisualizer:
                  # Data points
                  show_points=True, point_style='jitter', max_points_per_group=None,
                  point_size=80, point_alpha=0.8, point_edge_width=0.5,
-                 jitter_strength=0.3, strip_dodge=False,
+                 jitter_strength=0.3, strip_dodge=False, marker_shapes=None,
                  # Statistical annotations
                  show_significance_letters=True,
                  significance_height_offset=0.05, comparison_line_height=0.1,
-                 significance_font_size=12, comparison_font_size=14,
+                 significance_font_size=12, comparison_font_size=14, p_value_style='Fixed stars',
                  # Axes and labels
                  x_label=None, y_label=None, title=None,
                  x_label_size=12, y_label_size=12, title_size=14,
@@ -650,6 +702,9 @@ class DataVisualizer:
                  # Axis formatting
                  y_axis_format='auto', y_limits=None, x_limits=None,
                  grid_style='none', grid_alpha=0.3,
+                 logx=False, logy=False, axis_break_enabled=False,
+                 axis_break_start=20.0, axis_break_end=80.0,
+                 tick_direction='out', offset_axes=False, axis_offset_points=10,
                  # Legend
                  show_legend=True, legend_position='upper right',
                  legend_bbox=(1.15, 1), legend_fontsize=9,
@@ -762,13 +817,14 @@ class DataVisualizer:
             DataVisualizer._add_data_points(
                 ax, groups, samples, point_style, point_size, 
                 point_alpha, jitter_strength, max_points_per_group,
-                point_edge_width, strip_dodge
+                point_edge_width, strip_dodge, marker_shapes
             )
         
         # Format axes
         DataVisualizer._format_axes(
             ax, y_axis_format, y_limits, x_limits, 
-            grid_style, grid_alpha, spine_style
+            grid_style, grid_alpha, spine_style, tick_direction, offset_axes, axis_offset_points,
+            logx, logy, axis_break_enabled, axis_break_start, axis_break_end
         )
         
         # Add labels and title
@@ -834,6 +890,7 @@ class DataVisualizer:
                 'bracket_font_size': comparison_font_size,
                 'bracket_vertical_fraction': 0.25,
                 'bracket_spacing': comparison_line_height,
+                'p_value_style': p_value_style,
                 'bracket_color': '#222222'
             }
             DataVisualizer._add_pairwise_comparisons(
@@ -885,15 +942,19 @@ class DataVisualizer:
         width=8, height=6, dpi=300,
         theme='default', colors=None, hatches=None, color_palette='Greys', alpha=0.8,
         violin_width=0.8, edge_color='black', edge_width=0.5,
+        violin_bandwidth=1.0,
         show_points=True, point_style='jitter', max_points_per_group=None,
         point_size=80, point_alpha=0.8, point_edge_width=0.5,
-        jitter_strength=0.3, strip_dodge=False,
-        show_significance_letters=True, significance_height_offset=0.05, significance_font_size=12,
+        jitter_strength=0.3, strip_dodge=False, marker_shapes=None,
+        show_significance_letters=True, significance_height_offset=0.05, significance_font_size=12, p_value_style='Fixed stars',
         x_label=None, y_label=None, title=None,
         x_label_size=12, y_label_size=12, title_size=14,
         tick_label_size=10, rotate_x_labels=0,
         y_axis_format='auto', y_limits=None, x_limits=None,
         grid_style='none', grid_alpha=0.3,
+        logx=False, logy=False, axis_break_enabled=False,
+        axis_break_start=20.0, axis_break_end=80.0,
+        tick_direction='out', offset_axes=False, axis_offset_points=10,
         show_legend=True, legend_position='upper right',
         legend_bbox=(1.15, 1), legend_fontsize=9,
         legend_title="Samples", legend_title_size=12,
@@ -948,7 +1009,8 @@ class DataVisualizer:
         sns.violinplot(
             x='Group', y='Value', data=df, ax=ax,
             palette=colors, order=groups, width=violin_width,
-            linewidth=edge_width, edgecolor=edge_color, alpha=alpha
+            linewidth=edge_width, edgecolor=edge_color, alpha=alpha,
+            bw_adjust=violin_bandwidth
         )
         
         # Apply hatches to violins
@@ -968,12 +1030,13 @@ class DataVisualizer:
             DataVisualizer._add_data_points(
                 ax, groups, samples, point_style, point_size,
                 point_alpha, jitter_strength, max_points_per_group,
-                point_edge_width, strip_dodge
+                point_edge_width, strip_dodge, marker_shapes
             )
 
         DataVisualizer._format_axes(
             ax, y_axis_format, y_limits, x_limits,
-            grid_style, grid_alpha, spine_style
+            grid_style, grid_alpha, spine_style, tick_direction, offset_axes, axis_offset_points,
+            logx, logy, axis_break_enabled, axis_break_start, axis_break_end
         )
         DataVisualizer._add_labels(
             ax, x_label, y_label, title,
@@ -1030,9 +1093,15 @@ class DataVisualizer:
                 "sd", pairwise_results=pairwise_results
             )
         if show_bars and pairwise_results:
+            bracket_config = {
+                'bracket_line_width': 2.0,
+                'bracket_font_size': significance_font_size,
+                'bracket_vertical_fraction': 0.25,
+                'bracket_spacing': 0.1,
+                'p_value_style': p_value_style
+            }
             DataVisualizer._add_pairwise_comparisons(
-                ax, groups, groups, pairwise_results, df,
-                significance_height_offset, significance_font_size
+                ax, groups, groups, pairwise_results, bracket_config, df
             )
         if show_legend and show_points:
             if legend_colors is not None:
@@ -1083,14 +1152,17 @@ class DataVisualizer:
         box_width=0.8, edge_color='black', edge_width=0.5,
         show_points=True, point_style='jitter', max_points_per_group=None,
         point_size=80, point_alpha=0.8, point_edge_width=0.5,
-        jitter_strength=0.3, strip_dodge=False,
+        jitter_strength=0.3, strip_dodge=False, marker_shapes=None,
         show_error_bars=True, error_type="sd", capsize=0.05,
-        show_significance_letters=True, significance_height_offset=0.05, significance_font_size=12,
+        show_significance_letters=True, significance_height_offset=0.05, significance_font_size=12, p_value_style='Fixed stars',
         x_label=None, y_label=None, title=None,
         x_label_size=12, y_label_size=12, title_size=14,
         tick_label_size=10, rotate_x_labels=0,
         y_axis_format='auto', y_limits=None, x_limits=None,
         grid_style='none', grid_alpha=0.3,
+        logx=False, logy=False, axis_break_enabled=False,
+        axis_break_start=20.0, axis_break_end=80.0,
+        tick_direction='out', offset_axes=False, axis_offset_points=10,
         show_legend=True, legend_position='upper right',
         legend_bbox=(1.15, 1), legend_fontsize=9,
         legend_title="Samples", legend_title_size=12,
@@ -1184,12 +1256,13 @@ class DataVisualizer:
             DataVisualizer._add_data_points(
                 ax, groups, samples, point_style, point_size,
                 point_alpha, jitter_strength, max_points_per_group,
-                point_edge_width, strip_dodge
+                point_edge_width, strip_dodge, marker_shapes
             )
 
         DataVisualizer._format_axes(
             ax, y_axis_format, y_limits, x_limits,
-            grid_style, grid_alpha, spine_style
+            grid_style, grid_alpha, spine_style, tick_direction, offset_axes, axis_offset_points,
+            logx, logy, axis_break_enabled, axis_break_start, axis_break_end
         )
         DataVisualizer._add_labels(
             ax, x_label, y_label, title,
@@ -1246,9 +1319,15 @@ class DataVisualizer:
                 "sd", pairwise_results=pairwise_results
             )
         if show_bars and pairwise_results:
+            bracket_config = {
+                'bracket_line_width': 2.0,
+                'bracket_font_size': significance_font_size,
+                'bracket_vertical_fraction': 0.25,
+                'bracket_spacing': 0.1,
+                'p_value_style': p_value_style
+            }
             DataVisualizer._add_pairwise_comparisons(
-                ax, groups, groups, pairwise_results, df,
-                significance_height_offset, significance_font_size
+                ax, groups, groups, pairwise_results, bracket_config, df
             )
         if show_legend and show_points:
             if legend_colors is not None:
@@ -1300,13 +1379,16 @@ class DataVisualizer:
         violin_width=0.8, box_width=0.2, edge_color='black', edge_width=0.5,
         show_points=True, point_style='jitter', max_points_per_group=None,
         point_size=80, point_alpha=0.8, point_edge_width=0.5,
-        jitter_strength=0.3, strip_dodge=False,
-        show_significance_letters=True, significance_height_offset=0.05, significance_font_size=12,
+        jitter_strength=0.3, strip_dodge=False, marker_shapes=None,
+        show_significance_letters=True, significance_height_offset=0.05, significance_font_size=12, p_value_style='Fixed stars',
         x_label=None, y_label=None, title=None,
         x_label_size=12, y_label_size=12, title_size=14,
         tick_label_size=10, rotate_x_labels=0,
         y_axis_format='auto', y_limits=None, x_limits=None,
         grid_style='none', grid_alpha=0.3,
+        logx=False, logy=False, axis_break_enabled=False,
+        axis_break_start=20.0, axis_break_end=80.0,
+        tick_direction='out', offset_axes=False, axis_offset_points=10,
         show_legend=True, legend_position='center right',
         legend_bbox=(1.08, 0.7), legend_fontsize=9,
         legend_title="Samples", legend_title_size=12,
@@ -1324,6 +1406,7 @@ class DataVisualizer:
         fontsize_ticks=None, fontsize_groupnames=None, legend_colors=None, group_spacing=0.5,
         # Raincloud-specific color options
         violin_colors=None, box_colors=None, point_colors=None,
+        global_group_color_mode=False,
         # Spacing options
         point_offset=0.2, point_jitter=0.05,
         # Line thickness options
@@ -1406,6 +1489,11 @@ class DataVisualizer:
         if isinstance(point_colors, dict):
             point_colors = [point_colors.get(group, colors[i % len(colors)]) for i, group in enumerate(groups)]
 
+        if global_group_color_mode:
+            violin_colors = colors
+            box_colors = colors
+            point_colors = colors
+
         # Use these colors for the legend as well
         actual_legend_colors = {groups[i]: box_colors[i % len(box_colors)] for i in range(len(groups))}
         
@@ -1416,16 +1504,17 @@ class DataVisualizer:
         bp = ax.boxplot(data_x, patch_artist=True, vert=False, positions=positions)
         for patch, color in zip(bp['boxes'], box_colors):
             patch.set_facecolor(color)
-            patch.set_alpha(alpha)
+            patch.set_alpha(0.6 if global_group_color_mode else alpha)
             
         # Violinplot with correct orientation and explicit positions
-        vp = ax.violinplot(data_x, points=500, showmeans=False, showextrema=False, showmedians=False, vert=False, positions=positions)
+        vp = ax.violinplot(data_x, points=500, showmeans=False, showextrema=False, showmedians=False, vert=False, positions=positions, bw_method=violin_bandwidth)
         for idx, b in enumerate(vp['bodies']):
             m = np.mean(b.get_paths()[0].vertices[:, 0])
             # Only show upper half (half-violin) - adjust clipping to new positions
             pos = positions[idx]
             b.get_paths()[0].vertices[:, 1] = np.clip(b.get_paths()[0].vertices[:, 1], pos, pos+1)
             b.set_color(violin_colors[idx % len(violin_colors)])
+            b.set_alpha(0.3 if global_group_color_mode else alpha)
             
         # Scatter points with correct positioning based on positions - improved spacing
         for idx, features in enumerate(data_x):
@@ -1435,7 +1524,10 @@ class DataVisualizer:
             # Use configurable jitter strength
             out.flat[idxs] += np.random.uniform(low=-point_jitter, high=point_jitter, size=len(idxs))
             y = out
-            ax.scatter(features, y, s=point_size/8, c=point_colors[idx % len(point_colors)], alpha=point_alpha)
+            marker = 'o'
+            if isinstance(marker_shapes, dict) and idx < len(groups):
+                marker = marker_shapes.get(groups[idx], 'o')
+            ax.scatter(features, y, s=point_size/8, marker=marker, c=point_colors[idx % len(point_colors)], alpha=(1.0 if global_group_color_mode else point_alpha))
             
         # Set up axes and labels with explicit positions
         ax.set_yticks(positions)
@@ -1462,8 +1554,8 @@ class DataVisualizer:
             spine.set_linewidth(frame_thickness)
         
         # Set axis line thickness
-        ax.tick_params(axis='both', which='major', width=axis_thickness)
-        ax.tick_params(axis='both', which='minor', width=axis_thickness * 0.7)
+        ax.tick_params(axis='both', which='major', width=axis_thickness, direction=tick_direction)
+        ax.tick_params(axis='both', which='minor', width=axis_thickness * 0.7, direction=tick_direction)
         
         # Remove y-ticks if too many groups
         if len(groups) > 10:
@@ -1486,12 +1578,22 @@ class DataVisualizer:
             sns.despine(ax=ax, top=True, right=True)
         elif spine_style == 'none':
             sns.despine(ax=ax, top=True, right=True, left=True, bottom=True)
+
+        if offset_axes:
+            try:
+                ax.spines['left'].set_position(('outward', axis_offset_points))
+                ax.spines['bottom'].set_position(('outward', axis_offset_points))
+            except Exception as e:
+                print(f"Warning: Could not offset raincloud axes: {e}")
         
         # Set axis limits - for horizontal plot, x_limits controls value range
         if x_limits:
             ax.set_xlim(x_limits)
         if y_limits:  # y_limits would control group range (rarely used)
             ax.set_ylim(y_limits)
+
+        if logx:
+            ax.set_xscale('log', base=10)
             
         # Entscheide, ob Buchstaben oder Bars angezeigt werden sollen
         show_letters = True
@@ -1510,9 +1612,15 @@ class DataVisualizer:
                 significance_height_offset, significance_font_size, positions, pairwise_results=pairwise_results
             )
         if show_bars and pairwise_results:
+            bracket_config = {
+                'bracket_line_width': 2.0,
+                'bracket_font_size': significance_font_size,
+                'bracket_vertical_fraction': 0.25,
+                'bracket_spacing': 0.1,
+                'p_value_style': p_value_style
+            }
             DataVisualizer._add_pairwise_comparisons(
-                ax, groups, groups, pairwise_results, None,
-                significance_height_offset, significance_font_size
+                ax, groups, groups, pairwise_results, bracket_config, None
             )
             
         # Add legend with correct colors
@@ -1599,8 +1707,8 @@ class DataVisualizer:
         return data
     
     @staticmethod
-    def _add_data_points(ax, groups, samples, style, size, alpha, 
-                        jitter_strength, max_points, edge_width, dodge):
+    def _add_data_points(ax, groups, samples, style, size, alpha,
+                        jitter_strength, max_points, edge_width, dodge, marker_shapes=None):
         """Add individual data points to the plot"""
         markers = ['o', 's', 'D', '^', 'v', '<', '>', 'p', '*', 'h', '+', 'x']
         
@@ -1619,8 +1727,11 @@ class DataVisualizer:
                     jitter = [0]
                 
                 for j, (val, jit) in enumerate(zip(values, jitter)):
-                    marker_idx = j % len(markers)
-                    marker = markers[marker_idx]
+                    if isinstance(marker_shapes, dict) and group in marker_shapes:
+                        marker = marker_shapes[group]
+                    else:
+                        marker_idx = j % len(markers)
+                        marker = markers[marker_idx]
                     
                     # Nur für filled markers edgecolors setzen
                     scatter_kwargs = {
@@ -1652,7 +1763,10 @@ class DataVisualizer:
                             size=size/10, alpha=alpha, color='black')
     
     @staticmethod
-    def _format_axes(ax, y_format, y_limits, x_limits, grid_style, grid_alpha, spine_style):
+    def _format_axes(ax, y_format, y_limits, x_limits, grid_style, grid_alpha, spine_style,
+                     tick_direction='out', offset_axes=False, axis_offset_points=10,
+                     logx=False, logy=False, axis_break_enabled=False,
+                     axis_break_start=20.0, axis_break_end=80.0):
         """Format axes according to specifications"""
         # Y-axis formatting
         if y_format == 'scientific':
@@ -1671,6 +1785,11 @@ class DataVisualizer:
         if x_limits:
             ax.set_xlim(x_limits)
 
+        if logx:
+            ax.set_xscale('log', base=10)
+        if logy:
+            ax.set_yscale('log', base=10)
+
         # --- TICK CONTROL: Ensure ticks are always visible unless explicitly removed ---
         # Always show major ticks on both axes
         ax.xaxis.set_visible(True)
@@ -1681,7 +1800,8 @@ class DataVisualizer:
         for label in ax.get_yticklabels():
             label.set_visible(True)
         # Ensure ticks are drawn (for matplotlib >=3.1)
-        ax.tick_params(axis='both', which='both', length=4, width=0.7, direction='out', bottom=True, top=False, left=True, right=False)
+        ax.tick_params(axis='both', which='both', length=4, width=0.7,
+                  direction=tick_direction, bottom=True, top=False, left=True, right=False)
 
         # Make sure grid is off by default, only turn on if explicitly requested
         ax.grid(False)  # First turn off all grid lines
@@ -1703,6 +1823,21 @@ class DataVisualizer:
         elif spine_style == 'box':
             # Keep all spines
             pass
+
+        if offset_axes:
+            try:
+                ax.spines['left'].set_position(('outward', axis_offset_points))
+                ax.spines['bottom'].set_position(('outward', axis_offset_points))
+            except Exception as e:
+                print(f"Warning: Could not offset axes in _format_axes: {e}")
+
+        if axis_break_enabled:
+            try:
+                if axis_break_end > axis_break_start:
+                    break_mid = axis_break_start + (axis_break_end - axis_break_start) / 2.0
+                    DataVisualizer.add_broken_axis(ax, break_mid)
+            except Exception as e:
+                print(f"Warning: Could not render axis break marker: {e}")
     
     @staticmethod
     def _add_labels(ax, x_label, y_label, title, x_size, y_size, title_size, tick_size, rotation):
@@ -2471,7 +2606,11 @@ class DataVisualizer:
         hatches = [hatches_dict.get(g, '') for g in groups] if isinstance(hatches_dict, dict) else hatches_dict
         
         # Standard-Parameter
-        alpha = config.get('alpha', 0.8)
+        summary_alpha = config.get('summary_alpha', config.get('alpha', 0.8))
+        point_alpha = config.get('point_alpha', 0.8)
+        if config.get('superimposed_mode', False):
+            summary_alpha = 0.3
+            point_alpha = 1.0
         error_type = config.get('error_type', 'sd')
         error_style = config.get('error_style', 'caps')
         bar_edge_color = config.get('bar_edge_color', 'black')
@@ -2487,7 +2626,7 @@ class DataVisualizer:
             'theme': config.get('theme', 'default'),
             'colors': colors,
             'hatches': hatches,
-            'alpha': alpha,
+            'alpha': summary_alpha,
             # Seaborn styling parameters
             'seaborn_context': config.get('seaborn_context', 'notebook'),
             'seaborn_palette': config.get('seaborn_palette', 'Greys'),
@@ -2499,10 +2638,14 @@ class DataVisualizer:
             'show_points': config.get('show_points', True),
             'point_style': config.get('point_style', 'jitter'),
             'point_size': config.get('point_size', 80),
+            'point_alpha': point_alpha,
+            'marker_shapes': config.get('marker_shapes', {}),
             'jitter_strength': config.get('jitter_strength', 0.3),  # Jitter Parameter hinzugefügt
+            'violin_bandwidth': config.get('violin_bandwidth', 1.0),
             'show_significance_letters': config.get('show_significance_letters', True),
             'significance_height_offset': config.get('significance_height_offset', 0.05),
             'significance_font_size': config.get('significance_font_size', 12),
+            'p_value_style': config.get('p_value_style', 'Fixed stars'),
             # Bracket-spezifische Parameter werden nur für Funktionen gesetzt, die sie brauchen
             'x_label': config.get('x_label', ''),
             'y_label': config.get('y_label', ''),
@@ -2513,8 +2656,20 @@ class DataVisualizer:
             'tick_label_size': config.get('fontsize_ticks', 10),
             'grid_style': grid_style,
             'spine_style': 'minimal' if despine else 'box',
+            'logx': config.get('logx', False),
+            'logy': config.get('logy', False),
+            'axis_break_enabled': config.get('axis_break_enabled', False),
+            'axis_break_start': config.get('axis_break_start', 20.0),
+            'axis_break_end': config.get('axis_break_end', 80.0),
+            'tick_direction': config.get('tick_direction', 'out'),
+            'offset_axes': config.get('offset_axes', False) or config.get('prism_look', False),
+            'axis_offset_points': config.get('axis_offset_points', 10),
             'show_legend': config.get('show_legend', True),
-            'legend_position': config.get('legend_position', 'upper right')
+            'legend_position': config.get('legend_position', 'upper right'),
+            'legend_bbox': (
+                config.get('legend_anchor_x', 1.15),
+                config.get('legend_anchor_y', 1.0)
+            )
         }
         
         # 3. Plot-Typ spezifische Parameter und Dispatch
@@ -2570,6 +2725,7 @@ class DataVisualizer:
                 'violin_colors': config.get('violin_colors', None),
                 'box_colors': config.get('box_colors', None),
                 'point_colors': config.get('point_colors', None),
+                'global_group_color_mode': config.get('global_group_color_mode', False),
                 # Spacing settings
                 'point_offset': config.get('point_offset', 0.2),
                 'point_jitter': config.get('point_jitter', 0.05),
@@ -2601,6 +2757,16 @@ class DataVisualizer:
         
         # Anwenden des einheitlichen Stylings
         StylingManager.apply_unified_styling(ax, config, is_preview=is_preview)
+
+        DataVisualizer._apply_padding_mm(ax.figure, config)
+
+        # Optional grayscale preview for printability checks
+        if is_preview and config.get('grayscale_preview', False):
+            DataVisualizer._apply_grayscale_preview(ax)
+
+        if config.get('auto_format_units', False):
+            config['x_label'] = DataVisualizer._format_scientific_units(config.get('x_label', ''))
+            config['y_label'] = DataVisualizer._format_scientific_units(config.get('y_label', ''))
         
         # Labels und Titel setzen (nach Styling für korrekte Font-Anwendung)
         if config.get('show_title', True) and config.get('title'):
@@ -2623,3 +2789,76 @@ class DataVisualizer:
         
         # Control ticks for many groups to prevent matplotlib errors
         DataVisualizer._control_ticks_for_many_groups(ax, groups, config.get('plot_type', 'Bar'))   
+
+    @staticmethod
+    def _format_scientific_units(label):
+        """Convert common unit notations to MathText-friendly scientific labels."""
+        if not label:
+            return label
+
+        replacements = {
+            'umol/L': r'$\mu$mol$\cdot$L$^{-1}$',
+            'mmol/L': r'mmol$\cdot$L$^{-1}$',
+            'mol/L': r'mol$\cdot$L$^{-1}$',
+            'ug/mL': r'$\mu$g$\cdot$mL$^{-1}$',
+            'ng/mL': r'ng$\cdot$mL$^{-1}$',
+            'mg/dL': r'mg$\cdot$dL$^{-1}$'
+        }
+
+        formatted = str(label)
+        for key, value in replacements.items():
+            formatted = formatted.replace(key, value)
+        return formatted
+
+    @staticmethod
+    def _apply_padding_mm(fig, config):
+        """Apply exact subplot padding in mm by converting to figure fractions."""
+        try:
+            width_in, height_in = fig.get_size_inches()
+            left_mm = config.get('padding_left_mm', 0.0)
+            right_mm = config.get('padding_right_mm', 0.0)
+            top_mm = config.get('padding_top_mm', 0.0)
+            bottom_mm = config.get('padding_bottom_mm', 0.0)
+
+            left = max(0.0, min(0.95, left_mm / 25.4 / width_in))
+            right = max(0.05, min(1.0, 1.0 - (right_mm / 25.4 / width_in)))
+            bottom = max(0.0, min(0.95, bottom_mm / 25.4 / height_in))
+            top = max(0.05, min(1.0, 1.0 - (top_mm / 25.4 / height_in)))
+
+            if left < right and bottom < top:
+                fig.subplots_adjust(left=left, right=right, bottom=bottom, top=top)
+        except Exception as e:
+            print(f"Warning: Could not apply padding: {e}")
+
+    @staticmethod
+    def _apply_grayscale_preview(ax):
+        """Convert visible artists to grayscale for publication contrast checks."""
+        from matplotlib import colors as mcolors
+
+        def _to_gray(color):
+            try:
+                r, g, b, a = mcolors.to_rgba(color)
+                gray = 0.299 * r + 0.587 * g + 0.114 * b
+                return (gray, gray, gray, a)
+            except Exception:
+                return color
+
+        for patch in getattr(ax, 'patches', []):
+            if hasattr(patch, 'get_facecolor') and hasattr(patch, 'set_facecolor'):
+                patch.set_facecolor(_to_gray(patch.get_facecolor()))
+            if hasattr(patch, 'get_edgecolor') and hasattr(patch, 'set_edgecolor'):
+                patch.set_edgecolor(_to_gray(patch.get_edgecolor()))
+
+        for collection in getattr(ax, 'collections', []):
+            if hasattr(collection, 'get_facecolors') and hasattr(collection, 'set_facecolors'):
+                fcs = collection.get_facecolors()
+                if len(fcs) > 0:
+                    collection.set_facecolors([_to_gray(c) for c in fcs])
+            if hasattr(collection, 'get_edgecolors') and hasattr(collection, 'set_edgecolors'):
+                ecs = collection.get_edgecolors()
+                if len(ecs) > 0:
+                    collection.set_edgecolors([_to_gray(c) for c in ecs])
+
+        for line in getattr(ax, 'lines', []):
+            if hasattr(line, 'get_color') and hasattr(line, 'set_color'):
+                line.set_color(_to_gray(line.get_color()))

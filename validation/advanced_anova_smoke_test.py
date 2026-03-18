@@ -17,7 +17,7 @@ from Source_Code.resultsexporter import ResultsExporter
 from Source_Code.statisticaltester import StatisticalTester
 
 
-def test_mixed_gee_workflow():
+def test_mixed_gee_workflow(tmp_path):
     np.random.seed(42)
 
     subjects = [f"S{i:02d}" for i in range(1, 25)]
@@ -61,6 +61,13 @@ def test_mixed_gee_workflow():
     pairwise = results.get("pairwise_comparisons", [])
     assert len(pairwise) > 0, "Keine Post-hoc-Vergleiche generiert."
 
+    # Stable labels are required by GUI cards and exports.
+    assert results.get("final_test_label"), "final_test_label fehlt im Mixed-Workflow."
+    assert results.get("tested_against"), "tested_against fehlt im Mixed-Workflow."
+    assert results.get("tested_against") == results.get("final_test_label"), (
+        "tested_against und final_test_label sollten konsistent sein."
+    )
+
     posthoc_test = str(results.get("posthoc_test") or "")
     labels = [str(comp.get("test", "")) for comp in pairwise]
     if "Marginal Effects Pairwise Comparisons (Mixed GEE-based)" in posthoc_test:
@@ -73,14 +80,59 @@ def test_mixed_gee_workflow():
         assert any("Dunn" in label for label in labels), "Between-Fallback via Dunn fehlt."
         assert any("Wilcoxon" in label for label in labels), "Within-Fallback via Wilcoxon fehlt."
 
-    output_path = REPO_ROOT / "validation_test_mixed.xlsx"
-    if output_path.exists():
-        output_path.unlink()
+    output_path = tmp_path / "validation_test_mixed.xlsx"
 
     ResultsExporter.export_results_to_excel(results, str(output_path))
     assert output_path.exists(), "Excel-Export fehlgeschlagen."
 
     print(f"Mixed GEE Smoke Test erfolgreich. Datei: {output_path}")
+
+
+def test_two_group_paths_expose_stable_labels():
+    groups = ["A", "B"]
+
+    independent_samples = {
+        "A": [2.1, 2.3, 2.2, 2.0, 2.4, 2.5],
+        "B": [3.2, 3.1, 3.3, 3.5, 3.0, 3.4],
+    }
+
+    independent_result = StatisticalTester.perform_statistical_test(
+        groups=groups,
+        transformed_samples=independent_samples,
+        original_samples=independent_samples,
+        dependent=False,
+        test_recommendation="parametric",
+        alpha=0.05,
+        test_info={"variance_test": {"equal_variance": True}},
+    )
+
+    assert independent_result.get("test") in {
+        "t-test (independent)",
+        "Welch's t-test (unequal variances)",
+    }, f"Unerwarteter Testname: {independent_result.get('test')}"
+    assert independent_result.get("final_test_label") == independent_result.get("test")
+    assert independent_result.get("tested_against") == independent_result.get("final_test_label")
+
+    paired_samples = {
+        "A": [10.1, 9.8, 10.4, 9.9, 10.2, 10.0],
+        "B": [9.4, 9.2, 9.8, 9.3, 9.7, 9.5],
+    }
+
+    paired_result = StatisticalTester.perform_statistical_test(
+        groups=groups,
+        transformed_samples=paired_samples,
+        original_samples=paired_samples,
+        dependent=True,
+        test_recommendation="parametric",
+        alpha=0.05,
+        test_info={"variance_test": {"equal_variance": True}},
+    )
+
+    assert paired_result.get("test") == "Paired t-test", (
+        f"Unerwarteter Testname für dependent=True: {paired_result.get('test')}"
+    )
+    assert paired_result.get("final_test_label") == paired_result.get("test")
+    assert paired_result.get("tested_against") == paired_result.get("final_test_label")
 
 
 if __name__ == "__main__":

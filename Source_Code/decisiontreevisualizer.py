@@ -9,6 +9,47 @@ class DecisionTreeVisualizer:
     Creates visual decision trees for statistical test workflows with the actual path highlighted.
     Uses networkx and matplotlib to generate a directed graph showing the decision-making process.
     """
+
+    WIDE_LAYOUT_TOP_X_SCALE = 1.35
+    WIDE_LAYOUT_BOTTOM_X_SCALE = 2.25
+    WIDE_LAYOUT_TOP_Y_SCALE = 1.15
+    WIDE_LAYOUT_BOTTOM_Y_SCALE = 1.55
+
+    @staticmethod
+    def _apply_wide_canvas_layout(nodes_info):
+        """Stretch the layout while preserving the geometric decision-tree pattern."""
+        f_y = nodes_info['F']["pos"][1]
+        stretched = {}
+
+        for node_id, info in nodes_info.items():
+            x_pos, y_pos = info["pos"]
+            if y_pos < f_y:
+                x_scale = DecisionTreeVisualizer.WIDE_LAYOUT_BOTTOM_X_SCALE
+                y_scale = DecisionTreeVisualizer.WIDE_LAYOUT_BOTTOM_Y_SCALE
+            else:
+                x_scale = DecisionTreeVisualizer.WIDE_LAYOUT_TOP_X_SCALE
+                y_scale = DecisionTreeVisualizer.WIDE_LAYOUT_TOP_Y_SCALE
+
+            stretched_y = f_y + ((y_pos - f_y) * y_scale)
+            stretched[node_id] = {"label": info["label"], "pos": (x_pos * x_scale, stretched_y)}
+
+        return stretched
+
+    @staticmethod
+    def _calculate_figure_size(pos):
+        """Derive a figure size from node extents so wide layouts are not compressed."""
+        if not pos:
+            return 24.0, 16.0
+
+        x_values = [xy[0] for xy in pos.values()]
+        y_values = [xy[1] for xy in pos.values()]
+        x_span = max(x_values) - min(x_values)
+        y_span = max(y_values) - min(y_values)
+
+        width = max(24.0, min(42.0, (x_span * 0.58) + 4.0))
+        height = max(16.0, min(32.0, (y_span * 1.05) + 5.0))
+        return width, height
+
     @staticmethod
     def visualize(results, output_path=None):
         """
@@ -320,7 +361,7 @@ class DecisionTreeVisualizer:
                 'G2': {"label": "Non-parametric Test", "pos": (10, 5)},                      # MOVED CLOSER
                 'H2': {"label": "Group Structure", "pos": (10, 4)},
                 'I2_2': {"label": "Two Groups", "pos": (8, 3)},                             # MOVED CLOSER
-                'I2_M': {"label": "Multiple Groups", "pos": (12, 3)},                       # MOVED CLOSER
+                'I2_M': {"label": "Multiple Groups", "pos": (14, 3)},
 
                 # Non-parametric - Two groups (MOVED CLOSER TO TWO GROUPS)
                 'J2_INDEP': {"label": "Independent\nSamples", "pos": (7, 2)},               # MOVED CLOSER
@@ -328,15 +369,35 @@ class DecisionTreeVisualizer:
                 'K2_2_IND': {"label": "Mann-Whitney U", "pos": (7, 1)},
                 'K2_2_DEP': {"label": "Wilcoxon\nSigned-Rank", "pos": (9, 1)},
 
-                # Non-parametric - Multiple groups (ONLY INDEPENDENT - NO FRIEDMAN)
-                'J2_M_INDEP': {"label": "Independent\nSamples", "pos": (11, 2)},            # KEPT
-                'K2_M_IND': {"label": "Kruskal-Wallis", "pos": (11, 1)},                    # KEPT
-                'NP_POSTHOC': {"label": "Non-parametric\nPost-hoc Tests", "pos": (11, 0)},  # CENTERED
-                'NP_DUNN': {"label": "Dunn Test", "pos": (10, -1)},                         # KRUSKAL-WALLIS POST-HOC
-                'NP_MANN_WHITNEY': {"label": "Pairwise\nMann-Whitney U", "pos": (12, -1)},  # KRUSKAL-WALLIS POST-HOC
+                # Non-parametric - Multiple groups (advanced layout aligned to parametric pattern)
+                'NP_INDEPENDENT_GROUPS': {"label": "Independent\nGroups", "pos": (12.5, 2)},
+                'NP_REPEATED_MEASURES': {"label": "Repeated\nMeasures", "pos": (16, 2)},
+                'NP_MIXED_DESIGN': {"label": "Mixed\nDesign", "pos": (20, 2)},
+
+                # Non-parametric independent path (classic + robust two-way)
+                'K2_M_IND': {"label": "Kruskal-Wallis", "pos": (11.5, 1)},
+                'NP_POSTHOC': {"label": "Non-parametric\nPost-hoc Tests", "pos": (11.5, 0)},
+                'NP_DUNN': {"label": "Dunn Test", "pos": (10.5, -1)},
+                'NP_MANN_WHITNEY': {"label": "Pairwise\nMann-Whitney U", "pos": (12.5, -1)},
+                'NP_TWO_WAY_ROBUST': {"label": "Robust Two-way\n(GLMM/GLM)", "pos": (13.5, 1)},
+                'NP_TWO_WAY_POSTHOC': {"label": "Two-way Robust\nPost-hoc", "pos": (13.5, 0)},
+                'NP_TWO_WAY_PAIRWISE': {"label": "Marginal Effects\nPairwise", "pos": (13.5, -1)},
+
+                # Non-parametric repeated-measures path
+                'NP_RM_ROBUST': {"label": "Robust RM\n(GEE)", "pos": (16, 1)},
+                'NP_RM_POSTHOC': {"label": "RM Robust\nPost-hoc", "pos": (16, 0)},
+                'NP_RM_PAIRWISE': {"label": "RM Pairwise\nComparisons", "pos": (16, -1)},
+
+                # Non-parametric mixed path
+                'NP_MIXED_ROBUST': {"label": "Robust Mixed\n(GLMM/GEE)", "pos": (20, 1)},
+                'NP_MIXED_POSTHOC': {"label": "Mixed Robust\nPost-hoc", "pos": (20, 0)},
+                'NP_MIXED_BETWEEN': {"label": "Between-Subjects\nComparisons", "pos": (19, -1)},
+                'NP_MIXED_WITHIN': {"label": "Within-Subjects\nComparisons", "pos": (21, -1)},
             }
 
-            # Add nodes to graph
+            # Apply wide-canvas spacing to preserve structure while avoiding label collisions.
+            nodes_info = DecisionTreeVisualizer._apply_wide_canvas_layout(nodes_info)
+
             for node_id, info in nodes_info.items():
                 G.add_node(node_id, label=info["label"], pos=info["pos"])
 
@@ -432,12 +493,30 @@ class DecisionTreeVisualizer:
                 ('J2_INDEP', 'K2_2_IND'),  # Mann-Whitney U
                 ('J2_DEP', 'K2_2_DEP'),    # Wilcoxon
 
-                # Non-parametric - Multiple groups (ONLY INDEPENDENT - NO FRIEDMAN)
-                ('I2_M', 'J2_M_INDEP'),    # Multiple groups -> Independent samples ONLY
-                ('J2_M_INDEP', 'K2_M_IND'),    # Independent -> Kruskal-Wallis
-                ('K2_M_IND', 'NP_POSTHOC'),    # Kruskal-Wallis -> Post-hoc
-                ('NP_POSTHOC', 'NP_DUNN'),         # Non-parametric -> Dunn Test (for Kruskal-Wallis)
-                ('NP_POSTHOC', 'NP_MANN_WHITNEY'), # Non-parametric -> Pairwise Mann-Whitney U (for Kruskal-Wallis)
+                # Non-parametric - Multiple groups (advanced cluster, geometry aligned to parametric branch)
+                ('I2_M', 'NP_INDEPENDENT_GROUPS'),
+                ('I2_M', 'NP_REPEATED_MEASURES'),
+                ('I2_M', 'NP_MIXED_DESIGN'),
+
+                # Independent branch: classic Kruskal + robust two-way fallback
+                ('NP_INDEPENDENT_GROUPS', 'K2_M_IND'),
+                ('K2_M_IND', 'NP_POSTHOC'),
+                ('NP_POSTHOC', 'NP_DUNN'),
+                ('NP_POSTHOC', 'NP_MANN_WHITNEY'),
+                ('NP_INDEPENDENT_GROUPS', 'NP_TWO_WAY_ROBUST'),
+                ('NP_TWO_WAY_ROBUST', 'NP_TWO_WAY_POSTHOC'),
+                ('NP_TWO_WAY_POSTHOC', 'NP_TWO_WAY_PAIRWISE'),
+
+                # Repeated-measures robust branch
+                ('NP_REPEATED_MEASURES', 'NP_RM_ROBUST'),
+                ('NP_RM_ROBUST', 'NP_RM_POSTHOC'),
+                ('NP_RM_POSTHOC', 'NP_RM_PAIRWISE'),
+
+                # Mixed robust branch
+                ('NP_MIXED_DESIGN', 'NP_MIXED_ROBUST'),
+                ('NP_MIXED_ROBUST', 'NP_MIXED_POSTHOC'),
+                ('NP_MIXED_POSTHOC', 'NP_MIXED_BETWEEN'),
+                ('NP_MIXED_POSTHOC', 'NP_MIXED_WITHIN'),
             }
 
             # Add edges to graph
@@ -474,6 +553,49 @@ class DecisionTreeVisualizer:
             print(f"DEBUG TREE: test_type='{test_type}', actual_test_type='{actual_test_type}'")
             print(f"DEBUG TREE: test_name='{test_name}'")
             print(f"DEBUG TREE: auto_switched={auto_switched}")
+
+            recommendation_text = str(results.get("recommendation", "")).lower()
+            model_class_text = str(results.get("model_class", "")).lower()
+            model_type_text = str(results.get("model_type", "")).lower()
+            analysis_log_text = str(results.get("analysis_log", "")).lower()
+            test_name_text = str(test_name).lower()
+
+            is_modern_or_robust_fallback = (
+                "fallback" in recommendation_text or
+                "modern model" in analysis_log_text or
+                "robust" in recommendation_text or
+                "[gee fallback]" in test_name_text or
+                "[glm fallback]" in test_name_text
+            )
+
+            is_nonparam_two_way_advanced = (
+                ("two-way" in test_name_text or "two way" in test_name_text) and
+                (
+                    is_modern_or_robust_fallback or
+                    "glm" in model_class_text or
+                    "glm" in model_type_text or
+                    "gee" in model_class_text
+                )
+            )
+
+            is_nonparam_rm_advanced = (
+                ("repeated" in test_name_text or "rm anova" in test_name_text) and
+                (
+                    is_modern_or_robust_fallback or
+                    "gee" in model_class_text or
+                    "geer" in model_type_text
+                )
+            )
+
+            is_nonparam_mixed_advanced = (
+                "mixed" in test_name_text and
+                (
+                    is_modern_or_robust_fallback or
+                    "mixed" in model_class_text or
+                    "glmm" in model_type_text or
+                    "gee" in model_class_text
+                )
+            )
             
             # Check if this is a non-parametric test
             is_nonparametric_test = (
@@ -522,22 +644,50 @@ class DecisionTreeVisualizer:
                         highlighted.add(('J2_INDEP', 'K2_2_IND'))  # Mann-Whitney U
                 else:
                     highlighted.add(('H2', 'I2_M'))
-                    
-                    # For non-parametric multiple groups, only independent samples are supported in this tree
-                    highlighted.add(('I2_M', 'J2_M_INDEP'))
-                    highlighted.add(('J2_M_INDEP', 'K2_M_IND'))  # Kruskal-Wallis
-                    
-                    # Only add post-hoc if Kruskal-Wallis is significant
+
                     alpha = results.get("alpha", 0.05)
-                    if p_value is not None and p_value < alpha:
-                        highlighted.add(('K2_M_IND', 'NP_POSTHOC'))
-                        
-                        # Determine specific post-hoc test
-                        posthoc_test = results.get("posthoc_test", "")
-                        if "dunn" in posthoc_test.lower():
-                            highlighted.add(('NP_POSTHOC', 'NP_DUNN'))
-                        else:
-                            highlighted.add(('NP_POSTHOC', 'NP_MANN_WHITNEY'))
+
+                    if is_nonparam_two_way_advanced:
+                        highlighted.add(('I2_M', 'NP_INDEPENDENT_GROUPS'))
+                        highlighted.add(('NP_INDEPENDENT_GROUPS', 'NP_TWO_WAY_ROBUST'))
+                        if p_value is not None and p_value < alpha:
+                            highlighted.add(('NP_TWO_WAY_ROBUST', 'NP_TWO_WAY_POSTHOC'))
+                            highlighted.add(('NP_TWO_WAY_POSTHOC', 'NP_TWO_WAY_PAIRWISE'))
+
+                    elif is_nonparam_rm_advanced:
+                        highlighted.add(('I2_M', 'NP_REPEATED_MEASURES'))
+                        highlighted.add(('NP_REPEATED_MEASURES', 'NP_RM_ROBUST'))
+                        if p_value is not None and p_value < alpha:
+                            highlighted.add(('NP_RM_ROBUST', 'NP_RM_POSTHOC'))
+                            highlighted.add(('NP_RM_POSTHOC', 'NP_RM_PAIRWISE'))
+
+                    elif is_nonparam_mixed_advanced:
+                        highlighted.add(('I2_M', 'NP_MIXED_DESIGN'))
+                        highlighted.add(('NP_MIXED_DESIGN', 'NP_MIXED_ROBUST'))
+                        if p_value is not None and p_value < alpha:
+                            highlighted.add(('NP_MIXED_ROBUST', 'NP_MIXED_POSTHOC'))
+                            posthoc_text = str(results.get("posthoc_test", "")).lower()
+                            if "between" in posthoc_text:
+                                highlighted.add(('NP_MIXED_POSTHOC', 'NP_MIXED_BETWEEN'))
+                            elif "within" in posthoc_text:
+                                highlighted.add(('NP_MIXED_POSTHOC', 'NP_MIXED_WITHIN'))
+                            else:
+                                highlighted.add(('NP_MIXED_POSTHOC', 'NP_MIXED_BETWEEN'))
+                                highlighted.add(('NP_MIXED_POSTHOC', 'NP_MIXED_WITHIN'))
+
+                    else:
+                        # Classic non-parametric multiple-groups path (Kruskal-Wallis)
+                        highlighted.add(('I2_M', 'NP_INDEPENDENT_GROUPS'))
+                        highlighted.add(('NP_INDEPENDENT_GROUPS', 'K2_M_IND'))
+
+                        if p_value is not None and p_value < alpha:
+                            highlighted.add(('K2_M_IND', 'NP_POSTHOC'))
+
+                            posthoc_text = str(results.get("posthoc_test", "")).lower()
+                            if "dunn" in posthoc_text:
+                                highlighted.add(('NP_POSTHOC', 'NP_DUNN'))
+                            else:
+                                highlighted.add(('NP_POSTHOC', 'NP_MANN_WHITNEY'))
                         
             elif (actual_test_type.lower() == "parametric" or 
                   (test_name.lower().find("anova") != -1 and test_name.lower().find("non") == -1)) and \
@@ -710,7 +860,8 @@ class DecisionTreeVisualizer:
 
             # Draw the graph
             pos = nx.get_node_attributes(G, 'pos')
-            plt.figure(figsize=(32, 24))  # Increased size for better readability
+            fig_width, fig_height = DecisionTreeVisualizer._calculate_figure_size(pos)
+            plt.figure(figsize=(fig_width, fig_height))
             node_labels = nx.get_node_attributes(G, 'label')
 
             # --- Shape logic for nodes ---
@@ -745,13 +896,13 @@ class DecisionTreeVisualizer:
                 highlighted_nodes.add(v)
 
             # Draw all nodes: highlighted ones in color, others in white
-            nx.draw_networkx_nodes(G, pos, nodelist=[n for n in square_nodes if n in highlighted_nodes], node_size=3500,
+            nx.draw_networkx_nodes(G, pos, nodelist=[n for n in square_nodes if n in highlighted_nodes], node_size=3000,
                                     node_color='#ffcccc', edgecolors='black', linewidths=1.5, node_shape='s')
-            nx.draw_networkx_nodes(G, pos, nodelist=[n for n in square_nodes if n not in highlighted_nodes], node_size=3500,
+            nx.draw_networkx_nodes(G, pos, nodelist=[n for n in square_nodes if n not in highlighted_nodes], node_size=3000,
                                     node_color='white', edgecolors='black', linewidths=1.5, node_shape='s')
-            nx.draw_networkx_nodes(G, pos, nodelist=[n for n in round_nodes if n in highlighted_nodes], node_size=3500,
+            nx.draw_networkx_nodes(G, pos, nodelist=[n for n in round_nodes if n in highlighted_nodes], node_size=3000,
                                     node_color='#ffcccc', edgecolors='black', linewidths=1.5, node_shape='o')
-            nx.draw_networkx_nodes(G, pos, nodelist=[n for n in round_nodes if n not in highlighted_nodes], node_size=3500,
+            nx.draw_networkx_nodes(G, pos, nodelist=[n for n in round_nodes if n not in highlighted_nodes], node_size=3000,
                                     node_color='white', edgecolors='black', linewidths=1.5, node_shape='o')
 
             # Draw all edges with different styles
@@ -761,9 +912,9 @@ class DecisionTreeVisualizer:
             nx.draw_networkx_edges(G, pos, edgelist=regular_edges, width=1, edge_color='black', style='solid')
 
             # Draw node labels with background boxes
-            nx.draw_networkx_labels(G, pos, labels=node_labels, font_size=14,
+            nx.draw_networkx_labels(G, pos, labels=node_labels, font_size=12.5,
                     font_family='sans-serif', font_weight='bold',
-                    bbox=dict(boxstyle='round,pad=0.3', facecolor='white',
+                    bbox=dict(boxstyle='round,pad=0.28', facecolor='white',
                                 alpha=0.7, edgecolor='lightgray'))
 
             # Add title using figure-level title
@@ -788,7 +939,7 @@ class DecisionTreeVisualizer:
 
             # Create legend with larger font size
             plt.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(0.99, 0.99),
-                    fontsize=14, frameon=True, facecolor='white', edgecolor='black',
+                    fontsize=11, frameon=True, facecolor='white', edgecolor='black',
                     framealpha=0.9, shadow=True)
 
             # Remove axis
@@ -797,7 +948,7 @@ class DecisionTreeVisualizer:
             
             # Set figure size early and maintain it
             fig = plt.gcf()
-            fig.set_size_inches(32, 24, forward=True)  # Increased size
+            fig.set_size_inches(fig_width, fig_height, forward=True)
             
             print(f"DEBUG: About to save figure to {'temp file' if not output_path else output_path}")
             print(f"DEBUG: Using matplotlib backend: {plt.get_backend()}")
@@ -808,7 +959,7 @@ class DecisionTreeVisualizer:
             # Save the image if path provided
             if output_path:
                 output_file = f"{output_path}.png"
-                plt.savefig(output_file, format="png", dpi=300, transparent=False, 
+                plt.savefig(output_file, format="png", dpi=200, transparent=False, 
                         facecolor='white', bbox_inches='tight')
                 plt.close('all')
                 
@@ -816,7 +967,7 @@ class DecisionTreeVisualizer:
                 return output_file
             else:
                 with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
-                    plt.savefig(tmp.name, format="png", dpi=300, transparent=False,
+                    plt.savefig(tmp.name, format="png", dpi=200, transparent=False,
                             facecolor='white', bbox_inches='tight')
                     path = tmp.name
                 

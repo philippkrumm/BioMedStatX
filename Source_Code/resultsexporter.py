@@ -2583,8 +2583,13 @@ class ResultsExporter:
                     aspect_ratio = width / height
                     print(f"DEBUG: Image dimensions: {width}x{height}, aspect ratio: {aspect_ratio:.2f}")
                     
-                    # Scale to fit within Excel cell constraints
-                    scale_factor = 0.75 if width > 4000 else 1.0
+                    # Scale to keep wide trees readable while avoiding oversize sheet rendering.
+                    max_embed_width = 3800
+                    max_embed_height = 2800
+                    width_scale = max_embed_width / float(width) if width > 0 else 1.0
+                    height_scale = max_embed_height / float(height) if height > 0 else 1.0
+                    scale_factor = min(1.0, width_scale, height_scale)
+                    scale_factor = max(0.5, scale_factor)
                     new_width = int(width * scale_factor)
                     new_height = int(height * scale_factor)
                     print(f"DEBUG: Scale factor: {scale_factor}, resulting size: {new_width}x{new_height}")

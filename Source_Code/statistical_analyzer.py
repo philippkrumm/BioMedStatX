@@ -10,7 +10,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QFileDialog, QWidget, QV
                            QTabWidget, QGroupBox, QCheckBox, QSpinBox, QColorDialog, 
                            QMessageBox, QScrollArea, QListWidgetItem, QDialog, QDialogButtonBox,
                            QGridLayout, QLineEdit, QRadioButton, QAction, QFormLayout, QAbstractItemView, QDoubleSpinBox, QButtonGroup,
-                           QFrame, QTableWidget, QTableWidgetItem, QSplitter, QToolButton, QGraphicsOpacityEffect)
+                           QFrame, QTableWidget, QTableWidgetItem, QSplitter, QToolButton, QGraphicsOpacityEffect, QSizePolicy)
 from PyQt5.QtGui import QColor, QIcon, QPixmap, QDrag, QDesktopServices
 from PyQt5.QtCore import Qt, QMimeData, QPoint, pyqtSignal, QPropertyAnimation, QEasingCurve, QSequentialAnimationGroup, QTimer, QUrl
 
@@ -650,13 +650,15 @@ class PlotConfigDialog(QDialog):
         )
         # Remove the question mark from the window
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
-        self.setWindowTitle("Configure Plot")
+        self.setWindowTitle("Configure Plot Export")
         self.groups = groups
         
         # IMPORTANT: Explicitly initialize all status variables
         self.comparisons = []  # Empty list as initial state
         self.colors = None     # No preselected colors
         self.hatches = None    # No preselected hatches
+        self._dependent = False
+        self._show_individual_lines = True
         
         # Initialize UI elements
         layout = QVBoxLayout(self)
@@ -674,18 +676,18 @@ class PlotConfigDialog(QDialog):
         # comp_layout.addWidget(reset_button)
         
         # File name configuration
-        file_group = QGroupBox("File Configuration")
+        file_group = QGroupBox("Export")
         file_group.setObjectName("grpFileConfig")
         file_layout = QGridLayout(file_group)
         file_layout.setObjectName("lyoFileConfig")
 
         # File name only
-        file_label = QLabel("File Name:")
+        file_label = QLabel("Output file name:")
         file_label.setObjectName("lblFileName")
         file_layout.addWidget(file_label, 0, 0)
         self.file_name_edit = QLineEdit("")
         self.file_name_edit.setObjectName("edtFileName")
-        self.file_name_edit.setPlaceholderText("Default: automatically generated from group names")
+        self.file_name_edit.setPlaceholderText("Default: generated from the dataset filename")
         
         # Set default filename if provided
         if default_filename:
@@ -702,14 +704,8 @@ class PlotConfigDialog(QDialog):
         stats_group.setObjectName("grpStatOptions")
         stats_layout = QVBoxLayout(stats_group)
         stats_layout.setObjectName("lyoStatOptions")
-        
-        # Improved description for dependent samples
-        dependent_layout = QHBoxLayout()
-        self.dependent_check = QCheckBox("Dependent samples (paired tests)")
-        self.dependent_check.setObjectName("chkDependentSamples")
-        dependent_layout.addWidget(self.dependent_check)
 
-        # --- Gruppenreihenfolge (Drag & Drop) ---
+        # Group order (drag and drop)
         order_group = QGroupBox("Group order (drag to sort)")
         order_layout = QVBoxLayout(order_group)
         self.order_list = QListWidget()
@@ -721,69 +717,17 @@ class PlotConfigDialog(QDialog):
         order_layout.addWidget(self.order_list)
         layout.addWidget(order_group)
         
-        # Add an info button with tooltip
-        dependent_info = QPushButton("?")
-        dependent_info.setObjectName("btnDependentInfo")
-        dependent_info.setMaximumWidth(20)
-        dependent_info.setToolTip(
-            "Dependent samples are measurements on the same subject at different time points or "
-            "under different conditions. Examples: pre/post measurements, repeated measurements.\n\n"
-            "Important: For dependent tests, all groups must have the same number of measurements and "
-            "the order of the values must match."
-        )
-        dependent_info.clicked.connect(self.show_dependent_help)
-        dependent_layout.addWidget(dependent_info)
-        dependent_layout.addStretch()
         
-        stats_layout.addLayout(dependent_layout)
-        
-        # Options for dependent visualization
-        self.dependent_visualization_options = QWidget()
-        dependent_vis_layout = QVBoxLayout(self.dependent_visualization_options)
-        dependent_vis_layout.setObjectName("lyoDependentVisOptions")
-        
-        self.show_individual_lines = QCheckBox("Show individual connection lines")
-        self.show_individual_lines.setObjectName("chkShowIndividualLines")
-        self.show_individual_lines.setChecked(True)
-        self.show_individual_lines.setToolTip(
-            "If enabled, lines are drawn connecting the values of the same subject. "
-            "This is useful to visualize individual changes."
-        )
-        
-        dependent_vis_layout.addWidget(self.show_individual_lines)
-        # Hide initially
-        self.dependent_visualization_options.setVisible(False)
-        
-        # Insert below the dependent-check
-        stats_layout.addWidget(self.dependent_visualization_options)
-
-        # -- Options for dependent tests: select subject ID and within factor
-        self.dependent_data_options = QWidget()
-        dep_data_layout = QFormLayout(self.dependent_data_options)
-
-        # Placeholder text for missing column data
-        self.subject_info_label = QLabel(
-            "Note: After closing this dialog, subject ID and within factor will be required. "
-            "You can select these later in the advanced test options or in the data import dialog."
-        )
-        self.subject_info_label.setWordWrap(True)
-        self.subject_info_label.setStyleSheet("color: #666; font-style: italic;")
-        dep_data_layout.addRow(self.subject_info_label)
-
-        # Hide initially
-        self.dependent_data_options.setVisible(False)
-        stats_layout.addWidget(self.dependent_data_options)
-        
-        # right after you’ve created your create_plot_check…
+        # Create plot/export toggle
         self.create_plot_check = QCheckBox("Create plot")
         self.create_plot_check.setObjectName("chkCreatePlot")
         self.create_plot_check.setChecked(False)
         stats_layout.addWidget(self.create_plot_check)
 
-        # add your new button, hidden by default:
+        # Appearance configuration button
         self.appearance_btn = QPushButton("Configure appearance…")
         self.appearance_btn.setObjectName("btnConfigureAppearance")
-        self.appearance_btn.hide()
+        self.appearance_btn.setVisible(self.create_plot_check.isChecked())
         self.appearance_btn.clicked.connect(self.open_appearance_dialog)
         stats_layout.addWidget(self.appearance_btn)
 
@@ -831,11 +775,6 @@ class PlotConfigDialog(QDialog):
         # Save comparisons
         self.comparisons = []
         
-    def toggle_dependent_options(self, checked):
-        """Show or hide dependent options (visualization + data selection)."""
-        self.dependent_visualization_options.setVisible(checked)
-        self.dependent_data_options.setVisible(checked)
-
     def open_appearance_dialog(self):
         print("DEBUG: open_appearance_dialog called!")
         print(f"DEBUG: PLOT_MODULES_AVAILABLE = {PLOT_MODULES_AVAILABLE}")
@@ -868,20 +807,20 @@ class PlotConfigDialog(QDialog):
             # Determine context: this is a user plot (not analysis-only)
             context = "user_plot"
             
-            dlg = PlotAestheticsDialog(
+                dlg = PlotAestheticsDialog(
                 ordered_groups,
                 parent_app.samples if hasattr(parent_app, "samples") else {},
                 config=merged_config,
                 parent=self,
                 context=context
             )
-            print("DEBUG: PlotAestheticsDialog created successfully")
+                print("DEBUG: PlotAestheticsDialog created successfully")
             if dlg.exec_() == dlg.Accepted:
                 print("DEBUG: Dialog accepted, saving settings")
-                # Speichere in temporären Einstellungen der parent App
+                    # Store settings in temporary parent-app state
                 parent_app.temp_plot_appearance_settings = dlg.get_config()
                 self.update_appearance_button_text()
-                # WICHTIG: Aktualisiere die Live-Preview im Hauptfenster
+                    # IMPORTANT: Refresh live preview in the main window
                 parent_app.auto_generate_preview()
             else:
                 print("DEBUG: Dialog cancelled")
@@ -893,7 +832,7 @@ class PlotConfigDialog(QDialog):
     
     def update_appearance_button_text(self):
         """Update the appearance button text to show if settings are configured"""
-        # Greife auf die parent App zu, um die temporären Einstellungen zu prüfen
+        # Check temporary appearance settings on the parent app
         parent_app = self.parent()
         if hasattr(parent_app, 'temp_plot_appearance_settings') and parent_app.temp_plot_appearance_settings:
             self.appearance_btn.setText("Configure appearance… ✓")
@@ -902,24 +841,6 @@ class PlotConfigDialog(QDialog):
             self.appearance_btn.setText("Configure appearance…")
             self.appearance_btn.setToolTip("Configure plot appearance settings.")
             
-    def show_dependent_help(self):
-        QMessageBox.information(
-            self, "Dependent samples",
-            "<b>When to choose dependent samples?</b><br><br>"
-            "Dependent (or paired) samples are present when you:<br>"
-            "• Measure the same subjects/individuals multiple times (e.g. before/after a treatment)<br>"
-            "• Perform measurements on naturally paired pairs (e.g. twin studies)<br>"
-            "• Take multiple measurements on the same material under different conditions<br><br>"
-            "<b>Requirements for dependent tests:</b><br>"
-            "• All groups must have the <i>same number</i> of measurements<br>"
-            "• The values must be in the <i>same order</i> (i.e. measurement 1 from group A "
-            "belongs to the same subject as measurement 1 from group B)<br>"
-            "• For more than 2 groups, a special repeated measures ANOVA is performed<br><br>"
-            "<b>Visualization:</b><br>"
-            "For dependent samples, an additional line plot is created "
-            "showing the individual changes."
-        )
-        
     def set_groups(self, groups): self.groups = groups
     def set_width(self, w): self.width_spin.setValue(w)
     def set_height(self, h): self.height_spin.setValue(h)
@@ -937,7 +858,9 @@ class PlotConfigDialog(QDialog):
                 QMessageBox.warning(self, "Warning", f"Hatch '{hatch}' not available for group {group}!")
         else:
             QMessageBox.warning(self, "Warning", f"Group {group} not in hatch table!")
-    def set_dependent(self, dep): self.dependent_check.setChecked(dep)
+    def set_dependent(self, dep, show_individual_lines=True):
+        self._dependent = bool(dep)
+        self._show_individual_lines = bool(show_individual_lines)
     def set_create_plot(self, create): self.create_plot_check.setChecked(create)
     # COMMENTED OUT: Manual comparison methods - not needed as post-hoc tests provide all comparisons
     # def set_comparisons(self, comps):
@@ -1010,9 +933,9 @@ class PlotConfigDialog(QDialog):
                 'create_plot': self.create_plot_check.isChecked(),
                 # REMOVED: 'comparisons': self.comparisons.copy() if self.comparisons else [],  # Not needed - post-hoc tests provide comparisons
                 'error_type': 'sd',  # Default to standard deviation (handled by PlotAestheticsDialog)
-                'dependent': self.dependent_check.isChecked(),
-                'show_individual_lines': self.show_individual_lines.isChecked() if self.dependent_check.isChecked() else False,
-                'needs_subject_selection': self.dependent_check.isChecked(),
+                'dependent': self._dependent,
+                'show_individual_lines': self._show_individual_lines if self._dependent else False,
+                'needs_subject_selection': self._dependent,
                 # Add default Seaborn palette settings
                 'seaborn_palette': 'Greys',
                 'use_seaborn_styling': True,
@@ -1055,7 +978,7 @@ class PlotConfigDialog(QDialog):
                 'colors': colors_dict,
                 'hatches': {g: "" for g in self.groups},
                 'dependent': False,
-                'create_plot': True,
+                'create_plot': False,
                 # REMOVED: 'comparisons': [],  # Not needed - post-hoc tests provide comparisons
                 'error_type': 'sd',
                 # Add default Seaborn palette settings
@@ -1072,7 +995,7 @@ class PlotConfigDialog(QDialog):
         
     def _convert_old_config_to_new(self, old_config):
         """
-        Konvertiert alte Plot-Konfiguration zum neuen Format.
+        Convert a legacy plot configuration to the new format.
         """
         config = {
             'plot_type': 'Bar',  # Default
@@ -1103,20 +1026,20 @@ class PlotConfigDialog(QDialog):
             'bar_edge_color': 'black'
         }
         
-        # Konvertiere alte appearance_settings
+        # Convert legacy appearance settings
         if 'appearance_settings' in old_config:
             appearance = old_config['appearance_settings']
             
             # Plot type
             config['plot_type'] = appearance.get('plot_type', 'Bar')
             
-            # Farben und Hatches
+            # Colors and hatches
             if 'colors' in appearance:
                 config['colors'] = appearance['colors']
             if 'hatches' in appearance:
                 config['hatches'] = appearance['hatches']
                 
-            # Weitere Einstellungen übernehmen
+            # Apply additional settings
             config.update({
                 'alpha': appearance.get('alpha', 0.8),
                 'grid': appearance.get('grid', False),
@@ -1226,24 +1149,24 @@ class PlotConfigDialog(QDialog):
     
     def integrate_statistical_results(self, plot_config, statistical_results):
         """
-        Integriert statistische Ergebnisse (Signifikanzen, Post-hoc Tests) in die Plot-Konfiguration.
+        Integrate statistical results (significance and post-hoc tests) into the plot configuration.
         
         Parameters:
         -----------
         plot_config : dict
-            Bestehende Plot-Konfiguration
+            Existing plot configuration
         statistical_results : dict
-            Ergebnisse der statistischen Analyse
+            Statistical analysis results
         
         Returns:
         --------
         dict
-            Erweiterte Plot-Konfiguration mit statistischen Informationen
+            Extended plot configuration with statistical information
         """
-        # Konvertiere zur neuen Konfiguration
+        # Convert to the new configuration format
         config = self._convert_old_config_to_new(plot_config)
         
-        # Füge statistische Informationen hinzu
+        # Add statistical information
         if statistical_results:
             # P-value for title or annotation
             if 'p_value' in statistical_results:
@@ -1276,29 +1199,29 @@ class PlotConfigDialog(QDialog):
 
     def create_plot_with_statistics(self, groups, title="", statistical_results=None):
         """
-        Erstellt einen Plot mit integrierten statistischen Ergebnissen.
+        Create a plot with integrated statistical results.
         
         Parameters:
         -----------
         groups : list
-            Liste der Gruppennamen
+            List of group names
         title : str
             Title for the plot
         statistical_results : dict, optional
-            Statistische Analyseergebnisse
+            Statistical analysis results
         """
         if not self.samples:
             QMessageBox.warning(self, "No data", "No data available for plotting.")
             return
         
-        # Basis-Konfiguration
+        # Base configuration
         plot_config = {
             'groups': groups,
             'title': title,
             'create_plot': True
         }
         
-        # Integriere statistische Ergebnisse
+        # Integrate statistical results
         config = self.integrate_statistical_results(plot_config, statistical_results)
         
         # Use global appearance settings if available
@@ -1372,16 +1295,16 @@ class PlotConfigDialog(QDialog):
     
     def demo_new_plot_system(self):
         """
-        Demo-Methode, die das neue Plot-System mit allen Features zeigt.
+        Demo method that showcases the new plot system and its features.
         """
         if not self.samples or not self.available_groups:
             QMessageBox.warning(self, "No data", "Please load data first.")
             return
         
-        # Wähle die ersten 3-4 Gruppen für Demo
+        # Select the first 3-4 groups for the demo
         demo_groups = self.available_groups[:min(4, len(self.available_groups))]
         
-        # Simuliere statistische Ergebnisse
+        # Simulate statistical results
         import numpy as np
         demo_statistical_results = {
             'test': 'One-Way ANOVA',
@@ -1393,7 +1316,7 @@ class PlotConfigDialog(QDialog):
             ] if len(demo_groups) >= 3 else []
         }
         
-        # Erstelle Plot mit allen Features
+        # Create plot with all features
         self.create_plot_with_statistics(
             groups=demo_groups,
             title="Demo Analysis with Statistics",
@@ -1703,12 +1626,17 @@ class StatisticalAnalyzerApp(QMainWindow):
         
         # Set window icon
         try:
-            icon_path = resource_path("assets/Institutslogo.ico")
-            if os.path.exists(icon_path):
+            icon_candidates = [
+                resource_path("assets/Institutslogo.ico"),
+                resource_path("assets/Institutslogo.png"),
+            ]
+            icon_path = next((path for path in icon_candidates if os.path.exists(path)), None)
+
+            if icon_path:
                 self.setWindowIcon(QIcon(icon_path))
                 print(f"SUCCESS: Window icon set from {icon_path}")
             else:
-                print(f"WARNING: Icon file not found at {icon_path}")
+                print("WARNING: Icon file not found (checked .ico and .png variants)")
         except Exception as e:
             print(f"ERROR: Could not set window icon: {e}")
         
@@ -2118,9 +2046,18 @@ class StatisticalAnalyzerApp(QMainWindow):
     
     def browse_file(self):
         """Opens a dialog to select an Excel or CSV file."""
+        options = QFileDialog.Options()
+        if sys.platform == "darwin":
+            # Native macOS dialogs can become non-selectable for some users/setups.
+            # The Qt dialog is more reliable for extension-filtered selection.
+            options |= QFileDialog.DontUseNativeDialog
+
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Open Excel file", "", 
-            "Excel files (*.xlsx *.xls);;CSV files (*.csv);;All files (*.*)"
+            self,
+            "Open Excel/CSV file",
+            "",
+            "All supported files (*.xlsx *.xls *.csv);;Excel files (*.xlsx *.xls);;CSV files (*.csv);;All files (*)",
+            options=options,
         )
         
         if file_path:
@@ -2129,7 +2066,7 @@ class StatisticalAnalyzerApp(QMainWindow):
                 QMessageBox.critical(self, "Error", f"The file {file_path} does not exist.")
                 return
                 
-            if not file_path.endswith(('.xlsx', '.xls', '.csv')):
+            if not file_path.lower().endswith((".xlsx", ".xls", ".csv")):
                 QMessageBox.critical(self, "Error", "Only Excel and CSV files are supported.")
                 return
                 
@@ -2143,7 +2080,7 @@ class StatisticalAnalyzerApp(QMainWindow):
             return
             
         try:
-            if self.file_path.endswith('.csv'):
+            if self.file_path.lower().endswith('.csv'):
                 # CSV file
                 self.df = pd.read_csv(self.file_path)
                 self.sheet_combo.clear()
@@ -2176,7 +2113,7 @@ class StatisticalAnalyzerApp(QMainWindow):
     
     def load_sheet(self, index):
         """Loads a specific worksheet from an Excel file."""
-        if index < 0 or not self.file_path or not self.file_path.endswith(('.xlsx', '.xls')):
+        if index < 0 or not self.file_path or not self.file_path.lower().endswith((".xlsx", ".xls")):
             return
             
         try:
@@ -2538,20 +2475,20 @@ class StatisticalAnalyzerApp(QMainWindow):
             base_filename = os.path.splitext(os.path.basename(self.file_path))[0]
             default_filename = f"{base_filename}_analyzed"
         
-        # KORREKTUR: Gehe zuerst zu PlotConfigDialog, nicht direkt zu PlotAestheticsDialog
+        # FIX: Open PlotConfigDialog first, not PlotAestheticsDialog directly
         dlg = PlotConfigDialog(config.get('groups', []), parent=self, default_filename=default_filename)
         
-        # Lade die bestehende Konfiguration in den Dialog (nur verfügbare Felder)
+        # Load existing configuration into the dialog (available fields only)
         if 'file_name' in config:
             dlg.file_name_edit.setText(config['file_name'])
         if 'dependent' in config:
-            dlg.dependent_check.setChecked(config['dependent'])
+            dlg.set_dependent(config['dependent'], config.get('show_individual_lines', True))
         if 'create_plot' in config:
             dlg.create_plot_check.setChecked(config['create_plot'])
         # Note: error_type is now handled by PlotAestheticsDialog only
             
         if dlg.exec_() == dlg.Accepted:
-            # Hole die neue Konfiguration und merge mit der alten
+            # Get new configuration and merge with existing values
             new_config = dlg.get_config()
             # Keep appearance_settings if available
             if 'appearance_settings' in config:
@@ -3732,6 +3669,11 @@ class StatisticalAnalyzerApp(QMainWindow):
         """Cleanup temporäre Daten beim Schließen des Programms"""
         print("DEBUG: Cleaning up temporary plot appearance settings...")
         self.temp_plot_appearance_settings = None
+        try:
+            if hasattr(self, 'decision_tree_panel') and self.decision_tree_panel is not None:
+                self.decision_tree_panel.cleanup()
+        except Exception as close_exc:
+            print(f"DEBUG: Decision tree cleanup warning during close: {close_exc}")
         super().closeEvent(event)
     
     def run_multi_dataset_analysis(self):
@@ -4196,10 +4138,43 @@ def _infer_column_kind(series):
     return "categorical"
 
 
-def _looks_like_subject(column_name):
+def _looks_like_subject(column_name, series=None):
     lowered = str(column_name).strip().lower()
-    keywords = ("subject", "subjekt", "patient", "participant", "animal", "mouse", "id", "sample")
-    return any(keyword in lowered for keyword in keywords)
+    strong_keywords = ("subject", "subjekt", "patient", "participant", "animal", "mouse", "id")
+    weak_keywords = ("sample",)
+
+    strong_hit = any(keyword in lowered for keyword in strong_keywords)
+    weak_hit = any(keyword in lowered for keyword in weak_keywords)
+    if not (strong_hit or weak_hit):
+        return False
+
+    if series is None:
+        return strong_hit
+
+    non_null = series.dropna()
+    if non_null.empty:
+        return False
+
+    unique_count = int(non_null.nunique())
+    unique_ratio = unique_count / max(len(non_null), 1)
+
+    # Estimate whether values look like true IDs (e.g. S01, WT_03, Mouse12).
+    unique_values = [str(value).strip().lower() for value in non_null.unique().tolist()[:80]]
+    id_like = 0
+    for value in unique_values:
+        if not value:
+            continue
+        has_letters = any(ch.isalpha() for ch in value)
+        has_digits = any(ch.isdigit() for ch in value)
+        if (value.startswith("s") and value[1:].isdigit()) or (has_letters and has_digits):
+            id_like += 1
+    id_like_ratio = id_like / max(len(unique_values), 1)
+
+    if strong_hit:
+        return unique_ratio >= 0.25 or unique_count >= 8 or id_like_ratio >= 0.40
+
+    # For "sample" columns be stricter to avoid misclassifying group labels like WT/KO.
+    return unique_ratio >= 0.60 or unique_count >= 8 or id_like_ratio >= 0.40
 
 
 def _sorted_unique(values):
@@ -4476,6 +4451,132 @@ class MappingBucketWidget(QFrame):
         self.placeholder_label.setVisible(len(self._assignments) == 0)
 
 
+class DecisionTreeOverlayWidget(QFrame):
+    closed = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("decisionTreeOverlay")
+        self.setVisible(False)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setAttribute(Qt.WA_DeleteOnClose, False)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(12)
+
+        header = QHBoxLayout()
+        title = QLabel("Decision Tree (Expanded)")
+        title.setObjectName("panelTitle")
+        header.addWidget(title)
+        header.addStretch()
+
+        self.close_button = QPushButton("Close")
+        self.close_button.clicked.connect(self.hide_overlay)
+        header.addWidget(self.close_button)
+        layout.addLayout(header)
+
+        self.overlay_status = QLabel("Run an analysis to render the decision tree.")
+        self.overlay_status.setObjectName("panelDescription")
+        self.overlay_status.setWordWrap(True)
+        layout.addWidget(self.overlay_status)
+
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setObjectName("decisionTreeOverlayScroll")
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
+        self.overlay_image_label = QLabel("Decision tree preview")
+        self.overlay_image_label.setObjectName("decisionTreeOverlayImage")
+        self.overlay_image_label.setAlignment(Qt.AlignCenter)
+        self.overlay_image_label.setMinimumSize(1400, 900)
+        self.overlay_image_label.setWordWrap(True)
+        self.scroll_area.setWidget(self.overlay_image_label)
+        layout.addWidget(self.scroll_area, 1)
+
+        self._render_path = None
+        self._source_pixmap = QPixmap()
+
+    def _target_render_size(self):
+        parent = self.parentWidget()
+        parent_width = parent.width() if parent is not None else 1400
+        parent_height = parent.height() if parent is not None else 1000
+
+        # Keep margins and header space to avoid clipping while maximizing usable area.
+        target_width = max(1200, parent_width - 40)
+        target_height = max(760, parent_height - 170)
+        return target_width, target_height
+
+    def show_overlay(self):
+        if self.parentWidget() is not None:
+            self.setGeometry(self.parentWidget().rect())
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        self.setFocus(Qt.ActiveWindowFocusReason)
+
+    def hide_overlay(self):
+        self.hide()
+        self.closed.emit()
+
+    def closeEvent(self, event):
+        # If the overlay gets a window-close event, treat it like "hide" instead
+        # of destroying the hosting UI hierarchy.
+        self.hide_overlay()
+        event.ignore()
+
+    def set_placeholder(self, text):
+        self.overlay_status.setText(text)
+        self._render_path = None
+        self._source_pixmap = QPixmap()
+        self.overlay_image_label.setPixmap(QPixmap())
+        self.overlay_image_label.setText("Decision tree preview")
+
+    def set_render_path(self, render_path, status_text=None):
+        if render_path != self._render_path:
+            pixmap = QPixmap(render_path)
+            if pixmap.isNull():
+                self.set_placeholder("Decision tree image could not be loaded.")
+                return
+            self._render_path = render_path
+            self._source_pixmap = pixmap
+
+        if self._source_pixmap.isNull():
+            self.set_placeholder("Decision tree image could not be loaded.")
+            return
+
+        if status_text:
+            self.overlay_status.setText(status_text)
+        self.overlay_image_label.setText("")
+        target_width, target_height = self._target_render_size()
+        scaled = self._source_pixmap.scaled(target_width, target_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.overlay_image_label.setMinimumSize(scaled.width(), scaled.height())
+        self.overlay_image_label.setPixmap(scaled)
+
+    def refresh_scaled_render(self):
+        if self._source_pixmap.isNull():
+            return
+
+        target_width, target_height = self._target_render_size()
+        refreshed = self._source_pixmap.scaled(target_width, target_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.overlay_image_label.setMinimumSize(refreshed.width(), refreshed.height())
+        self.overlay_image_label.setPixmap(refreshed)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.hide_overlay()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def cleanup(self):
+        self.hide()
+        self._render_path = None
+        self._source_pixmap = QPixmap()
+        self.overlay_image_label.clear()
+
+
 class DecisionTreePanel(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -4485,9 +4586,18 @@ class DecisionTreePanel(QFrame):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(10)
 
+        title_row = QHBoxLayout()
         title = QLabel("Decision Tree Dashboard")
         title.setObjectName("panelTitle")
-        layout.addWidget(title)
+        title_row.addWidget(title)
+        title_row.addStretch()
+
+        self.maximize_button = QPushButton("Maximize")
+        self.maximize_button.setObjectName("decisionTreeMaximizeButton")
+        self.maximize_button.setEnabled(False)
+        self.maximize_button.clicked.connect(self.show_overlay)
+        title_row.addWidget(self.maximize_button)
+        layout.addLayout(title_row)
 
         self.status_label = QLabel("The statistical decision path will appear here after the analysis.")
         self.status_label.setObjectName("panelDescription")
@@ -4497,16 +4607,76 @@ class DecisionTreePanel(QFrame):
         self.image_label = QLabel("Decision tree preview")
         self.image_label.setObjectName("decisionTreeImage")
         self.image_label.setAlignment(Qt.AlignCenter)
-        self.image_label.setMinimumHeight(280)
+        self.image_label.setMinimumHeight(320)
+        # Prevent pixmap size-hint feedback loops that can make split layouts "wobble".
+        self.image_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         self.image_label.setWordWrap(True)
         layout.addWidget(self.image_label, 1)
 
         self.last_render_path = None
+        self.overlay = None
+        self._source_pixmap = QPixmap()
+        self._last_scaled_size = None
+        self._resize_scale_timer = QTimer(self)
+        self._resize_scale_timer.setSingleShot(True)
+        self._resize_scale_timer.setInterval(60)
+        self._resize_scale_timer.timeout.connect(self._refresh_scaled_preview)
 
     def show_placeholder(self, text):
         self.status_label.setText(text)
+        self.last_render_path = None
+        self._source_pixmap = QPixmap()
+        self._last_scaled_size = None
         self.image_label.setPixmap(QPixmap())
         self.image_label.setText("Decision tree preview")
+        self.maximize_button.setEnabled(False)
+        self._sync_overlay_placeholder(text)
+
+    def _refresh_scaled_preview(self, force=False):
+        if self._source_pixmap.isNull():
+            return
+
+        target_size = self.image_label.size()
+        if target_size.width() < 10 or target_size.height() < 10:
+            return
+
+        size_tuple = (target_size.width(), target_size.height())
+        if not force and self._last_scaled_size == size_tuple:
+            return
+
+        scaled = self._source_pixmap.scaled(target_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.image_label.setPixmap(scaled)
+        self._last_scaled_size = size_tuple
+
+    def _ensure_overlay(self):
+        host_window = self.window()
+        if host_window is None:
+            return None
+
+        if self.overlay is None or self.overlay.parentWidget() is not host_window:
+            self.overlay = DecisionTreeOverlayWidget(host_window)
+        self.overlay.setGeometry(host_window.rect())
+        return self.overlay
+
+    def _sync_overlay_placeholder(self, text):
+        if self.overlay is not None:
+            self.overlay.set_placeholder(text)
+
+    def _sync_overlay_render(self):
+        if self.overlay is None:
+            return
+        overlay = self.overlay
+        if self.last_render_path and os.path.exists(self.last_render_path):
+            overlay.set_render_path(self.last_render_path, self.status_label.text())
+        else:
+            overlay.set_placeholder(self.status_label.text())
+
+    def show_overlay(self):
+        overlay = self._ensure_overlay()
+        if overlay is None:
+            return
+        self._sync_overlay_render()
+        overlay.show_overlay()
 
     def update_results(self, results):
         try:
@@ -4518,26 +4688,40 @@ class DecisionTreePanel(QFrame):
             if pixmap.isNull():
                 raise ValueError("Decision tree image could not be loaded.")
             self.last_render_path = rendered_path
+            self._source_pixmap = pixmap
+            self._last_scaled_size = None
             self.status_label.setText(results.get("tested_against", results.get("test", "Decision path ready.")))
             self.image_label.setText("")
-            self.image_label.setPixmap(pixmap.scaled(
-                self.image_label.size(),
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation
-            ))
+            self._refresh_scaled_preview(force=True)
+            self.maximize_button.setEnabled(True)
+            self._sync_overlay_render()
         except Exception as exc:
             self.show_placeholder(f"Decision tree could not be rendered: {exc}")
 
     def resizeEvent(self, event):
-        if self.last_render_path and os.path.exists(self.last_render_path):
-            pixmap = QPixmap(self.last_render_path)
-            if not pixmap.isNull():
-                self.image_label.setPixmap(pixmap.scaled(
-                    self.image_label.size(),
-                    Qt.KeepAspectRatio,
-                    Qt.SmoothTransformation
-                ))
+        if self.overlay is not None and self.overlay.isVisible():
+            self.overlay.setGeometry(self.overlay.parentWidget().rect())
+            self.overlay.refresh_scaled_render()
+
+        if not self._source_pixmap.isNull():
+            self._resize_scale_timer.start()
         super().resizeEvent(event)
+
+    def cleanup(self):
+        self._resize_scale_timer.stop()
+        self._source_pixmap = QPixmap()
+        self.last_render_path = None
+        self._last_scaled_size = None
+        self.image_label.clear()
+
+        if self.overlay is not None:
+            try:
+                self.overlay.cleanup()
+            except Exception:
+                pass
+            self.overlay.setParent(None)
+            self.overlay.deleteLater()
+            self.overlay = None
 
 
 class ResultCardWidget(QFrame):
@@ -4583,14 +4767,36 @@ class ResultCockpitWidget(QFrame):
         self.subtitle.setWordWrap(True)
         layout.addWidget(self.subtitle)
 
-        self.cards = {
+        metrics_title = QLabel("Key Metrics")
+        metrics_title.setObjectName("sectionLabel")
+        layout.addWidget(metrics_title)
+
+        self.metric_cards = {
+            "metric_normality": ResultCardWidget("Normality"),
+            "metric_variance": ResultCardWidget("Variance Homogeneity"),
+            "metric_main_test": ResultCardWidget("Main Test + p-value"),
+            "metric_effect_size": ResultCardWidget("Effect Size"),
+        }
+        self.metric_grid_widget = QWidget()
+        self.metric_grid = QGridLayout(self.metric_grid_widget)
+        self.metric_grid.setContentsMargins(0, 0, 0, 0)
+        self.metric_grid.setHorizontalSpacing(12)
+        self.metric_grid.setVerticalSpacing(12)
+        self._metric_breakpoint_width = 500
+        self._metric_grid_columns = None
+        self._update_metric_grid_columns(2)
+        layout.addWidget(self.metric_grid_widget)
+
+        context_title = QLabel("Context")
+        context_title.setObjectName("sectionLabel")
+        layout.addWidget(context_title)
+
+        self.context_cards = {
             "detected_test": ResultCardWidget("Detected Test"),
-            "tested_against": ResultCardWidget("Tested Against"),
-            "assumptions": ResultCardWidget("Assumptions"),
             "rationale": ResultCardWidget("Why This Path"),
             "posthoc": ResultCardWidget("Post-hoc Status"),
         }
-        for card in self.cards.values():
+        for card in self.context_cards.values():
             layout.addWidget(card)
 
         buttons_row = QHBoxLayout()
@@ -4607,23 +4813,82 @@ class ResultCockpitWidget(QFrame):
 
         self.clear()
 
+    def _sync_metric_grid_layout(self):
+        # Use the cockpit width as primary signal so startup resize quirks do not lock into 1-column mode.
+        available_width = max(
+            self.width(),
+            self.metric_grid_widget.width(),
+            self.contentsRect().width(),
+        )
+        if available_width < self._metric_breakpoint_width:
+            self._update_metric_grid_columns(1)
+        else:
+            self._update_metric_grid_columns(2)
+
+    def _update_metric_grid_columns(self, columns):
+        if self._metric_grid_columns == columns:
+            return
+
+        self._metric_grid_columns = columns
+        while self.metric_grid.count():
+            item = self.metric_grid.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                self.metric_grid.removeWidget(widget)
+
+        cards_in_order = [
+            self.metric_cards["metric_normality"],
+            self.metric_cards["metric_variance"],
+            self.metric_cards["metric_main_test"],
+            self.metric_cards["metric_effect_size"],
+        ]
+
+        for index, card in enumerate(cards_in_order):
+            row = index // columns
+            column = index % columns
+            self.metric_grid.addWidget(card, row, column)
+
+        # Ensure opacity side-effects from card animations do not hide cards
+        # after relayout or scrolling in the main dashboard.
+        self._clear_card_effects()
+
+        # Keep columns balanced in desktop mode and single full width in compact mode.
+        self.metric_grid.setColumnStretch(0, 1)
+        self.metric_grid.setColumnStretch(1, 1 if columns > 1 else 0)
+
+    def resizeEvent(self, event):
+        self._sync_metric_grid_layout()
+        super().resizeEvent(event)
+
+    def showEvent(self, event):
+        self._sync_metric_grid_layout()
+        super().showEvent(event)
+
     def clear(self):
         self.subtitle.setText("Run an analysis to populate the cockpit.")
-        defaults = {
+        metric_defaults = {
+            "metric_normality": "Will be calculated after analysis.",
+            "metric_variance": "Will be calculated after analysis.",
+            "metric_main_test": "Will be calculated after analysis.",
+            "metric_effect_size": "Will be calculated after analysis.",
+        }
+        context_defaults = {
             "detected_test": "The app will infer the design from your mapping.",
-            "tested_against": "The final calculated model path will appear here.",
-            "assumptions": "Assumption checks will be summarized after the run.",
             "rationale": "The decision rationale will be explained here.",
             "posthoc": "Transformation and post-hoc remain user-guided when needed.",
         }
-        for key, text in defaults.items():
-            self.cards[key].set_value(text)
+        for key, text in metric_defaults.items():
+            self.metric_cards[key].set_value(text)
+        for key, text in context_defaults.items():
+            self.context_cards[key].set_value(text)
         self.configure_plot_button.setEnabled(False)
         self.open_output_button.setEnabled(False)
 
     def set_summary(self, summary, enable_plot=False, enable_output=False):
         self.subtitle.setText(summary.get("subtitle", "Analysis complete."))
-        for key, card in self.cards.items():
+        for key, card in self.metric_cards.items():
+            card.set_value(summary.get(key, "N/A"))
+        for key, card in self.context_cards.items():
             card.set_value(summary.get(key, "N/A"))
 
         self.configure_plot_button.setEnabled(enable_plot)
@@ -4631,8 +4896,13 @@ class ResultCockpitWidget(QFrame):
         self._animate_cards()
 
     def _animate_cards(self):
+        self._clear_card_effects()
         self._animation_group = QSequentialAnimationGroup(self)
-        for card in self.cards.values():
+        ordered_cards = [
+            *self.metric_cards.values(),
+            *self.context_cards.values(),
+        ]
+        for card in ordered_cards:
             effect = QGraphicsOpacityEffect(card)
             card.setGraphicsEffect(effect)
             effect.setOpacity(0.0)
@@ -4642,7 +4912,19 @@ class ResultCockpitWidget(QFrame):
             animation.setEndValue(1.0)
             animation.setEasingCurve(QEasingCurve.OutCubic)
             self._animation_group.addAnimation(animation)
+        self._animation_group.finished.connect(self._clear_card_effects)
         self._animation_group.start()
+
+    def _clear_card_effects(self):
+        cards = []
+        if hasattr(self, "metric_cards") and isinstance(self.metric_cards, dict):
+            cards.extend(self.metric_cards.values())
+        if hasattr(self, "context_cards") and isinstance(self.context_cards, dict):
+            cards.extend(self.context_cards.values())
+        for card in cards:
+            effect = card.graphicsEffect()
+            if effect is not None:
+                card.setGraphicsEffect(None)
 
 
 def _load_auto_pilot_stylesheet():
@@ -4658,6 +4940,10 @@ def _load_auto_pilot_stylesheet():
 
 
 def _ap_init_ui(self):
+    central_scroll = QScrollArea()
+    central_scroll.setWidgetResizable(True)
+    central_scroll.setFrameShape(QFrame.NoFrame)
+
     central_widget = QWidget()
     central_widget.setObjectName("autoPilotRoot")
     root_layout = QVBoxLayout(central_widget)
@@ -4718,7 +5004,7 @@ def _ap_init_ui(self):
     mode_row.addWidget(self.multi_mode_button)
     left_layout.addLayout(mode_row)
 
-    self.auto_mode_hint = QLabel("Single mode expects exactly one dependent variable.")
+    self.auto_mode_hint = QLabel("Single mode expects exactly one measurement column (for example one gene).")
     self.auto_mode_hint.setObjectName("panelDescription")
     self.auto_mode_hint.setWordWrap(True)
     left_layout.addWidget(self.auto_mode_hint)
@@ -4774,7 +5060,7 @@ def _ap_init_ui(self):
 
     self.dv_bucket = MappingBucketWidget(
         "Dependent Variable",
-        "Drop one numeric measurement column here. In multi mode, multiple DVs are allowed.",
+        "Drop numeric measurement columns here. Single mode uses one column; multi mode uses multiple columns (for example several genes).",
         accepted_kinds={"numeric"},
         allow_multiple=False
     )
@@ -4829,7 +5115,8 @@ def _ap_init_ui(self):
     splitter.addWidget(right_panel)
     splitter.setSizes([450, 430, 520])
 
-    self.setCentralWidget(central_widget)
+    central_scroll.setWidget(central_widget)
+    self.setCentralWidget(central_scroll)
 
     self.file_path_label = self.auto_file_label
     self.current_analysis_context = None
@@ -4888,17 +5175,11 @@ def _ap_apply_mapping_heuristics(self):
         return
 
     columns = list(self.df.columns)
-    subject_column = next((column for column in columns if _looks_like_subject(column)), None)
-    if subject_column:
-        self.subject_bucket.assign_column(subject_column, _infer_column_kind(self.df[subject_column]))
+    numeric_all = [column for column in columns if pd.api.types.is_numeric_dtype(self.df[column])]
 
-    numeric_columns = [
-        column for column in columns
-        if pd.api.types.is_numeric_dtype(self.df[column]) and column != subject_column
-    ]
     factor_candidates = []
     for column in columns:
-        if column == subject_column or column in numeric_columns:
+        if column in numeric_all:
             continue
         unique_count = self.df[column].dropna().nunique()
         if 1 < unique_count < max(len(self.df) * 0.75, 5):
@@ -4907,8 +5188,27 @@ def _ap_apply_mapping_heuristics(self):
     if not factor_candidates:
         factor_candidates = [
             column for column in columns
-            if column not in numeric_columns and column != subject_column
+            if column not in numeric_all
         ]
+
+    subject_candidates = [
+        column for column in columns
+        if _looks_like_subject(column, self.df[column])
+    ]
+    subject_column = None
+    for candidate in subject_candidates:
+        # Keep the only available factor-like column for Factor 1 if possible.
+        if candidate in factor_candidates and len(factor_candidates) <= 1:
+            continue
+        subject_column = candidate
+        break
+    if subject_column is None and subject_candidates:
+        subject_column = subject_candidates[0]
+
+    if subject_column in factor_candidates:
+        factor_candidates = [column for column in factor_candidates if column != subject_column]
+
+    numeric_columns = [column for column in numeric_all if column != subject_column]
 
     if numeric_columns:
         if self.multi_mode_button.isChecked() and len(numeric_columns) > 1:
@@ -4922,14 +5222,17 @@ def _ap_apply_mapping_heuristics(self):
     if len(factor_candidates) > 1:
         self.factor2_bucket.assign_column(factor_candidates[1], _infer_column_kind(self.df[factor_candidates[1]]))
 
+    if subject_column:
+        self.subject_bucket.assign_column(subject_column, _infer_column_kind(self.df[subject_column]))
+
 
 def _ap_update_mode_constraints(self):
     allow_multiple_dv = self.multi_mode_button.isChecked()
     self.dv_bucket.set_allow_multiple(allow_multiple_dv)
     if allow_multiple_dv:
-        self.auto_mode_hint.setText("Multi mode analyzes several dependent variables with the same factor mapping. It remains restricted to ANOVA-capable designs.")
+        self.auto_mode_hint.setText("Multi mode analyzes multiple measurement columns (for example several genes) with the same factor mapping. It remains restricted to ANOVA-capable designs.")
     else:
-        self.auto_mode_hint.setText("Single mode expects exactly one dependent variable.")
+        self.auto_mode_hint.setText("Single mode expects exactly one measurement column (for example one gene).")
     self.on_mapping_changed()
 
 
@@ -4952,19 +5255,22 @@ def _ap_on_mapping_changed(self):
     subject_columns = self.subject_bucket.get_assigned_columns()
 
     if not dv_columns:
-        self.mapping_feedback_label.setText("Assign at least one dependent variable.")
+        self.mapping_feedback_label.setText("Assign at least one measurement column.")
         self.start_analysis_button.setEnabled(False)
         return
     if not factor_columns:
-        self.mapping_feedback_label.setText("Assign at least one factor column.")
+        if subject_columns:
+            self.mapping_feedback_label.setText("Assign Factor 1 (group column, for example WT/KO). Subject ID alone is not sufficient.")
+        else:
+            self.mapping_feedback_label.setText("Assign at least one factor column.")
         self.start_analysis_button.setEnabled(False)
         return
     if not self.multi_mode_button.isChecked() and len(dv_columns) != 1:
-        self.mapping_feedback_label.setText("Single mode requires exactly one dependent variable.")
+        self.mapping_feedback_label.setText("Single mode requires exactly one measurement column.")
         self.start_analysis_button.setEnabled(False)
         return
     if self.multi_mode_button.isChecked() and len(dv_columns) < 2:
-        self.mapping_feedback_label.setText("Multi mode requires at least two dependent variables.")
+        self.mapping_feedback_label.setText("Multi mode requires at least two measurement columns (for example two or more genes).")
         self.start_analysis_button.setEnabled(False)
         return
     if len(factor_columns) > 2:
@@ -5123,9 +5429,9 @@ def _ap_build_analysis_context(self):
             context["dependent"] = False
 
     if context["mode"] == "single" and len(dv_columns) != 1:
-        raise ValueError("Single mode requires exactly one dependent variable.")
+        raise ValueError("Single mode requires exactly one measurement column.")
     if context["mode"] == "multi" and len(dv_columns) < 2:
-        raise ValueError("Multi mode requires at least two dependent variables.")
+        raise ValueError("Multi mode requires at least two measurement columns (for example two or more genes).")
     if context["mode"] == "multi" and context["inferred_test"] in {"independent_ttest", "paired_ttest"}:
         raise ValueError("Multi mode is restricted to ANOVA-capable designs, not two-level t-test designs.")
 
@@ -5207,6 +5513,82 @@ def _ap_format_assumptions(self, results):
     return f"{normality}. {variance}."
 
 
+def _ap_extract_normality_metric(self, results):
+    normality_tests = results.get("normality_tests", {})
+    if "model_residuals_transformed" in normality_tests:
+        is_normal = normality_tests["model_residuals_transformed"].get("is_normal")
+        return "OK (after transformation)" if is_normal else "Violated (after transformation)"
+    if "model_residuals" in normality_tests:
+        is_normal = normality_tests["model_residuals"].get("is_normal")
+        return "OK" if is_normal else "Violated"
+    if "transformed_data" in normality_tests:
+        is_normal = normality_tests["transformed_data"].get("is_normal")
+        return "OK (after transformation)" if is_normal else "Violated"
+    if "all_data" in normality_tests:
+        is_normal = normality_tests["all_data"].get("is_normal")
+        return "OK" if is_normal else "Violated"
+    return "Not available"
+
+
+def _ap_extract_variance_metric(self, results):
+    variance_test = results.get("variance_test", {})
+    variance_source = variance_test.get("transformed", variance_test)
+    if variance_source and isinstance(variance_source, dict):
+        equal_variance = variance_source.get("equal_variance")
+        if equal_variance is True:
+            return "Homogeneous"
+        if equal_variance is False:
+            return "Heterogeneous"
+    return "Not available"
+
+
+def _ap_format_main_test_metric(self, results):
+    tested_against = results.get("tested_against") or results.get("final_test_label") or results.get("test") or "Not available"
+    p_value = results.get("p_value")
+    if p_value is None:
+        return f"{tested_against}; p = N/A"
+    if p_value < 0.0001:
+        p_text = "< 0.0001"
+    else:
+        p_text = f"= {p_value:.4f}"
+    return f"{tested_against}; p {p_text}"
+
+
+def _ap_format_effect_size_metric(self, results):
+    effect_size = results.get("effect_size")
+    effect_size_type = results.get("effect_size_type")
+    if effect_size is None:
+        return "Not available"
+
+    labels = {
+        "cohens_d": "Cohen's d",
+        "eta_squared": "Eta-squared",
+        "partial_eta_squared": "Partial eta-squared",
+        "epsilon_squared": "Epsilon-squared",
+        "hedges_g": "Hedges' g",
+    }
+    type_label = labels.get(effect_size_type, effect_size_type.replace("_", " ").title() if effect_size_type else "Effect size")
+    return f"{type_label} = {effect_size:.4f}"
+
+
+def _ap_is_ttest_result(self, context, results):
+    if context.get("inferred_test") in {"independent_ttest", "paired_ttest"}:
+        return True
+
+    fields_to_scan = [
+        results.get("tested_against"),
+        results.get("final_test_label"),
+        results.get("test"),
+    ]
+    for field in fields_to_scan:
+        if not field:
+            continue
+        lowered = str(field).lower()
+        if "t-test" in lowered or "ttest" in lowered:
+            return True
+    return False
+
+
 def _ap_format_rationale(self, context, results):
     reasons = [f"Structure inferred as {self._detected_test_label(context)}."]
     if context.get("subject_column"):
@@ -5224,7 +5606,10 @@ def _ap_format_rationale(self, context, results):
     return " ".join(reasons)
 
 
-def _ap_format_posthoc_status(self, results):
+def _ap_format_posthoc_status(self, context, results):
+    if self._is_ttest_result(context, results):
+        return "No post-hoc applicable for t-tests (two groups only)."
+
     if results.get("posthoc_test"):
         return f"{results['posthoc_test']}."
     if results.get("p_value") is not None and results["p_value"] < 0.05 and len(results.get("groups", [])) > 2:
@@ -5235,14 +5620,15 @@ def _ap_format_posthoc_status(self, results):
 
 
 def _ap_render_result_summary(self, context, results, output_dir, subtitle):
-    tested_against = results.get("tested_against") or results.get("final_test_label") or results.get("test") or "Not available"
     summary = {
         "subtitle": subtitle,
+        "metric_normality": self._extract_normality_metric(results),
+        "metric_variance": self._extract_variance_metric(results),
+        "metric_main_test": self._format_main_test_metric(results),
+        "metric_effect_size": self._format_effect_size_metric(results),
         "detected_test": self._detected_test_label(context),
-        "tested_against": tested_against,
-        "assumptions": self._format_assumptions(results),
         "rationale": self._format_rationale(context, results),
-        "posthoc": self._format_posthoc_status(results),
+        "posthoc": self._format_posthoc_status(context, results),
     }
     self.result_cockpit.set_summary(summary, enable_plot=True, enable_output=bool(output_dir))
     self.decision_tree_panel.update_results(results)
@@ -5336,8 +5722,8 @@ def _ap_configure_plot_from_result(self):
         default_filename = f"{default_filename}_{_safe_file_slug(self.current_rendered_dataset)}"
 
     dialog = PlotConfigDialog(groups, parent=self, default_filename=default_filename)
-    dialog.dependent_check.setChecked(self.current_analysis_context.get("dependent", False))
-    dialog.create_plot_check.setChecked(True)
+    dialog.set_dependent(self.current_analysis_context.get("dependent", False))
+    dialog.create_plot_check.setChecked(False)
 
     if dialog.exec_() != dialog.Accepted:
         return
@@ -5437,6 +5823,11 @@ StatisticalAnalyzerApp._build_analysis_context = _ap_build_analysis_context
 StatisticalAnalyzerApp._detected_test_label = _ap_detected_test_label
 StatisticalAnalyzerApp._execute_single_analysis = _ap_execute_single_analysis
 StatisticalAnalyzerApp._format_assumptions = _ap_format_assumptions
+StatisticalAnalyzerApp._extract_normality_metric = _ap_extract_normality_metric
+StatisticalAnalyzerApp._extract_variance_metric = _ap_extract_variance_metric
+StatisticalAnalyzerApp._format_main_test_metric = _ap_format_main_test_metric
+StatisticalAnalyzerApp._format_effect_size_metric = _ap_format_effect_size_metric
+StatisticalAnalyzerApp._is_ttest_result = _ap_is_ttest_result
 StatisticalAnalyzerApp._format_rationale = _ap_format_rationale
 StatisticalAnalyzerApp._format_posthoc_status = _ap_format_posthoc_status
 StatisticalAnalyzerApp._render_result_summary = _ap_render_result_summary
@@ -5450,6 +5841,12 @@ if __name__ == "__main__":
         # Timer-Warnungen unterdrücken
         import os
         os.environ["QT_LOGGING_RULES"] = "qt.core.qobject.timer=false"
+
+        # Enforce high-DPI behavior before QApplication is created.
+        if hasattr(Qt, "AA_EnableHighDpiScaling"):
+            QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+        if hasattr(Qt, "AA_UseHighDpiPixmaps"):
+            QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
         
         # Apply stylesheet if available
         try:

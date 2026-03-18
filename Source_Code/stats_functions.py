@@ -3604,21 +3604,16 @@ class AnalysisManager:
                     'dependent', 'show_individual_lines', 'compare', 'additional_factors',
                     'dataset_name', 'dialog_column', 'dialog_progress',
                     # Parameters that don't exist in plot_bar method
-                    'aspect', 'x_label_size', 'y_label_size', 'title_size',
+                    'aspect',
                     'refline', 'panel_labels', 'value_annotations', 'significance_mode',
                     'embed_fonts', 'add_metadata',
-                    # Appearance/formatting keys to exclude
-                    'font_main', 'font_axis', 'show_title', 'fontsize_title', 'fontsize_axis',
-                    'fontsize_ticks', 'fontsize_groupnames', 'axis_linewidth', 'bar_linewidth',
-                    'gridline_width', 'grid', 'minor_ticks', 'logy', 'logx', 'despine', 'alpha',
-                    'bar_edge_color', 'bar_edge_width', 'grid_style', 'spine_style', 'tick_label_size',
-                    'dpi'
+                    # Legacy keys that are not supported by plotting signatures
+                    'font_main', 'font_axis', 'axis_linewidth', 'gridline_width'
                 ]}
                 
                 # Choose the appropriate plot function based on plot_type
                 if plot_type == "Bar":
-                    # Ensure show_points is always True for bar plots
-                    plot_kwargs['show_points'] = True
+                    plot_kwargs['show_points'] = plot_kwargs.get('show_points', True)
                     plot_kwargs['point_size'] = plot_kwargs.get('point_size', 80)
                     plot_kwargs['point_alpha'] = plot_kwargs.get('point_alpha', 0.8)
                     # Always pass colors to legend
@@ -3631,54 +3626,49 @@ class AnalysisManager:
                         pairwise_results=pairwise_comparisons,
                         file_name=file_base, legend_colors=colors, **plot_kwargs)
                 elif plot_type == "Box":
-                    # Ensure show_points is always True for box plots
                     fig, ax = DataVisualizer.plot_box(
                         groups, filtered_samples, width=width, height=height,
                         colors=colors, hatches=hatches,
                         test_recommendation=test_recommendation,
                         x_label=x_label, y_label=y_label,
                         title=title, save_plot=save_plot,
-                        show_points=True, point_size=80, point_alpha=0.8,
                         pairwise_results=pairwise_comparisons,
-                        file_name=file_base, legend_colors=colors)
+                        file_name=file_base, legend_colors=colors, **plot_kwargs)
                 elif plot_type == "Violin":
-                    # Ensure show_points is always True for violin plots  
                     fig, ax = DataVisualizer.plot_violin(
                         groups, filtered_samples, width=width, height=height,
                         colors=colors, hatches=hatches,
                         test_recommendation=test_recommendation,
                         x_label=x_label, y_label=y_label,
                         title=title, save_plot=save_plot,
-                        show_points=True, point_size=80, point_alpha=0.8,
                         pairwise_results=pairwise_comparisons,
-                        file_name=file_base, legend_colors=colors)
+                        file_name=file_base, legend_colors=colors, **plot_kwargs)
                 elif plot_type == "Strip":
                     # Strip plot doesn't exist, fall back to box plot with points
+                    plot_kwargs['show_points'] = plot_kwargs.get('show_points', True)
+                    plot_kwargs['point_size'] = plot_kwargs.get('point_size', 80)
+                    plot_kwargs['point_alpha'] = plot_kwargs.get('point_alpha', 0.8)
                     fig, ax = DataVisualizer.plot_box(
                         groups, filtered_samples, width=width, height=height,
                         colors=colors, hatches=hatches,
                         test_recommendation=test_recommendation,
                         x_label=x_label, y_label=y_label,
                         title=title, save_plot=save_plot,
-                        show_points=True, point_size=80, point_alpha=0.8,
                         pairwise_results=pairwise_comparisons,
-                        file_name=file_base, legend_colors=colors)
+                        file_name=file_base, legend_colors=colors, **plot_kwargs)
                 elif plot_type == "Raincloud":
-                    # Ensure show_points is always True for raincloud plots
                     fig, ax = DataVisualizer.plot_raincloud(
                         groups, filtered_samples, width=width, height=height,
                         colors=colors, hatches=hatches,
                         test_recommendation=test_recommendation,
                         x_label=x_label, y_label=y_label,
                         title=title, save_plot=save_plot,
-                        show_points=True, point_size=80, point_alpha=0.8,
                         pairwise_results=pairwise_comparisons,
-                        file_name=file_base, legend_colors=colors)
+                        file_name=file_base, legend_colors=colors, **plot_kwargs)
                 else:
                     # Fallback to bar plot for unknown plot types
                     print(f"WARNING: Unknown plot type '{plot_type}', falling back to Bar plot")
-                    # Ensure show_points is always True for fallback bar plots
-                    plot_kwargs['show_points'] = True
+                    plot_kwargs['show_points'] = plot_kwargs.get('show_points', True)
                     plot_kwargs['point_size'] = plot_kwargs.get('point_size', 80)
                     plot_kwargs['point_alpha'] = plot_kwargs.get('point_alpha', 0.8)
                     fig, ax = DataVisualizer.plot_bar(
