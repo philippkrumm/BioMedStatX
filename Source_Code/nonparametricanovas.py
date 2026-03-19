@@ -89,7 +89,7 @@ except ImportError:
 import warnings
 
 
-def fallback_modern_models(data, dependent_var, formula, design_type, subject_col=None):
+def fallback_modern_models(data, dependent_var, formula, design_type, subject_col=None, cov_struct_option=None, time_col=None):
     import re
     import warnings
     import numpy as np
@@ -137,6 +137,14 @@ def fallback_modern_models(data, dependent_var, formula, design_type, subject_co
             "fallback_model_used": True,
             "model_class": None,
             "model_family": None,
+            "model_link": None,
+            "family_diagnostics": {},
+            "cov_struct_used": None,
+            "covariance_estimator": None,
+            "primary_effect_policy": "minimum_p_across_omnibus_effects",
+            "primary_effect": None,
+            "interaction_significant": False,
+            "interpretation_order": ["main_effects", "interaction"],
         }
 
     def _as_float(value):
@@ -321,6 +329,104 @@ def fallback_modern_models(data, dependent_var, formula, design_type, subject_co
 
         return descriptive
 
+    def _is_time_like_levels(series):
+        values = pd.Series(series).dropna().unique().tolist()
+        if len(values) < 3:
+            return False
+        try:
+            numeric_values = pd.to_numeric(pd.Series(values), errors="coerce")
+            if numeric_values.notna().all():
+                return True
+        except Exception:
+            pass
+
+        values_as_text = [str(value).strip() for value in values]
+        has_digit = [bool(re.search(r"\d", text)) for text in values_as_text]
+        return all(has_digit)
+
+    def _select_family(values):
+        diagnostics = {
+            "n": int(len(values)),
+            "zero_fraction": float(np.mean(values == 0)) if len(values) > 0 else None,
+            "negative_fraction": float(np.mean(values < 0)) if len(values) > 0 else None,
+            "integer_like": bool(np.all(np.isclose(values, np.round(values)))) if len(values) > 0 else False,
+            "mean": float(np.mean(values)) if len(values) > 0 else None,
+            "variance": float(np.var(values, ddof=1)) if len(values) > 1 else 0.0,
+            "overdispersion_ratio": None,
+            "selection_reason": None,
+        }
+
+        if diagnostics["integer_like"]:
+            if np.any(values < 0):
+                return None, None, diagnostics, "Count-data fallback is not possible because negative values were detected."
+
+            mean_value = diagnostics["mean"] if diagnostics["mean"] is not None else 0.0
+            variance_value = diagnostics["variance"] if diagnostics["variance"] is not None else 0.0
+            if mean_value > 0:
+                diagnostics["overdispersion_ratio"] = float(variance_value / mean_value)
+
+            diagnostics["selection_reason"] = (
+                "Count outcome detected. Initial fit uses Poisson(log), then switches to NegativeBinomial(log) "
+                "if Pearson phi exceeds 1.2."
+            )
+            return sm.families.Poisson(), "Poisson", "log", diagnostics, None
+
+        if np.any(values <= 0):
+            diagnostics["selection_reason"] = (
+                "Continuous outcome contains non-positive values; Gamma(log) assumptions violated. "
+                "Using Gaussian(identity) fallback."
+            )
+            return sm.families.Gaussian(), "Gaussian", "identity", diagnostics, None
+
+        diagnostics["selection_reason"] = "Strictly positive continuous outcome; selected Gamma(log)."
+        return sm.families.Gamma(link=sm.families.links.Log()), "Gamma", "log", diagnostics, None
+
+    def _resolve_cov_struct(sanitized_df, sanitized_time, requested_cov):
+        if design_type not in ["rm", "mixed"]:
+            return None, None, "not_applicable"
+
+        option = (requested_cov or "").strip().lower()
+        if option in ["", "auto"]:
+            if sanitized_time and sanitized_time in sanitized_df.columns and _is_time_like_levels(sanitized_df[sanitized_time]):
+                return sm.cov_struct.Autoregressive(), sanitized_df[sanitized_time].cat.codes.to_numpy(), "Autoregressive"
+            return sm.cov_struct.Exchangeable(), None, "Exchangeable"
+
+        if option in ["ar1", "autoregressive"]:
+            if not sanitized_time or sanitized_time not in sanitized_df.columns:
+                return sm.cov_struct.Exchangeable(), None, "Exchangeable"
+            return sm.cov_struct.Autoregressive(), sanitized_df[sanitized_time].cat.codes.to_numpy(), "Autoregressive"
+
+        if option in ["independence", "independent"]:
+            return sm.cov_struct.Independence(), None, "Independence"
+
+        if option in ["exchangeable", "exchange"]:
+            return sm.cov_struct.Exchangeable(), None, "Exchangeable"
+
+        return sm.cov_struct.Exchangeable(), None, "Exchangeable"
+
+    def _compute_pearson_phi(y_true, mu, variance_fn, n_params):
+        try:
+            y_array = np.asarray(y_true, dtype=float)
+            mu_array = np.asarray(mu, dtype=float)
+            var_mu = np.asarray(variance_fn(mu_array), dtype=float)
+            var_mu = np.where(var_mu <= 1e-12, 1e-12, var_mu)
+
+            valid_mask = np.isfinite(y_array) & np.isfinite(mu_array) & np.isfinite(var_mu)
+            if not np.any(valid_mask):
+                return None
+
+            y_array = y_array[valid_mask]
+            mu_array = mu_array[valid_mask]
+            var_mu = var_mu[valid_mask]
+
+            numerator = np.sum(((y_array - mu_array) ** 2) / var_mu)
+            denominator = len(y_array) - max(1, int(n_params))
+            if denominator <= 0:
+                return None
+            return float(numerator / denominator)
+        except Exception:
+            return None
+
     factor_order = _extract_factor_order(formula)
     if design_type == "two_way" and len(factor_order) >= 2:
         test_label = f"Two-Way ANOVA ({factor_order[0]} * {factor_order[1]}) [GLM Fallback]"
@@ -370,31 +476,59 @@ def fallback_modern_models(data, dependent_var, formula, design_type, subject_co
             results["error"] = "Dependent variable contains non-finite values."
             return results
 
-        is_integer_like = np.all(np.isclose(dependent_values, np.round(dependent_values)))
-        if is_integer_like:
-            if np.any(dependent_values < 0):
-                results["error"] = "Negative binomial fallback is not possible: count data must not contain negative values."
-                return results
-            family = sm.families.NegativeBinomial()
-            results["model_family"] = "NegativeBinomial"
-        else:
-            if np.any(dependent_values <= 0):
-                results["error"] = "Gamma fallback is not possible: continuous data must be strictly greater than 0."
-                return results
-            family = sm.families.Gamma(link=sm.families.links.Log())
-            results["model_family"] = "Gamma(log)"
+        family, family_name, link_name, family_diagnostics, selection_error = _select_family(dependent_values)
+        if selection_error:
+            results["error"] = selection_error
+            return results
+
+        results["model_family"] = family_name
+        results["model_link"] = link_name
+        results["family_diagnostics"] = family_diagnostics
+
+        if family_diagnostics.get("zero_fraction") is not None and family_diagnostics["zero_fraction"] > 0.30:
+            warnings_list = results.setdefault("warnings", [])
+            warnings_list.append(
+                "High zero fraction detected (>30%). Consider zero-inflated models for confirmatory analyses."
+            )
 
         sanitized_df, rename_map = _sanitize_dataframe(model_data)
         reverse_map = {safe: original for original, safe in rename_map.items()}
         sanitized_formula = _sanitize_formula(formula, rename_map)
         sanitized_subject = rename_map.get(subject_col) if subject_col else None
+        sanitized_time = rename_map.get(time_col) if time_col else None
+        sanitized_dependent = rename_map.get(dependent_var, dependent_var)
+
+        cov_struct = None
+        gee_time = None
+        cov_struct_name = "not_applicable"
+        if design_type in ["rm", "mixed"]:
+            cov_struct, gee_time, cov_struct_name = _resolve_cov_struct(
+                sanitized_df,
+                sanitized_time,
+                cov_struct_option,
+            )
+        results["cov_struct_used"] = cov_struct_name
+
+        if design_type in ["rm", "mixed"] and sanitized_subject in sanitized_df.columns:
+            n_clusters = int(sanitized_df[sanitized_subject].nunique())
+            if n_clusters <= 30:
+                warnings_list = results.setdefault("warnings", [])
+                warnings_list.append(
+                    f"Small number of clusters detected (n={n_clusters}). Working-correlation choice can materially affect precision."
+                )
 
         with warnings.catch_warnings(record=True) as caught_warnings:
             warnings.simplefilter("always")
 
             if design_type == "two_way":
                 model = smf.glm(formula=sanitized_formula, data=sanitized_df, family=family)
-                fitted = model.fit()
+                fit_kwargs = {}
+                if family_name == "Gaussian":
+                    fit_kwargs["cov_type"] = "HC3"
+                    results["covariance_estimator"] = "sandwich_hc3"
+                else:
+                    results["covariance_estimator"] = "model_based"
+                fitted = model.fit(**fit_kwargs)
                 results["model_class"] = "GLM"
             elif design_type in ["rm", "mixed"]:
                 if sanitized_subject is None:
@@ -405,13 +539,58 @@ def fallback_modern_models(data, dependent_var, formula, design_type, subject_co
                     groups=sanitized_df[sanitized_subject],
                     data=sanitized_df,
                     family=family,
-                    cov_struct=sm.cov_struct.Exchangeable()
+                    cov_struct=cov_struct,
+                    time=gee_time
                 )
                 fitted = model.fit()
                 results["model_class"] = "GEE"
+                results["covariance_estimator"] = "robust_gee_sandwich"
             else:
                 results["error"] = f"Unknown design_type '{design_type}'."
                 return results
+
+            # For count outcomes, use Pearson phi from the initial Poisson fit to decide NB refit.
+            if (
+                family_name == "Poisson"
+                and family_diagnostics.get("integer_like")
+                and sanitized_dependent in sanitized_df.columns
+            ):
+                pearson_phi = _compute_pearson_phi(
+                    y_true=sanitized_df[sanitized_dependent],
+                    mu=fitted.fittedvalues,
+                    variance_fn=family.variance,
+                    n_params=len(getattr(fitted, "params", [])),
+                )
+                family_diagnostics["pearson_phi"] = pearson_phi
+
+                if pearson_phi is not None and pearson_phi > 1.2:
+                    family = sm.families.NegativeBinomial()
+                    family_name = "NegativeBinomial"
+                    link_name = "log"
+                    family_diagnostics["selection_reason"] = (
+                        f"Count outcome with Pearson phi={pearson_phi:.3f} > 1.2; switched to NegativeBinomial(log)."
+                    )
+
+                    if design_type == "two_way":
+                        model = smf.glm(formula=sanitized_formula, data=sanitized_df, family=family)
+                        fitted = model.fit()
+                        results["model_class"] = "GLM"
+                        results["covariance_estimator"] = "model_based"
+                    else:
+                        model = smf.gee(
+                            formula=sanitized_formula,
+                            groups=sanitized_df[sanitized_subject],
+                            data=sanitized_df,
+                            family=family,
+                            cov_struct=cov_struct,
+                            time=gee_time
+                        )
+                        fitted = model.fit()
+                        results["model_class"] = "GEE"
+                        results["covariance_estimator"] = "robust_gee_sandwich"
+
+                    results["model_family"] = family_name
+                    results["model_link"] = link_name
 
         convergence_messages = []
         for warning in caught_warnings:
@@ -455,6 +634,7 @@ def fallback_modern_models(data, dependent_var, formula, design_type, subject_co
             anova_rows.append({
                 "Source": restored_term,
                 "F": statistic,
+                "Wald_Chi2": statistic,
                 "p-unc": p_value,
                 "DF1": df1,
                 "DF2": None,
@@ -467,6 +647,7 @@ def fallback_modern_models(data, dependent_var, formula, design_type, subject_co
                     "factor": factor_name,
                     "type": _term_type(factor_name, factor_order),
                     "F": statistic,
+                    "Wald_Chi2": statistic,
                     "p_value": p_value,
                     "df1": df1,
                     "df2": None,
@@ -477,6 +658,7 @@ def fallback_modern_models(data, dependent_var, formula, design_type, subject_co
                 interaction_entries.append({
                     "factors": term_factors,
                     "F": statistic,
+                    "Wald_Chi2": statistic,
                     "p_value": p_value,
                     "df1": df1,
                     "df2": None,
@@ -497,18 +679,46 @@ def fallback_modern_models(data, dependent_var, formula, design_type, subject_co
         results["descriptive"] = _build_descriptive(model_data, factor_order, dependent_var)
         results["fitted_model"] = fitted
 
-        if design_type in ["two_way", "mixed"] and results["interactions"]:
-            primary_effect = results["interactions"][0]
-        elif results["factors"]:
-            primary_effect = results["factors"][0]
-        else:
-            primary_effect = None
+        interaction_significant = any(
+            interaction.get("p_value") is not None and interaction.get("p_value") < results.get("alpha", 0.05)
+            for interaction in results["interactions"]
+        )
+        results["interaction_significant"] = interaction_significant
+        if interaction_significant:
+            results["interpretation_order"] = ["interaction", "main_effects_cautious"]
+            analysis_note = str(results.get("analysis_note") or "")
+            interaction_note = (
+                " Significant interaction detected: interpret interaction effects first; "
+                "main effects represent averaged effects across the other factor."
+            )
+            if interaction_note.strip() not in analysis_note:
+                results["analysis_note"] = f"{analysis_note}{interaction_note}".strip()
+
+        all_effects = []
+        for factor_effect in results["factors"]:
+            all_effects.append({"source": factor_effect.get("factor"), "kind": "main", "effect": factor_effect})
+        for interaction_effect in results["interactions"]:
+            interaction_name = " * ".join(interaction_effect.get("factors", []))
+            all_effects.append({"source": interaction_name, "kind": "interaction", "effect": interaction_effect})
+
+        primary_effect = None
+        candidate_effects = [entry for entry in all_effects if entry["effect"].get("p_value") is not None]
+        if candidate_effects:
+            primary_effect = min(candidate_effects, key=lambda entry: entry["effect"].get("p_value"))
 
         if primary_effect is not None:
-            results["p_value"] = primary_effect.get("p_value")
-            results["statistic"] = primary_effect.get("F")
-            results["df1"] = primary_effect.get("df1")
-            results["df2"] = primary_effect.get("df2")
+            effect_payload = primary_effect.get("effect", {})
+            results["p_value"] = effect_payload.get("p_value")
+            results["statistic"] = effect_payload.get("Wald_Chi2", effect_payload.get("F"))
+            results["df1"] = effect_payload.get("df1")
+            results["df2"] = effect_payload.get("df2")
+            results["primary_effect"] = {
+                "source": primary_effect.get("source"),
+                "kind": primary_effect.get("kind"),
+                "policy": results.get("primary_effect_policy"),
+                "p_value": results["p_value"],
+                "wald_chi2": results["statistic"],
+            }
 
         return results
 

@@ -15,6 +15,7 @@ if str(SOURCE_CODE_DIR) not in sys.path:
 
 from Source_Code.resultsexporter import ResultsExporter
 from Source_Code.statisticaltester import StatisticalTester
+from Source_Code.nonparametricanovas import fallback_modern_models
 
 
 def test_mixed_gee_workflow(tmp_path):
@@ -54,9 +55,17 @@ def test_mixed_gee_workflow(tmp_path):
 
     assert results.get("fallback_model_used") is True, "Fallback auf modernes Modell wurde nicht ausgelöst."
     assert results.get("model_class") == "GEE", f"Erwartet GEE, erhalten: {results.get('model_class')}"
-    assert results.get("model_family") == "NegativeBinomial", (
-        f"Erwartet NegativeBinomial, erhalten: {results.get('model_family')}"
+    assert results.get("model_family") in {"Poisson", "NegativeBinomial"}, (
+        f"Erwartet Poisson/NegativeBinomial, erhalten: {results.get('model_family')}"
     )
+    assert results.get("cov_struct_used") in {"Autoregressive", "Exchangeable"}, (
+        f"Unerwartete Kovarianzstruktur: {results.get('cov_struct_used')}"
+    )
+
+    diagnostics = results.get("family_diagnostics", {})
+    assert "zero_fraction" in diagnostics, "family_diagnostics.zero_fraction fehlt."
+    assert "selection_reason" in diagnostics, "family_diagnostics.selection_reason fehlt."
+    assert "pearson_phi" in diagnostics, "family_diagnostics.pearson_phi fehlt."
 
     pairwise = results.get("pairwise_comparisons", [])
     assert len(pairwise) > 0, "Keine Post-hoc-Vergleiche generiert."
@@ -73,6 +82,10 @@ def test_mixed_gee_workflow(tmp_path):
     if "Marginal Effects Pairwise Comparisons (Mixed GEE-based)" in posthoc_test:
         assert any("Mixed: Between at fixed Within" in label for label in labels), "Between-Pass fehlt."
         assert any("Mixed: Within at fixed Between" in label for label in labels), "Within-Pass fehlt."
+        assert all(comp.get("corrected") is True for comp in pairwise), "Marginaleffects-Vergleiche sollten korrigiert sein."
+        assert all(comp.get("correction") == "holm-sidak" for comp in pairwise), (
+            "Marginaleffects-Korrekturmethode sollte Holm-Sidak sein."
+        )
     else:
         assert "Non-parametric pairwise tests" in posthoc_test, (
             f"Unerwarteter Post-hoc-Pfad: {posthoc_test}"
@@ -86,6 +99,43 @@ def test_mixed_gee_workflow(tmp_path):
     assert output_path.exists(), "Excel-Export fehlgeschlagen."
 
     print(f"Mixed GEE Smoke Test erfolgreich. Datei: {output_path}")
+
+
+def test_gaussian_fallback_uses_robust_covariance():
+    np.random.seed(123)
+
+    rows = []
+    for a_level in ["A1", "A2"]:
+        for b_level in ["B1", "B2"]:
+            base = 0.2 if a_level == "A1" else 0.5
+            shift = -0.35 if b_level == "B1" else 0.15
+            for _ in range(25):
+                value = base + shift + np.random.normal(0, 0.2)
+                rows.append({"A": a_level, "B": b_level, "Y": value})
+
+    # Ensure non-positive values are present so Gamma fallback is not admissible.
+    rows[0]["Y"] = 0.0
+    rows[1]["Y"] = -0.1
+
+    df = pd.DataFrame(rows)
+
+    results = fallback_modern_models(
+        data=df,
+        dependent_var="Y",
+        formula="Y ~ C(A) * C(B)",
+        design_type="two_way",
+        subject_col=None,
+    )
+
+    assert results.get("error") is None, f"Unerwarteter Fehler im Gaussian-Fallback: {results.get('error')}"
+    assert results.get("model_class") == "GLM", f"Erwartet GLM, erhalten: {results.get('model_class')}"
+    assert results.get("model_family") == "Gaussian", f"Erwartet Gaussian, erhalten: {results.get('model_family')}"
+    assert results.get("covariance_estimator") == "sandwich_hc3", (
+        f"Erwartet sandwich_hc3, erhalten: {results.get('covariance_estimator')}"
+    )
+
+    diagnostics = results.get("family_diagnostics", {})
+    assert diagnostics.get("selection_reason"), "family_diagnostics.selection_reason fehlt im Gaussian-Fallback."
 
 
 def test_two_group_paths_expose_stable_labels():

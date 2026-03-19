@@ -92,6 +92,7 @@ class ResultsExporter:
         fmt = ResultsExporter._get_excel_formats(workbook)
 
         ResultsExporter._write_summary_sheet(workbook, results, fmt)
+        ResultsExporter._write_methodology_sheet(workbook, results, fmt)
         ResultsExporter._write_assumptions_sheet(workbook, results, fmt)
         ResultsExporter._write_results_sheet(workbook, results, fmt)
         ResultsExporter._write_descriptive_sheet(workbook, results, fmt)
@@ -345,6 +346,7 @@ class ResultsExporter:
             try:
                 # Create all the detailed sheets for this dataset
                 ResultsExporter._write_summary_sheet(workbook, results, fmt, f"{dataset_name}_Summary")
+                ResultsExporter._write_methodology_sheet(workbook, results, fmt, f"{dataset_name}_Methodology")
                 ResultsExporter._write_assumptions_sheet(workbook, results, fmt, f"{dataset_name}_Assumptions")
                 ResultsExporter._write_results_sheet(workbook, results, fmt, f"{dataset_name}_Results")
                 ResultsExporter._write_descriptive_sheet(workbook, results, fmt, f"{dataset_name}_Descriptive")
@@ -683,6 +685,12 @@ class ResultsExporter:
         if results.get("analysis_note"):
             key_value_pairs.append(("Analysis note:", str(results["analysis_note"])))
 
+        if results.get("interaction_significant"):
+            key_value_pairs.append((
+                "Reporting priority:",
+                "Interaction first; interpret main effects as averaged effects across the other factor."
+            ))
+
         for key, value in key_value_pairs:
             ws.write(row, 0, key, fmt["key"])
             current_format = fmt["cell"]
@@ -701,6 +709,7 @@ class ResultsExporter:
         ws.merge_range(f'A{row}:F{row}', "NAVIGATION TO DETAILED RESULTS", fmt["section_header"])
         row += 1
         nav_text = (
+            "• Methodology: Model family, covariance choices, overdispersion metrics, and correction strategy\n"
             "• Statistical results: Details on test and significance\n"
             "• Assumptions check: Tests for normality and variance homogeneity\n"
             "• Descriptive statistics: Metrics with confidence intervals for each group\n"
@@ -781,6 +790,68 @@ class ResultsExporter:
             note_height = ResultsExporter.get_fixed_row_height("general_note")
             ws.set_row(row, note_height)
             row += 1
+
+    @staticmethod
+    def _write_methodology_sheet(workbook, results, fmt, sheet_name="Methodology"):
+        ws = workbook.add_worksheet(sheet_name)
+        ws.set_column(0, 0, 45)
+        ws.set_column(1, 1, 75)
+        ws.set_row(0, 30)
+        ws.merge_range("A1:B1", "METHODIK UND MODELLPARAMETER", fmt["title"])
+
+        family_diagnostics = results.get("family_diagnostics") or {}
+        pairwise = results.get("pairwise_comparisons") or []
+        corrections = sorted({
+            str(comp.get("correction"))
+            for comp in pairwise
+            if comp.get("correction")
+        })
+        posthoc_path = "marginaleffects"
+        posthoc_test = str(results.get("posthoc_test") or "")
+        if "non-parametric" in posthoc_test.lower():
+            posthoc_path = "fallback_nonparametric"
+
+        interpretation_order = results.get("interpretation_order")
+        if isinstance(interpretation_order, (list, tuple)):
+            interpretation_order = " -> ".join(str(item) for item in interpretation_order)
+
+        methodology_rows = [
+            ("Model class", results.get("model_class", "N/A")),
+            ("Selected family", results.get("model_family", "N/A")),
+            ("Link function", results.get("model_link", "N/A")),
+            ("Covariance structure (working)", results.get("cov_struct_used", "N/A")),
+            ("Covariance estimator", results.get("covariance_estimator", "N/A")),
+            ("Pearson phi", family_diagnostics.get("pearson_phi", "N/A")),
+            ("Zero fraction", family_diagnostics.get("zero_fraction", "N/A")),
+            ("Overdispersion ratio", family_diagnostics.get("overdispersion_ratio", "N/A")),
+            ("Family selection rationale", family_diagnostics.get("selection_reason", "N/A")),
+            ("Omnibus statistic", "Wald Chi-square"),
+            ("Primary gate policy", results.get("primary_effect_policy", "N/A")),
+            ("Primary effect (gate)", (results.get("primary_effect") or {}).get("source", "N/A")),
+            ("Interaction significant", results.get("interaction_significant", "N/A")),
+            ("Interpretation order", interpretation_order or "N/A"),
+            ("Post-hoc path used", posthoc_path),
+            ("Multiplicity method(s)", ", ".join(corrections) if corrections else "None"),
+        ]
+
+        row = 2
+        ws.write(row, 0, "Parameter", fmt["header"])
+        ws.write(row, 1, "Value", fmt["header"])
+        row += 1
+
+        for key, value in methodology_rows:
+            ws.write(row, 0, key, fmt["key"])
+            if isinstance(value, float):
+                ws.write(row, 1, f"{value:.6f}", fmt["cell"])
+            else:
+                ws.write(row, 1, str(value), fmt["cell"])
+            row += 1
+
+        warnings_list = results.get("warnings") or []
+        if warnings_list:
+            row += 1
+            ws.write(row, 0, "Methodik-Hinweise", fmt["section_header"])
+            ws.write(row, 1, " | ".join(str(item) for item in warnings_list), fmt["explanation"])
 
         anova_table = results.get("anova_table")
         if anova_table is not None:

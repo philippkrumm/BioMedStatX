@@ -4,7 +4,7 @@
 		{
 			"type": "shell",
 			"label": "Run all tests",
-			"command": "pytest --maxfail=5 --disable-warnings -v",
+			"command": "python -m pytest --maxfail=5 --disable-warnings -v",
 			"group": "test"
 		}
 	]

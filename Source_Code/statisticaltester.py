@@ -1839,7 +1839,9 @@ class StatisticalTester:
                     dependent_var=dv,
                     formula=formula,
                     design_type=design_type,
-                    subject_col=subject_col
+                    subject_col=subject_col,
+                    cov_struct_option="auto",
+                    time_col=within[0] if within else None,
                 )
 
                 res["test_info"] = test_info
@@ -3331,7 +3333,44 @@ class StatisticalTester:
         return [str(group) for group in valid_groups], samples
 
     @staticmethod
-    def _map_marginaleffects_to_exporter(comparisons_df, alpha=0.05, by_cols=None, test_label="Marginal Effects (Robust GLM)"):
+    def _apply_pairwise_multiplicity(pairwise_rows, alpha=0.05, correction_method="holm-sidak"):
+        if not pairwise_rows:
+            return pairwise_rows
+
+        valid_indices = []
+        p_values = []
+        for idx, comparison in enumerate(pairwise_rows):
+            p_val = comparison.get("p_value")
+            if isinstance(p_val, (float, int)) and not np.isnan(float(p_val)):
+                valid_indices.append(idx)
+                p_values.append(float(p_val))
+
+        if not p_values:
+            return pairwise_rows
+
+        try:
+            multipletests = get_statsmodels_multitest()
+            _, corrected_p, _, _ = multipletests(p_values, alpha=alpha, method=correction_method)
+        except Exception:
+            return pairwise_rows
+
+        for idx, corrected_value in zip(valid_indices, corrected_p):
+            pairwise_rows[idx]["p_value"] = float(corrected_value)
+            pairwise_rows[idx]["significant"] = bool(float(corrected_value) < alpha)
+            pairwise_rows[idx]["corrected"] = True
+            pairwise_rows[idx]["correction"] = correction_method
+
+        return pairwise_rows
+
+    @staticmethod
+    def _map_marginaleffects_to_exporter(
+        comparisons_df,
+        alpha=0.05,
+        by_cols=None,
+        test_label="Marginal Effects (Robust GLM)",
+        apply_correction=True,
+        correction_method="holm-sidak",
+    ):
         mapped = []
         by_cols = by_cols or []
         excluded_columns = {
@@ -3394,12 +3433,19 @@ class StatisticalTester:
                 "p_value": p_value,
                 "statistic": statistic,
                 "significant": bool(p_value is not None and p_value < alpha),
-                "corrected": False,
-                "correction": None,
+                "corrected": bool(apply_correction),
+                "correction": correction_method if apply_correction else None,
                 "effect_size": None,
                 "effect_size_type": None,
                 "confidence_interval": confidence_interval
             })
+
+        if apply_correction:
+            mapped = StatisticalTester._apply_pairwise_multiplicity(
+                mapped,
+                alpha=alpha,
+                correction_method=correction_method,
+            )
 
         return mapped
 
@@ -3427,7 +3473,9 @@ class StatisticalTester:
                 comparisons_df,
                 alpha=alpha,
                 by_cols=[by_factor],
-                test_label="Marginal Effects (Robust GLM)"
+                test_label="Marginal Effects (Robust GLM)",
+                apply_correction=True,
+                correction_method="holm-sidak",
             )
             if not mapped:
                 return None
@@ -3467,7 +3515,9 @@ class StatisticalTester:
                 comparisons_df,
                 alpha=alpha,
                 by_cols=[],
-                test_label="Marginal Effects (RM)"
+                test_label="Marginal Effects (RM)",
+                apply_correction=True,
+                correction_method="holm-sidak",
             )
             if not mapped:
                 return None
@@ -3511,7 +3561,8 @@ class StatisticalTester:
                     comparisons_df,
                     alpha=alpha,
                     by_cols=[within_factor],
-                    test_label="Marginal Effects (Mixed: Between at fixed Within)"
+                    test_label="Marginal Effects (Mixed: Between at fixed Within)",
+                    apply_correction=False,
                 )
                 pairwise_comparisons.extend(mapped)
         except Exception as exc:
@@ -3535,7 +3586,8 @@ class StatisticalTester:
                     comparisons_df,
                     alpha=alpha,
                     by_cols=[between_factor],
-                    test_label="Marginal Effects (Mixed: Within at fixed Between)"
+                    test_label="Marginal Effects (Mixed: Within at fixed Between)",
+                    apply_correction=False,
                 )
                 pairwise_comparisons.extend(mapped)
         except Exception as exc:
@@ -3553,6 +3605,12 @@ class StatisticalTester:
                     "error": " | ".join(errors)
                 }
             return None
+
+        pairwise_comparisons = StatisticalTester._apply_pairwise_multiplicity(
+            pairwise_comparisons,
+            alpha=alpha,
+            correction_method="holm-sidak",
+        )
 
         return {
             "posthoc_test": "Marginal Effects Pairwise Comparisons (Mixed GEE-based)",
