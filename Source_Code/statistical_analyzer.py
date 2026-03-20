@@ -1082,12 +1082,16 @@ class StatisticalAnalyzerApp(QMainWindow):
         central_widget.setObjectName("widMainContainer")
         main_layout = QVBoxLayout(central_widget)
         main_layout.setObjectName("lyoMainLayout")
+        main_layout.setContentsMargins(16, 8, 16, 16)
+        main_layout.setSpacing(12)
         
         # File selection
         file_section = QGroupBox("Data Source")
         file_section.setObjectName("grpDataSource")
         file_layout = QHBoxLayout(file_section)
         file_layout.setObjectName("lyoFileSection")
+        file_layout.setContentsMargins(0, 0, 0, 0)
+        file_layout.setSpacing(8)
         
         file_label = QLabel("Excel file:")
         file_label.setObjectName("lblFileLabel")
@@ -1108,6 +1112,8 @@ class StatisticalAnalyzerApp(QMainWindow):
         data_section.setObjectName("grpDataConfig")
         data_layout = QVBoxLayout(data_section)
         data_layout.setObjectName("lyoDataSection")
+        data_layout.setContentsMargins(0, 0, 0, 0)
+        data_layout.setSpacing(8)
         
         # Excel sheet
         sheet_layout = QHBoxLayout()
@@ -1155,7 +1161,6 @@ class StatisticalAnalyzerApp(QMainWindow):
         # Mark for combined columns
         self.combine_columns_label = QLabel("No combined columns selected")
         self.combine_columns_label.setObjectName("lblCombineStatus")
-        self.combine_columns_label.setStyleSheet("color: gray; font-style: italic;")
         data_layout.addWidget(self.combine_columns_label)
         
         main_layout.addWidget(data_section)
@@ -1163,6 +1168,7 @@ class StatisticalAnalyzerApp(QMainWindow):
         # Available groups and plot management
         groups_and_plots = QHBoxLayout()
         groups_and_plots.setObjectName("lyoGroupsAndPlots")
+        groups_and_plots.setSpacing(12)
         
         # Available groups
         groups_section = QGroupBox("Available Groups")
@@ -1180,6 +1186,13 @@ class StatisticalAnalyzerApp(QMainWindow):
         # Connection for automatic preview updates when group selection changes
         self.groups_list.itemSelectionChanged.connect(self.update_preview_on_selection_change)
         groups_layout.addWidget(self.groups_list)
+
+        self.groups_empty_label = QLabel("Load a file and\nselect a group column")
+        self.groups_empty_label.setObjectName("lblEmptyState")
+        self.groups_empty_label.setAlignment(Qt.AlignCenter)
+        self.groups_empty_label.setMinimumHeight(64)
+        groups_layout.addWidget(self.groups_empty_label)
+        self.groups_list.hide()
         
         # Buttons for group selection
         group_buttons = QHBoxLayout()
@@ -1205,6 +1218,13 @@ class StatisticalAnalyzerApp(QMainWindow):
         self.plots_list.setMaximumHeight(200)
         self.plots_list.itemDoubleClicked.connect(self.edit_plot_config)
         plots_layout.addWidget(self.plots_list)
+
+        self.plots_empty_label = QLabel("No plots configured yet.\nSelect groups to add a plot.")
+        self.plots_empty_label.setObjectName("lblEmptyState")
+        self.plots_empty_label.setAlignment(Qt.AlignCenter)
+        self.plots_empty_label.setMinimumHeight(64)
+        plots_layout.addWidget(self.plots_empty_label)
+        self.plots_list.hide()
         
         # Plot buttons
         plot_buttons = QHBoxLayout()
@@ -1249,6 +1269,7 @@ class StatisticalAnalyzerApp(QMainWindow):
         # Action buttons
         actions_layout = QHBoxLayout()
         actions_layout.setObjectName("lyoActionButtons")
+        actions_layout.setSpacing(8)
         analyze_button = QPushButton("Start all analyses")
         analyze_button.setObjectName("btnAnalyzeAll")
         analyze_button.clicked.connect(self.run_all_analyses)
@@ -1440,7 +1461,11 @@ class StatisticalAnalyzerApp(QMainWindow):
             self.groups_list.clear()
             for group in self.available_groups:
                 self.groups_list.addItem(str(group))
-            
+
+            has_groups = self.groups_list.count() > 0
+            self.groups_list.setVisible(has_groups)
+            self.groups_empty_label.setVisible(not has_groups)
+
             # Reload data
             self.update_samples()
             
@@ -1591,6 +1616,7 @@ class StatisticalAnalyzerApp(QMainWindow):
             self.plot_configs.append(config)
             plot_item_text = f"Plot: {config.get('title') or ', '.join(config.get('groups', []))}"
             self.plots_list.addItem(plot_item_text)
+            self._update_plots_empty_state()
             if config.get('create_plot', False):
                 self.preview_plot(len(self.plot_configs) - 1)
     
@@ -1753,7 +1779,8 @@ class StatisticalAnalyzerApp(QMainWindow):
         if current_row >= 0:
             self.plots_list.takeItem(current_row)
             self.plot_configs.pop(current_row)
-            
+            self._update_plots_empty_state()
+
             # Clear the preview if no plot is left
             if len(self.plot_configs) == 0:
                 if hasattr(self, 'plot_preview_widget') and self.plot_preview_widget:
@@ -1761,6 +1788,12 @@ class StatisticalAnalyzerApp(QMainWindow):
                 elif hasattr(self, 'figure') and hasattr(self, 'canvas'):
                     self.figure.clear()
                     self.canvas.draw()
+
+    def _update_plots_empty_state(self):
+        """Shows or hides the plots empty-state label based on list content."""
+        has_plots = self.plots_list.count() > 0
+        self.plots_list.setVisible(has_plots)
+        self.plots_empty_label.setVisible(not has_plots)
     
     def preview_selected_plot(self):
         """Creates a preview of the selected plot."""
