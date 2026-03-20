@@ -3,3 +3,9 @@ __pycache__/
 *.pyc
 *.pyo
 .venv/
+
+# Claude Code internal files
+.claude/
+
+# R output artifacts
+Rplots.pdf
