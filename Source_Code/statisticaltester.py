@@ -6,7 +6,11 @@ from scipy import stats
 from lazy_imports import get_pingouin, get_scipy_stats, get_statsmodels_multitest
 from stats_functions import UIDialogManager, PostHocFactory, get_pingouin_module, get_output_path, PostHocAnalyzer, PostHocStatistics
 from resultsexporter import ResultsExporter
-from nonparametricanovas import GLMMTwoWayANOVA, GEERMANOVA, GLMMMixedANOVA, auto_anova_decision, fallback_modern_models, posthoc_marginaleffects
+from nonparametricanovas import (
+    GLMMTwoWayANOVA, GEERMANOVA, GLMMMixedANOVA,
+    auto_anova_decision, fallback_modern_models, posthoc_marginaleffects,
+    perform_friedman_test, perform_freedman_lane_test, perform_brunner_langer_ats,
+)
 
 class StatisticalTester:
     @staticmethod
@@ -1815,34 +1819,43 @@ class StatisticalTester:
                 return res
 
             elif recommendation == 'non_parametric':
-                print(f"DEBUG: Modern-model fallback required for {test}")
+                print(f"DEBUG: Nonparametric fallback required for {test}")
 
-                if test == 'two_way_anova':
-                    formula = f"{dv} ~ C({between[0]}) * C({between[1]})"
-                    design_type = "two_way"
-                    subject_col = None
-                elif test == 'repeated_measures_anova':
-                    formula = f"{dv} ~ C({within[0]})"
-                    design_type = "rm"
-                    subject_col = subject
+                if test == 'repeated_measures_anova':
+                    res = perform_friedman_test(
+                        data=df_original.copy(),
+                        dv=dv,
+                        within_factor=within[0],
+                        subject_col=subject,
+                        alpha=alpha,
+                    )
+                elif test == 'two_way_anova':
+                    res = perform_freedman_lane_test(
+                        data=df_original.copy(),
+                        dv=dv,
+                        factor_a=between[0],
+                        factor_b=between[1],
+                        alpha=alpha,
+                    )
                 elif test == 'mixed_anova':
-                    formula = f"{dv} ~ C({between[0]}) * C({within[0]})"
-                    design_type = "mixed"
-                    subject_col = subject
+                    res = perform_brunner_langer_ats(
+                        data=df_original.copy(),
+                        dv=dv,
+                        between_factor=between[0],
+                        within_factor=within[0],
+                        subject_col=subject,
+                        alpha=alpha,
+                    )
                 else:
-                    formula = f"{dv} ~ 1"
-                    design_type = test
-                    subject_col = subject
-
-                res = fallback_modern_models(
-                    data=df_original.copy(),
-                    dependent_var=dv,
-                    formula=formula,
-                    design_type=design_type,
-                    subject_col=subject_col,
-                    cov_struct_option="auto",
-                    time_col=within[0] if within else None,
-                )
+                    res = fallback_modern_models(
+                        data=df_original.copy(),
+                        dependent_var=dv,
+                        formula=f"{dv} ~ 1",
+                        design_type=test,
+                        subject_col=subject,
+                        cov_struct_option="auto",
+                        time_col=within[0] if within else None,
+                    )
 
                 res["test_info"] = test_info
                 res["parametric_assumptions_violated"] = True

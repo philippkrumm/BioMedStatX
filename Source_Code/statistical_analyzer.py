@@ -1,5 +1,5 @@
 import sys
-import time 
+import time
 import os
 from PyQt5.QtWidgets import QDesktopWidget
 # Core imports - always needed
@@ -10,9 +10,9 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QFileDialog, QWidget, QV
                            QTabWidget, QGroupBox, QCheckBox, QSpinBox, QColorDialog, 
                            QMessageBox, QScrollArea, QListWidgetItem, QDialog, QDialogButtonBox,
                            QGridLayout, QLineEdit, QRadioButton, QAction, QFormLayout, QAbstractItemView, QDoubleSpinBox, QButtonGroup,
-                           QFrame, QTableWidget, QTableWidgetItem, QSplitter, QToolButton, QGraphicsOpacityEffect, QSizePolicy)
+                           QFrame, QTableWidget, QTableWidgetItem, QSplitter, QToolButton, QGraphicsOpacityEffect, QSizePolicy, QTextEdit)
 from PyQt5.QtGui import QColor, QIcon, QPixmap, QDrag, QDesktopServices
-from PyQt5.QtCore import Qt, QMimeData, QPoint, pyqtSignal, QPropertyAnimation, QEasingCurve, QSequentialAnimationGroup, QTimer, QUrl
+from PyQt5.QtCore import Qt, QMimeData, QPoint, pyqtSignal, QObject, QPropertyAnimation, QEasingCurve, QSequentialAnimationGroup, QTimer, QUrl
 
 # Initialize lazy loading system
 from lazy_imports import preload_critical_modules
@@ -630,762 +630,14 @@ class AdvancedTestDialog(QDialog):
         self.betweenList.setEnabled(is_mixed or is_two_way)
 
 
-# --- Unified PlotConfigDialog (new system) ---
-class PlotConfigDialog(QDialog):
-    def __init__(self, groups, parent=None, default_filename=None):
-        if not groups:
-            QMessageBox.critical(parent, "Error", "No groups passed for plot configuration!")
-            raise ValueError("No groups for PlotConfigDialog.")
-        if len(set(groups)) != len(groups):
-            QMessageBox.warning(parent, "Warning", "There are duplicate group names!")
-            # Optional: raise ValueError("Duplicate groups for PlotConfigDialog.")
-        super().__init__(parent)
-        screen = QDesktopWidget().screenGeometry()
-        width = int(screen.width() * 0.40)
-        height = int(screen.height() * 0.50)
-        self.resize(width, height)
-        self.move(
-            (screen.width() - width) // 2,
-            (screen.height() - height) // 2
-        )
-        # Remove the question mark from the window
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
-        self.setWindowTitle("Configure Plot Export")
-        self.groups = groups
-        
-        # IMPORTANT: Explicitly initialize all status variables
-        self.comparisons = []  # Empty list as initial state
-        self.colors = None     # No preselected colors
-        self.hatches = None    # No preselected hatches
-        self._dependent = False
-        self._show_individual_lines = True
-        
-        # Initialize UI elements
-        layout = QVBoxLayout(self)
-        
-        # COMMENTED OUT: Comparisons list and reset button - not needed as post-hoc tests provide all comparisons
-        # comp_group = QGroupBox("Pairwise Comparisons")
-        # comp_layout = QVBoxLayout()
-        # 
-        # self.comp_list = QListWidget()
-        # comp_layout.addWidget(self.comp_list)
-        # 
-        # # Reset button for explicit reset
-        # reset_button = QPushButton("Reset comparisons")
-        # reset_button.clicked.connect(self.reset_comparisons)
-        # comp_layout.addWidget(reset_button)
-        
-        # File name configuration
-        file_group = QGroupBox("Export")
-        file_group.setObjectName("grpFileConfig")
-        file_layout = QGridLayout(file_group)
-        file_layout.setObjectName("lyoFileConfig")
-
-        # File name only
-        file_label = QLabel("Output file name:")
-        file_label.setObjectName("lblFileName")
-        file_layout.addWidget(file_label, 0, 0)
-        self.file_name_edit = QLineEdit("")
-        self.file_name_edit.setObjectName("edtFileName")
-        self.file_name_edit.setPlaceholderText("Default: generated from the dataset filename")
-        
-        # Set default filename if provided
-        if default_filename:
-            clean_filename = "".join(c for c in default_filename if c.isalnum() or c in (' ', '-', '_')).strip()
-            if clean_filename:
-                self.file_name_edit.setText(clean_filename)
-                
-        file_layout.addWidget(self.file_name_edit, 0, 1)
-        
-        layout.addWidget(file_group)
-        
-        # Statistical options
-        stats_group = QGroupBox("Statistical Options")
-        stats_group.setObjectName("grpStatOptions")
-        stats_layout = QVBoxLayout(stats_group)
-        stats_layout.setObjectName("lyoStatOptions")
-
-        # Group order (drag and drop)
-        order_group = QGroupBox("Group order (drag to sort)")
-        order_layout = QVBoxLayout(order_group)
-        self.order_list = QListWidget()
-        self.order_list.setDragDropMode(QListWidget.InternalMove)
-        # Limit height for many groups
-        self.order_list.setMaximumHeight(150)
-        for group in groups:
-            self.order_list.addItem(str(group))
-        order_layout.addWidget(self.order_list)
-        layout.addWidget(order_group)
-        
-        
-        # Create plot/export toggle
-        self.create_plot_check = QCheckBox("Create plot")
-        self.create_plot_check.setObjectName("chkCreatePlot")
-        self.create_plot_check.setChecked(False)
-        stats_layout.addWidget(self.create_plot_check)
-
-        # Appearance configuration button
-        self.appearance_btn = QPushButton("Configure appearance…")
-        self.appearance_btn.setObjectName("btnConfigureAppearance")
-        self.appearance_btn.setVisible(self.create_plot_check.isChecked())
-        self.appearance_btn.clicked.connect(self.open_appearance_dialog)
-        stats_layout.addWidget(self.appearance_btn)
-
-        # wire it up so it only shows when create_plot is checked
-        self.create_plot_check.toggled.connect(self.appearance_btn.setVisible)
-
-        # Initialize appearance button text
-        self.update_appearance_button_text()
-        
-        # COMMENTED OUT: Manual comparison selection - not needed as post-hoc tests provide all comparisons
-        # # List of comparisons
-        # comparisons_label = QLabel("Specific comparisons:")
-        # comparisons_label.setObjectName("lblComparisons")
-        # stats_layout.addWidget(comparisons_label)
-        # 
-        # self.comparisons_list = QListWidget()
-        # self.comparisons_list.setObjectName("lstComparisons")
-        # stats_layout.addWidget(self.comparisons_list)
-        # 
-        # # Buttons for comparisons
-        # compare_buttons = QHBoxLayout()
-        # compare_buttons.setObjectName("lyoCompareButtons")
-        # 
-        # add_compare_button = QPushButton("Add comparison")
-        # add_compare_button.setObjectName("btnAddComparison")
-        # add_compare_button.clicked.connect(self.add_comparison)
-        # 
-        # remove_compare_button = QPushButton("Remove comparison")
-        # remove_compare_button.setObjectName("btnRemoveComparison")
-        # remove_compare_button.clicked.connect(self.remove_comparison)
-        # 
-        # compare_buttons.addWidget(add_compare_button)
-        # compare_buttons.addWidget(remove_compare_button)
-        # stats_layout.addLayout(compare_buttons)
-        
-        layout.addWidget(stats_group)
-        
-        # Dialog buttons
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        button_box.setObjectName("btnDialogButtons")
-        button_box.accepted.connect(self.accept)
-        button_box.rejected.connect(self.reject)
-        layout.addWidget(button_box)
-        
-        # Save comparisons
-        self.comparisons = []
-        
-    def open_appearance_dialog(self):
-        print("DEBUG: open_appearance_dialog called!")
-        print(f"DEBUG: PLOT_MODULES_AVAILABLE = {PLOT_MODULES_AVAILABLE}")
-        print(f"DEBUG: PlotAestheticsDialog = {PlotAestheticsDialog}")
-        
-        # Get the ordered groups from the list widget instead of using self.groups
-        ordered_groups = [self.order_list.item(i).text() for i in range(self.order_list.count())]
-        print(f"DEBUG: ordered_groups = {ordered_groups}")
-        
-        # Only open PlotAestheticsDialog for appearance configuration, not as main dialog
-        if PLOT_MODULES_AVAILABLE and PlotAestheticsDialog:
-            print("DEBUG: Opening new PlotAestheticsDialog!")
-            # Access parent app for temporary settings
-            parent_app = self.parent()
-            
-            # IMPORTANT: Get the current plot config to preserve user's colors
-            current_plot_config = self.get_config() or {}
-            current_appearance_config = getattr(parent_app, 'temp_plot_appearance_settings', None) or {}
-            
-            # Merge configs: appearance settings override plot config, but preserve user's colors if no appearance colors
-            merged_config = current_plot_config.copy()
-            merged_config.update(current_appearance_config)
-            
-            # Ensure colors are from plot config if not overridden by appearance
-            if 'colors' in current_plot_config and ('colors' not in current_appearance_config or not current_appearance_config['colors']):
-                merged_config['colors'] = current_plot_config['colors']
-            
-            print(f"DEBUG: merged_config colors = {merged_config.get('colors', {})}")
-            
-            # Determine context: this is a user plot (not analysis-only)
-            context = "user_plot"
-            
-                dlg = PlotAestheticsDialog(
-                ordered_groups,
-                parent_app.samples if hasattr(parent_app, "samples") else {},
-                config=merged_config,
-                parent=self,
-                context=context
-            )
-                print("DEBUG: PlotAestheticsDialog created successfully")
-            if dlg.exec_() == dlg.Accepted:
-                print("DEBUG: Dialog accepted, saving settings")
-                    # Store settings in temporary parent-app state
-                parent_app.temp_plot_appearance_settings = dlg.get_config()
-                self.update_appearance_button_text()
-                    # IMPORTANT: Refresh live preview in the main window
-                parent_app.auto_generate_preview()
-            else:
-                print("DEBUG: Dialog cancelled")
-        else:
-            print("DEBUG: PlotAestheticsDialog not available, showing warning")
-            QMessageBox.warning(self, "Feature not available", 
-                               "The new plot appearance dialog is not available. "
-                               "Please ensure plot_aesthetics_dialog.py is in the same directory.")
-    
-    def update_appearance_button_text(self):
-        """Update the appearance button text to show if settings are configured"""
-        # Check temporary appearance settings on the parent app
-        parent_app = self.parent()
-        if hasattr(parent_app, 'temp_plot_appearance_settings') and parent_app.temp_plot_appearance_settings:
-            self.appearance_btn.setText("Configure appearance… ✓")
-            self.appearance_btn.setToolTip("Appearance settings are configured. Click to modify.")
-        else:
-            self.appearance_btn.setText("Configure appearance…")
-            self.appearance_btn.setToolTip("Configure plot appearance settings.")
-            
-    def set_groups(self, groups): self.groups = groups
-    def set_width(self, w): self.width_spin.setValue(w)
-    def set_height(self, h): self.height_spin.setValue(h)
-    def set_color(self, group, color):
-        if group in self.color_buttons:
-            self.color_buttons[group].setStyleSheet(f"background-color: {color};")
-        else:
-            QMessageBox.warning(self, "Warning", f"Group {group} not in color table!")
-    def set_hatch(self, group, hatch):
-        if group in self.hatch_combos:
-            idx = self.hatch_combos[group].findText(hatch)
-            if idx >= 0:
-                self.hatch_combos[group].setCurrentIndex(idx)
-            else:
-                QMessageBox.warning(self, "Warning", f"Hatch '{hatch}' not available for group {group}!")
-        else:
-            QMessageBox.warning(self, "Warning", f"Group {group} not in hatch table!")
-    def set_dependent(self, dep, show_individual_lines=True):
-        self._dependent = bool(dep)
-        self._show_individual_lines = bool(show_individual_lines)
-    def set_create_plot(self, create): self.create_plot_check.setChecked(create)
-    # COMMENTED OUT: Manual comparison methods - not needed as post-hoc tests provide all comparisons
-    # def set_comparisons(self, comps):
-    #     self.comparisons = comps
-    #     self.comparisons_list.clear()
-    #     for comp in comps:
-    #         self.comparisons_list.addItem(f"{comp['group1']} vs {comp['group2']} ({comp['test_type']})")
-    def set_file_name(self, name): self.file_name_edit.setText(name)
-
-    def select_color(self, group):
-        """Opens a color dialog for a group"""
-        color = QColorDialog.getColor()
-        if color.isValid():
-            self.color_buttons[group].setStyleSheet(f"background-color: {color.name()};")
-
-    # COMMENTED OUT: Manual comparison methods - not needed as post-hoc tests provide all comparisons
-    # def add_comparison(self):
-    #     dialog = PairwiseComparisonDialog(self.groups, self)
-    #     if dialog.exec_() == QDialog.Accepted:
-    #         comp = dialog.get_comparison()
-    #         if comp['group1'] == comp['group2']:
-    #             QMessageBox.warning(self, "Error", "The two groups must be different.")
-    #             return
-    #                 # Set a default value for the test type, will be replaced later by post-hoc results
-    #         comp['test_type'] = "From post-hoc test"
-    # 
-    #         self.comparisons.append(comp)
-    #         self.comparisons_list.addItem(f"{comp['group1']} vs {comp['group2']} ({comp['test_type']})")
-    # 
-    # def remove_comparison(self):
-    #     current_row = self.comparisons_list.currentRow()
-    #     if current_row >= 0:
-    #         self.comparisons_list.takeItem(current_row)
-    #         self.comparisons.pop(current_row)
-              
-    def get_config(self):
-        if not self.groups:
-            QMessageBox.critical(self, "Error", "Plot without groups is not possible!")
-            return None
-        try:
-            # Use Greys palette by default instead of the bright default colors
-            try:
-                import seaborn as sns
-                # Generate Greys palette colors for groups
-                greys_colors = sns.color_palette('Greys', n_colors=len(self.groups))
-                colors_dict = {}
-                for i, g in enumerate(self.groups):
-                    # Convert RGB tuple to hex
-                    rgb = greys_colors[i]
-                    hex_color = "#{:02x}{:02x}{:02x}".format(
-                        int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255)
-                    )
-                    colors_dict[g] = hex_color
-            except ImportError:
-                # Fallback to default colors if seaborn is not available
-                colors_dict = {}
-                for i, g in enumerate(self.groups):
-                    colors_dict[g] = DEFAULT_COLORS[i % len(DEFAULT_COLORS)]
-            hatches_dict = {}
-            for g in self.groups:
-                hatches_dict[g] = ""  # Default: no hatch
-            config = {
-                'file_name': self.file_name_edit.text() if self.file_name_edit.text() else None,
-                'groups': [self.order_list.item(i).text() for i in range(self.order_list.count())],
-                'group_order': [self.order_list.item(i).text() for i in range(self.order_list.count())],
-                'width': 12,
-                'height': 10,
-                'colors': colors_dict,
-                'hatches': hatches_dict,
-                'create_plot': self.create_plot_check.isChecked(),
-                # REMOVED: 'comparisons': self.comparisons.copy() if self.comparisons else [],  # Not needed - post-hoc tests provide comparisons
-                'error_type': 'sd',  # Default to standard deviation (handled by PlotAestheticsDialog)
-                'dependent': self._dependent,
-                'show_individual_lines': self._show_individual_lines if self._dependent else False,
-                'needs_subject_selection': self._dependent,
-                # Add default Seaborn palette settings
-                'seaborn_palette': 'Greys',
-                'use_seaborn_styling': True,
-                'seaborn_context': 'paper'
-            }
-            # Always add appearance_settings from PlotAestheticsDialog if present
-            parent_app = self.parent()
-            if hasattr(parent_app, 'temp_plot_appearance_settings') and parent_app.temp_plot_appearance_settings:
-                config['appearance_settings'] = parent_app.temp_plot_appearance_settings
-            return config
-        except Exception as e:
-            print(f"Error in get_config: {str(e)}")
-            traceback.print_exc()
-            # Return a minimal config to prevent crashes
-            try:
-                import seaborn as sns
-                # Generate Greys palette colors for groups
-                greys_colors = sns.color_palette('Greys', n_colors=len(self.groups))
-                colors_dict = {}
-                for i, g in enumerate(self.groups):
-                    # Convert RGB tuple to hex
-                    rgb = greys_colors[i]
-                    hex_color = "#{:02x}{:02x}{:02x}".format(
-                        int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255)
-                    )
-                    colors_dict[g] = hex_color
-            except ImportError:
-                # Fallback to default colors if seaborn is not available
-                colors_dict = {g: DEFAULT_COLORS[i % len(DEFAULT_COLORS)] for i, g in enumerate(self.groups)}
-            
-            return {
-                'groups': [self.order_list.item(i).text() for i in range(self.order_list.count())],
-                'group_order': [self.order_list.item(i).text() for i in range(self.order_list.count())],
-                'title': None,
-                'x_label': None,
-                'y_label': None,
-                'file_name': None,
-                'width': 12,
-                'height': 10,
-                'colors': colors_dict,
-                'hatches': {g: "" for g in self.groups},
-                'dependent': False,
-                'create_plot': False,
-                # REMOVED: 'comparisons': [],  # Not needed - post-hoc tests provide comparisons
-                'error_type': 'sd',
-                # Add default Seaborn palette settings
-                'seaborn_palette': 'Greys',
-                'use_seaborn_styling': True,
-                'seaborn_context': 'paper'
-            }
-    
-    # COMMENTED OUT: Manual comparison reset - not needed as post-hoc tests provide all comparisons
-    # def reset_comparisons(self):
-    #     """Explicit method to reset comparisons"""
-    #     self.comparisons = []
-    #     self.comparisons_list.clear()
-        
-    def _convert_old_config_to_new(self, old_config):
-        """
-        Convert a legacy plot configuration to the new format.
-        """
-        config = {
-            'plot_type': 'Bar',  # Default
-            'width': 8,
-            'height': 6,
-            'dpi': 300,
-            'colors': {},
-            'hatches': {},
-            'alpha': 0.8,
-            'theme': 'default',
-            'grid': False,
-            'despine': True,
-            'show_error_bars': True,
-            'error_type': 'sd',
-            'error_style': 'caps',
-            'capsize': 0.05,
-            'show_points': True,
-            'point_size': 80,
-            'jitter_strength': 0.3,
-            'show_significance_letters': True,
-            'x_label': '',
-            'y_label': '',
-            'title': old_config.get('title', ''),
-            'fontsize_title': 14,
-            'fontsize_axis': 12,
-            'fontsize_ticks': 10,
-            'bar_linewidth': 0.5,
-            'bar_edge_color': 'black'
-        }
-        
-        # Convert legacy appearance settings
-        if 'appearance_settings' in old_config:
-            appearance = old_config['appearance_settings']
-            
-            # Plot type
-            config['plot_type'] = appearance.get('plot_type', 'Bar')
-            
-            # Colors and hatches
-            if 'colors' in appearance:
-                config['colors'] = appearance['colors']
-            if 'hatches' in appearance:
-                config['hatches'] = appearance['hatches']
-                
-            # Apply additional settings
-            config.update({
-                'alpha': appearance.get('alpha', 0.8),
-                'grid': appearance.get('grid', False),
-                'despine': appearance.get('despine', True),
-                'fontsize_title': appearance.get('fontsize_title', 14),
-                'fontsize_axis': appearance.get('fontsize_axis', 12),
-                'fontsize_ticks': appearance.get('fontsize_ticks', 10),
-                'bar_linewidth': appearance.get('bar_linewidth', 0.5),
-                'bar_edge_color': appearance.get('bar_edge_color', 'black')
-            })
-        
-        # Use global settings if available
-        if hasattr(self, 'global_appearance_settings') and self.global_appearance_settings:
-            config.update(self.global_appearance_settings)
-        
-        return config
-
-    def preview_plot(self, plot_idx):
-        """Creates a preview of a plot based on its configuration."""
-        if self.samples is None:
-            QMessageBox.warning(self, "Error", "No data loaded.")
-            return
-            
-        if plot_idx < 0 or plot_idx >= len(self.plot_configs):
-            return
-
-        plot_config = self.plot_configs[plot_idx]
-
-        try:
-            # Prepare data - with error checking
-            plot_samples = {}
-            if 'groups' not in plot_config:
-                QMessageBox.warning(self, "Error", "Configuration contains no groups.")
-                return
-
-            for group in plot_config.get('groups', []):
-                if self.samples and group in self.samples:
-                    plot_samples[group] = self.samples[group]
-
-            if not plot_samples:
-                QMessageBox.warning(self, "Warning", "No data found for the selected groups.")
-                return
-
-            # Use the unified DataVisualizer.plot_from_config for preview
-            import matplotlib.pyplot as plt
-            from stats_functions import DataVisualizer
-            
-            # Check if we have the new preview widget
-            if hasattr(self, 'plot_preview_widget') and self.plot_preview_widget:
-                # Use the new preview widget
-                config = self._convert_old_config_to_new(plot_config)
-                self.plot_preview_widget.set_data(plot_config['groups'], plot_samples)
-                self.plot_preview_widget.update_plot(config)
-            elif hasattr(self, 'figure'):
-                # Use the old figure/canvas approach
-                fig = self.figure
-                fig.clear()
-                ax = fig.add_subplot(111)
-                config = self._convert_old_config_to_new(plot_config)
-                try:
-                    DataVisualizer.plot_from_config(ax, plot_config['groups'], plot_samples, config)
-                    fig.tight_layout()
-                    if hasattr(self, 'canvas'):
-                        self.canvas.draw()
-                except Exception as e:
-                    print(f"Error in DataVisualizer.plot_from_config: {str(e)}")
-                    import traceback
-                    traceback.print_exc()
-                    # Fallback to simple preview
-                    ax.text(0.5, 0.5, f'Error creating preview:\n{str(e)}', 
-                           ha='center', va='center', transform=ax.transAxes,
-                           fontsize=10, color='red')
-                    fig.tight_layout()
-                    if hasattr(self, 'canvas'):
-                        self.canvas.draw()
-            else:
-                print("Warning: No preview widget or figure available")
-                
-        except Exception as e:
-            print(f"Error in preview_plot: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            QMessageBox.critical(self, "Preview Error", f"An error occurred while creating the preview: {str(e)}")
-
-    def update_preview_on_selection_change(self):
-        """Updates the preview when group selection changes."""
-        if not PLOT_MODULES_AVAILABLE or not self.preview_widget:
-            return
-            
-        selected_items = self.groups_list.selectedItems()
-        if selected_items and self.samples:
-            selected_groups = [item.text() for item in selected_items]
-            
-            # Use global settings or default config
-            config = getattr(self, 'global_appearance_settings', {})
-            if not config:
-                config = {
-                    'plot_type': 'Bar',
-                    'colors': {group: DEFAULT_COLORS[i % len(DEFAULT_COLORS)] 
-                              for i, group in enumerate(selected_groups)},
-                    'show_points': True,
-                    'show_significance_letters': True
-                }
-            
-            self.preview_widget.set_data(selected_groups, self.samples)
-            self.preview_widget.update_plot(config)
-    
-    def integrate_statistical_results(self, plot_config, statistical_results):
-        """
-        Integrate statistical results (significance and post-hoc tests) into the plot configuration.
-        
-        Parameters:
-        -----------
-        plot_config : dict
-            Existing plot configuration
-        statistical_results : dict
-            Statistical analysis results
-        
-        Returns:
-        --------
-        dict
-            Extended plot configuration with statistical information
-        """
-        # Convert to the new configuration format
-        config = self._convert_old_config_to_new(plot_config)
-        
-        # Add statistical information
-        if statistical_results:
-            # P-value for title or annotation
-            if 'p_value' in statistical_results:
-                p_val = statistical_results['p_value']
-                if isinstance(p_val, (int, float)):
-                    if p_val < 0.001:
-                        p_text = "p < 0.001"
-                    else:
-                        p_text = f"p = {p_val:.4f}"
-                    
-                    # Add P-value to title if desired
-                    current_title = config.get('title', '')
-                    if current_title:
-                        config['title'] = f"{current_title} ({p_text})"
-                    else:
-                        config['title'] = f"Analysis Results ({p_text})"
-            
-            # Enable significance letters if post-hoc tests are available
-            if 'pairwise_comparisons' in statistical_results and statistical_results['pairwise_comparisons']:
-                config['show_significance_letters'] = True
-                config['pairwise_results'] = statistical_results['pairwise_comparisons']
-            
-            # Test recommendation for significance letters
-            if 'test_recommendation' in statistical_results:
-                config['test_recommendation'] = statistical_results['test_recommendation']
-            else:
-                config['test_recommendation'] = 'parametric'  # Default
-        
-        return config
-
-    def create_plot_with_statistics(self, groups, title="", statistical_results=None):
-        """
-        Create a plot with integrated statistical results.
-        
-        Parameters:
-        -----------
-        groups : list
-            List of group names
-        title : str
-            Title for the plot
-        statistical_results : dict, optional
-            Statistical analysis results
-        """
-        if not self.samples:
-            QMessageBox.warning(self, "No data", "No data available for plotting.")
-            return
-        
-        # Base configuration
-        plot_config = {
-            'groups': groups,
-            'title': title,
-            'create_plot': True
-        }
-        
-        # Integrate statistical results
-        config = self.integrate_statistical_results(plot_config, statistical_results)
-        
-        # Use global appearance settings if available
-        if hasattr(self, 'global_appearance_settings') and self.global_appearance_settings:
-            config.update(self.global_appearance_settings)
-        
-        try:
-            # Filter samples for selected groups
-            plot_samples = {}
-            for group in groups:
-                if group in self.samples:
-                    plot_samples[group] = self.samples[group]
-            
-            if not plot_samples:
-                QMessageBox.warning(self, "No data", "No data found for selected groups.")
-                return
-            
-            # Use DataVisualizer for final plot
-            plot_type = config.get('plot_type', 'Bar')
-            
-            if plot_type == 'Bar':
-                fig, ax = DataVisualizer.plot_bar(
-                    groups, plot_samples,
-                    title=config.get('title', ''),
-                    colors=config.get('colors', {}),
-                    hatches=config.get('hatches', {}),
-                    alpha=config.get('alpha', 0.8),
-                    show_points=config.get('show_points', True),
-                    show_significance_letters=config.get('show_significance_letters', True),
-                    test_recommendation=config.get('test_recommendation', 'parametric'),
-                    pairwise_results=config.get('pairwise_results'),
-                    **{k: v for k, v in config.items() if k not in ['groups', 'title', 'colors', 'hatches', 'alpha', 'show_points', 'show_significance_letters', 'test_recommendation', 'pairwise_results']}
-                )
-            elif plot_type == 'Box':
-                fig, ax = DataVisualizer.plot_box(
-                    groups, plot_samples,
-                    title=config.get('title', ''),
-                    colors=config.get('colors', {}),
-                    show_points=config.get('show_points', True),
-                    show_significance_letters=config.get('show_significance_letters', True),
-                    test_recommendation=config.get('test_recommendation', 'parametric'),
-                    **{k: v for k, v in config.items() if k not in ['groups', 'title', 'colors', 'show_points', 'show_significance_letters', 'test_recommendation']}
-                )
-            elif plot_type == 'Violin':
-                fig, ax = DataVisualizer.plot_violin(
-                    groups, plot_samples,
-                    title=config.get('title', ''),
-                    colors=config.get('colors', {}),
-                    show_points=config.get('show_points', True),
-                    show_significance_letters=config.get('show_significance_letters', True),
-                    test_recommendation=config.get('test_recommendation', 'parametric'),
-                    **{k: v for k, v in config.items() if k not in ['groups', 'title', 'colors', 'show_points', 'show_significance_letters', 'test_recommendation']}
-                )
-            elif plot_type == 'Raincloud':
-                fig, ax = DataVisualizer.plot_raincloud(
-                    groups, plot_samples,
-                    title=config.get('title', ''),
-                    colors=config.get('colors', {}),
-                    show_points=config.get('show_points', True),
-                    show_significance_letters=config.get('show_significance_letters', True),
-                    test_recommendation=config.get('test_recommendation', 'parametric'),
-                    **{k: v for k, v in config.items() if k not in ['groups', 'title', 'colors', 'show_points', 'show_significance_letters', 'test_recommendation']}
-                )
-            
-            plt = get_matplotlib()
-            plt.show()
-            
-        except Exception as e:
-            print(f"Error creating plot: {str(e)}")
-            QMessageBox.critical(self, "Plot Error", f"An error occurred while creating the plot: {str(e)}")
-    
-    def demo_new_plot_system(self):
-        """
-        Demo method that showcases the new plot system and its features.
-        """
-        if not self.samples or not self.available_groups:
-            QMessageBox.warning(self, "No data", "Please load data first.")
-            return
-        
-        # Select the first 3-4 groups for the demo
-        demo_groups = self.available_groups[:min(4, len(self.available_groups))]
-        
-        # Simulate statistical results
-        import numpy as np
-        demo_statistical_results = {
-            'test': 'One-Way ANOVA',
-            'p_value': 0.023,
-            'test_recommendation': 'parametric',
-            'pairwise_comparisons': [
-                {'group1': demo_groups[0], 'group2': demo_groups[1], 'p_value': 0.045, 'significant': True},
-                {'group1': demo_groups[0], 'group2': demo_groups[2], 'p_value': 0.156, 'significant': False}
-            ] if len(demo_groups) >= 3 else []
-        }
-        
-        # Create plot with all features
-        self.create_plot_with_statistics(
-            groups=demo_groups,
-            title="Demo Analysis with Statistics",
-            statistical_results=demo_statistical_results
-        )
-        
-        QMessageBox.information(self, "Demo completed", 
-                               f"Created demo plot for groups: {', '.join(demo_groups)}\n"
-                               f"With simulated statistical results (p = {demo_statistical_results['p_value']})")
-        
-
-
-class TransformationDialog(QDialog):
-    def __init__(self, test_info=None, parent=None):
-        super().__init__(parent)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
-        self.test_info = test_info
-        self.transformation = None
-        self.setWindowTitle("Select Data Transformation")
-        self.setupUI()
-        
-    def setupUI(self):
-        layout = QVBoxLayout()
-        
-        # Info text
-        info = QLabel("The data do not meet the requirements for parametric tests.\n"
-                     "Please select a transformation:")
-        layout.addWidget(info)
-        
-        # Transformation options
-        self.log10RB = QRadioButton("Log10 transformation (for positive, right-skewed data)")
-        self.boxcoxRB = QRadioButton("Box-Cox transformation (automatic lambda optimization)")
-        self.arcsinRB = QRadioButton("Arcsin square root transformation (for percentages/proportions)")
-        
-        # Default selection
-        self.log10RB.setChecked(True)
-        
-        # Add options to layout
-        layout.addWidget(self.log10RB)
-        layout.addWidget(self.boxcoxRB)
-        layout.addWidget(self.arcsinRB)
-        
-        # Buttons
-        buttonBox = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttonBox.accepted.connect(self.accept)
-        buttonBox.rejected.connect(self.reject)
-        layout.addWidget(buttonBox)
-        
-        self.setLayout(layout)
-        
-    def get_transformation(self):
-        if self.log10RB.isChecked():
-            return "log10"
-        elif self.boxcoxRB.isChecked():
-            return "boxcox"
-        elif self.arcsinRB.isChecked():
-            return "arcsin_sqrt"
-        return "log10"  # Default fallback
-
 class OutlierDetectionDialog(QDialog):
-    """Dialog for configuring outlier detection analysis"""
     def __init__(self, df, parent=None):
         super().__init__(parent)
+        self.df = df
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self.setWindowTitle("Outlier Detection")
-        self.resize(600, 500)  # Make it slightly wider
-        self.df = df
         self.setup_ui()
-        
+                
     def setup_ui(self):
         """Set up the dialog UI"""
         layout = QVBoxLayout(self)
@@ -1607,6 +859,114 @@ class OutlierDetectionDialog(QDialog):
 
 import numpy as np
 
+
+# ---------------------------------------------------------------------------
+# Debug Console — redirects sys.stdout/stderr to a floating Qt window
+# ---------------------------------------------------------------------------
+class _DebugStream(QObject):
+    """Wraps sys.stdout/stderr and emits each write() call as a Qt signal."""
+    text_written = pyqtSignal(str)
+
+    def write(self, text):
+        if text:
+            self.text_written.emit(text)
+
+    def flush(self):
+        pass
+
+
+class DebugConsoleWindow(QWidget):
+    """
+    Floating log window that captures all print() / DEBUG: output.
+    Color-coded: DEBUG=blue, ERROR=red, WARNING=orange, rest=default.
+    Toggle with Ctrl+D or View > Debug Console.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.Window)
+        self.setWindowTitle("Debug Console")
+        self.resize(700, 400)
+        self.setWindowFlags(
+            Qt.Window |
+            Qt.WindowStaysOnTopHint |
+            Qt.WindowCloseButtonHint |
+            Qt.WindowMinimizeButtonHint
+        )
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(4)
+
+        self.text_edit = QTextEdit()
+        self.text_edit.setReadOnly(True)
+        self.text_edit.setFont(__import__('PyQt5.QtGui', fromlist=['QFont']).QFont("Courier", 10))
+        self.text_edit.setStyleSheet(
+            "QTextEdit { background: #1e1e1e; color: #d4d4d4; border: none; }"
+        )
+        layout.addWidget(self.text_edit)
+
+        btn_row = QHBoxLayout()
+        clear_btn = QPushButton("Clear")
+        clear_btn.setFixedWidth(70)
+        clear_btn.clicked.connect(self.text_edit.clear)
+        btn_row.addWidget(clear_btn)
+        btn_row.addStretch()
+
+        self._line_count_label = QLabel("0 lines")
+        btn_row.addWidget(self._line_count_label)
+        layout.addLayout(btn_row)
+
+        self._line_count = 0
+
+        # Redirect stdout and stderr
+        self._stdout_stream = _DebugStream()
+        self._stderr_stream = _DebugStream()
+        self._stdout_stream.text_written.connect(self._append)
+        self._stderr_stream.text_written.connect(self._append)
+        self._orig_stdout = sys.stdout
+        self._orig_stderr = sys.stderr
+        sys.stdout = self._stdout_stream
+        sys.stderr = self._stderr_stream
+
+    def _append(self, text):
+        if not text.strip():
+            return
+        color = "#d4d4d4"
+        lower = text.lower()
+        if "error" in lower or "traceback" in lower or "exception" in lower:
+            color = "#f48771"   # red
+        elif "warning" in lower or "warn" in lower:
+            color = "#ce9178"   # orange
+        elif lower.startswith("debug") or "debug:" in lower:
+            color = "#9cdcfe"   # blue
+        elif lower.startswith("success") or "success" in lower:
+            color = "#4ec9b0"   # teal
+
+        import html
+        safe = html.escape(text.rstrip())
+        self.text_edit.append(f'<span style="color:{color};">{safe}</span>')
+
+        # Auto-scroll
+        sb = self.text_edit.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
+        self._line_count += 1
+        self._line_count_label.setText(f"{self._line_count} lines")
+
+    def closeEvent(self, event):
+        # Restore streams on close so the process doesn't lose output
+        sys.stdout = self._orig_stdout
+        sys.stderr = self._orig_stderr
+        super().closeEvent(event)
+
+    def toggle(self):
+        if self.isVisible():
+            self.hide()
+        else:
+            self.show()
+            self.raise_()
+
+
 class StatisticalAnalyzerApp(QMainWindow):
     """Main application for statistical analysis of data from Excel/CSV files."""
     
@@ -1661,14 +1021,33 @@ class StatisticalAnalyzerApp(QMainWindow):
         
         # Add menu bar
         self.create_menu()
-        
+
         # Initialize updater
         self.setup_updater()
+
+        # Debug console — starts alongside the main window
+        self.debug_console = DebugConsoleWindow()
+        self._position_debug_console()
+        self.debug_console.show()
                
+    def _position_debug_console(self):
+        """Position the debug console to the right of the main window, or below if no space."""
+        screen = QDesktopWidget().screenGeometry()
+        main_geo = self.geometry()
+        console_w = 700
+        console_h = 400
+        right_x = main_geo.right() + 8
+        if right_x + console_w <= screen.width():
+            self.debug_console.setGeometry(right_x, main_geo.top(), console_w, console_h)
+        else:
+            # Fall back to bottom of main window
+            bottom_y = main_geo.bottom() + 8
+            self.debug_console.setGeometry(main_geo.left(), bottom_y, console_w, console_h)
+
     def create_menu(self):
         """Creates the menu bar with help options"""
         menubar = self.menuBar()
-        
+
         # File menu
         file_menu = menubar.addMenu('&File')
         
@@ -1717,6 +1096,16 @@ class StatisticalAnalyzerApp(QMainWindow):
         about_action = QAction('About', self)
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
+
+        # View menu
+        view_menu = menubar.addMenu('&View')
+        debug_action = QAction('Debug Console', self)
+        debug_action.setShortcut('Ctrl+D')
+        debug_action.setCheckable(True)
+        debug_action.setChecked(True)
+        debug_action.triggered.connect(lambda checked: self.debug_console.show() if checked else self.debug_console.hide())
+        view_menu.addAction(debug_action)
+        self._debug_menu_action = debug_action
 
         # Analysis menu (create new or use existing)
         analysis_menu = menubar.addMenu('&Analysis')
@@ -2439,61 +1828,62 @@ class StatisticalAnalyzerApp(QMainWindow):
     
     def configure_plot(self, groups):
         """Opens a dialog to configure a plot with the selected groups."""
-        # Get Excel filename for default filename
+        if not groups:
+            QMessageBox.warning(self, "Error", "No groups provided for plot configuration.")
+            return
         default_filename = None
         if hasattr(self, 'file_path') and self.file_path:
-            # Get filename without path and extension, add "_analyzed"
             base_filename = os.path.splitext(os.path.basename(self.file_path))[0]
             default_filename = f"{base_filename}_analyzed"
-        
-        # Open the main plot configuration dialog first
-        dlg = PlotConfigDialog(groups, parent=self, default_filename=default_filename)
-        if dlg.exec_() == dlg.Accepted:
+
+        samples_for_dlg = {}
+        if hasattr(self, 'samples') and self.samples:
+            samples_for_dlg = {g: self.samples[g] for g in groups if g in (self.samples or {})}
+
+        dlg = PlotAestheticsDialog(
+            groups=groups,
+            samples=samples_for_dlg,
+            parent=self,
+            default_filename=default_filename,
+        )
+        if dlg.exec_() == QDialog.Accepted:
             config = dlg.get_config()
             if config is None:
                 return
             self.plot_configs.append(config)
             plot_item_text = f"Plot: {config.get('title') or ', '.join(config.get('groups', []))}"
             self.plots_list.addItem(plot_item_text)
-            # Only show preview if 'create_plot' is checked
             if config.get('create_plot', False):
                 self.preview_plot(len(self.plot_configs) - 1)
     
     def edit_plot_config(self, item):
         """Edits the configuration of a selected plot."""
         index = self.plots_list.row(item)
-        
         if index < 0 or index >= len(self.plot_configs):
             return
-        
+
         config = self.plot_configs[index]
-        
-        # Get Excel filename for default filename
+        groups_for_dlg = config.get('groups', [])
+
         default_filename = None
         if hasattr(self, 'file_path') and self.file_path:
-            # Get filename without path and extension, add "_analyzed"
             base_filename = os.path.splitext(os.path.basename(self.file_path))[0]
             default_filename = f"{base_filename}_analyzed"
-        
-        # FIX: Open PlotConfigDialog first, not PlotAestheticsDialog directly
-        dlg = PlotConfigDialog(config.get('groups', []), parent=self, default_filename=default_filename)
-        
-        # Load existing configuration into the dialog (available fields only)
-        if 'file_name' in config:
-            dlg.file_name_edit.setText(config['file_name'])
-        if 'dependent' in config:
-            dlg.set_dependent(config['dependent'], config.get('show_individual_lines', True))
-        if 'create_plot' in config:
-            dlg.create_plot_check.setChecked(config['create_plot'])
-        # Note: error_type is now handled by PlotAestheticsDialog only
-            
-        if dlg.exec_() == dlg.Accepted:
-            # Get new configuration and merge with existing values
+
+        samples_for_dlg = {}
+        if hasattr(self, 'samples') and self.samples:
+            samples_for_dlg = {g: self.samples[g] for g in groups_for_dlg if g in (self.samples or {})}
+
+        dlg = PlotAestheticsDialog(
+            groups=groups_for_dlg,
+            samples=samples_for_dlg,
+            config=config,
+            parent=self,
+            default_filename=default_filename,
+            dependent=config.get('dependent', False),
+        )
+        if dlg.exec_() == QDialog.Accepted:
             new_config = dlg.get_config()
-            # Keep appearance_settings if available
-            if 'appearance_settings' in config:
-                new_config['appearance_settings'] = config['appearance_settings']
-            
             self.plot_configs[index] = new_config
             plot_item_text = f"Plot: {new_config.get('title') or ', '.join(new_config.get('groups', []))}"
             item.setText(plot_item_text)
@@ -3723,55 +3113,100 @@ class StatisticalAnalyzerApp(QMainWindow):
                 os.chdir(output_dir)
                 print(f"Changed to output directory: {output_dir}")
 
-                # 1. For each value column (e.g. gene): plot configuration & analysis
-                for i, column in enumerate(self.selected_columns):
-                    print(f"Configuring plot for column {column} ({i+1}/{len(self.selected_columns)})")
-                    print(f"DEBUG MULTI:   ► iterating dataset #{i+1}: '{column}'")
-                    print(f"DEBUG MULTI:      → plot_configs keys so far: {list(plot_configs.keys())}")
-                    
-                    # Get Excel filename for default filename
-                    default_filename = None
-                    if hasattr(self, 'file_path') and self.file_path:
-                        # Get filename without path and extension, add column name and "_analyzed"
-                        base_filename = os.path.splitext(os.path.basename(self.file_path))[0]
-                        default_filename = f"{base_filename}_{column}_analyzed"
-                    
-                    # --- Use the main PlotConfigDialog for each dataset ---
-                    dlg = PlotConfigDialog(selected_groups, parent=self, default_filename=default_filename)
-                    dlg.setWindowTitle(f"Configure plot for '{column}' ({i+1}/{len(self.selected_columns)})")
-                    # Pre-fill the file name with the column name
-                    dlg.file_name_edit.setText(f"{column}_analysis")
-                    if dlg.exec_() != dlg.Accepted:
-                        print(f"Configuration for {column} cancelled")
-                        continue
-                    plot_config = dlg.get_config()
-                    # Ensure groups are stored
-                    plot_config['groups'] = selected_groups.copy() if isinstance(selected_groups, list) else list(selected_groups)
-                    plot_configs[column] = plot_config
-                    print(f"Configuration for {column} saved")
-
-                if not plot_configs:
-                    QMessageBox.warning(self, "Aborted", "No datasets were configured.")
-                    return
-
-                # Progress dialog for analysis
-                print("Creating progress dialog...")
+                # ── PHASE A: Analyze all datasets first (no dialog yet) ─────────────────
                 progress = QMessageBox()
-                progress.setWindowTitle("Analysis running...")
-                progress.setText("The multi-dataset analysis is running. Please wait...")
+                progress.setWindowTitle("Analyzing datasets...")
+                progress.setText(f"Pre-analyzing {len(self.selected_columns)} dataset(s). Please wait…")
                 progress.setStandardButtons(QMessageBox.NoButton)
                 progress.show()
                 QApplication.processEvents()
 
-                # 2. Analyze all configured datasets in sequence
-                for i, (column, plot_config) in enumerate(plot_configs.items()):
-                    progress_text = f"({i+1}/{len(plot_configs)})"
-                    progress.setText(f"Analyzing dataset {i+1}/{len(plot_configs)}: {column}")
+                for i, column in enumerate(self.selected_columns):
+                    progress.setText(f"Analyzing dataset {i+1}/{len(self.selected_columns)}: {column}")
                     QApplication.processEvents()
-                    
-                    print(f"Starting analysis for {column}...")
+                    print(f"DEBUG MULTI: Pre-analyzing '{column}' ({i+1}/{len(self.selected_columns)})")
                     try:
-                        # --- Prepare values for analyze() ---
+                        stat_kwargs = {
+                            'file_path': self.file_path,
+                            'group_col': self.group_col_combo.currentText(),
+                            'groups': selected_groups,
+                            'sheet_name': self.sheet_combo.currentText() if self.sheet_combo.isEnabled() else 0,
+                            'value_cols': [column],
+                            'combine_columns': False,
+                            'skip_plots': True,   # statistics only — no rendering yet
+                            'skip_excel': True,
+                            'dataset_name': column,
+                        }
+                        results = AnalysisManager.analyze(**stat_kwargs)
+                        if isinstance(results, dict) and results.get('error'):
+                            print(f"WARNING: analysis error for '{column}': {results['error']}")
+                            all_results[column] = None
+                        else:
+                            all_results[column] = results
+                            print(f"✓ '{column}' analyzed — pairwise: "
+                                  f"{len((results or {}).get('pairwise_comparisons', []))} comparisons")
+                    except Exception as e:
+                        print(f"ERROR pre-analyzing '{column}': {e}")
+                        traceback.print_exc()
+                        all_results[column] = None  # isolated failure — others continue
+
+                try:
+                    progress.close()
+                except Exception:
+                    pass
+
+                # ── PHASE B: Open PlotAestheticsDialog per dataset (analysis-first) ───
+                base_filename = ""
+                if hasattr(self, 'file_path') and self.file_path:
+                    base_filename = os.path.splitext(os.path.basename(self.file_path))[0]
+
+                n_valid = sum(1 for r in all_results.values() if r is not None)
+                dialog_idx = 0
+                for column, result in all_results.items():
+                    if result is None:
+                        print(f"Skipping dialog for '{column}' (analysis failed)")
+                        continue
+                    dialog_idx += 1
+                    samples_for_dlg = result.get('raw_data') or result.get('samples') or {}
+                    default_filename = f"{base_filename}_{column}_analyzed" if base_filename else f"{column}_analyzed"
+                    dlg = PlotAestheticsDialog(
+                        groups=selected_groups,
+                        samples=samples_for_dlg,
+                        analysis_result=result,
+                        parent=self,
+                        default_filename=default_filename,
+                        show_export_controls=True,
+                    )
+                    # Pre-fill sensible file name
+                    if hasattr(dlg, 'file_name_edit'):
+                        dlg.file_name_edit.setText(f"{column}_analysis")
+                    dlg.setWindowTitle(f"Configure plot for '{column}' ({dialog_idx}/{n_valid})")
+                    if dlg.exec_() != QDialog.Accepted:
+                        print(f"Dialog for '{column}' cancelled — skipping")
+                        continue
+                    plot_config = dlg.get_config()
+                    # Guarantee original group keys are preserved
+                    plot_config['groups'] = list(selected_groups)
+                    plot_configs[column] = plot_config
+                    print(f"Config for '{column}' saved")
+
+                if not plot_configs:
+                    QMessageBox.warning(self, "Aborted", "No datasets were configured for export.")
+                    return
+
+                # ── PHASE C: Render configured datasets ─────────────────────────────────
+                progress = QMessageBox()
+                progress.setWindowTitle("Rendering plots…")
+                progress.setText("Rendering plots. Please wait…")
+                progress.setStandardButtons(QMessageBox.NoButton)
+                progress.show()
+                QApplication.processEvents()
+
+                for i, (column, plot_config) in enumerate(plot_configs.items()):
+                    progress.setText(f"Rendering dataset {i+1}/{len(plot_configs)}: {column}")
+                    QApplication.processEvents()
+                    print(f"Starting render for '{column}'…")
+                    try:
                         kwargs = {
                             'file_path': self.file_path,
                             'group_col': self.group_col_combo.currentText(),
@@ -3790,122 +3225,72 @@ class StatisticalAnalyzerApp(QMainWindow):
                             'error_type': plot_config.get('error_type', 'sd'),
                             'file_name': plot_config.get('file_name', f"{column}_analysis"),
                             'dataset_name': column,
-                            'dialog_column': column,
-                            'dialog_progress': progress_text
+                            'plot_type': plot_config.get('plot_type', 'Bar'),
+                            'dpi': plot_config.get('dpi', 300),
+                            'fontsize_title': plot_config.get('fontsize_title', 12),
+                            'fontsize_axis': plot_config.get('fontsize_axis', 9),
+                            'fontsize_ticks': plot_config.get('fontsize_ticks', 7),
+                            'logy': plot_config.get('logy', False),
+                            'logx': plot_config.get('logx', False),
+                            'despine': plot_config.get('despine', True),
+                            'alpha': plot_config.get('alpha', 0.8),
+                            'bar_edge_color': plot_config.get('bar_edge_color', 'black'),
                         }
-                        # Apply appearance settings if available
-                        if 'appearance_settings' in plot_config:
-                            appearance = plot_config['appearance_settings']
-                            # Plot type and dimensions
-                            kwargs['plot_type'] = appearance.get('plot_type', 'Bar')
-                            kwargs['dpi'] = appearance.get('dpi', 300)
-                            kwargs['aspect'] = appearance.get('aspect', None)
-                            
-                            # Typography
-                            kwargs['font_main'] = appearance.get('font_main', 'Arial')
-                            kwargs['font_axis'] = appearance.get('font_axis', 'Arial')
-                            kwargs['show_title'] = appearance.get('show_title', True)
-                            kwargs['fontsize_title'] = appearance.get('fontsize_title', 12)
-                            kwargs['fontsize_axis'] = appearance.get('fontsize_axis', 9)
-                            kwargs['fontsize_ticks'] = appearance.get('fontsize_ticks', 7)
-                            kwargs['fontsize_groupnames'] = appearance.get('fontsize_groupnames', 8)
-                            
-                            # Lines and axes
-                            kwargs['axis_linewidth'] = appearance.get('axis_linewidth', 0.7)
-                            kwargs['bar_linewidth'] = appearance.get('bar_linewidth', 1.0)
-                            kwargs['gridline_width'] = appearance.get('gridline_width', 0.5)
-                            kwargs['grid'] = appearance.get('grid', False)
-                            kwargs['minor_ticks'] = appearance.get('minor_ticks', False)
-                            kwargs['logy'] = appearance.get('logy', False)
-                            kwargs['logx'] = appearance.get('logx', False)
-                            kwargs['despine'] = appearance.get('despine', True)
-                            
-                            # Colors and appearance
-                            kwargs['alpha'] = appearance.get('alpha', 0.8)
-                            kwargs['bar_edge_color'] = appearance.get('bar_edge_color', 'black')
-                            
-                            # Annotations
-                            kwargs['refline'] = appearance.get('refline', False)
-                            kwargs['panel_labels'] = appearance.get('panel_labels', False)
-                            kwargs['value_annotations'] = appearance.get('value_annotations', False)
-                            kwargs['significance_mode'] = appearance.get('significance_mode', 'letters')
-                            
-                            # Export options
-                            kwargs['embed_fonts'] = appearance.get('embed_fonts', False)
-                            kwargs['add_metadata'] = appearance.get('add_metadata', False)
-                            
-                            # Handle hatches consistently with colors
-                            if 'hatches' in appearance:
-                                kwargs['hatches'] = [appearance['hatches'].get(group, '') for group in plot_config['groups']]
+                        # Colors — use original group keys for matching (never display labels)
+                        colors_dict = plot_config.get('colors', {})
+                        kwargs['colors'] = [
+                            colors_dict.get(group, DEFAULT_COLORS[j % len(DEFAULT_COLORS)])
+                            for j, group in enumerate(plot_config['groups'])
+                        ]
+                        # Hatches
+                        hatches_dict = plot_config.get('hatches', {})
+                        if hatches_dict:
+                            kwargs['hatches'] = [hatches_dict.get(group, '') for group in plot_config['groups']]
+                        # Pass pairwise results from pre-analysis for significance display
+                        pre_result = all_results.get(column)
+                        if pre_result:
+                            kwargs['pairwise_results'] = pre_result.get('pairwise_comparisons', [])
 
-                        # Two-Way ANOVA factors
-                        if 'additional_factors' in plot_config and plot_config['additional_factors']:
-                            kwargs['additional_factors'] = plot_config['additional_factors']
-                            
-                        # Specific comparisons
-                        if 'comparisons' in plot_config and plot_config['comparisons']:
-                            compare_list = [(comp['group1'], comp['group2']) for comp in plot_config['comparisons']]
-                            kwargs['compare'] = compare_list
-                            
-                        # Colors and hatches
-                        colors = [plot_config['colors'].get(group, DEFAULT_COLORS[j % len(DEFAULT_COLORS)])
-                                for j, group in enumerate(plot_config['groups'])]
-                        kwargs['colors'] = colors
-                        
-                    # Run analysis (without individual Excel export)
-                        print(f"Calling AnalysisManager.analyze() for {column} with skip_excel=True...")
-                        start_time = time.time()  # Track execution time
+                        start_time = time.time()
                         results = AnalysisManager.analyze(**kwargs)
+                        analysis_time = time.time() - start_time
 
-                        # --- Export with metadata and font embedding if requested ---
+                        if isinstance(results, dict):
+                            if results.get('error'):
+                                print(f"WARNING: render error for '{column}': {results['error']}")
+                            else:
+                                all_results[column] = results  # update with rendered results
+                        print(f"✓ Render for '{column}' done in {analysis_time:.2f}s")
+
+                        # --- Export with font embedding / metadata if requested ---
                         if plot_config.get('create_plot', True) and (
                             plot_config.get('embed_fonts', False) or plot_config.get('add_metadata', False)
                         ):
                             filename = plot_config.get('file_name', f"{column}_analysis")
-                            filetype = "pdf"  # or "svg", depending on your UI
+                            filetype = "pdf"
                             out_path = os.path.join(os.getcwd(), f"{filename}.{filetype}")
-                            fig = results.get('figure', None)
+                            fig = results.get('figure', None) if isinstance(results, dict) else None
                             if fig is None:
-                                plt = get_matplotlib()
-                                fig = plt.gcf()
+                                import matplotlib.pyplot as _plt
+                                fig = _plt.gcf()
                             DataVisualizer.export_with_metadata(
                                 fig, out_path,
                                 metadata={"Title": plot_config.get('title', column), "Description": ""},
                                 embed_fonts=plot_config.get('embed_fonts', True),
-                                dpi=plot_config.get('dpi', 300) if 'dpi' in plot_config else 300,
+                                dpi=plot_config.get('dpi', 300),
                                 filetype=filetype
                             )
-                        analysis_time = time.time() - start_time
-                        
-                        # Validate results structure
-                        print(f"Analysis for {column} completed in {analysis_time:.2f} seconds")
-                        print(f"Result type: {type(results)}")
-                        print(f"Keys in results: {list(results.keys()) if isinstance(results, dict) else 'Not a dictionary'}")
-                        
-                        # Check for critical keys
-                        if isinstance(results, dict):
-                            if 'error' in results and results['error']:
-                                print(f"WARNING: Error found in results: {results['error']}")
-                            if 'test' in results:
-                                print(f"Test performed: {results['test']}")
-                            if 'p_value' in results:
-                                print(f"p-value: {results['p_value']}")
-                        
-                        # Store results
-                        all_results[column] = results
-                        print(f"✓ Results for '{column}' successfully stored in all_results dictionary")
-                        print(f"Analysis for {column} completed")
-
                     except Exception as e:
-                        QMessageBox.critical(self, "Error",
-                                        f"Error analyzing {column}: {str(e)}")
+                        QMessageBox.critical(self, "Error", f"Error rendering '{column}': {e}")
                         traceback.print_exc()
-                        
-                print("DEBUG MULTI: Finished analyzing all columns.")
-                print("DEBUG MULTI: all_results keys:", list(all_results.keys()))
-                print("DEBUG MULTI: all_results contents:")
-                for key, value in all_results.items():
-                    print(f"  {key}: {type(value)} with keys {list(value.keys()) if isinstance(value, dict) else 'not a dict'}")
+
+                try:
+                    progress.close()
+                except Exception:
+                    pass
+
+                # Filter all_results to only successfully completed datasets
+                all_results = {k: v for k, v in all_results.items() if v is not None}
 
                 if all_results:
                     print("DEBUG MULTI: About to call export_multi_dataset_results()")
@@ -3938,13 +3323,6 @@ class StatisticalAnalyzerApp(QMainWindow):
                     print("DEBUG MULTI: all_results is empty, skipping export")
                     QMessageBox.warning(self, "No Results", "No analysis results were generated.")
 
-                # Ensure the progress dialog is closed
-                try:
-                    progress.close()
-                    progress = None  # Delete reference
-                except Exception as e:
-                    print(f"Error closing progress dialog: {str(e)}")
-                    
             except Exception as e:
                 print(f"ERROR in main flow of multi-dataset analysis: {str(e)}")
                 import traceback
@@ -5721,11 +5099,18 @@ def _ap_configure_plot_from_result(self):
     if self.current_rendered_dataset:
         default_filename = f"{default_filename}_{_safe_file_slug(self.current_rendered_dataset)}"
 
-    dialog = PlotConfigDialog(groups, parent=self, default_filename=default_filename)
-    dialog.set_dependent(self.current_analysis_context.get("dependent", False))
-    dialog.create_plot_check.setChecked(False)
+    dialog = PlotAestheticsDialog(
+        groups=groups,
+        samples=self.samples or {},
+        analysis_result=self.current_analysis_result,
+        parent=self,
+        default_filename=default_filename,
+        dependent=self.current_analysis_context.get("dependent", False),
+    )
+    if hasattr(dialog, 'create_plot_check'):
+        dialog.create_plot_check.setChecked(False)
 
-    if dialog.exec_() != dialog.Accepted:
+    if dialog.exec_() != QDialog.Accepted:
         return
 
     plot_config = dialog.get_config()

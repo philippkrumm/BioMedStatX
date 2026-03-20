@@ -253,3 +253,69 @@ QScrollArea {
     border-radius: 12px;
     padding: 6px 8px;
 }
+
+QDialog#plotConfigDialog,
+QDialog#plotAestheticsDialog,
+QDialog#debugLogWindow {
+    background: #eef5fb;
+    color: #17324d;
+    font-family: "Avenir Next", "Segoe UI", sans-serif;
+    font-size: 13px;
+}
+
+QDialog#plotConfigDialog QGroupBox,
+QDialog#plotAestheticsDialog QGroupBox,
+QDialog#debugLogWindow QGroupBox {
+    background: #fcfeff;
+    border: 1px solid #d5e6f5;
+    border-radius: 12px;
+    margin-top: 10px;
+    padding-top: 10px;
+}
+
+QDialog#plotConfigDialog QGroupBox::title,
+QDialog#plotAestheticsDialog QGroupBox::title,
+QDialog#debugLogWindow QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 10px;
+    padding: 0 6px;
+    color: #15395b;
+    font-weight: 700;
+}
+
+QDialog#plotConfigDialog QLineEdit,
+QDialog#plotConfigDialog QListWidget,
+QDialog#plotConfigDialog QComboBox,
+QDialog#plotAestheticsDialog QLineEdit,
+QDialog#plotAestheticsDialog QListWidget,
+QDialog#plotAestheticsDialog QComboBox,
+QDialog#plotAestheticsDialog QSpinBox,
+QDialog#plotAestheticsDialog QDoubleSpinBox,
+QDialog#debugLogWindow QPlainTextEdit {
+    background: #ffffff;
+    border: 1px solid #d8e7f4;
+    border-radius: 10px;
+    padding: 6px 8px;
+}
+
+QDialog#plotAestheticsDialog QTabWidget::pane {
+    border: 1px solid #d8e7f4;
+    border-radius: 10px;
+    background: #fcfeff;
+}
+
+QDialog#plotAestheticsDialog QTabBar::tab {
+    background: #e8f2fa;
+    border: 1px solid #cfe0ee;
+    border-bottom: none;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+    padding: 7px 12px;
+    color: #264b68;
+}
+
+QDialog#plotAestheticsDialog QTabBar::tab:selected {
+    background: #fcfeff;
+    color: #17324d;
+    border-color: #86b5d1;
+}

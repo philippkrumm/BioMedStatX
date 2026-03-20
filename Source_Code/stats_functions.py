@@ -3599,7 +3599,7 @@ class AnalysisManager:
                 # Create a clean kwargs dict without parameters that plotting methods don't accept
                 # Only exclude parameters that definitely don't exist in plot methods
                 plot_kwargs = {k: v for k, v in kwargs.items() if k not in [
-                    'plot_type', 'file_path', 'group_col', 'groups', 'sheet_name', 
+                    'plot_type', 'file_path', 'group_col', 'groups', 'sheet_name',
                     'value_cols', 'combine_columns', 'skip_plots', 'skip_excel',
                     'dependent', 'show_individual_lines', 'compare', 'additional_factors',
                     'dataset_name', 'dialog_column', 'dialog_progress',
@@ -3608,7 +3608,9 @@ class AnalysisManager:
                     'refline', 'panel_labels', 'value_annotations', 'significance_mode',
                     'embed_fonts', 'add_metadata',
                     # Legacy keys that are not supported by plotting signatures
-                    'font_main', 'font_axis', 'axis_linewidth', 'gridline_width'
+                    'font_main', 'font_axis', 'axis_linewidth', 'gridline_width',
+                    # Analysis metadata — not a plot parameter
+                    'analysis_context',
                 ]}
                 
                 # Choose the appropriate plot function based on plot_type

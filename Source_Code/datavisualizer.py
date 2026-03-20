@@ -678,11 +678,11 @@ class DataVisualizer:
         StylingManager._apply_seaborn_base(temp_config)
 
     @staticmethod
-    def plot_bar(groups, samples, 
+    def plot_bar(groups, samples,
                  # Basic plot settings
                  width=8, height=6, dpi=300,
                  # Styling and theme
-                 theme='default', colors=None, hatches=None, 
+                 theme='default', colors=None, hatches=None,
                  color_palette='Greys', alpha=0.8,
                  # Bar customization
                  bar_width=0.8, bar_edge_color='black', bar_edge_width=0.5,
@@ -705,6 +705,7 @@ class DataVisualizer:
                  logx=False, logy=False, axis_break_enabled=False,
                  axis_break_start=20.0, axis_break_end=80.0,
                  tick_direction='out', offset_axes=False, axis_offset_points=10,
+                 axis_thickness=0.5,
                  # Legend
                  show_legend=True, legend_position='upper right',
                  legend_bbox=(1.15, 1), legend_fontsize=9,
@@ -727,6 +728,10 @@ class DataVisualizer:
                  subplot_margins=None, tight_layout=True,
                  # Legend colors
                  legend_colors=None,
+                 # Bracket styling (Fix F)
+                 bracket_line_width=1.5, bracket_vertical_fraction=0.05, bracket_color='#000000',
+                 # font_family (unused here, applied by plot_from_config)
+                 font_family='Arial',
                  # Optional ax parameter for direct plotting
                  ax=None):
       
@@ -822,22 +827,26 @@ class DataVisualizer:
         
         # Format axes
         DataVisualizer._format_axes(
-            ax, y_axis_format, y_limits, x_limits, 
+            ax, y_axis_format, y_limits, x_limits,
             grid_style, grid_alpha, spine_style, tick_direction, offset_axes, axis_offset_points,
             logx, logy, axis_break_enabled, axis_break_start, axis_break_end
         )
-        
+        # Fix D: Apply axis_thickness to spines and tick marks
+        for spine in ax.spines.values():
+            spine.set_linewidth(axis_thickness)
+        ax.tick_params(axis='both', which='major', width=axis_thickness)
+
         # Add labels and title
         DataVisualizer._add_labels(
             ax, x_label, y_label, title,
             x_label_size, y_label_size, title_size,
             tick_label_size, rotate_x_labels
         )
-        
+
         # Entscheide, ob Buchstaben oder Bars angezeigt werden sollen basierend auf Post-hoc Test Typ
         show_letters = True  # Standard: Buchstaben zeigen
         show_bars = False
-        
+
         # Prüfe zuerst, ob wir den Post-hoc Test Typ aus pairwise_results ermitteln können
         if pairwise_results is not None and len(pairwise_results) > 0:
             # Schaue auf den ersten Vergleich, um den Test-Typ zu bestimmen
@@ -886,18 +895,18 @@ class DataVisualizer:
         if show_bars and pairwise_results:
             # Konfiguration für Brackets zusammenstellen
             bracket_config = {
-                'bracket_line_width': 2.0,
+                'bracket_line_width': bracket_line_width,
                 'bracket_font_size': comparison_font_size,
-                'bracket_vertical_fraction': 0.25,
+                'bracket_vertical_fraction': bracket_vertical_fraction,
                 'bracket_spacing': comparison_line_height,
                 'p_value_style': p_value_style,
-                'bracket_color': '#222222'
+                'bracket_color': bracket_color
             }
             DataVisualizer._add_pairwise_comparisons(
-                ax, groups, compare if compare else groups, pairwise_results, 
+                ax, groups, compare if compare else groups, pairwise_results,
                 bracket_config, df
             )
-        
+
         # Add legend
         if show_legend:
             if legend_colors is not None:
@@ -955,6 +964,7 @@ class DataVisualizer:
         logx=False, logy=False, axis_break_enabled=False,
         axis_break_start=20.0, axis_break_end=80.0,
         tick_direction='out', offset_axes=False, axis_offset_points=10,
+        axis_thickness=0.5,
         show_legend=True, legend_position='upper right',
         legend_bbox=(1.15, 1), legend_fontsize=9,
         legend_title="Samples", legend_title_size=12,
@@ -970,6 +980,10 @@ class DataVisualizer:
         custom_annotations=None, watermark=None,
         subplot_margins=None, tight_layout=True,
         legend_colors=None,
+        # Bracket styling (Fix F)
+        bracket_line_width=1.5, bracket_vertical_fraction=0.05, bracket_color='#000000',
+        # font_family (unused here, applied by plot_from_config)
+        font_family='Arial',
         # Optional ax parameter for direct plotting
         ax=None
     ):
@@ -977,10 +991,10 @@ class DataVisualizer:
         # Apply theme (simplified - use default colors if none provided)
         if colors is None:
             colors = DataVisualizer.DEFAULT_COLORS
-        
+
         # Apply Seaborn styling
         DataVisualizer._apply_seaborn_settings(seaborn_context, seaborn_palette, use_seaborn_styling)
-        
+
         if colors is None:
             colors = sns.color_palette(color_palette, len(groups))
         colors = DataVisualizer._extend_list(colors, len(groups))
@@ -1038,6 +1052,11 @@ class DataVisualizer:
             grid_style, grid_alpha, spine_style, tick_direction, offset_axes, axis_offset_points,
             logx, logy, axis_break_enabled, axis_break_start, axis_break_end
         )
+        # Fix D: Apply axis_thickness to spines and tick marks
+        for spine in ax.spines.values():
+            spine.set_linewidth(axis_thickness)
+        ax.tick_params(axis='both', which='major', width=axis_thickness)
+
         DataVisualizer._add_labels(
             ax, x_label, y_label, title,
             x_label_size, y_label_size, title_size,
@@ -1046,7 +1065,7 @@ class DataVisualizer:
         # Entscheide, ob Buchstaben oder Bars angezeigt werden sollen basierend auf Post-hoc Test Typ (VIOLIN)
         show_letters = True  # Standard: Buchstaben zeigen
         show_bars = False
-        
+
         # Prüfe zuerst, ob wir den Post-hoc Test Typ aus pairwise_results ermitteln können
         if pairwise_results is not None and len(pairwise_results) > 0:
             # Schaue auf den ersten Vergleich, um den Test-Typ zu bestimmen
@@ -1094,11 +1113,12 @@ class DataVisualizer:
             )
         if show_bars and pairwise_results:
             bracket_config = {
-                'bracket_line_width': 2.0,
+                'bracket_line_width': bracket_line_width,
                 'bracket_font_size': significance_font_size,
-                'bracket_vertical_fraction': 0.25,
+                'bracket_vertical_fraction': bracket_vertical_fraction,
                 'bracket_spacing': 0.1,
-                'p_value_style': p_value_style
+                'p_value_style': p_value_style,
+                'bracket_color': bracket_color
             }
             DataVisualizer._add_pairwise_comparisons(
                 ax, groups, groups, pairwise_results, bracket_config, df
@@ -1110,14 +1130,14 @@ class DataVisualizer:
             else:
                 # Use the colors from the plot
                 colors_to_use = colors
-                
+
             # Create patches for the legend with the correct colors
             legend_patches = []
             for i, group in enumerate(groups):
                 color = colors_to_use.get(group, colors[i % len(colors)]) if isinstance(colors_to_use, dict) else colors[i % len(colors)]
                 patch = mpatches.Patch(color=color, label=str(group), alpha=alpha)
                 legend_patches.append(patch)
-                
+
             ax.legend(
                 handles=legend_patches,
                 loc=legend_position,
@@ -1137,11 +1157,11 @@ class DataVisualizer:
                 plt.subplots_adjust(**subplot_margins)
             else:
                 fig.tight_layout()
-        
+
         # Save plot nur wenn neue Figure erstellt wurde
         if save_plot and created_fig:
             DataVisualizer._save_plot(fig, file_name, groups, file_formats, dpi)
-        
+
         return fig, ax if created_fig else ax
 
     @staticmethod
@@ -1163,11 +1183,14 @@ class DataVisualizer:
         logx=False, logy=False, axis_break_enabled=False,
         axis_break_start=20.0, axis_break_end=80.0,
         tick_direction='out', offset_axes=False, axis_offset_points=10,
+        axis_thickness=0.5,
+        bracket_line_width=1.5, bracket_vertical_fraction=0.05, bracket_color='#000000',
+        font_family='Arial',
         show_legend=True, legend_position='upper right',
         legend_bbox=(1.15, 1), legend_fontsize=9,
         legend_title="Samples", legend_title_size=12,
         spine_style='minimal', background_color='white',
-        figure_face_color='white', error_style="caps", 
+        figure_face_color='white', error_style="caps",
         # Seaborn styling
         seaborn_context=None, seaborn_palette=None, use_seaborn_styling=True,
         save_plot=True, file_formats=['png', 'svg'],
@@ -1264,6 +1287,11 @@ class DataVisualizer:
             grid_style, grid_alpha, spine_style, tick_direction, offset_axes, axis_offset_points,
             logx, logy, axis_break_enabled, axis_break_start, axis_break_end
         )
+        # Fix D: Apply axis_thickness to spines and tick marks
+        for spine in ax.spines.values():
+            spine.set_linewidth(axis_thickness)
+        ax.tick_params(axis='both', which='major', width=axis_thickness)
+
         DataVisualizer._add_labels(
             ax, x_label, y_label, title,
             x_label_size, y_label_size, title_size,
@@ -1272,7 +1300,7 @@ class DataVisualizer:
         # Entscheide, ob Buchstaben oder Bars angezeigt werden sollen basierend auf Post-hoc Test Typ (BOX)
         show_letters = True  # Standard: Buchstaben zeigen
         show_bars = False
-        
+
         # Prüfe zuerst, ob wir den Post-hoc Test Typ aus pairwise_results ermitteln können
         if pairwise_results is not None and len(pairwise_results) > 0:
             # Schaue auf den ersten Vergleich, um den Test-Typ zu bestimmen
@@ -1320,9 +1348,10 @@ class DataVisualizer:
             )
         if show_bars and pairwise_results:
             bracket_config = {
-                'bracket_line_width': 2.0,
+                'bracket_line_width': bracket_line_width,
                 'bracket_font_size': significance_font_size,
-                'bracket_vertical_fraction': 0.25,
+                'bracket_vertical_fraction': bracket_vertical_fraction,
+                'bracket_color': bracket_color,
                 'bracket_spacing': 0.1,
                 'p_value_style': p_value_style
             }
@@ -1376,6 +1405,7 @@ class DataVisualizer:
         groups, samples,
         width=8, height=6, dpi=300,
         theme='default', colors=None, hatches=None, color_palette='Greys', alpha=0.8,
+        violin_bandwidth=1.0,
         violin_width=0.8, box_width=0.2, edge_color='black', edge_width=0.5,
         show_points=True, point_style='jitter', max_points_per_group=None,
         point_size=80, point_alpha=0.8, point_edge_width=0.5,
@@ -2577,7 +2607,7 @@ class DataVisualizer:
         fig.text(0.01, 0.01, meta_text, fontsize=4, color='gray', ha='left', va='bottom', alpha=0.7)
 
     @staticmethod
-    def plot_from_config(ax, groups, samples, config):
+    def plot_from_config(ax, groups, samples, config, pairwise_results=None):
         """
         Zentrale Dispatcher-Methode für alle Plot-Typen.
         Zeichnet auf dem übergebenen ax-Objekt genau den Plot,
@@ -2596,15 +2626,26 @@ class DataVisualizer:
         """
         # 1. Alle nötigen Parameter aus config auslesen
         plot_type = config.get('plot_type', 'Bar')
-        
+
+        # Fix B: Apply font_scale_percent to base font sizes before use
+        font_scale = config.get('font_scale_percent', 100) / 100.0
+        fontsize_title = int(config.get('fontsize_title', 14) * font_scale)
+        fontsize_axis  = int(config.get('fontsize_axis',  12) * font_scale)
+        fontsize_ticks = int(config.get('fontsize_ticks', 10) * font_scale)
+        # Write scaled values back so all downstream consumers use them
+        config = dict(config)
+        config['fontsize_title'] = fontsize_title
+        config['fontsize_axis']  = fontsize_axis
+        config['fontsize_ticks'] = fontsize_ticks
+
         # Farben für Gruppen extrahieren
         colors_dict = config.get('colors', {})
         colors = [colors_dict.get(g, '#3357FF') for g in groups] if isinstance(colors_dict, dict) else colors_dict
-        
+
         # Hatches für Gruppen extrahieren
         hatches_dict = config.get('hatches', {})
         hatches = [hatches_dict.get(g, '') for g in groups] if isinstance(hatches_dict, dict) else hatches_dict
-        
+
         # Standard-Parameter
         summary_alpha = config.get('summary_alpha', config.get('alpha', 0.8))
         point_alpha = config.get('point_alpha', 0.8)
@@ -2627,6 +2668,7 @@ class DataVisualizer:
             'colors': colors,
             'hatches': hatches,
             'alpha': summary_alpha,
+            'font_family': config.get('font_family', 'Arial'),
             # Seaborn styling parameters
             'seaborn_context': config.get('seaborn_context', 'notebook'),
             'seaborn_palette': config.get('seaborn_palette', 'Greys'),
@@ -2641,7 +2683,6 @@ class DataVisualizer:
             'point_alpha': point_alpha,
             'marker_shapes': config.get('marker_shapes', {}),
             'jitter_strength': config.get('jitter_strength', 0.3),  # Jitter Parameter hinzugefügt
-            'violin_bandwidth': config.get('violin_bandwidth', 1.0),
             'show_significance_letters': config.get('show_significance_letters', True),
             'significance_height_offset': config.get('significance_height_offset', 0.05),
             'significance_font_size': config.get('significance_font_size', 12),
@@ -2669,12 +2710,29 @@ class DataVisualizer:
             'legend_bbox': (
                 config.get('legend_anchor_x', 1.15),
                 config.get('legend_anchor_y', 1.0)
-            )
+            ),
+            'pairwise_results': pairwise_results or [],
         }
-        
+
+        # Fix G: Filter pairwise_results by selected_pairs if specified
+        selected_pairs = config.get('selected_pairs', [])
+        if selected_pairs and base_kwargs.get('pairwise_results'):
+            def _pair_matches(result, pairs):
+                for pair in pairs:
+                    if set(pair) == {result.get('group1'), result.get('group2')}:
+                        return True
+                return False
+            base_kwargs['pairwise_results'] = [
+                r for r in base_kwargs['pairwise_results']
+                if _pair_matches(r, selected_pairs)
+            ]
+
         # 3. Plot-Typ spezifische Parameter und Dispatch
+        # font_family is applied directly by plot_from_config; remove from plot-function kwargs
+        _base_no_font = {k: v for k, v in base_kwargs.items() if k != 'font_family'}
+
         if plot_type == "Bar":
-            bar_kwargs = base_kwargs.copy()
+            bar_kwargs = _base_no_font.copy()
             bar_kwargs.update({
                 'show_error_bars': config.get('show_error_bars', True),
                 'error_type': error_type,
@@ -2684,12 +2742,13 @@ class DataVisualizer:
                 'error_style': error_style,
                 # Bracket-spezifische Parameter nur für Bar-Plots
                 'comparison_font_size': config.get('bracket_font_size', 16),
-                'comparison_line_height': config.get('bracket_spacing', 0.1)
+                'comparison_line_height': config.get('bracket_spacing', 0.1),
+                'axis_thickness': config.get('axis_thickness', 0.5),
             })
             DataVisualizer.plot_bar(groups, samples, **bar_kwargs)
-            
+
         elif plot_type == "Box":
-            box_kwargs = base_kwargs.copy()
+            box_kwargs = _base_no_font.copy()
             box_kwargs.update({
                 'show_error_bars': config.get('show_error_bars', True),
                 'error_type': error_type,
@@ -2697,23 +2756,31 @@ class DataVisualizer:
                 'edge_color': bar_edge_color,
                 'edge_width': bar_linewidth,
                 'error_style': error_style,
-                'box_width': config.get('box_width', 0.8)
+                'box_width': config.get('box_width', 0.8),
+                'axis_thickness': config.get('axis_thickness', 0.5),
+                'bracket_line_width': config.get('bracket_line_width', 1.5),
+                'bracket_vertical_fraction': config.get('bracket_vertical_fraction', 0.05),
+                'bracket_color': config.get('bracket_color', '#000000'),
             })
             DataVisualizer.plot_box(groups, samples, **box_kwargs)
-            
+
         elif plot_type == "Violin":
             # Violin hat keine show_error_bars oder error_type Parameter
-            violin_kwargs = base_kwargs.copy()
+            violin_kwargs = _base_no_font.copy()
             violin_kwargs.update({
                 'edge_color': bar_edge_color,
                 'edge_width': bar_linewidth,
-                'violin_width': config.get('violin_width', 0.8)
+                'violin_width': config.get('violin_width', 0.8),
+                'violin_bandwidth': config.get('violin_bandwidth', 1.0),
+                'axis_thickness': config.get('axis_thickness', 0.5),
             })
             DataVisualizer.plot_violin(groups, samples, **violin_kwargs)
-            
+
         elif plot_type == "Raincloud":
             # Raincloud hat spezifische Parameter
-            raincloud_kwargs = base_kwargs.copy()
+            raincloud_kwargs = _base_no_font.copy()
+            # plot_raincloud has no violin_bandwidth parameter.
+            raincloud_kwargs.pop('violin_bandwidth', None)
             raincloud_kwargs.update({
                 'edge_color': bar_edge_color,
                 'edge_width': bar_linewidth,
@@ -2750,18 +2817,28 @@ class DataVisualizer:
             # Setze Konfiguration für spätere Nutzung
             ax._bracket_config_current = bracket_config
         
+        # Fix A: Apply font_family explicitly after plot call, before unified styling
+        font_family = config.get('font_family', 'Arial')
+        FontManager.apply_font_safely(ax, ax.figure, font_family)
+
+        # Fix C: Apply minor_ticks setting
+        if config.get('minor_ticks', False):
+            ax.minorticks_on()
+        else:
+            ax.minorticks_off()
+
         # 5. UNIFIED STYLING mit neuen Managern
-        
+
         # Bestimme ob es sich um Preview handelt
         is_preview = config.get('_is_preview', False)
-        
+
         # Anwenden des einheitlichen Stylings
         StylingManager.apply_unified_styling(ax, config, is_preview=is_preview)
 
         DataVisualizer._apply_padding_mm(ax.figure, config)
 
-        # Optional grayscale preview for printability checks
-        if is_preview and config.get('grayscale_preview', False):
+        # Fix E: Apply grayscale regardless of preview/export mode
+        if config.get('grayscale_preview', False):
             DataVisualizer._apply_grayscale_preview(ax)
 
         if config.get('auto_format_units', False):

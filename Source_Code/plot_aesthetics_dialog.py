@@ -5,12 +5,13 @@ Enables comprehensive customization of plot appearance.
 from PyQt5.QtWidgets import QDesktopWidget
 import sys
 import os
-from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, 
-                             QWidget, QLabel, QComboBox, QSpinBox, QDoubleSpinBox, 
-                             QCheckBox, QPushButton, QColorDialog, QSlider, 
+from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
+                             QWidget, QLabel, QComboBox, QSpinBox, QDoubleSpinBox,
+                             QCheckBox, QPushButton, QColorDialog, QSlider,
                              QGroupBox, QGridLayout, QDialogButtonBox, QLineEdit,
-                             QApplication, QMainWindow, QSplitter, QFrame)
-from PyQt5.QtCore import Qt, pyqtSignal
+                             QApplication, QMainWindow, QSplitter, QFrame,
+                             QListWidget, QScrollArea)
+from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtGui import QColor, QPalette
 
 # Import des Preview Widgets
@@ -59,8 +60,15 @@ class SizeTab(QWidget):
         self.init_ui()
         
     def init_ui(self):
-        layout = QVBoxLayout(self)
-        
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content_widget = QWidget()
+        content_layout = QVBoxLayout(content_widget)
+        scroll.setWidget(content_widget)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.addWidget(scroll)
+
         # Figure Size Group
         fig_group = QGroupBox("Figure Size")
         fig_layout = QGridLayout(fig_group)
@@ -68,24 +76,27 @@ class SizeTab(QWidget):
         # Width
         fig_layout.addWidget(QLabel("Width (inches):"), 0, 0)
         self.width_spin = QDoubleSpinBox()
+        self.width_spin.setMinimumHeight(25)
         self.width_spin.setRange(1, 20)
         self.width_spin.setValue(self.config.get('width', 8))
         self.width_spin.setSingleStep(0.5)
         self.width_spin.valueChanged.connect(self.settingsChanged)
         fig_layout.addWidget(self.width_spin, 0, 1)
-        
+
         # Height
         fig_layout.addWidget(QLabel("Height (inches):"), 1, 0)
         self.height_spin = QDoubleSpinBox()
+        self.height_spin.setMinimumHeight(25)
         self.height_spin.setRange(1, 20)
         self.height_spin.setValue(self.config.get('height', 6))
         self.height_spin.setSingleStep(0.5)
         self.height_spin.valueChanged.connect(self.settingsChanged)
         fig_layout.addWidget(self.height_spin, 1, 1)
-        
+
         # DPI
         fig_layout.addWidget(QLabel("DPI:"), 2, 0)
         self.dpi_spin = QSpinBox()
+        self.dpi_spin.setMinimumHeight(25)
         self.dpi_spin.setRange(72, 600)
         self.dpi_spin.setValue(self.config.get('dpi', 300))
         self.dpi_spin.valueChanged.connect(self.settingsChanged)
@@ -96,20 +107,23 @@ class SizeTab(QWidget):
         aspect_layout = QHBoxLayout(aspect_group)
 
         self.square_btn = QPushButton("Square")
+        self.square_btn.setMinimumHeight(25)
         self.square_btn.clicked.connect(lambda: self.apply_aspect_preset('square'))
         aspect_layout.addWidget(self.square_btn)
 
         self.landscape_btn = QPushButton("Landscape (4:3)")
+        self.landscape_btn.setMinimumHeight(25)
         self.landscape_btn.clicked.connect(lambda: self.apply_aspect_preset('landscape_4_3'))
         aspect_layout.addWidget(self.landscape_btn)
 
         self.portrait_btn = QPushButton("Portrait (3:4)")
+        self.portrait_btn.setMinimumHeight(25)
         self.portrait_btn.clicked.connect(lambda: self.apply_aspect_preset('portrait_3_4'))
         aspect_layout.addWidget(self.portrait_btn)
-        
-        layout.addWidget(fig_group)
-        layout.addWidget(aspect_group)
-        layout.addStretch()
+
+        content_layout.addWidget(fig_group)
+        content_layout.addWidget(aspect_group)
+        content_layout.addStretch()
 
     def apply_aspect_preset(self, preset):
         current_width = self.width_spin.value()
@@ -159,15 +173,23 @@ class TypographyTab(QWidget):
         self.init_ui()
         
     def init_ui(self):
-        layout = QVBoxLayout(self)
-        
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content_widget = QWidget()
+        content_layout = QVBoxLayout(content_widget)
+        scroll.setWidget(content_widget)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.addWidget(scroll)
+
         # Font Family Group
         font_family_group = QGroupBox("Font Family")
         font_family_layout = QGridLayout(font_family_group)
-        
+
         font_family_layout.addWidget(QLabel("Font Family:"), 0, 0)
         self.font_family_combo = QComboBox()
-        
+        self.font_family_combo.setMinimumHeight(25)
+
         # Use FontManager to get available system fonts
         try:
             # Import the FontManager from datavisualizer
@@ -177,7 +199,7 @@ class TypographyTab(QWidget):
             src_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'src')
             if src_path not in sys.path:
                 sys.path.insert(0, src_path)
-            
+
             from datavisualizer import FontManager
             font_families = FontManager.get_available_fonts()
             print(f"Loaded {len(font_families)} system fonts for UI")
@@ -189,10 +211,10 @@ class TypographyTab(QWidget):
                 'Segoe UI', 'Georgia', 'Helvetica',
                 'Trebuchet MS', 'Impact', 'DejaVu Sans'
             ]
-        
+
         self.font_family_combo.addItems(font_families)
         current_font = self.config.get('font_family', 'Arial')
-        
+
         # Validate and set current font
         try:
             if current_font in font_families:
@@ -203,42 +225,45 @@ class TypographyTab(QWidget):
                 print(f"Font '{current_font}' not available, using '{font_families[0]}'")
         except:
             self.font_family_combo.setCurrentText(font_families[0])
-            
+
         # Improved signal connection for immediate updates
         self.font_family_combo.currentTextChanged.connect(self.on_font_changed)
         font_family_layout.addWidget(self.font_family_combo, 0, 1)
-        
-        layout.addWidget(font_family_group)
-        
+
+        content_layout.addWidget(font_family_group)
+
         # Font Sizes Group
         font_group = QGroupBox("Font Sizes")
         font_layout = QGridLayout(font_group)
-        
+
         # Title Font Size
         font_layout.addWidget(QLabel("Title:"), 0, 0)
         self.title_size_spin = QSpinBox()
+        self.title_size_spin.setMinimumHeight(25)
         self.title_size_spin.setRange(8, 48)
         self.title_size_spin.setValue(self.config.get('fontsize_title', 14))
         self.title_size_spin.valueChanged.connect(self.on_title_size_changed)
         font_layout.addWidget(self.title_size_spin, 0, 1)
-        
+
         # Axis Label Font Size
         font_layout.addWidget(QLabel("Axis Labels:"), 1, 0)
         self.axis_size_spin = QSpinBox()
+        self.axis_size_spin.setMinimumHeight(25)
         self.axis_size_spin.setRange(8, 24)
         self.axis_size_spin.setValue(self.config.get('fontsize_axis', 12))
         self.axis_size_spin.valueChanged.connect(self.on_axis_size_changed)
         font_layout.addWidget(self.axis_size_spin, 1, 1)
-        
+
         # Tick Label Font Size
         font_layout.addWidget(QLabel("Tick Labels:"), 2, 0)
         self.ticks_size_spin = QSpinBox()
+        self.ticks_size_spin.setMinimumHeight(25)
         self.ticks_size_spin.setRange(6, 20)
         self.ticks_size_spin.setValue(self.config.get('fontsize_ticks', 10))
         self.ticks_size_spin.valueChanged.connect(self.on_ticks_size_changed)
         font_layout.addWidget(self.ticks_size_spin, 2, 1)
-        
-        layout.addWidget(font_group)
+
+        content_layout.addWidget(font_group)
 
         # Global typography scaling to preserve manual relative proportions
         scale_group = QGroupBox("Scale All Fonts")
@@ -246,6 +271,7 @@ class TypographyTab(QWidget):
 
         scale_layout.addWidget(QLabel("Scale:"), 0, 0)
         self.font_scale_slider = QSlider(Qt.Horizontal)
+        self.font_scale_slider.setMinimumHeight(25)
         self.font_scale_slider.setRange(50, 200)
         self.font_scale_slider.setValue(int(self.config.get('font_scale_percent', 100)))
         self.font_scale_slider.valueChanged.connect(self.on_font_scale_changed)
@@ -254,24 +280,24 @@ class TypographyTab(QWidget):
         self.font_scale_label = QLabel(f"{self.font_scale_slider.value()}%")
         scale_layout.addWidget(self.font_scale_label, 0, 2)
 
-        layout.addWidget(scale_group)
-        
+        content_layout.addWidget(scale_group)
+
         # Labels Group
         labels_group = QGroupBox("Labels")
         labels_layout = QGridLayout(labels_group)
-        
+
         # Title
         labels_layout.addWidget(QLabel("Title:"), 0, 0)
         self.title_edit = QLineEdit(self.config.get('title', ''))
         self.title_edit.textChanged.connect(self.settingsChanged)
         labels_layout.addWidget(self.title_edit, 0, 1)
-        
+
         # X Label
         labels_layout.addWidget(QLabel("X Label:"), 1, 0)
         self.x_label_edit = QLineEdit(self.config.get('x_label', ''))
         self.x_label_edit.textChanged.connect(self.settingsChanged)
         labels_layout.addWidget(self.x_label_edit, 1, 1)
-        
+
         # Y Label
         labels_layout.addWidget(QLabel("Y Label:"), 2, 0)
         self.y_label_edit = QLineEdit(self.config.get('y_label', ''))
@@ -283,9 +309,9 @@ class TypographyTab(QWidget):
         self.auto_format_units_check.setChecked(self.config.get('auto_format_units', False))
         self.auto_format_units_check.toggled.connect(self.settingsChanged)
         labels_layout.addWidget(self.auto_format_units_check, 3, 0, 1, 2)
-        
-        layout.addWidget(labels_group)
-        layout.addStretch()
+
+        content_layout.addWidget(labels_group)
+        content_layout.addStretch()
     
     def on_font_changed(self):
         """Special handling for font changes with immediate update"""
@@ -365,23 +391,32 @@ class ColorsTab(QWidget):
         self.init_ui()
         
     def init_ui(self):
-        layout = QVBoxLayout(self)
-        
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content_widget = QWidget()
+        content_layout = QVBoxLayout(content_widget)
+        scroll.setWidget(content_widget)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.addWidget(scroll)
+
         # Seaborn Style and Palette Selection
         seaborn_group = QGroupBox("Color Style & Palette")
         seaborn_layout = QGridLayout(seaborn_group)
-        
+
         # Style context selector
         seaborn_layout.addWidget(QLabel("Style Context:"), 0, 0)
         self.style_context_combo = QComboBox()
+        self.style_context_combo.setMinimumHeight(25)
         self.style_context_combo.addItems(['notebook', 'paper', 'talk', 'poster'])
         self.style_context_combo.setCurrentText(self.config.get('seaborn_context', 'notebook'))
         self.style_context_combo.currentTextChanged.connect(self.on_seaborn_settings_changed)
         seaborn_layout.addWidget(self.style_context_combo, 0, 1)
-        
+
         # Color palette selector
         seaborn_layout.addWidget(QLabel("Color Palette:"), 1, 0)
         self.palette_combo = QComboBox()
+        self.palette_combo.setMinimumHeight(25)
         # Professional palettes - excluding rainbow/childish ones
         professional_palettes = [
             'Nature', 'Science', 'NEJM', 'Lancet',
@@ -393,29 +428,29 @@ class ColorsTab(QWidget):
         self.palette_combo.setCurrentText(self.config.get('seaborn_palette', 'Greys'))
         self.palette_combo.currentTextChanged.connect(self.on_seaborn_settings_changed)
         seaborn_layout.addWidget(self.palette_combo, 1, 1)
-        
+
         # Enable/disable Seaborn styling
         self.use_seaborn_checkbox = QCheckBox("Use Seaborn Styling")
         self.use_seaborn_checkbox.setChecked(self.config.get('use_seaborn_styling', True))
         self.use_seaborn_checkbox.stateChanged.connect(self.on_seaborn_settings_changed)
         seaborn_layout.addWidget(self.use_seaborn_checkbox, 2, 0, 1, 2)
-        
-        layout.addWidget(seaborn_group)
-        
+
+        content_layout.addWidget(seaborn_group)
+
         # Individual Colors Group
         colors_group = QGroupBox("Individual Colors")
         self.colors_layout = QGridLayout(colors_group)
         self.update_color_buttons()
-        
-        layout.addWidget(colors_group)
-        
+
+        content_layout.addWidget(colors_group)
+
         # Hatches Group
         hatches_group = QGroupBox("Hatches (Patterns)")
         self.hatches_layout = QGridLayout(hatches_group)
         self.update_hatch_selectors()
-        
-        layout.addWidget(hatches_group)
-        layout.addStretch()
+
+        content_layout.addWidget(hatches_group)
+        content_layout.addStretch()
     
     def update_hatch_selectors(self):
         """Update hatch selector dropdowns for each group"""
@@ -588,21 +623,29 @@ class StyleTab(QWidget):
         self.init_ui()
         
     def init_ui(self):
-        layout = QVBoxLayout(self)
-        
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content_widget = QWidget()
+        content_layout = QVBoxLayout(content_widget)
+        scroll.setWidget(content_widget)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.addWidget(scroll)
+
         # Plot Type Group
         type_group = QGroupBox("Plot Type")
         type_layout = QHBoxLayout(type_group)
-        
+
         type_layout.addWidget(QLabel("Type:"))
         self.plot_type_combo = QComboBox()
+        self.plot_type_combo.setMinimumHeight(25)
         self.plot_type_combo.addItems(['Bar', 'Box', 'Violin', 'Raincloud'])
         self.plot_type_combo.setCurrentText(self.config.get('plot_type', 'Bar'))
         self.plot_type_combo.currentTextChanged.connect(self.settingsChanged)
         type_layout.addWidget(self.plot_type_combo)
         type_layout.addStretch()
-        
-        layout.addWidget(type_group)
+
+        content_layout.addWidget(type_group)
         
         # Appearance Group
         appearance_group = QGroupBox("Appearance")
@@ -611,49 +654,52 @@ class StyleTab(QWidget):
         # Alpha
         appearance_layout.addWidget(QLabel("Transparency:"), 0, 0)
         self.alpha_spin = QDoubleSpinBox()
+        self.alpha_spin.setMinimumHeight(25)
         self.alpha_spin.setRange(0.1, 1.0)
         self.alpha_spin.setSingleStep(0.1)
         self.alpha_spin.setValue(self.config.get('alpha', 0.8))
         self.alpha_spin.valueChanged.connect(self.settingsChanged)
         appearance_layout.addWidget(self.alpha_spin, 0, 1)
-        
+
         # Edge Width
         appearance_layout.addWidget(QLabel("Edge Width:"), 1, 0)
         self.edge_width_spin = QDoubleSpinBox()
+        self.edge_width_spin.setMinimumHeight(25)
         self.edge_width_spin.setRange(0.0, 5.0)
         self.edge_width_spin.setSingleStep(0.1)
         self.edge_width_spin.setValue(self.config.get('bar_linewidth', 0.5))
         self.edge_width_spin.valueChanged.connect(self.settingsChanged)
         appearance_layout.addWidget(self.edge_width_spin, 1, 1)
-        
+
         # Grid
         self.grid_check = QCheckBox("Show Grid")
         self.grid_check.setChecked(self.config.get('grid', False))
         self.grid_check.toggled.connect(self.settingsChanged)
         appearance_layout.addWidget(self.grid_check, 2, 0)
-        
+
         # Minor Ticks
         self.minor_ticks_check = QCheckBox("Show Minor Ticks")
         self.minor_ticks_check.setChecked(self.config.get('minor_ticks', False))
         self.minor_ticks_check.toggled.connect(self.settingsChanged)
         appearance_layout.addWidget(self.minor_ticks_check, 2, 1)
-        
+
         # Despine
         self.despine_check = QCheckBox("Remove Spines")
         self.despine_check.setChecked(self.config.get('despine', True))
         self.despine_check.toggled.connect(self.settingsChanged)
         appearance_layout.addWidget(self.despine_check, 3, 0)
-        
+
         # Axis Thickness
         appearance_layout.addWidget(QLabel("Axis Thickness:"), 4, 0)
         self.axis_thickness_spin = QDoubleSpinBox()
+        self.axis_thickness_spin.setMinimumHeight(25)
         self.axis_thickness_spin.setRange(0.1, 3.0)
         self.axis_thickness_spin.setSingleStep(0.1)
         self.axis_thickness_spin.setValue(self.config.get('axis_thickness', 0.7))
         self.axis_thickness_spin.valueChanged.connect(self.settingsChanged)
         appearance_layout.addWidget(self.axis_thickness_spin, 4, 1)
-        
-        layout.addWidget(appearance_group)
+
+        content_layout.addWidget(appearance_group)
 
         # Publication Standards Group
         publication_group = QGroupBox("Publication Standards")
@@ -671,6 +717,7 @@ class StyleTab(QWidget):
 
         publication_layout.addWidget(QLabel("Tick Direction:"), 2, 0)
         self.tick_direction_combo = QComboBox()
+        self.tick_direction_combo.setMinimumHeight(25)
         self.tick_direction_combo.addItems(['In', 'Out', 'Both'])
         self.tick_direction_combo.setCurrentText(self.config.get('tick_direction', 'Out').title())
         self.tick_direction_combo.currentTextChanged.connect(self.settingsChanged)
@@ -681,29 +728,31 @@ class StyleTab(QWidget):
         self.grayscale_preview_check.toggled.connect(self.settingsChanged)
         publication_layout.addWidget(self.grayscale_preview_check, 3, 0, 1, 2)
 
-        layout.addWidget(publication_group)
-        
+        content_layout.addWidget(publication_group)
+
         # Data Points Group
         points_group = QGroupBox("Data Points")
         points_layout = QGridLayout(points_group)
-        
+
         # Show Points
         self.points_check = QCheckBox("Show Individual Points")
         self.points_check.setChecked(self.config.get('show_points', True))
         self.points_check.toggled.connect(self.settingsChanged)
         points_layout.addWidget(self.points_check, 0, 0, 1, 2)
-        
+
         # Point Size
         points_layout.addWidget(QLabel("Point Size:"), 1, 0)
         self.point_size_spin = QSpinBox()
+        self.point_size_spin.setMinimumHeight(25)
         self.point_size_spin.setRange(10, 200)
         self.point_size_spin.setValue(self.config.get('point_size', 80))
         self.point_size_spin.valueChanged.connect(self.settingsChanged)
         points_layout.addWidget(self.point_size_spin, 1, 1)
-        
+
         # Jitter Strength
         points_layout.addWidget(QLabel("Jitter Strength:"), 2, 0)
         self.jitter_spin = QDoubleSpinBox()
+        self.jitter_spin.setMinimumHeight(25)
         self.jitter_spin.setRange(0.0, 1.0)
         self.jitter_spin.setSingleStep(0.1)
         self.jitter_spin.setValue(self.config.get('jitter_strength', 0.3))
@@ -713,6 +762,7 @@ class StyleTab(QWidget):
         # Point style / layout algorithm
         points_layout.addWidget(QLabel("Point Layout:"), 3, 0)
         self.point_style_combo = QComboBox()
+        self.point_style_combo.setMinimumHeight(25)
         self.point_style_combo.addItems(['Jitter', 'Beeswarm', 'Strip'])
         point_style_map = {
             'jitter': 'Jitter',
@@ -731,6 +781,7 @@ class StyleTab(QWidget):
 
         points_layout.addWidget(QLabel("Summary Alpha:"), 5, 0)
         self.summary_alpha_spin = QDoubleSpinBox()
+        self.summary_alpha_spin.setMinimumHeight(25)
         self.summary_alpha_spin.setRange(0.1, 1.0)
         self.summary_alpha_spin.setSingleStep(0.05)
         self.summary_alpha_spin.setValue(self.config.get('summary_alpha', self.config.get('alpha', 0.8)))
@@ -739,6 +790,7 @@ class StyleTab(QWidget):
 
         points_layout.addWidget(QLabel("Point Alpha:"), 6, 0)
         self.point_alpha_spin = QDoubleSpinBox()
+        self.point_alpha_spin.setMinimumHeight(25)
         self.point_alpha_spin.setRange(0.1, 1.0)
         self.point_alpha_spin.setSingleStep(0.05)
         self.point_alpha_spin.setValue(self.config.get('point_alpha', 0.8))
@@ -748,13 +800,14 @@ class StyleTab(QWidget):
         # Violin KDE bandwidth
         points_layout.addWidget(QLabel("Violin Bandwidth:"), 7, 0)
         self.violin_bandwidth_spin = QDoubleSpinBox()
+        self.violin_bandwidth_spin.setMinimumHeight(25)
         self.violin_bandwidth_spin.setRange(0.1, 3.0)
         self.violin_bandwidth_spin.setSingleStep(0.1)
         self.violin_bandwidth_spin.setValue(self.config.get('violin_bandwidth', 1.0))
         self.violin_bandwidth_spin.valueChanged.connect(self.settingsChanged)
         points_layout.addWidget(self.violin_bandwidth_spin, 7, 1)
-        
-        layout.addWidget(points_group)
+
+        content_layout.addWidget(points_group)
 
         # Axis Dynamics Group
         dynamics_group = QGroupBox("Axis Dynamics")
@@ -777,6 +830,7 @@ class StyleTab(QWidget):
 
         dynamics_layout.addWidget(QLabel("Break Start:"), 2, 0)
         self.axis_break_start_spin = QDoubleSpinBox()
+        self.axis_break_start_spin.setMinimumHeight(25)
         self.axis_break_start_spin.setRange(-1e6, 1e6)
         self.axis_break_start_spin.setDecimals(4)
         self.axis_break_start_spin.setValue(self.config.get('axis_break_start', 20.0))
@@ -785,18 +839,19 @@ class StyleTab(QWidget):
 
         dynamics_layout.addWidget(QLabel("Break End:"), 3, 0)
         self.axis_break_end_spin = QDoubleSpinBox()
+        self.axis_break_end_spin.setMinimumHeight(25)
         self.axis_break_end_spin.setRange(-1e6, 1e6)
         self.axis_break_end_spin.setDecimals(4)
         self.axis_break_end_spin.setValue(self.config.get('axis_break_end', 80.0))
         self.axis_break_end_spin.valueChanged.connect(self.settingsChanged)
         dynamics_layout.addWidget(self.axis_break_end_spin, 3, 1)
 
-        layout.addWidget(dynamics_group)
-        
+        content_layout.addWidget(dynamics_group)
+
         # Legend Group
         legend_group = QGroupBox("Legend")
         legend_layout = QGridLayout(legend_group)
-        
+
         # Show Legend
         self.legend_check = QCheckBox("Show Legend")
         self.legend_check.setChecked(self.config.get('show_legend', True))
@@ -806,6 +861,7 @@ class StyleTab(QWidget):
         # Stable legend anchoring coordinates
         legend_layout.addWidget(QLabel("Legend Anchor X:"), 1, 0)
         self.legend_anchor_x_spin = QDoubleSpinBox()
+        self.legend_anchor_x_spin.setMinimumHeight(25)
         self.legend_anchor_x_spin.setRange(-5.0, 5.0)
         self.legend_anchor_x_spin.setSingleStep(0.05)
         self.legend_anchor_x_spin.setValue(self.config.get('legend_anchor_x', 1.15))
@@ -814,6 +870,7 @@ class StyleTab(QWidget):
 
         legend_layout.addWidget(QLabel("Legend Anchor Y:"), 2, 0)
         self.legend_anchor_y_spin = QDoubleSpinBox()
+        self.legend_anchor_y_spin.setMinimumHeight(25)
         self.legend_anchor_y_spin.setRange(-5.0, 5.0)
         self.legend_anchor_y_spin.setSingleStep(0.05)
         self.legend_anchor_y_spin.setValue(self.config.get('legend_anchor_y', 1.0))
@@ -823,6 +880,7 @@ class StyleTab(QWidget):
         # Export padding in millimeters
         legend_layout.addWidget(QLabel("Padding Left (mm):"), 3, 0)
         self.padding_left_mm_spin = QDoubleSpinBox()
+        self.padding_left_mm_spin.setMinimumHeight(25)
         self.padding_left_mm_spin.setRange(0.0, 100.0)
         self.padding_left_mm_spin.setSingleStep(0.5)
         self.padding_left_mm_spin.setValue(self.config.get('padding_left_mm', 8.0))
@@ -831,6 +889,7 @@ class StyleTab(QWidget):
 
         legend_layout.addWidget(QLabel("Padding Right (mm):"), 4, 0)
         self.padding_right_mm_spin = QDoubleSpinBox()
+        self.padding_right_mm_spin.setMinimumHeight(25)
         self.padding_right_mm_spin.setRange(0.0, 100.0)
         self.padding_right_mm_spin.setSingleStep(0.5)
         self.padding_right_mm_spin.setValue(self.config.get('padding_right_mm', 6.0))
@@ -839,6 +898,7 @@ class StyleTab(QWidget):
 
         legend_layout.addWidget(QLabel("Padding Top (mm):"), 5, 0)
         self.padding_top_mm_spin = QDoubleSpinBox()
+        self.padding_top_mm_spin.setMinimumHeight(25)
         self.padding_top_mm_spin.setRange(0.0, 100.0)
         self.padding_top_mm_spin.setSingleStep(0.5)
         self.padding_top_mm_spin.setValue(self.config.get('padding_top_mm', 6.0))
@@ -847,14 +907,15 @@ class StyleTab(QWidget):
 
         legend_layout.addWidget(QLabel("Padding Bottom (mm):"), 6, 0)
         self.padding_bottom_mm_spin = QDoubleSpinBox()
+        self.padding_bottom_mm_spin.setMinimumHeight(25)
         self.padding_bottom_mm_spin.setRange(0.0, 100.0)
         self.padding_bottom_mm_spin.setSingleStep(0.5)
         self.padding_bottom_mm_spin.setValue(self.config.get('padding_bottom_mm', 6.0))
         self.padding_bottom_mm_spin.valueChanged.connect(self.settingsChanged)
         legend_layout.addWidget(self.padding_bottom_mm_spin, 6, 1)
-        
-        layout.addWidget(legend_group)
-        layout.addStretch()
+
+        content_layout.addWidget(legend_group)
+        content_layout.addStretch()
 
     def apply_prism_look(self, checked):
         """Apply Prism-like defaults for publication-focused appearance."""
@@ -927,14 +988,21 @@ class SymbolsTab(QWidget):
         self.init_ui()
 
     def init_ui(self):
-        layout = QVBoxLayout(self)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content_widget = QWidget()
+        content_layout = QVBoxLayout(content_widget)
+        scroll.setWidget(content_widget)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.addWidget(scroll)
 
         symbols_group = QGroupBox("Marker Shapes")
         self.symbols_layout = QGridLayout(symbols_group)
         self.update_symbol_selectors()
 
-        layout.addWidget(symbols_group)
-        layout.addStretch()
+        content_layout.addWidget(symbols_group)
+        content_layout.addStretch()
 
     def update_symbol_selectors(self):
         for i in reversed(range(self.symbols_layout.count())):
@@ -983,83 +1051,95 @@ class RaincloudTab(QWidget):
         self.init_ui()
         
     def init_ui(self):
-        layout = QVBoxLayout(self)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content_widget = QWidget()
+        content_layout = QVBoxLayout(content_widget)
+        scroll.setWidget(content_widget)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.addWidget(scroll)
 
         self.global_group_color_check = QCheckBox("Global Group Color Mode (auto shades)")
         self.global_group_color_check.setChecked(self.config.get('global_group_color_mode', True))
         self.global_group_color_check.toggled.connect(self.settingsChanged)
-        layout.addWidget(self.global_group_color_check)
-        
+        content_layout.addWidget(self.global_group_color_check)
+
         # Violin Colors Group
         violin_group = QGroupBox("Violin Colors")
         self.violin_layout = QGridLayout(violin_group)
-        
+
         # Box Colors Group
         box_group = QGroupBox("Box Colors")
         self.box_layout = QGridLayout(box_group)
-        
+
         # Point Colors Group
         point_group = QGroupBox("Point Colors")
         self.point_layout = QGridLayout(point_group)
-        
+
         # Update color buttons
         self.update_color_buttons()
-        
-        layout.addWidget(violin_group)
-        layout.addWidget(box_group)
-        layout.addWidget(point_group)
-        
+
+        content_layout.addWidget(violin_group)
+        content_layout.addWidget(box_group)
+        content_layout.addWidget(point_group)
+
         # Spacing and Layout Group
         spacing_group = QGroupBox("Spacing and Layout")
         spacing_layout = QGridLayout(spacing_group)
-        
+
         # Group Spacing
         spacing_layout.addWidget(QLabel("Group Spacing:"), 0, 0)
         self.group_spacing_spin = QDoubleSpinBox()
+        self.group_spacing_spin.setMinimumHeight(25)
         self.group_spacing_spin.setRange(0.3, 2.0)
         self.group_spacing_spin.setSingleStep(0.1)
         self.group_spacing_spin.setValue(self.config.get('group_spacing', 0.90))
         self.group_spacing_spin.valueChanged.connect(self.settingsChanged)
         spacing_layout.addWidget(self.group_spacing_spin, 0, 1)
-        
+
         # Point Vertical Offset
         spacing_layout.addWidget(QLabel("Point Vertical Offset:"), 1, 0)
         self.point_offset_spin = QDoubleSpinBox()
+        self.point_offset_spin.setMinimumHeight(25)
         self.point_offset_spin.setRange(0.1, 0.5)
         self.point_offset_spin.setSingleStep(0.05)
         self.point_offset_spin.setValue(self.config.get('point_offset', 0.2))
         self.point_offset_spin.valueChanged.connect(self.settingsChanged)
         spacing_layout.addWidget(self.point_offset_spin, 1, 1)
-        
+
         # Point Horizontal Jitter
         spacing_layout.addWidget(QLabel("Point Horizontal Jitter:"), 2, 0)
         self.point_jitter_spin = QDoubleSpinBox()
+        self.point_jitter_spin.setMinimumHeight(25)
         self.point_jitter_spin.setRange(0.01, 0.1)
         self.point_jitter_spin.setSingleStep(0.01)
         self.point_jitter_spin.setValue(self.config.get('point_jitter', 0.05))
         self.point_jitter_spin.valueChanged.connect(self.settingsChanged)
         spacing_layout.addWidget(self.point_jitter_spin, 2, 1)
-        
+
         # Violin Width
         spacing_layout.addWidget(QLabel("Violin Width:"), 3, 0)
         self.violin_width_spin = QDoubleSpinBox()
+        self.violin_width_spin.setMinimumHeight(25)
         self.violin_width_spin.setRange(0.3, 1.5)
         self.violin_width_spin.setSingleStep(0.1)
         self.violin_width_spin.setValue(self.config.get('violin_width', 0.8))
         self.violin_width_spin.valueChanged.connect(self.settingsChanged)
         spacing_layout.addWidget(self.violin_width_spin, 3, 1)
-        
+
         # Box Width
         spacing_layout.addWidget(QLabel("Box Width:"), 4, 0)
         self.box_width_spin = QDoubleSpinBox()
+        self.box_width_spin.setMinimumHeight(25)
         self.box_width_spin.setRange(0.1, 0.8)
         self.box_width_spin.setSingleStep(0.1)
         self.box_width_spin.setValue(self.config.get('box_width', 0.2))
         self.box_width_spin.valueChanged.connect(self.settingsChanged)
         spacing_layout.addWidget(self.box_width_spin, 4, 1)
-        
-        layout.addWidget(spacing_group)
-        layout.addStretch()
+
+        content_layout.addWidget(spacing_group)
+        content_layout.addStretch()
     
     def update_color_buttons(self):
         """Update color buttons for all groups"""
@@ -1159,45 +1239,55 @@ class ErrorBarsTab(QWidget):
         self.init_ui()
         
     def init_ui(self):
-        layout = QVBoxLayout(self)
-        
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content_widget = QWidget()
+        content_layout = QVBoxLayout(content_widget)
+        scroll.setWidget(content_widget)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.addWidget(scroll)
+
         # Error Bars Group
         error_group = QGroupBox("Error Bars")
         error_layout = QGridLayout(error_group)
-        
+
         # Show Error Bars
         self.show_error_check = QCheckBox("Show Error Bars")
         self.show_error_check.setChecked(self.config.get('show_error_bars', True))
         self.show_error_check.toggled.connect(self.settingsChanged)
         error_layout.addWidget(self.show_error_check, 0, 0, 1, 2)
-        
+
         # Error Type
         error_layout.addWidget(QLabel("Error Type:"), 1, 0)
         self.error_type_combo = QComboBox()
+        self.error_type_combo.setMinimumHeight(25)
         self.error_type_combo.addItems(['sd', 'se', 'ci'])
         self.error_type_combo.setCurrentText(self.config.get('error_type', 'sd'))
         self.error_type_combo.currentTextChanged.connect(self.settingsChanged)
         error_layout.addWidget(self.error_type_combo, 1, 1)
-        
+
         # Error Style
         error_layout.addWidget(QLabel("Error Style:"), 2, 0)
         self.error_style_combo = QComboBox()
+        self.error_style_combo.setMinimumHeight(25)
         self.error_style_combo.addItems(['caps', 'line'])
         self.error_style_combo.setCurrentText(self.config.get('error_style', 'caps'))
         self.error_style_combo.currentTextChanged.connect(self.settingsChanged)
         error_layout.addWidget(self.error_style_combo, 2, 1)
-        
+
         # Cap Size
         error_layout.addWidget(QLabel("Cap Size:"), 3, 0)
         self.capsize_spin = QDoubleSpinBox()
+        self.capsize_spin.setMinimumHeight(25)
         self.capsize_spin.setRange(0.0, 1.0)
         self.capsize_spin.setSingleStep(0.01)
         self.capsize_spin.setValue(self.config.get('capsize', 0.05))
         self.capsize_spin.valueChanged.connect(self.settingsChanged)
         error_layout.addWidget(self.capsize_spin, 3, 1)
-        
-        layout.addWidget(error_group)
-        layout.addStretch()
+
+        content_layout.addWidget(error_group)
+        content_layout.addStretch()
     
     def get_settings(self):
         return {
@@ -1211,77 +1301,92 @@ class ErrorBarsTab(QWidget):
 class SignificanceTab(QWidget):
     """Tab für Signifikanz-Einstellungen (Buchstaben und Balken)"""
     settingsChanged = pyqtSignal()
-    
-    def __init__(self, config=None):
+
+    def __init__(self, config=None, analysis_result=None):
         super().__init__()
         self.config = config or {}
+        self.analysis_result = analysis_result
+        self.pair_checkboxes = {}  # (group1, group2) -> QCheckBox
         self.init_ui()
         
     def init_ui(self):
-        layout = QVBoxLayout(self)
-        
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        content_widget = QWidget()
+        content_layout = QVBoxLayout(content_widget)
+        scroll_area.setWidget(content_widget)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.addWidget(scroll_area)
+
         # Significance Letters Group
         letters_group = QGroupBox("Significance Letters")
         letters_layout = QGridLayout(letters_group)
-        
+
         # Show Significance Letters
         self.show_letters_check = QCheckBox("Show Significance Letters")
         self.show_letters_check.setChecked(self.config.get('show_significance_letters', True))
         self.show_letters_check.toggled.connect(self.settingsChanged)
         letters_layout.addWidget(self.show_letters_check, 0, 0, 1, 2)
-        
+
         # Letters Font Size
         letters_layout.addWidget(QLabel("Font Size:"), 1, 0)
         self.letters_fontsize_spin = QSpinBox()
+        self.letters_fontsize_spin.setMinimumHeight(25)
         self.letters_fontsize_spin.setRange(6, 24)
         self.letters_fontsize_spin.setValue(self.config.get('significance_font_size', 12))
         self.letters_fontsize_spin.valueChanged.connect(self.settingsChanged)
         letters_layout.addWidget(self.letters_fontsize_spin, 1, 1)
-        
+
         # Letters Height Offset
         letters_layout.addWidget(QLabel("Height Offset:"), 2, 0)
         self.letters_offset_spin = QDoubleSpinBox()
+        self.letters_offset_spin.setMinimumHeight(25)
         self.letters_offset_spin.setRange(0.0, 0.5)
         self.letters_offset_spin.setSingleStep(0.01)
         self.letters_offset_spin.setValue(self.config.get('significance_height_offset', 0.05))
         self.letters_offset_spin.valueChanged.connect(self.settingsChanged)
         letters_layout.addWidget(self.letters_offset_spin, 2, 1)
-        
-        layout.addWidget(letters_group)
-        
+
+        content_layout.addWidget(letters_group)
+
         # Significance Brackets Group
         brackets_group = QGroupBox("Significance Brackets")
         brackets_layout = QGridLayout(brackets_group)
-        
+
         # Bracket Line Width
         brackets_layout.addWidget(QLabel("Line Width:"), 0, 0)
         self.bracket_linewidth_spin = QDoubleSpinBox()
+        self.bracket_linewidth_spin.setMinimumHeight(25)
         self.bracket_linewidth_spin.setRange(0.5, 5.0)
         self.bracket_linewidth_spin.setSingleStep(0.1)
         self.bracket_linewidth_spin.setValue(self.config.get('bracket_line_width', 2.0))
         self.bracket_linewidth_spin.valueChanged.connect(self.settingsChanged)
         brackets_layout.addWidget(self.bracket_linewidth_spin, 0, 1)
-        
+
         # Bracket Font Size
         brackets_layout.addWidget(QLabel("Font Size:"), 1, 0)
         self.bracket_fontsize_spin = QSpinBox()
+        self.bracket_fontsize_spin.setMinimumHeight(25)
         self.bracket_fontsize_spin.setRange(8, 30)
         self.bracket_fontsize_spin.setValue(self.config.get('bracket_font_size', 16))
         self.bracket_fontsize_spin.valueChanged.connect(self.settingsChanged)
         brackets_layout.addWidget(self.bracket_fontsize_spin, 1, 1)
-        
+
         # Bracket Vertical Length
         brackets_layout.addWidget(QLabel("Vertical Length:"), 2, 0)
         self.bracket_vertical_spin = QDoubleSpinBox()
+        self.bracket_vertical_spin.setMinimumHeight(25)
         self.bracket_vertical_spin.setRange(0.1, 1.0)
         self.bracket_vertical_spin.setSingleStep(0.05)
         self.bracket_vertical_spin.setValue(self.config.get('bracket_vertical_fraction', 0.25))
         self.bracket_vertical_spin.valueChanged.connect(self.settingsChanged)
         brackets_layout.addWidget(self.bracket_vertical_spin, 2, 1)
-        
+
         # Bracket Spacing
         brackets_layout.addWidget(QLabel("Spacing:"), 3, 0)
         self.bracket_spacing_spin = QDoubleSpinBox()
+        self.bracket_spacing_spin.setMinimumHeight(25)
         self.bracket_spacing_spin.setRange(0.05, 0.5)
         self.bracket_spacing_spin.setSingleStep(0.01)
         self.bracket_spacing_spin.setValue(self.config.get('bracket_spacing', 0.1))
@@ -1291,15 +1396,80 @@ class SignificanceTab(QWidget):
         # P-value style
         brackets_layout.addWidget(QLabel("P-value Style:"), 4, 0)
         self.pvalue_style_combo = QComboBox()
+        self.pvalue_style_combo.setMinimumHeight(25)
         self.pvalue_style_combo.addItems(['GP: 0.0332 (*)', 'Exact p-value', 'Fixed stars'])
         self.pvalue_style_combo.setCurrentText(self.config.get('p_value_style', 'Fixed stars'))
         self.pvalue_style_combo.currentTextChanged.connect(self.settingsChanged)
         brackets_layout.addWidget(self.pvalue_style_combo, 4, 1)
-        
-        layout.addWidget(brackets_group)
-        layout.addStretch()
-    
+
+        content_layout.addWidget(brackets_group)
+
+        # Pairwise comparisons section — populated from real analysis_result
+        pairs_group = QGroupBox("Bracket Comparisons (from analysis)")
+        pairs_layout = QVBoxLayout(pairs_group)
+
+        pairwise = (self.analysis_result or {}).get('pairwise_comparisons', [])
+        if pairwise:
+            info_label = QLabel("Select comparisons to display as brackets:")
+            info_label.setWordWrap(True)
+            pairs_layout.addWidget(info_label)
+            inner_scroll = QScrollArea()
+            inner_scroll.setWidgetResizable(True)
+            inner_scroll.setMaximumHeight(160)
+            inner = QWidget()
+            inner_layout = QVBoxLayout(inner)
+            inner_layout.setContentsMargins(4, 4, 4, 4)
+            inner_layout.setSpacing(2)
+            prechecked = set()
+            if isinstance(self.config.get('selected_pairs'), list):
+                for p in self.config['selected_pairs']:
+                    prechecked.add(tuple(p))
+            for comp in pairwise:
+                g1 = comp.get('group1', '')
+                g2 = comp.get('group2', '')
+                if not g1 or not g2:
+                    continue
+                p_val = comp.get('p_value')
+                sig = comp.get('significant', False)
+                p_str = f"p={p_val:.4f}" if p_val is not None else "p=N/A"
+                sig_str = " *" if sig else ""
+                label = f"{g1} vs {g2}  ({p_str}{sig_str})"
+                cb = QCheckBox(label)
+                cb.setChecked(len(prechecked) == 0 or (g1, g2) in prechecked)
+                cb.stateChanged.connect(self.settingsChanged)
+                self.pair_checkboxes[(g1, g2)] = cb
+                inner_layout.addWidget(cb)
+            inner_layout.addStretch()
+            inner.setLayout(inner_layout)
+            inner_scroll.setWidget(inner)
+            pairs_layout.addWidget(inner_scroll)
+            # Select all / none buttons
+            btn_row = QHBoxLayout()
+            btn_all = QPushButton("All")
+            btn_none = QPushButton("None")
+            btn_all.setMaximumWidth(60)
+            btn_none.setMaximumWidth(60)
+            btn_all.clicked.connect(lambda: self._set_all_pairs(True))
+            btn_none.clicked.connect(lambda: self._set_all_pairs(False))
+            btn_row.addWidget(btn_all)
+            btn_row.addWidget(btn_none)
+            btn_row.addStretch()
+            pairs_layout.addLayout(btn_row)
+        else:
+            no_data_label = QLabel("No post-hoc data available.\nRun analysis with a post-hoc test to enable bracket selection.")
+            no_data_label.setWordWrap(True)
+            no_data_label.setStyleSheet("color: gray; font-style: italic;")
+            pairs_layout.addWidget(no_data_label)
+
+        content_layout.addWidget(pairs_group)
+        content_layout.addStretch()
+
+    def _set_all_pairs(self, checked: bool):
+        for cb in self.pair_checkboxes.values():
+            cb.setChecked(checked)
+
     def get_settings(self):
+        selected_pairs = [list(key) for key, cb in self.pair_checkboxes.items() if cb.isChecked()]
         return {
             'show_significance_letters': self.show_letters_check.isChecked(),
             'significance_font_size': self.letters_fontsize_spin.value(),
@@ -1310,7 +1480,9 @@ class SignificanceTab(QWidget):
             'bracket_vertical_fraction': self.bracket_vertical_spin.value(),
             'bracket_spacing': self.bracket_spacing_spin.value(),
             'p_value_style': self.pvalue_style_combo.currentText(),
-            'bracket_color': '#000000'  # Always black
+            'bracket_color': '#000000',  # Always black
+            # Selected pairs (original group keys, never display labels)
+            'selected_pairs': selected_pairs,
         }
 
 
@@ -1319,12 +1491,18 @@ class PlotAestheticsDialog(QDialog):
     Hauptdialog für Plot-Einstellungen mit Tab-Interface und Live-Preview
     """
     
-    def __init__(self, groups=None, samples=None, config=None, parent=None, context="user_plot"):
+    def __init__(self, groups=None, samples=None, config=None, parent=None, context="user_plot",
+                 default_filename=None, show_export_controls=True, analysis_result=None, dependent=False):
         super().__init__(parent)
+        self.setObjectName("plotAestheticsDialog")
         self.groups = groups or []
         self.samples = samples or {}
         self.config = config or {}
         self.context = context  # "user_plot" or "analysis_only"
+        self.default_filename = default_filename
+        self.show_export_controls = show_export_controls
+        self.analysis_result = analysis_result
+        self.dependent = dependent
         
         self.setWindowTitle("Plot Appearance Settings")
         self.setModal(True)
@@ -1336,26 +1514,32 @@ class PlotAestheticsDialog(QDialog):
         
         # High-resolution displays (Retina, 4K, etc.) - like MacBook Air 2880x1864
         if screen_width >= 2560:  # High-res displays
-            width = min(1400, int(screen_width * 0.50))   # 50% of screen, max 1400px
-            height = min(550, int(screen_height * 0.30))  # 30% of screen, max 550px (much shorter!)
+            width = min(1500, int(screen_width * 0.72))
+            height = min(980, int(screen_height * 0.82))
         # Medium resolution displays
         elif screen_width >= 1920:  # Full HD and similar
-            width = min(1200, int(screen_width * 0.60))   # 60% of screen, max 1200px
-            height = min(500, int(screen_height * 0.45))  # 45% of screen, max 500px
+            width = min(1320, int(screen_width * 0.78))
+            height = min(900, int(screen_height * 0.84))
         # Standard/smaller displays
         else:  # < 1920px width
-            width = min(1000, int(screen_width * 0.65))   # 65% of screen, max 1000px
-            height = min(450, int(screen_height * 0.50))  # 50% of screen, max 450px
+            width = min(1180, int(screen_width * 0.88))
+            height = min(860, int(screen_height * 0.88))
             
+        self.setMinimumSize(900, 600)
         self.resize(width, height)
         self.move(
             (screen.width() - width) // 2,
             (screen.height() - height) // 2
         )
         
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.setInterval(250)
+        self._preview_timer.timeout.connect(self._do_update_preview)
+
         self.init_ui()
         self.connect_signals()
-        
+
         # Initial update für Raincloud Tab Sichtbarkeit
         self.update_raincloud_tab_visibility()
         
@@ -1365,17 +1549,53 @@ class PlotAestheticsDialog(QDialog):
     
     def init_ui(self):
         main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(8)
         
         # Splitter für Tabs und Preview
         splitter = QSplitter(Qt.Horizontal)
+        splitter.setChildrenCollapsible(False)
+        self.splitter = splitter  # store for resizeEvent
         main_layout.addWidget(splitter)
         
         # Linke Seite: Tab Widget für Einstellungen
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(8)
+
+        if self.show_export_controls:
+            export_group = QGroupBox("Export")
+            export_layout = QGridLayout(export_group)
+            export_layout.setContentsMargins(8, 8, 8, 8)
+            export_layout.setHorizontalSpacing(8)
+            export_layout.setVerticalSpacing(6)
+
+            export_layout.addWidget(QLabel("Output file name:"), 0, 0)
+            self.file_name_edit = QLineEdit()
+            configured_name = self.config.get('file_name') or self.default_filename or ""
+            self.file_name_edit.setText(configured_name)
+            self.file_name_edit.setPlaceholderText("Default: dataset-based filename")
+            export_layout.addWidget(self.file_name_edit, 0, 1)
+
+            export_layout.addWidget(QLabel("Group order (drag to sort):"), 1, 0, Qt.AlignTop)
+            self.order_list = QListWidget()
+            self.order_list.setDragDropMode(QListWidget.InternalMove)
+            self.order_list.setMaximumHeight(130)
+            for group in self.groups:
+                self.order_list.addItem(str(group))
+            export_layout.addWidget(self.order_list, 1, 1)
+
+            left_layout.addWidget(export_group)
+
+            # Keep preview and all tabs in sync with current group ordering.
+            if self.order_list.model() is not None:
+                self.order_list.model().rowsMoved.connect(self._on_group_order_changed)
         
         # Tab Widget
         self.tab_widget = QTabWidget()
+        self.tab_widget.setUsesScrollButtons(True)
+        self.tab_widget.setElideMode(Qt.ElideRight)
         
         # Tabs erstellen
         self.size_tab = SizeTab(self.config)
@@ -1385,7 +1605,7 @@ class PlotAestheticsDialog(QDialog):
         self.symbols_tab = SymbolsTab(self.groups, self.config)
         self.raincloud_tab = RaincloudTab(self.groups, self.config)
         self.error_tab = ErrorBarsTab(self.config)
-        self.significance_tab = SignificanceTab(self.config)
+        self.significance_tab = SignificanceTab(self.config, analysis_result=self.analysis_result)
         
         # Set dialog reference for cross-tab communication
         self.colors_tab.dialog_ref = self
@@ -1413,31 +1633,50 @@ class PlotAestheticsDialog(QDialog):
         # Rechte Seite: Preview
         if PlotPreviewWidget:
             preview_frame = QFrame()
-            preview_frame.setFrameStyle(QFrame.StyledPanel)
+            preview_frame.setFrameStyle(QFrame.Sunken)
             preview_layout = QVBoxLayout(preview_frame)
-            
-            preview_label = QLabel("Live Preview")
-            preview_label.setAlignment(Qt.AlignCenter)
-            preview_label.setStyleSheet("font-weight: bold; padding: 2px; font-size: 10px;")
-            preview_label.setMaximumHeight(20)  # Begrenze die Höhe des Labels
-            preview_layout.addWidget(preview_label)
-            
+            preview_layout.setContentsMargins(2, 2, 2, 2)
+
             self.preview = PlotPreviewWidget()
             if self.groups and self.samples:
                 self.preview.set_data(self.groups, self.samples)
             preview_layout.addWidget(self.preview)
             
             splitter.addWidget(preview_frame)
-            splitter.setSizes([500, 800])  # Weniger Platz für Tabs, mehr für Preview
+            splitter.setStretchFactor(0, 2)
+            splitter.setStretchFactor(1, 3)
+            splitter.setSizes([560, 840])
         else:
             # Fallback ohne Preview
             no_preview_label = QLabel("Preview not available")
             no_preview_label.setAlignment(Qt.AlignCenter)
             splitter.addWidget(no_preview_label)
-            splitter.setSizes([500, 300])
+            splitter.setStretchFactor(0, 2)
+            splitter.setStretchFactor(1, 3)
+            splitter.setSizes([560, 840])
+
+    def _get_ordered_groups(self):
+        if hasattr(self, 'order_list') and self.order_list is not None:
+            return [self.order_list.item(i).text() for i in range(self.order_list.count())]
+        return list(self.groups)
+
+    def _on_group_order_changed(self, *args):
+        ordered_groups = self._get_ordered_groups()
+        self.groups = ordered_groups
+        if hasattr(self, 'preview') and self.preview:
+            ordered_samples = {g: self.samples[g] for g in ordered_groups if g in self.samples}
+            self.preview.set_data(ordered_groups, ordered_samples)
+        self.update_preview()
     
     def connect_signals(self):
         """Verbinde alle Signals für Live-Update"""
+        # Block signals on all tabs during wiring to prevent spurious preview calls
+        tabs = [self.size_tab, self.typography_tab, self.colors_tab,
+                self.symbols_tab, self.style_tab, self.raincloud_tab,
+                self.error_tab, self.significance_tab]
+        for tab in tabs:
+            tab.blockSignals(True)
+
         self.size_tab.settingsChanged.connect(self.update_preview)
         self.typography_tab.settingsChanged.connect(self.update_preview_immediately)
         self.colors_tab.settingsChanged.connect(self.update_preview)
@@ -1445,19 +1684,18 @@ class PlotAestheticsDialog(QDialog):
         self.style_tab.settingsChanged.connect(self.update_preview)
         self.style_tab.settingsChanged.connect(self.update_raincloud_tab_visibility)
         self.raincloud_tab.settingsChanged.connect(self.update_preview)
-        # FIXED: Add missing signal connections for complete preview updates
         self.error_tab.settingsChanged.connect(self.update_preview)
         self.significance_tab.settingsChanged.connect(self.update_preview)
-        self.error_tab.settingsChanged.connect(self.update_preview)
-        self.significance_tab.settingsChanged.connect(self.update_preview)
+
+        for tab in tabs:
+            tab.blockSignals(False)
     
     def update_preview_immediately(self):
         """Sofortige Preview-Aktualisierung für Schriftarten-Änderungen"""
         if hasattr(self, 'preview') and self.preview:
             config = self.get_config()
-            
-            # Font-Management ist jetzt im StylingManager integriert
-            # Einfach das normale Update verwenden - der neue Manager handhabt Fonts optimal
+            config['pairwise_results'] = (self.analysis_result or {}).get('pairwise_comparisons', [])
+            self._apply_preview_aspect(config)
             self.preview.update_plot(config)
             
             # Force immediate redraw for font changes
@@ -1484,10 +1722,27 @@ class PlotAestheticsDialog(QDialog):
             if raincloud_tab_index != -1:
                 self.tab_widget.removeTab(raincloud_tab_index)
     
+    def _apply_preview_aspect(self, config):
+        """Preview always fills the available canvas — aspect ratio only matters for export."""
+        pass
+
     def update_preview(self):
+        """Schedules a debounced preview update (250 ms quiet period)."""
+        self._preview_timer.start()
+
+    def _do_update_preview(self):
         """Aktualisiert die Live-Preview"""
         if hasattr(self, 'preview') and self.preview:
+            ordered_groups = self._get_ordered_groups()
+            if ordered_groups != self.groups:
+                self.groups = ordered_groups
+            if self.samples:
+                ordered_samples = {g: self.samples[g] for g in self.groups if g in self.samples}
+                self.preview.set_data(self.groups, ordered_samples)
             config = self.get_config()
+            # Inject real pairwise results for significance rendering
+            config['pairwise_results'] = (self.analysis_result or {}).get('pairwise_comparisons', [])
+            self._apply_preview_aspect(config)
             self.preview.update_plot(config)
     
     def get_config(self):
@@ -1546,9 +1801,21 @@ class PlotAestheticsDialog(QDialog):
             config['colors'] = {}
             for i, group in enumerate(self.groups):
                 config['colors'][group] = default_colors[i % len(default_colors)]
-        
+
+        config['groups'] = self._get_ordered_groups()
+        config['group_order'] = config['groups'][:]
+        if hasattr(self, 'file_name_edit') and self.file_name_edit is not None:
+            config['file_name'] = self.file_name_edit.text().strip() or None
+        config['create_plot'] = True
+        config['dependent'] = self.dependent
+
         return config
     
+    def set_dependent(self, val, show_lines=True):
+        """Setzt den Paired/Dependent-Status."""
+        self.dependent = bool(val)
+
+
     def set_groups(self, groups, samples):
         """Aktualisiert Gruppen und Samples"""
         self.groups = groups

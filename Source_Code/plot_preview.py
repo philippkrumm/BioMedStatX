@@ -214,12 +214,16 @@ class PlotPreviewWidget(FigureCanvasQTAgg):
         try:
             # Clear and redraw
             self.ax.clear()
-            
+
             # Markiere als Preview für optimiertes Styling
             config['_is_preview'] = True
-            
+
+            # Extract pairwise results before passing config to avoid key leakage
+            pairwise_results = config.pop('pairwise_results', []) or []
+
             # Use the central dispatcher method (Font-Management ist jetzt integriert)
-            DataVisualizer.plot_from_config(self.ax, self.groups, self.samples, config)
+            DataVisualizer.plot_from_config(self.ax, self.groups, self.samples, config,
+                                            pairwise_results=pairwise_results)
             
             # Force immediate redraw
             self.draw_idle()
