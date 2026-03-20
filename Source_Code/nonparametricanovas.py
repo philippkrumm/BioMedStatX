@@ -87,15 +87,14 @@ except ImportError:
     avg_predictions = comparisons = plot_predictions = plot_comparisons = None
     # The posthoc_marginaleffects function will raise an error if called without marginaleffects
 import warnings
+import numpy as np
+import pandas as pd
+from scipy import stats as sp_stats
+from scipy.linalg import block_diag
 
 
 def fallback_modern_models(data, dependent_var, formula, design_type, subject_col=None, cov_struct_option=None, time_col=None):
     import re
-    import warnings
-    import numpy as np
-    import pandas as pd
-    import statsmodels.api as sm
-    import statsmodels.formula.api as smf
     from pandas.api.types import is_numeric_dtype
     from statsmodels.tools.sm_exceptions import ConvergenceWarning
 
@@ -729,6 +728,90 @@ def fallback_modern_models(data, dependent_var, formula, design_type, subject_co
         results["error"] = f"Error in modern-model fallback: {exc}"
         return results
 
+# ---------------------------------------------------------------------------
+# Post-hoc helpers shared by all three nonparametric ANOVA functions
+# ---------------------------------------------------------------------------
+
+def _holm_correct(p_values):
+    """Holm step-down correction. Returns list of corrected p-values (same order)."""
+    n = len(p_values)
+    if n == 0:
+        return []
+    order = np.argsort(p_values)
+    corrected = np.array(p_values, dtype=float)
+    running_max = 0.0
+    for rank, idx in enumerate(order):
+        adj = float(p_values[idx]) * (n - rank)
+        running_max = max(running_max, adj)
+        corrected[idx] = min(running_max, 1.0)
+    return corrected.tolist()
+
+
+def _wilcoxon_posthoc_comp(arr1, arr2, label1, label2, alpha):
+    """Paired Wilcoxon signed-rank comparison dict (raw p; Holm applied by caller)."""
+    diffs = np.asarray(arr1, float) - np.asarray(arr2, float)
+    diffs = diffs[~np.isnan(diffs)]
+    n = len(diffs)
+    if n < 3 or np.all(diffs == 0):
+        return None
+    try:
+        stat, p_raw = sp_stats.wilcoxon(diffs, alternative='two-sided', zero_method='wilcox')
+    except Exception:
+        return None
+    total = n * (n + 1) / 2.0
+    rbc = abs((2.0 * float(stat) - total) / total)   # rank-biserial correlation
+    return {
+        "group1": label1, "group2": label2,
+        "test": "Wilcoxon Signed-Rank",
+        "statistic": float(stat),
+        "p_value": float(p_raw),    # overwritten after Holm by caller
+        "corrected": False, "correction": "None",
+        "significant": float(p_raw) < alpha,
+        "effect_size": round(rbc, 4), "effect_size_type": "rank_biserial_r",
+        "confidence_interval": None,
+    }
+
+
+def _mwu_posthoc_comp(arr1, arr2, label1, label2, alpha):
+    """Mann-Whitney U comparison dict (raw p; Holm applied by caller)."""
+    a1 = np.asarray(arr1, float); a1 = a1[~np.isnan(a1)]
+    a2 = np.asarray(arr2, float); a2 = a2[~np.isnan(a2)]
+    n1, n2 = len(a1), len(a2)
+    if n1 < 2 or n2 < 2:
+        return None
+    try:
+        stat, p_raw = sp_stats.mannwhitneyu(a1, a2, alternative='two-sided', use_continuity=True)
+    except Exception:
+        return None
+    rbc = abs((2.0 * float(stat) - n1 * n2) / (n1 * n2))   # rank-biserial correlation
+    return {
+        "group1": label1, "group2": label2,
+        "test": "Mann-Whitney U",
+        "statistic": float(stat),
+        "p_value": float(p_raw),    # overwritten after Holm by caller
+        "corrected": False, "correction": "None",
+        "significant": float(p_raw) < alpha,
+        "effect_size": round(rbc, 4), "effect_size_type": "rank_biserial_r",
+        "confidence_interval": None,
+    }
+
+
+def _apply_holm(raw_comps, alpha):
+    """In-place Holm correction of p_value fields. Returns the list."""
+    if not raw_comps:
+        return []
+    ps = [c["p_value"] for c in raw_comps]
+    corrected = _holm_correct(ps)
+    for comp, cp in zip(raw_comps, corrected):
+        comp["p_value"] = round(cp, 6)
+        comp["corrected"] = True
+        comp["correction"] = "Holm"
+        comp["significant"] = cp < alpha
+    return raw_comps
+
+
+# ---------------------------------------------------------------------------
+
 def perform_friedman_test(data, dv, within_factor, subject_col, alpha=0.05):
     """
     Friedman test as nonparametric fallback for Repeated-Measures ANOVA.
@@ -737,10 +820,6 @@ def perform_friedman_test(data, dv, within_factor, subject_col, alpha=0.05):
     Returns a result dict compatible with the downstream exporter and
     _run_modern_fallback_posthoc post-hoc infrastructure.
     """
-    import numpy as np
-    import pandas as pd
-    from scipy import stats
-
     warnings_list = []
     error = None
 
@@ -764,7 +843,7 @@ def perform_friedman_test(data, dv, within_factor, subject_col, alpha=0.05):
             warnings_list.append(f"Very few subjects (n={n_subjects}). Friedman test may have low power.")
 
         # --- Run Friedman test ---
-        chi2_stat, p_value = stats.friedmanchisquare(*[wide[col].values for col in level_cols])
+        chi2_stat, p_value = sp_stats.friedmanchisquare(*[wide[col].values for col in level_cols])
         df1 = k - 1
         chi2_stat = float(chi2_stat)
         p_value = float(p_value)
@@ -778,7 +857,7 @@ def perform_friedman_test(data, dv, within_factor, subject_col, alpha=0.05):
             sd = float(np.std(vals, ddof=1)) if n > 1 else 0.0
             stderr = float(sd / np.sqrt(n)) if n > 0 else None
             descriptive[f"{within_factor}={col}"] = {
-                "n": n, "mean": mean, "sd": sd, "stderr": stderr,
+                "n": n, "mean": mean, "sd": sd, "std": sd, "stderr": stderr,
                 "median": float(np.median(vals)),
                 "min": float(np.min(vals)), "max": float(np.max(vals)),
                 "ci_lower": None, "ci_upper": None,
@@ -824,12 +903,29 @@ def perform_friedman_test(data, dv, within_factor, subject_col, alpha=0.05):
             f"n = {n_subjects} subjects, k = {k} measurements)."
         )
 
+        # --- Post-hoc: pairwise Wilcoxon signed-rank (Holm-corrected), only if significant ---
+        posthoc_comps = []
+        posthoc_name = None
+        if p_value < alpha and k >= 2:
+            from itertools import combinations as _comb
+            raw = []
+            for c1, c2 in _comb(level_cols, 2):
+                comp = _wilcoxon_posthoc_comp(
+                    wide[c1].values, wide[c2].values,
+                    f"{within_factor}={c1}", f"{within_factor}={c2}", alpha
+                )
+                if comp is not None:
+                    raw.append(comp)
+            posthoc_comps = _apply_holm(raw, alpha)
+            if posthoc_comps:
+                posthoc_name = f"Pairwise Wilcoxon Signed-Rank (Holm, n={n_subjects} subjects)"
+
         return {
             "test": f"Repeated Measures ANOVA [Friedman Fallback]",
             "p_value": p_value,
             "statistic": chi2_stat,
-            "posthoc_test": None,
-            "pairwise_comparisons": [],
+            "posthoc_test": posthoc_name,
+            "pairwise_comparisons": posthoc_comps,
             "descriptive": descriptive,
             "descriptive_transformed": {},
             "alpha": alpha,
@@ -899,11 +995,6 @@ def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05, n_permu
 
     Returns a result dict compatible with the downstream exporter.
     """
-    import numpy as np
-    import pandas as pd
-    import statsmodels.formula.api as smf
-    from scipy import stats as sp_stats
-
     warnings_list = []
     rng = np.random.default_rng(seed)
 
@@ -938,12 +1029,12 @@ def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05, n_permu
             )
 
         formula_full    = f"{safe_dv} ~ C({safe_a}) + C({safe_b}) + C({safe_a}):C({safe_b})"
-        # Type-III-style reduced models: each removes exactly one effect,
-        # keeping the others (including the interaction term for main-effect tests).
-        # This ensures df_effect matches the effect's own df and avoids
-        # confounding main effects with the interaction in unbalanced designs.
-        formula_no_a    = f"{safe_dv} ~ C({safe_b}) + C({safe_a}):C({safe_b})"
-        formula_no_b    = f"{safe_dv} ~ C({safe_a}) + C({safe_a}):C({safe_b})"
+        # Freedman-Lane reduced models: nuisance-only (no interaction for main-effect tests).
+        # Using "Y ~ C(B) + C(A):C(B)" as reduced for A is wrong in balanced designs:
+        # that model spans the same column space as the full model, making F_obs ≈ 0.
+        # Standard Freedman-Lane approach: reduced contains only the other main effect.
+        formula_no_a    = f"{safe_dv} ~ C({safe_b})"
+        formula_no_b    = f"{safe_dv} ~ C({safe_a})"
         formula_no_inter= f"{safe_dv} ~ C({safe_a}) + C({safe_b})"
 
         full_model = smf.ols(formula_full, data=df).fit()
@@ -999,7 +1090,7 @@ def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05, n_permu
                 mean = float(np.mean(subset)) if n > 0 else None
                 sd   = float(np.std(subset, ddof=1)) if n > 1 else 0.0
                 descriptive[key] = {
-                    "n": n, "mean": mean, "sd": sd,
+                    "n": n, "mean": mean, "sd": sd, "std": sd,
                     "stderr": float(sd / np.sqrt(n)) if n > 0 else None,
                     "median": float(np.median(subset)) if n > 0 else None,
                     "min": float(np.min(subset)) if n > 0 else None,
@@ -1054,12 +1145,56 @@ def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05, n_permu
             f"was used as nonparametric alternative for factors '{factor_a}' and '{factor_b}'."
         )
 
+        # --- Post-hoc: pairwise MWU for significant main effects and interaction (Holm) ---
+        posthoc_comps = []
+        posthoc_name = None
+        from itertools import combinations as _comb
+        raw = []
+        a_levels = sorted(df[safe_a].unique())
+        b_levels = sorted(df[safe_b].unique())
+
+        if p_perm_A < alpha and len(a_levels) >= 2:
+            for v1, v2 in _comb(a_levels, 2):
+                comp = _mwu_posthoc_comp(
+                    df[df[safe_a] == v1][safe_dv].values,
+                    df[df[safe_a] == v2][safe_dv].values,
+                    f"{factor_a}={v1}", f"{factor_a}={v2}", alpha
+                )
+                if comp is not None:
+                    raw.append(comp)
+
+        if p_perm_B < alpha and len(b_levels) >= 2:
+            for v1, v2 in _comb(b_levels, 2):
+                comp = _mwu_posthoc_comp(
+                    df[df[safe_b] == v1][safe_dv].values,
+                    df[df[safe_b] == v2][safe_dv].values,
+                    f"{factor_b}={v1}", f"{factor_b}={v2}", alpha
+                )
+                if comp is not None:
+                    raw.append(comp)
+
+        if p_perm_AB < alpha:
+            cells = [(av, bv) for av in a_levels for bv in b_levels]
+            for (a1, b1), (a2, b2) in _comb(cells, 2):
+                comp = _mwu_posthoc_comp(
+                    df[(df[safe_a] == a1) & (df[safe_b] == b1)][safe_dv].values,
+                    df[(df[safe_a] == a2) & (df[safe_b] == b2)][safe_dv].values,
+                    f"{factor_a}={a1}, {factor_b}={b1}",
+                    f"{factor_a}={a2}, {factor_b}={b2}", alpha
+                )
+                if comp is not None:
+                    raw.append(comp)
+
+        if raw:
+            posthoc_comps = _apply_holm(raw, alpha)
+            posthoc_name = "Pairwise Mann-Whitney U (Holm-corrected)"
+
         return {
             "test": "Two-Way ANOVA [Freedman-Lane Permutation Fallback]",
             "p_value": primary_p,
             "statistic": primary_F,
-            "posthoc_test": None,
-            "pairwise_comparisons": [],
+            "posthoc_test": posthoc_name,
+            "pairwise_comparisons": posthoc_comps,
             "descriptive": descriptive,
             "descriptive_transformed": {},
             "alpha": alpha,
@@ -1130,11 +1265,6 @@ def perform_brunner_langer_ats(data, dv, between_factor, within_factor, subject_
     Projection matrices used directly (idempotent, no pseudoinverse needed).
     df2 for Between effect via Satterthwaite marginal-covariance approximation.
     """
-    import numpy as np
-    import pandas as pd
-    from scipy import stats as sp_stats
-    from scipy.linalg import block_diag
-
     warnings_list = []
 
     try:
@@ -1158,7 +1288,7 @@ def perform_brunner_langer_ats(data, dv, between_factor, within_factor, subject_
 
         # --- Per-group wide rank matrices and covariance ---
         group_ns  = []
-        V_hats    = []   # (t×t) per-group rank covariance / N²
+        V_hats    = []   # (t×t) per-group rank covariance / N  (Ŝ_i per Brunner)
         RTE_rows  = []   # For output DataFrame
 
         for i, b_val in enumerate(between_levels):
@@ -1182,9 +1312,9 @@ def perform_brunner_langer_ats(data, dv, between_factor, within_factor, subject_
                     f"Group '{b_val}' has n={n_i} < 3. Covariance estimation may be unreliable."
                 )
 
-            R_i = wide.values.astype(float) / N  # shape (n_i, t) — normalize ranks to [0,1] scale
-            # Sample covariance of normalized ranks (ddof=1) per Brunner et al.
-            V_hat_i = np.cov(R_i.T, ddof=1)  # shape (t, t)
+            R_i = wide.values.astype(float)  # raw ranks, shape (n_i, t)
+            # Ŝ_i = cov(R_i)/N per Brunner et al. (2002); V̂_N = block_diag(Ŝ_i/n_i)
+            V_hat_i = np.cov(R_i.T, ddof=1) / N  # shape (t, t)
             V_hats.append(V_hat_i)
 
             # RTEs per cell
@@ -1267,7 +1397,7 @@ def perform_brunner_langer_ats(data, dv, between_factor, within_factor, subject_
                 mean = float(np.mean(subset)) if n > 0 else None
                 sd   = float(np.std(subset, ddof=1)) if n > 1 else 0.0
                 descriptive[key] = {
-                    "n": n, "mean": mean, "sd": sd,
+                    "n": n, "mean": mean, "sd": sd, "std": sd,
                     "stderr": float(sd / np.sqrt(n)) if n > 0 else None,
                     "median": float(np.median(subset)) if n > 0 else None,
                     "min": float(np.min(subset)) if n > 0 else None,
@@ -1320,13 +1450,69 @@ def perform_brunner_langer_ats(data, dv, between_factor, within_factor, subject_
             f"Between-effect df2 ({df2_between:.1f}) uses Satterthwaite marginal-covariance approximation "
             f"(Brunner et al. 2002)."
         )
+        # Append RTE table so it appears in the Excel Summary sheet
+        rte_lines = ["Relative Treatment Effects (RTE, range 0–1; 0.5 = no effect):"]
+        for _, rte_row in RTE_df.iterrows():
+            rte_lines.append(
+                f"  {between_factor}={rte_row['between_group']}, "
+                f"{within_factor}={rte_row['within_level']}: "
+                f"RTE={rte_row['RTE']:.4f} (n={int(rte_row['n'])})"
+            )
+        analysis_note += "\n" + "\n".join(rte_lines)
+
+        # --- Post-hoc: Wilcoxon (within), MWU (between/interaction), Holm-corrected ---
+        posthoc_comps = []
+        posthoc_name = None
+        from itertools import combinations as _comb
+        raw = []
+
+        # Between-factor: MWU between groups collapsed over within levels
+        if p_A < alpha and a >= 2:
+            for b1, b2 in _comb(between_levels, 2):
+                comp = _mwu_posthoc_comp(
+                    df[df[between_factor] == b1][dv].values,
+                    df[df[between_factor] == b2][dv].values,
+                    f"{between_factor}={b1}", f"{between_factor}={b2}", alpha
+                )
+                if comp is not None:
+                    raw.append(comp)
+
+        # Within-factor: paired Wilcoxon between time points (all subjects)
+        if p_T < alpha and t >= 2:
+            wide_all = df.pivot_table(
+                index=subject_col, columns=within_factor, values=dv, aggfunc='mean'
+            ).reindex(columns=within_levels).dropna()
+            for w1, w2 in _comb(within_levels, 2):
+                comp = _wilcoxon_posthoc_comp(
+                    wide_all[w1].values, wide_all[w2].values,
+                    f"{within_factor}={w1}", f"{within_factor}={w2}", alpha
+                )
+                if comp is not None:
+                    raw.append(comp)
+
+        # Interaction: MWU for each between-group pair at each within level
+        if p_AT < alpha:
+            for w_val in within_levels:
+                for b1, b2 in _comb(between_levels, 2):
+                    comp = _mwu_posthoc_comp(
+                        df[(df[between_factor] == b1) & (df[within_factor] == w_val)][dv].values,
+                        df[(df[between_factor] == b2) & (df[within_factor] == w_val)][dv].values,
+                        f"{between_factor}={b1}, {within_factor}={w_val}",
+                        f"{between_factor}={b2}, {within_factor}={w_val}", alpha
+                    )
+                    if comp is not None:
+                        raw.append(comp)
+
+        if raw:
+            posthoc_comps = _apply_holm(raw, alpha)
+            posthoc_name = "Pairwise Wilcoxon/MWU (Holm-corrected)"
 
         return {
             "test": "Mixed ANOVA [Brunner-Langer ATS Fallback]",
             "p_value": primary_p,
             "statistic": primary_F,
-            "posthoc_test": None,
-            "pairwise_comparisons": [],
+            "posthoc_test": posthoc_name,
+            "pairwise_comparisons": posthoc_comps,
             "descriptive": descriptive,
             "descriptive_transformed": {},
             "alpha": alpha,
@@ -1429,7 +1615,6 @@ def auto_anova_decision(df, dv, factors, subject=None, design='two_way', alpha=0
         info: dict with assumption test results and model type
     """
     # 1. Fit OLS and get residuals for normality
-    import statsmodels.formula.api as smf
     if design == 'two_way':
         formula = f"{dv} ~ {' * '.join(factors)}"
         ols_model = smf.ols(formula, data=df).fit()
@@ -1465,7 +1650,6 @@ def auto_anova_decision(df, dv, factors, subject=None, design='two_way', alpha=0
         if verbose:
             print("Assumptions met: using parametric ANOVA.")
         if design == 'two_way':
-            import statsmodels.api as sm
             aov_table = sm.stats.anova_lm(ols_model, typ=2)
             return aov_table, {'parametric': True, 'p_norm': p_norm, 'p_levene': p_lev, 'model': 'ANOVA'}
         elif design == 'rm':
@@ -1473,7 +1657,6 @@ def auto_anova_decision(df, dv, factors, subject=None, design='two_way', alpha=0
             result = AnovaRM(df, depvar=dv, subject=subject, within=factors).fit()
             return result, {'parametric': True, 'p_norm': p_norm, 'p_levene': p_lev, 'model': 'AnovaRM'}
         elif design == 'mixed':
-            import statsmodels.formula.api as smf
             # Use MixedLM for parametric
             model = smf.mixedlm(formula, data=df, groups=df[subject])
             result = model.fit()
@@ -1528,7 +1711,6 @@ Example usage:
 
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
-import numpy as np
 import matplotlib.pyplot as plt
 from statsmodels.genmod.bayes_mixed_glm import BinomialBayesMixedGLM
 from scipy.stats import norm

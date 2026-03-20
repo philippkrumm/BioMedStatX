@@ -20,7 +20,6 @@ preload_critical_modules()
 
 # Heavy modules will be imported lazily when needed
 _matplotlib_plt = None
-_seaborn = None
 
 def get_matplotlib():
     """Lazy import matplotlib.pyplot"""
@@ -30,16 +29,6 @@ def get_matplotlib():
         _matplotlib_plt = plt
     return _matplotlib_plt
 
-def get_seaborn():
-    """Lazy import seaborn"""
-    global _seaborn
-    if _seaborn is None:
-        import seaborn as sns
-        _seaborn = sns
-    return _seaborn
-
-# DISABLED: Nonparametric fallbacks are not yet supported
-# from nonparametricanovas import NonParametricFactory, NonParametricRMANOVA
 from stats_functions import (
     DataImporter, AnalysisManager, 
     UIDialogManager, OutlierDetector, OUTLIER_IMPORTS_AVAILABLE
@@ -4611,7 +4600,11 @@ def _ap_update_mode_constraints(self):
         self.auto_mode_hint.setText("Multi mode analyzes multiple measurement columns (for example several genes) with the same factor mapping. It remains restricted to ANOVA-capable designs.")
     else:
         self.auto_mode_hint.setText("Single mode expects exactly one measurement column (for example one gene).")
-    self.on_mapping_changed()
+    # Re-run heuristics so the DV bucket is populated correctly for the new mode
+    if hasattr(self, 'df') and self.df is not None:
+        self._apply_mapping_heuristics()
+    else:
+        self.on_mapping_changed()
 
 
 def _ap_set_workflow_state(self, stage, message, running=False):

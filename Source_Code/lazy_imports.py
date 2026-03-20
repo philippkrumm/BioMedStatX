@@ -109,6 +109,11 @@ def get_scikit_posthocs():
     """Get scikit_posthocs module"""
     return lazy_imports.get_module('scikit_posthocs', 'scikit_posthocs')
 
+def get_pairwise_tukeyhsd():
+    """Get pairwise_tukeyhsd function from statsmodels"""
+    multicomp = lazy_imports.get_module('statsmodels_multicomp', 'statsmodels.stats.multicomp')
+    return multicomp.pairwise_tukeyhsd
+
 def get_statsmodels_multitest():
     """Get statsmodels multitest multipletests function with fallback"""
     try:

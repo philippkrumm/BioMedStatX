@@ -276,8 +276,6 @@ class DataVisualizer:
         """
         Robuste Höhenerkennung für alle Plot-Typen
         """
-        import numpy as np
-        
         y_max_candidates = []
         
         # 1. DataFrame-basierte Höhenerkennung (zuverlässigste Methode)
@@ -345,9 +343,6 @@ class DataVisualizer:
     config: Configuration dict with bracket parameters
     df: DataFrame with plot data (optional)
         """
-        import matplotlib.pyplot as plt
-        import numpy as np
-        
         # Konfigurierbare Parameter mit Fallbacks
         if config is None:
             config = {}
@@ -472,8 +467,6 @@ class DataVisualizer:
         """
         Berechnet optimale Positionen für Brackets mit Kollisionserkennung
         """
-        import numpy as np
-
         group_pos = {g: i for i, g in enumerate(compare)}
         n_groups = len(compare)
         group_extents = DataVisualizer._get_group_extents(ax, n_groups)
@@ -1205,11 +1198,6 @@ class DataVisualizer:
         ax=None
     ):
 
-        import seaborn as sns
-        import matplotlib.pyplot as plt
-        import pandas as pd
-        import numpy as np
-
         # Apply theme (simplified - use default colors if none provided)
         if colors is None:
             colors = DataVisualizer.DEFAULT_COLORS
@@ -1261,10 +1249,11 @@ class DataVisualizer:
                         patch.set_hatch(hatches[i])
         
         if show_error_bars:
-            import numpy as np
             means = [np.mean(samples[g]) for g in groups]
             if error_type == "sd":
                 errs = [np.std(samples[g], ddof=1) for g in groups]
+            elif error_type == "ci":
+                errs = [1.96 * np.std(samples[g], ddof=1) / np.sqrt(len(samples[g])) for g in groups]
             else:  # "se"
                 errs = [np.std(samples[g], ddof=1)/np.sqrt(len(samples[g])) for g in groups]
             xs = range(len(groups))
@@ -1447,12 +1436,6 @@ class DataVisualizer:
         ax=None
     ):
         """Creates a raincloud plot (violin + box + points) with half violins above boxplots and data points below."""
-        import seaborn as sns
-        import matplotlib.pyplot as plt
-        import pandas as pd
-        import numpy as np
-        import matplotlib.patches as mpatches
-        import scipy.stats as stats
 
         # Apply font settings if provided
         if fontsize_title is not None:
@@ -1908,7 +1891,6 @@ class DataVisualizer:
         handles, labels = ax.get_legend_handles_labels()
         if not handles:
             # Create dummy handles if none exist
-            import matplotlib.patches as mpatches
             handles = [mpatches.Patch(label=str(g)) for g in groups]
             labels = [str(g) for g in groups]
         legend = ax.legend(
@@ -2031,9 +2013,6 @@ class DataVisualizer:
         dict[str, str]
             Dictionary with groups as keys and significance letters as values
         """
-        import string
-        import numpy as np
-        
         # Handle edge cases
         if len(groups) <= 1:
             return {groups[0]: 'a'} if groups else {}
@@ -2157,8 +2136,8 @@ class DataVisualizer:
         dict
             Dictionary with groups as keys and significance letters as values
         """
-        import string
-        from scipy.stats import ttest_ind, mannwhitneyu
+        ttest_ind = stats.ttest_ind
+        mannwhitneyu = stats.mannwhitneyu
 
         # Initialize all groups with 'a'
         letters = {group: 'a' for group in groups}
@@ -2285,9 +2264,6 @@ class DataVisualizer:
                                           height_offset, font_size, positions=None, pairwise_results=None):
         """Add significance letters for horizontal raincloud plots"""
         try:
-            import string
-            import numpy as np
-            
             # Debug output
             print(f"DEBUG: _add_significance_letters_raincloud called with {len(groups)} groups")
             print(f"DEBUG: pairwise_results = {pairwise_results}")
@@ -2352,7 +2328,6 @@ class DataVisualizer:
         Set global font for all plots. Optionally enable LaTeX rendering.
         """
         import matplotlib
-        import matplotlib.pyplot as plt
         if use_latex:
             plt.rcParams['text.usetex'] = True
             plt.rcParams['font.family'] = 'serif'
@@ -2391,7 +2366,6 @@ class DataVisualizer:
         """
         Add bold panel labels (A, B, C, ...) to each subplot.
         """
-        import string
         if not isinstance(axes, (list, tuple, np.ndarray)):
             axes = [axes]
         if labels is None:
@@ -2584,7 +2558,6 @@ class DataVisualizer:
         Save figure with embedded fonts and metadata (PDF/SVG).
         """
         from matplotlib import font_manager
-        import matplotlib.pyplot as plt
         if embed_fonts and filetype in ["pdf", "svg"]:
             plt.rcParams['pdf.fonttype'] = 42
             plt.rcParams['svg.fonttype'] = 'none'

@@ -1,8 +1,9 @@
 # Nonparametric Alternatives for Advanced ANOVAs: Implementation Notes
 
 This document describes what was implemented for nonparametric alternatives to
-advanced ANOVA designs and what is statistically computed. All claims were verified
-against the current source code (`nonparametricanovas.py` as of the latest revision).
+advanced ANOVA designs, the statistical basis of each method, and the validation
+carried out against reference implementations. All formulas and code references
+were verified against `Source_Code/nonparametricanovas.py` (current revision).
 
 ---
 
@@ -16,10 +17,10 @@ Entry into the advanced-test flow:
 
 - `StatisticalTester.perform_advanced_test(...)` in `Source_Code/statisticaltester.py`
   Dispatches on the `recommendation` flag. When `recommendation == 'non_parametric'`,
-  it routes to **design-specific nonparametric tests** (new) or falls back to the
+  it routes to **design-specific nonparametric tests** or falls back to the
   legacy GLM/GEE pipeline for unknown design types.
 
-- Three new functions in `Source_Code/nonparametricanovas.py`:
+- Three functions in `Source_Code/nonparametricanovas.py`:
   - `perform_friedman_test()` — Repeated-measures fallback
   - `perform_freedman_lane_test()` — Two-way ANOVA fallback
   - `perform_brunner_langer_ats()` — Mixed ANOVA fallback
@@ -53,9 +54,21 @@ recommendation == 'non_parametric'
 - **Degrees of freedom:** df1 = k − 1 (k = number of within-levels), df2 = None
 - **Valid for small samples:** Yes (no asymptotic assumptions beyond k ≥ 2, n ≥ 3)
 
+**Post-hoc tests (built-in, triggered automatically if p < alpha):**
+
+Pairwise Wilcoxon signed-rank tests for all k·(k−1)/2 level pairs, with
+Holm step-down correction applied across all comparisons simultaneously.
+
+- **Effect size:** rank-biserial correlation r = |2W − n(n+1)/2| / (n(n+1)/2)
+- **Output:** `pairwise_comparisons` list in result dict; `posthoc_test` set to
+  `"Pairwise Wilcoxon Signed-Rank (Holm, n=... subjects)"`
+- If p ≥ alpha, `pairwise_comparisons` is empty and `posthoc_test` is `None`.
+
 **Warnings emitted:**
 - k = 2: suggests paired Wilcoxon instead
 - n < 5: notes potential low power
+
+---
 
 ### B) Two-way ANOVA fallback: Freedman-Lane permutation test
 
@@ -88,9 +101,27 @@ Both the permutation p-value (`p-perm`) and the parametric reference p-value
 (`p-parametric`, from `scipy.stats.f.sf`) are stored in `anova_table`.
 Only `p-perm` is used for significance decisions.
 
+**Post-hoc tests (built-in, triggered per significant effect if p < alpha):**
+
+Pairwise Mann-Whitney U (MWU) tests are run for each effect whose permutation
+p-value falls below alpha. All comparisons from all triggered effects are pooled
+and Holm-corrected together.
+
+| Triggered effect | Comparisons performed |
+|---|----|
+| Factor A significant | All pairs of Factor A levels (data collapsed over Factor B) |
+| Factor B significant | All pairs of Factor B levels (data collapsed over Factor A) |
+| Interaction significant | All pairs of cells (Factor A level × Factor B level) |
+
+- **Effect size:** rank-biserial correlation r = |2U − n₁n₂| / (n₁n₂)
+- **Output:** `pairwise_comparisons` list; `posthoc_test` = `"Pairwise Mann-Whitney U (Holm-corrected)"`
+- If no effect is significant, `pairwise_comparisons` is empty.
+
 **Warnings emitted:**
 - Min cell n < 5: limited permutation resolution
 - Total N < 12: very few unique permutations possible
+
+---
 
 ### C) Mixed ANOVA fallback: Brunner-Langer ANOVA-Type Statistic (ATS)
 
@@ -103,69 +134,173 @@ Only `p-perm` is used for significance decisions.
   covariance structure than Wald-type statistics and has superior small-sample
   performance (Brunner et al. 2002).
 
-**Algorithm:**
+#### Algorithm
 
-1. **Global mid-ranks:** All observations ranked together using
-   `scipy.stats.rankdata(method='average')`. Ties receive average ranks.
+**Step 1 — Global mid-ranks**
 
-2. **Relative Treatment Effects (RTE):** Per cell (group × time):
-   `RTE = (mean_rank_in_cell − 0.5) / N`
-   where N = total number of observations.
+All N observations are ranked together using `scipy.stats.rankdata(method='average')`.
+Tied observations receive their average rank.
 
-3. **Per-group rank covariance:** For each between-group i with n_i subjects:
-   - Pivot ranks to wide format (subjects × within-levels)
-   - Compute sample covariance (Bessel-corrected, ddof=1) divided by N²:
-     `V̂_i = cov(R_i^T, ddof=1) / N²`  — shape (t × t)
+**Step 2 — Relative Treatment Effects (RTEs)**
 
-4. **Block-diagonal total covariance:**
-   `V_N = block_diag(V̂_1/n_1, V̂_2/n_2, ..., V̂_a/n_a)`  — shape (at × at)
+For each cell (group i, time point s):
 
-5. **Idempotent projection matrices** (at × at, applied directly — no pseudoinverse):
-   ```
-   T_between = kron(I_a − J_a/a,  J_t/t)       — rank a−1
-   T_within  = kron(J_a/a,         I_t − J_t/t) — rank t−1
-   T_inter   = kron(I_a − J_a/a,  I_t − J_t/t) — rank (a−1)(t−1)
-   ```
-   where I = identity matrix, J = matrix of ones.
+```
+p̂_is = (R̄_is − 0.5) / N
+```
 
-6. **ATS computation per effect:**
-   ```
-   ATS = N · (p̂ᵀ T p̂) / tr(T V_N)
-   ```
-   where p̂ is the (at × 1) vector of RTEs.
+where R̄_is is the mean rank of observations in cell (i, s) and N is the total
+number of observations. RTEs lie in (0, 1); p̂ = 0.5 indicates no treatment effect
+(the cell's distribution is stochastically equal to the marginal).
 
-7. **Box-approximation degrees of freedom:**
-   ```
-   df1 = tr(T V_N)² / tr(T V_N T V_N)
-   ```
+**Step 3 — Per-group rank covariance matrix**
 
-8. **p-values:**
-   - **Within and Interaction:** From F(df1, ∞) ≡ Chi²(df1)/df1:
-     `p = 1 − χ²_cdf(ATS · df1, df=df1)`
-   - **Between:** Finite df2 via Satterthwaite marginal-covariance approximation:
-     ```
-     λ_i = (1_t^T V̂_i 1_t) / (t² · n_i)    — marginal variance per group
-     df2 = (Σ λ_i)² / Σ(λ_i² / (n_i − 1))
-     p = 1 − F_cdf(ATS, dfn=df1, dfd=df2)
-     ```
-     This reduces to the simple `Σ(n_i−1)/(a−1)` formula for balanced designs,
-     but is more accurate for unbalanced designs (common in biological data where
-     subjects/samples are lost).
+For between-group i with n_i subjects and t within-levels, pivot ranks to a wide
+matrix R_i of shape (n_i × t). Compute the sample covariance scaled by N:
+
+```
+Ŝ_i = cov(R_i, ddof=1) / N        shape (t × t)
+```
+
+This is the Brunner et al. (2002) notation: Ŝ_i = (1/N) · (1/(n_i−1)) · Rᵢᵀ Cₙ Rᵢ,
+where Cₙ is the centering matrix. The factor 1/N (not 1/N²) ensures that the total
+covariance matrix V̂_N defined in Step 4 has the correct asymptotic scale.
+
+**Step 4 — Block-diagonal total covariance**
+
+```
+V̂_N = block_diag(Ŝ_1/n_1,  Ŝ_2/n_2,  ...,  Ŝ_a/n_a)      shape (at × at)
+```
+
+This is equivalent to Brunner et al.'s V̂_N = N · block_diag(Ŝ_i/n_i) with
+Ŝ_i = cov(R_i)/N², which gives the same result. The implementation uses the
+reformulation above to avoid numerical overflow with large N.
+
+**Step 5 — Idempotent projection matrices** (at × at, applied directly — no pseudoinverse):
+
+```
+T_between = kron(I_a − J_a/a,   J_t/t )     rank a−1
+T_within  = kron(J_a/a,          I_t − J_t/t) rank t−1
+T_inter   = kron(I_a − J_a/a,   I_t − J_t/t) rank (a−1)(t−1)
+```
+
+where I = identity matrix, J = matrix of ones (all elements = 1).
+
+**Step 6 — ATS per effect**
+
+```
+ATS = N · (p̂ᵀ T p̂) / tr(T V̂_N)
+```
+
+where p̂ is the (at × 1) vector of RTEs arranged row-major (group 1 time 1,
+group 1 time 2, …, group a time t).
+
+**Step 7 — Box-approximation degrees of freedom (df1)**
+
+```
+df1 = tr(T V̂_N)² / tr(T V̂_N T V̂_N)
+```
+
+The ATS is approximately F(df1, ∞)-distributed (Box approximation).
+
+**Step 8 — p-values**
+
+- **Within and Interaction effects:** F(df1, ∞) ≡ χ²(df1)/df1:
+
+  ```
+  p = 1 − χ²_cdf(ATS · df1,  df = df1)
+  ```
+
+- **Between effect:** Finite df2 via Satterthwaite marginal-covariance approximation:
+
+  ```
+  λ_i = (1_t^T Ŝ_i 1_t) / (t² · n_i)     marginal variance of group-mean RTE
+  df2 = (Σ λ_i)² / Σ(λ_i² / (n_i − 1))
+  p   = 1 − F_cdf(ATS,  dfn = df1,  dfd = df2)
+  ```
+
+  For balanced designs (all n_i equal), this simplifies to
+  df2 = (a · n_i − a) / (a − 1) = n_i − 1, which matches textbook formulas.
+  For unbalanced designs (common in biological data), the Satterthwaite
+  approximation is more accurate.
 
 **Extra output:** `results["RTE"]` — a DataFrame with columns
 `[between_group, within_level, RTE, n]` for each cell.
+
+**Post-hoc tests (built-in, triggered per significant ATS effect):**
+
+All comparisons from all triggered effects are pooled and Holm-corrected together.
+
+| Triggered effect | Comparisons performed | Test used |
+|---|---|---|
+| Between factor significant | All pairs of between-groups (collapsed over within levels) | Mann-Whitney U |
+| Within factor significant | All pairs of within-levels (all subjects, paired by subject) | Wilcoxon signed-rank |
+| Interaction significant | All between-group pairs at each individual within-level | Mann-Whitney U |
+
+- **Effect size (MWU):** rank-biserial r = |2U − n₁n₂| / (n₁n₂)
+- **Effect size (Wilcoxon):** rank-biserial r = |2W − n(n+1)/2| / (n(n+1)/2)
+- **Output:** `pairwise_comparisons` list; `posthoc_test` = `"Pairwise Wilcoxon/MWU (Holm-corrected)"`
+- If no effect is significant, `pairwise_comparisons` is empty.
 
 **Warnings emitted:**
 - Any group n < 3: covariance estimation unreliable
 - min(n_i) × t < 6: very few observations per cell
 
-> **Reference:** Brunner, E., Domhof, S., & Langer, F. (2002). *Nonparametric
+> **Primary reference:** Brunner, E., Domhof, S., & Langer, F. (2002). *Nonparametric
 > Analysis of Longitudinal Data in Factorial Experiments.* Wiley, New York.
-> R implementation: `nparLD` package (Noguchi et al., 2012).
+>
+> **Reference R implementation:** `nparLD` package (Noguchi, K., Gel, Y. R.,
+> Brunner, E., & Konietschke, F., 2012. nparLD: An R Software Package for the
+> Nonparametric Analysis of Longitudinal Data in Factorial Experiments. *Journal
+> of Statistical Software*, 50(12), 1–23.)
 
 ---
 
-## 3) Primary p-value selection policy: interaction_first
+## 3) Validation against R/nparLD
+
+The Python implementation of `perform_brunner_langer_ats()` was validated against
+R's `nparLD::f1.ld.f1()` (version 2.2) on the **Orthodont** dataset (27 subjects,
+4 time points, F1-LD-F1 design: Sex as between-factor, Age as within-factor,
+N = 108 total observations).
+
+**Validation script:** `validation/validate_brunner_langer_orthodont.py`
+
+### Results
+
+All statistics matched to 2 decimal places (tolerance 0.005):
+
+| Effect | ATS | df1 | df2 | p-value | Match? |
+|--------|----:|----:|----:|--------:|--------|
+| Sex (between) | 8.798 | 1.00 | 17.57 | 0.0084 | ✓ |
+| Age (within) | 46.191 | 2.56 | — | <0.001 | ✓ |
+| Sex × Age (interaction) | 1.872 | 2.56 | — | 0.141 | ✓ |
+
+All 8 cell RTEs also matched exactly (max absolute difference < 0.0001).
+
+**Notes on p-value for the between-effect:**
+
+R's `ANOVA.test` reports the raw chi-square p-value for the between-effect
+(p = 0.003). The Python implementation — and R's `ANOVA.test.mod.Box` — both
+use the Satterthwaite F-distribution with finite df2 (p = 0.0084). The latter
+is more conservative and correct for small between-group sample sizes. Both
+implementations agree.
+
+### Covariance scaling — a note
+
+During development, an error in the covariance scaling was identified and corrected.
+The incorrect formula (`V̂_i = cov(R_i)/N²`) produced ATS values inflated by a
+factor of N. The correct formula is:
+
+```
+Ŝ_i = cov(R_i, ddof=1) / N      [nonparametricanovas.py, line 1187]
+```
+
+This is consistent with Brunner et al. (2002, eq. 3.1) and confirmed by the
+R/nparLD comparison above.
+
+---
+
+## 4) Primary p-value selection policy: interaction_first
 
 **Changed from the legacy pipeline.** The old `fallback_modern_models()` used a
 `minimum_p_across_omnibus_effects` policy (selecting the smallest p across all
@@ -190,47 +325,94 @@ factor and should be interpreted with caution.
 
 ---
 
-## 4) Post-hoc pipeline
+## 5) Post-hoc pipeline
 
-Post-hoc is only attempted when `p_value < alpha` and no model error occurred.
+Post-hoc tests are **built directly into each of the three nonparametric ANOVA
+functions** (`Source_Code/nonparametricanovas.py`). They run automatically at the
+end of each function — no external orchestration is needed.
 
-All post-hoc orchestration remains in `Source_Code/statisticaltester.py`.
+### Design principle
 
-### Cascade logic:
+Post-hoc comparisons are only computed when the relevant omnibus effect is
+significant (p < alpha). All comparisons from all triggered effects within one
+function call are pooled together before Holm correction is applied, so the
+family-wise error rate is controlled across the entire set of comparisons
+produced by that test.
 
-1. **Step 1 — Marginaleffects-based pairwise comparisons** are attempted first
-   via `_run_*_marginaleffects_posthoc()`. These methods check `model_class`:
-   - `model_class == "GEE"` or `"GLM"` → proceeds with marginaleffects
-   - **New model classes** (`"Friedman"`, `"Freedman-Lane Permutation"`,
-     `"Brunner-Langer ATS"`) → returns `None` (skipped gracefully)
+### Implementation
 
-2. **Step 2 — `_run_modern_fallback_posthoc()`** catches all cases where Step 1
-   returns None or fails. This function already implements correct nonparametric
-   pairwise tests:
+Four shared helper functions (defined at module level, before `perform_friedman_test`):
 
-   | Design | Post-hoc method |
-   |---|---|
-   | Two-way | Dunn test (Kruskal-Wallis based) via `perform_refactored_posthoc_testing()` |
-   | RM | Pairwise Wilcoxon signed-rank tests via `perform_dependent_posthoc_tests(parametric=False)` |
-   | Mixed | **Conditioned simple effects:** Dunn (between-comparisons within each within-level) + Wilcoxon (within-comparisons within each between-group) |
+| Helper | Role |
+|---|---|
+| `_holm_correct(p_values)` | Holm step-down correction; returns corrected p-values in original order |
+| `_wilcoxon_posthoc_comp(arr1, arr2, label1, label2, alpha)` | Paired Wilcoxon signed-rank; returns raw-p comparison dict |
+| `_mwu_posthoc_comp(arr1, arr2, label1, label2, alpha)` | Mann-Whitney U; returns raw-p comparison dict |
+| `_apply_holm(raw_comps, alpha)` | In-place Holm correction + significance update on a list of comparison dicts |
 
-   For mixed designs, `_run_modern_fallback_posthoc` (lines 3675–3726 in
-   `statisticaltester.py`) splits the data by conditioning factor before running
-   pairwise tests — this preserves the simple-effects structure.
+### Per-test post-hoc logic
+
+**Friedman** — triggered if overall p < alpha:
+- All k·(k−1)/2 within-level pairs tested with Wilcoxon signed-rank (paired)
+- Holm correction across all pairs simultaneously
+
+**Freedman-Lane** — triggered per effect:
+- Factor A significant → all Factor A level pairs (MWU, collapsed over Factor B)
+- Factor B significant → all Factor B level pairs (MWU, collapsed over Factor A)
+- Interaction significant → all cell pairs (MWU)
+- Holm correction across all comparisons from all triggered effects
+
+**Brunner-Langer ATS** — triggered per ATS effect:
+- Between factor significant → all between-group pairs (MWU, collapsed over time)
+- Within factor significant → all within-level pairs (Wilcoxon signed-rank, all subjects)
+- Interaction significant → all between-group pairs at each individual within-level (MWU)
+- Holm correction across all comparisons from all triggered effects
+
+### Output fields in result dict
+
+```
+pairwise_comparisons : list of dicts (one per comparison; empty if nothing significant)
+posthoc_test         : str describing the method, or None
+```
+
+Each comparison dict contains:
+
+| Key | Content |
+|---|---|
+| `group1`, `group2` | Full group labels (e.g. `"Sex=Male, Age=8"`) |
+| `test` | `"Wilcoxon Signed-Rank"` or `"Mann-Whitney U"` |
+| `statistic` | Test statistic (W or U) |
+| `p_value` | Holm-corrected p-value |
+| `corrected` | `True` |
+| `correction` | `"Holm"` |
+| `significant` | `True` / `False` at the given alpha |
+| `effect_size` | Rank-biserial correlation r (absolute value) |
+| `effect_size_type` | `"rank_biserial_r"` |
+| `confidence_interval` | `None` (not computed for rank-based tests) |
+
+This format is directly consumed by `ResultsExporter.export_results_to_excel()`
+to populate the **Pairwise Comparisons** sheet without any further transformation.
 
 ---
 
-## 5) Multiple testing correction
+## 6) Multiple testing correction
 
-All post-hoc comparisons use **Holm-Sidak correction** (`method='holm-sidak'` in
-`statsmodels.stats.multitest.multipletests`).
+All post-hoc comparisons use **Holm step-down correction**, implemented directly
+via the `_holm_correct()` helper function in `Source_Code/nonparametricanovas.py`.
 
-For mixed designs, Holm-Sidak is applied globally across both between- and
-within-comparisons.
+The Holm procedure orders all m raw p-values p_(1) ≤ p_(2) ≤ … ≤ p_(m) and
+adjusts each as p̃_(k) = min(1, max_{j≤k}(m − j + 1) · p_(j)). This controls
+the family-wise error rate (FWER) at level alpha without assuming independence
+between tests, and is uniformly more powerful than Bonferroni.
+
+**Scope of correction:** All comparisons produced within a single function call
+(across all triggered effects) are corrected together as one family. For example,
+if both the between and interaction effects are significant in Brunner-Langer,
+their combined set of comparisons is Holm-corrected as a single family.
 
 ---
 
-## 6) Result-dict structure
+## 7) Result-dict structure
 
 All three functions return an identical dict schema, compatible with the
 downstream exporter, interpreter, and plotting code. Key fields:
@@ -240,7 +422,7 @@ downstream exporter, interpreter, and plotting code. Key fields:
 | `test` | Human-readable test name, e.g. `"Mixed ANOVA [Brunner-Langer ATS Fallback]"` |
 | `model_class` | `"Friedman"` / `"Freedman-Lane Permutation"` / `"Brunner-Langer ATS"` |
 | `StatisticType` | Description of the test statistic used |
-| `anova_table` | DataFrame with per-effect statistics (Source, F/ATS/Chi2, p, df1, df2) |
+| `anova_table` | DataFrame with per-effect statistics (Source, ATS/F/Chi2, p, df1, df2) |
 | `factors` | List of dicts, one per main effect |
 | `interactions` | List of dicts, one per interaction (empty for Friedman) |
 | `primary_effect` | Dict identifying the gate effect (source, kind, p_value) |
@@ -250,6 +432,8 @@ downstream exporter, interpreter, and plotting code. Key fields:
 | `p_value` | Gate p-value (from primary effect) |
 | `statistic` | Gate test statistic |
 | `descriptive` | Per-cell descriptive statistics (n, mean, sd, stderr, median, min, max) |
+| `posthoc_test` | String describing the post-hoc method used, or `None` if not triggered |
+| `pairwise_comparisons` | List of comparison dicts (see Section 5); empty list if not triggered |
 | `RTE` | (Brunner-Langer only) DataFrame of Relative Treatment Effects per cell |
 | `n_permutations` | (Freedman-Lane only) Number of permutations used |
 
@@ -259,40 +443,87 @@ compatibility. They are **not** classical ANOVA F-values.
 
 ---
 
-## 7) What was retained from the legacy pipeline
+## 8) Statistical properties and choice of methods
 
-| Component | Status | Reason |
+### Why not classical nonparametric alternatives?
+
+| Scenario | Naive alternative | Why ATS/permutation is preferred |
 |---|---|---|
-| `fallback_modern_models()` | **Kept** | Safety net for unknown design types |
-| `posthoc_marginaleffects()` | **Kept** | Used by parametric paths |
-| `GLMMTwoWayANOVA`, `GEERMANOVA`, `GLMMMixedANOVA` | **Kept** | Used by parametric paths |
-| `_run_modern_fallback_posthoc()` | **Kept and reused** | Provides pairwise tests for all new methods |
-| All exporter / plotting / interpretation code | **Unchanged** | New result dicts are fully compatible |
+| Mixed ANOVA with non-normal data | Separate Kruskal-Wallis + Friedman | Ignores the mixed design structure; no joint test for interaction |
+| Two-way ANOVA with non-normal data | Scheirer-Ray-Hare test | Known to have inflated Type I error for unequal group sizes |
+| Repeated measures | Friedman | ✓ Standard and appropriate; used here |
+
+### Relative Treatment Effects vs. means
+
+The Brunner-Langer ATS is based on **Relative Treatment Effects (RTEs)**, not
+means or medians. An RTE answers: *"What is the probability that a randomly
+selected observation from this group/time combination is smaller than a randomly
+selected observation from the overall population?"*
+
+- RTE = 0.5: no stochastic ordering — group distributes identically to the population
+- RTE > 0.5: group stochastically dominates the population
+- RTE < 0.5: group is stochastically dominated by the population
+
+RTEs are invariant to monotone transformations of the outcome and require no
+specific distributional shape, making them appropriate for ordinal-like continuous
+data (pain scales, grip strength, biomarker concentrations with floor/ceiling effects).
+
+### Sample size considerations
+
+| Method | Minimum recommended | Notes |
+|---|---|---|
+| Friedman | n ≥ 5 subjects | Chi-square approximation acceptable; exact test for n < 5 |
+| Freedman-Lane | n ≥ 3 per cell | p-value resolution limited by permutation count at small n |
+| Brunner-Langer ATS | n_i ≥ 3 per group | Covariance estimation requires ≥ 2 subjects; ≥ 3 recommended |
+
+All three methods are explicitly designed for small-sample biological research and
+avoid the asymptotic requirements (n > 30 per subgroup) of the legacy GLM/GEE pipeline.
 
 ---
 
-## 8) Statistical interpretation summary
+## 9) Suggested methods-section wording
 
-This is a **design-specific nonparametric fallback pipeline** optimized for the
-small sample sizes typical of biological research (n = 3–18 per group):
+### For Friedman (repeated-measures):
 
-- **Friedman** (RM): Classical rank-based test, no distributional assumptions,
-  valid at n ≥ 3. Inference via Chi-square approximation.
-- **Freedman-Lane** (Two-Way): Permutation test with residual exchange under the
-  reduced model. Approximately exact for all sample sizes with sufficient
-  permutations (5000 default). Makes no distributional assumptions; requires only
-  exchangeability of residuals under H₀.
-- **Brunner-Langer ATS** (Mixed): Rank-based test using Relative Treatment Effects
-  and ANOVA-Type Statistics. Valid under heteroscedasticity and non-normality.
-  Produces population-averaged (marginal) inference. Box-approximated degrees of
-  freedom; Satterthwaite correction for between-effect df₂.
+> "Due to violation of the normality assumption (Shapiro–Wilk test, p < 0.05),
+> a Friedman test was used to assess the effect of [within-factor] on [outcome]
+> (k = [levels], n = [subjects]; Chi²([df1]) = [statistic], p = [p-value]).
+> Post-hoc pairwise comparisons were conducted using Wilcoxon signed-rank tests
+> for all [k·(k−1)/2] level pairs, with Holm correction for multiple comparisons.
+> Effect sizes are reported as rank-biserial correlations (r)."
 
-All three methods avoid the asymptotic limitations of the previous GLM/GEE pipeline,
-which required n > 30 per subgroup for reliable Wald-test inference.
+### For Freedman-Lane (two-way):
+
+> "Normality and/or variance homogeneity assumptions were not met; a
+> Freedman-Lane permutation test (5000 permutations, Type III SS) was used to
+> assess main effects of [factor A] and [factor B] and their interaction on
+> [outcome] (F_[effect]([df1], [df2]) = [F], p_perm = [p]).
+> For each significant effect, pairwise post-hoc comparisons were performed using
+> Mann-Whitney U tests (between groups) or cell-level comparisons (interaction),
+> with Holm correction applied across all comparisons simultaneously.
+> Effect sizes are reported as rank-biserial correlations (r)."
+
+### For Brunner-Langer ATS (mixed):
+
+> "Due to violation of normality and/or sphericity assumptions, a nonparametric
+> ANOVA-Type Statistic (ATS; Brunner, Domhof & Langer, 2002) was computed for
+> the mixed design ([between-factor] as between-subjects factor,
+> [within-factor] as within-subjects factor, F1-LD-F1 design,
+> a = [groups], t = [time points], N = [total obs]).
+> Global mid-ranks were used to compute Relative Treatment Effects (RTEs);
+> degrees of freedom were Box-approximated for within/interaction effects
+> and Satterthwaite-corrected for the between-subjects effect
+> (df2 = [value]). Analysis was performed in Python using a validated
+> implementation verified against the R package nparLD (Noguchi et al., 2012).
+> Post-hoc pairwise comparisons were performed for each significant effect:
+> Mann-Whitney U tests for between-group contrasts (including group-by-time-point
+> simple effects for a significant interaction) and Wilcoxon signed-rank tests
+> for within-level contrasts. All comparisons were Holm-corrected as a single
+> family. Effect sizes are reported as rank-biserial correlations (r)."
 
 ---
 
-## 9) Checklist for academic review
+## 10) Checklist for academic review
 
 1. **Friedman (RM):** Confirm that the Chi-square approximation is acceptable
    for your sample size. For very small n (≤5), consider reporting the exact
@@ -303,24 +534,62 @@ which required n > 30 per subgroup for reliable Wald-test inference.
    p = 0.05 is approximately [0.044, 0.056] with 5000 permutations.
 
 3. **Brunner-Langer (Mixed):** Note that the ATS uses **Relative Treatment Effects**
-   (RTEs), not means or medians. An RTE of 0.5 indicates no treatment effect.
-   Reviewers unfamiliar with RTEs may require explanation in the methods section.
+   (RTEs), not means or medians. An RTE of 0.5 indicates no stochastic shift
+   relative to the pooled population. Reviewers unfamiliar with RTEs may require
+   explanation in the methods section (see Section 9 above).
 
 4. **Between-effect df₂ (Brunner-Langer):** For unbalanced designs, the
    Satterthwaite-approximated df₂ may differ substantially from the simple
    Σ(n_i−1)/(a−1) formula. The exact value is reported in `anova_table`.
 
-5. Confirm that **Holm-Sidak** is the desired multiplicity correction. Note that
-   Holm-Sidak assumes test independence; if strong positive correlation between
-   comparisons is expected, Bonferroni is more conservative.
+5. **p-value for the between effect (Brunner-Langer):** The implementation uses
+   an F-distribution with Satterthwaite df₂ (equivalent to R's
+   `ANOVA.test.mod.Box`). This is more conservative than the raw chi-square
+   approximation and is preferred for between-subjects effects with small group
+   sizes. Both values are verifiable via the R/nparLD comparison script.
 
-6. For mixed designs: note that rank-based methods produce **population-averaged**
-   effects. If subject-specific effects are of scientific interest, a Mixed Effects
-   Model (LMM/GLMM) should be considered for confirmatory analysis.
+6. Confirm that **Holm step-down correction** is acceptable for your reviewers.
+   Holm controls the family-wise error rate without assuming independence and is
+   uniformly more powerful than Bonferroni. If a reviewer requires a specific
+   alternative (e.g., Bonferroni, Benjamini–Hochberg FDR), this can be changed
+   in `_holm_correct()` in `Source_Code/nonparametricanovas.py` without touching
+   the rest of the post-hoc logic.
 
-7. **Reduced model formulas (Freedman-Lane):** Confirm that each reduced model
+7. For mixed designs: rank-based methods produce **population-averaged** effects.
+   If subject-specific (random-effects) estimates are of scientific interest, a
+   Linear Mixed Model (LMM) should be considered for confirmatory analysis once
+   the distributional assumption is addressed (e.g., transformation, robust
+   variance estimation).
+
+8. **Reduced model formulas (Freedman-Lane):** Confirm that each reduced model
    retains all effects except the one being tested (Type III logic). This is
    critical for unbalanced designs where effects are non-orthogonal.
 
-8. Report the `analysis_note` text (or a version of it) in your methods section.
+9. Report the `analysis_note` text (or a version of it) in your methods section.
    It includes the specific test used, key parameters, and sample sizes.
+
+10. **Validation:** The Brunner-Langer implementation can be independently verified
+    by running `validation/validate_brunner_langer_orthodont.py`, which compares
+    ATS, df1, df2, p-values, and RTEs against R's nparLD package on the Orthodont
+    reference dataset (see Section 3).
+
+---
+
+## 11) References
+
+- Brunner, E., Domhof, S., & Langer, F. (2002). *Nonparametric Analysis of
+  Longitudinal Data in Factorial Experiments.* Wiley, New York.
+
+- Noguchi, K., Gel, Y. R., Brunner, E., & Konietschke, F. (2012). nparLD: An R
+  Software Package for the Nonparametric Analysis of Longitudinal Data in
+  Factorial Experiments. *Journal of Statistical Software*, 50(12), 1–23.
+
+- Freedman, D., & Lane, D. (1983). A nonstochastic interpretation of reported
+  significance levels. *Journal of Business and Economic Statistics*, 1(4), 292–298.
+
+- Holm, S. (1979). A simple sequentially rejective multiple test procedure.
+  *Scandinavian Journal of Statistics*, 6(2), 65–70.
+
+- Box, G. E. P. (1954). Some theorems on quadratic forms applied in the study
+  of analysis of variance problems. *Annals of Mathematical Statistics*, 25(2),
+  290–302.

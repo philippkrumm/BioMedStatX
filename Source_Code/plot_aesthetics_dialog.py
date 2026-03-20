@@ -1620,7 +1620,7 @@ class PlotAestheticsDialog(QDialog):
         self.tab_widget.addTab(self.error_tab, "Error Bars")
         self.tab_widget.addTab(self.significance_tab, "Significance")
         
-        left_layout.addWidget(self.tab_widget)
+        left_layout.addWidget(self.tab_widget, 1)
         
         # Dialog Buttons
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)

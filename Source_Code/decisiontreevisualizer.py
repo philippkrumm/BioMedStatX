@@ -210,14 +210,6 @@ class DecisionTreeVisualizer:
                 print(f"DEBUG TREE: ERROR - Could not determine actual number of groups from data!")
                 n_groups = 2  # Minimal fallback only to prevent crashes
 
-            # Check if non-parametric alternatives are disabled
-            nonparametric_disabled = False
-            if "error" in results and results.get("error"):
-                error_msg = str(results.get("error", ""))
-                if "nonparametric alternatives are" in error_msg.lower() and "disabled" in error_msg.lower():
-                    nonparametric_disabled = True
-                    print(f"DEBUG TREE: Detected disabled non-parametric alternatives")
-
             n_within_levels = results.get("n_within_levels", None)
 
             # Create graph
@@ -379,17 +371,17 @@ class DecisionTreeVisualizer:
                 'NP_POSTHOC': {"label": "Non-parametric\nPost-hoc Tests", "pos": (11.5, 0)},
                 'NP_DUNN': {"label": "Dunn Test", "pos": (10.5, -1)},
                 'NP_MANN_WHITNEY': {"label": "Pairwise\nMann-Whitney U", "pos": (12.5, -1)},
-                'NP_TWO_WAY_ROBUST': {"label": "Robust Two-way\n(GLMM/GLM)", "pos": (13.5, 1)},
-                'NP_TWO_WAY_POSTHOC': {"label": "Two-way Robust\nPost-hoc", "pos": (13.5, 0)},
+                'NP_TWO_WAY_ROBUST': {"label": "Freedman-Lane\nPermutation", "pos": (13.5, 1)},
+                'NP_TWO_WAY_POSTHOC': {"label": "Two-way\nPost-hoc", "pos": (13.5, 0)},
                 'NP_TWO_WAY_PAIRWISE': {"label": "Marginal Effects\nPairwise", "pos": (13.5, -1)},
 
                 # Non-parametric repeated-measures path
-                'NP_RM_ROBUST': {"label": "Robust RM\n(GEE)", "pos": (16, 1)},
-                'NP_RM_POSTHOC': {"label": "RM Robust\nPost-hoc", "pos": (16, 0)},
+                'NP_RM_ROBUST': {"label": "Friedman Test", "pos": (16, 1)},
+                'NP_RM_POSTHOC': {"label": "Friedman\nPost-hoc", "pos": (16, 0)},
                 'NP_RM_PAIRWISE': {"label": "RM Pairwise\nComparisons", "pos": (16, -1)},
 
                 # Non-parametric mixed path
-                'NP_MIXED_ROBUST': {"label": "Robust Mixed\n(GLMM/GEE)", "pos": (20, 1)},
+                'NP_MIXED_ROBUST': {"label": "Brunner-Langer\nATS", "pos": (20, 1)},
                 'NP_MIXED_POSTHOC': {"label": "Mixed Robust\nPost-hoc", "pos": (20, 0)},
                 'NP_MIXED_BETWEEN': {"label": "Between-Subjects\nComparisons", "pos": (19, -1)},
                 'NP_MIXED_WITHIN': {"label": "Within-Subjects\nComparisons", "pos": (21, -1)},
@@ -572,8 +564,9 @@ class DecisionTreeVisualizer:
                 ("two-way" in test_name_text or "two way" in test_name_text) and
                 (
                     is_modern_or_robust_fallback or
+                    "freedman" in model_class_text or
+                    "permutation" in model_class_text or
                     "glm" in model_class_text or
-                    "glm" in model_type_text or
                     "gee" in model_class_text
                 )
             )
@@ -582,8 +575,8 @@ class DecisionTreeVisualizer:
                 ("repeated" in test_name_text or "rm anova" in test_name_text) and
                 (
                     is_modern_or_robust_fallback or
-                    "gee" in model_class_text or
-                    "geer" in model_type_text
+                    "friedman" in model_class_text or
+                    "gee" in model_class_text
                 )
             )
 
@@ -591,8 +584,8 @@ class DecisionTreeVisualizer:
                 "mixed" in test_name_text and
                 (
                     is_modern_or_robust_fallback or
-                    "mixed" in model_class_text or
-                    "glmm" in model_type_text or
+                    "brunner" in model_class_text or
+                    "ats" in model_class_text or
                     "gee" in model_class_text
                 )
             )

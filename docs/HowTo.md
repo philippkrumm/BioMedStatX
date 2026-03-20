@@ -10,165 +10,180 @@ fontsize: 11pt
 
 # BioMedStatX User Guide
 
-This guide explains how to use the BioMedStatX application: from launching the program, importing data, running statistical analyses, customizing plots, and exporting results. All information is focused on the user interface, available statistics, and practical workflow - no programming or code knowledge required.
+This guide explains how to use the BioMedStatX application: from launching the program, importing data, running statistical analyses, customizing plots, and exporting results. All information is focused on the user interface, available statistics, and practical workflow — no programming or code knowledge required.
 
 ---
-
 
 ## 1. Launching the Application
 
 - Locate the `BioMedStatX.exe` file in your installation directory.
-- Double-click to start. A Qt-based GUI window will open with the menus: **File**, **Analysis**, and **Help**.
----
+- Double-click to start. A Qt-based GUI window will open.
 
 > Note for source-based usage: launcher scripts are available at the repository root as `Start_BioMedStatX_on_Linux.sh` for Linux/macOS and `start.bat` for Windows. They prefer a native binary if present and otherwise run the Python source `Source_Code/statistical_analyzer.py`.
 
-> Example on Linux/macOS: from the repo root run `chmod +x ./Start_BioMedStatX_on_Linux.sh` and then `./Start_BioMedStatX_on_Linux.sh`.
+> Example Excel template: the sample spreadsheet is included in the repository docs as `docs/StatisticalAnalyzer_Excel_Template.xlsx`.
 
--> Example Excel template: the sample spreadsheet is included in the repository docs as `docs/StatisticalAnalyzer_Excel_Template.xlsx`.
-
-
+---
 
 ## 2. Importing Data
 
-1. In the **File** menu, select **Browse** to choose your data file (Excel `.xlsx`/`.xls` or CSV `.csv`).
-2. For Excel files, select the worksheet you want to analyze. For CSV, this step is skipped.
-3. Click **Load** to import your data into the application.
+Click **Load Excel / CSV** to select your data file (Excel `.xlsx`/`.xls` or CSV `.csv`).
 
-![Step 1: Import Data - Browse Button](HowToScreenshots/Bild1.png)
-
-**Step 1:** Click the "Browse..." button (highlighted in red, number 1) in the top right to select your Excel or CSV data file. This is the first step in the workflow and starts the data import process.
+After loading, select the **Worksheet** from the dropdown. A **Table Preview** shows the first rows of your data so you can verify it loaded correctly.
 
 ---
 
+## 3. Smart Mapping — Assigning Columns to Roles
 
+After loading your data, the right panel shows **Smart Mapping**. The app tries to auto-detect the correct mapping, but you can adjust it by dragging header cards from the **Excel Headers** section into the appropriate bucket.
 
-## 3. Selecting Groups & Measurement Columns
+There are four buckets:
 
-![Step 2: Select Worksheet, Group, and Value Columns](HowToScreenshots/Bild2.png)
+| Bucket | What goes here |
+|---|---|
+| **Dependent Variable** | The column with your measurements (e.g., `Value`, gene expression, weight) |
+| **Factor 1** | The main grouping variable (e.g., `Group`, `Timepoint`) |
+| **Factor 2** *(optional)* | A second grouping variable for Two-Way or Mixed ANOVA |
+| **Subject ID** *(optional)* | Identifies individual subjects for repeated/paired measurements |
 
-**Step 2:** First, select the worksheet, group column, and value column in the Data Configuration section (number 2 in the picture). Then, click the "Select groups for plot" button (number 3 in the picture) to choose which groups to include in your plot.
+### What is the difference between Factor and Subject ID?
 
-![Step 3: Select Groups for Plot](HowToScreenshots/Bild3.png)
+This is a common source of confusion:
 
-**Step 3:** In the group selection dialog, select the groups you want to display in the plot by checking the boxes (number 4 in the picture). Then click "OK" to confirm your selection.
+- **Factor** = a variable that defines *experimental groups* or *conditions* you want to compare. Even if the values look like names (e.g., `WT`, `KO`), they are the *levels* of an independent variable — the thing you are testing. Example: `Group` with levels `WT` and `KO` is Factor 1 because you want to compare these two groups statistically.
 
-![Statistical Analysis Selection](HowToScreenshots/Bild4.png)
+- **Subject ID** = a variable that identifies *which individual* produced a measurement. It is only needed when the same individual was measured more than once (repeated measures or paired designs). Example: `Subject` with values `S01`, `S02`, `S03` goes into Subject ID because it links multiple rows that belong to the same mouse.
 
-**Step 4:** In the configure plot window, you can set the file name (number 5 in the picture), change the group order, select if the sample are dependent and select if you want to create a plot (number 6 in the picture). If you do not create a plot, the analysis results in the comprehensive excel sheet only.
+**Examples by design:**
+
+| Design | Dependent Variable | Factor 1 | Factor 2 | Subject ID |
+|---|---|---|---|---|
+| T-Test / One-Way ANOVA | Value | Group (WT / KO) | — | — |
+| Repeated Measures ANOVA | Value | Timepoint (0h / 2h / 6h) | — | Subject |
+| Two-Way ANOVA | Value | Group | Treatment | — |
+| Mixed ANOVA | Value | Timepoint | Group | Subject |
+
+The mapping status line below the buckets tells you whether the current mapping is valid and which test will be inferred.
 
 ---
 
-## 4. Plotting & Customization
+## 4. Single vs. Multi-Dataset Analysis
 
-BioMedStatX creates publication-ready plots for your results. Supported plot types include:
-- Bar charts (with error bars)
-- Violin plots
-- Boxplots
-- Overlayed individual data points (with lines for paired data)
+Use the radio buttons above the table preview to switch between modes:
 
-### Plot Customization
+- **Single Analysis**: exactly one measurement column. Use this for a single readout (e.g., one gene, one parameter).
+- **Multi-Dataset Analysis**: two or more measurement columns are analysed with the same factor mapping. Use this when you have several genes or parameters in separate columns and want to run the same statistical design on all of them at once. This mode is restricted to ANOVA-capable designs.
 
-Use the **Plot Settings** dialog to adjust:
-- Plot title and axis labels
+---
+
+## 5. Starting the Analysis
+
+Click **Start Auto Analysis**. The app infers the correct statistical test from your mapping and runs the full workflow automatically:
+
+1. Normality and variance checks
+2. Test selection (parametric or nonparametric)
+3. Main test execution
+4. Post-hoc comparisons (if significant)
+5. Plot generation
+6. Export to Excel
+
+---
+
+## 6. Export Settings
+
+Before or after the analysis, the **Export** section lets you:
+
+- Set the **Output file name** for the results Excel file and plot files.
+- Reorder groups in the **Group order** list by dragging — this controls the left-to-right order of groups in the plot.
+
+---
+
+## 7. Assumption Checks & Data Transformations
+
+Before any statistical test, the app automatically checks for normal distribution and equal variances. If your data does not meet the assumptions for a parametric test, you will be prompted to apply a transformation.
+
+![Select Transformation dialog](HowToScreenshots/Bild8.png)
+
+**Transformation options:** Log10 (for right-skewed positive data), Box-Cox (automatic lambda optimization), or Arcsin square root (for percentages/proportions). You can skip the transformation if you prefer a nonparametric test.
+
+---
+
+## 8. Post-Hoc Comparisons
+
+If the main test reveals a significant result, the app asks you to choose a post-hoc test.
+
+![Select Post-hoc Test dialog](HowToScreenshots/Bild9.png)
+
+Available options:
+- **Tukey-HSD**: all pairwise comparisons, family-wise error control. Use when you want to compare every group against every other group.
+- **Dunnett**: all groups vs. a single control group. Use when you have one reference group (e.g., WT).
+- **Paired t-tests (Holm-Sidak)**: custom pairwise comparisons with correction for multiple testing.
+
+Results are shown as significance letters or brackets on the plot and as a table in the exported Excel file.
+
+---
+
+## 9. Plot Customization
+
+After an analysis, the **Plot Appearance Settings** dialog (accessible via the plot preview) lets you adjust:
+
 - Figure size (width, height, DPI)
-- Colors and hatches for each group
-- Error bar style (SD/SEM, caps/lines)
-- Significance annotations (letters, brackets, custom comparisons)
-- Legend position, font size, and title
-- Background and grid style
+- Typography (axis labels, title, font size)
+- Colors and hatches per group
+- Error bar style (SD / SEM, caps)
 - Data point style (jitter, strip, swarm)
-- Overlay options (paired lines, custom annotations)
-
-![Plot Customization Settings](HowToScreenshots/Bild5.png)
-
-**Step 5:** In the plot settings dialog, adjust titles, axis labels, colors, error bars, and more. Preview changes and save or export the customized plot. All changes are shown in a live preview before saving. 
-
-![Post-Hoc Analysis Results](HowToScreenshots/Bild6.png)
-
-**Step 6:** It is possible to create different plots from the same dataset if needed (number 6 in the picture).
+- Significance annotation style (letters or brackets)
+- Legend position and title
+- Background and grid style
+- Paired lines for repeated-measures plots
 
 ---
 
+## 10. Statistical Analyses — Overview
 
+BioMedStatX automatically selects the appropriate test. Supported designs include:
 
-## 5. Statistical Analyses
+- Two-group comparisons: t-test (independent or paired), Mann-Whitney U
+- Multi-group comparisons: One-Way ANOVA, Kruskal-Wallis
+- Repeated Measures ANOVA (one within-subject factor)
+- Two-Way ANOVA (two between-subject factors)
+- Mixed ANOVA (one between-subject factor, one within-subject factor)
 
-BioMedStatX automatically selects the appropriate statistical test based on your data and design. Supported analyses include:
-
-- Two-group comparisons (independent or paired)
-- Multi-group comparisons (one-way, two-way, repeated measures, mixed designs)
-- Parametric and nonparametric alternatives for supported simple designs (for example t-tests, ANOVA, Mann-Whitney, Kruskal-Wallis)
-- Advanced ANOVAs (Two-Way, Mixed, Repeated Measures)
-
-At the moment, advanced nonparametric fallback workflows for Two-Way ANOVA, Mixed ANOVA, and Repeated Measures ANOVA should be considered experimental and not fully supported in the production workflow.
-
-You do not need to choose the test yourself—the software guides you and explains the result in plain language.
-
-![Decision Tree Visualization](HowToScreenshots/Bild7.png)
-
-**Step 7:** Click the button (number 9 in the picture) to start the analysis. You can analyze the selected plot or create and analyze all plots.
+> **Note:** Nonparametric fallbacks for Two-Way ANOVA, Mixed ANOVA, and Repeated Measures ANOVA are experimental and should be considered with caution in the current version.
 
 ---
 
+## 11. Decision Tree Visualization
 
-
-## 6. Assumption Checks & Data Transformations
-
-Before any statistical test, the app automatically checks for normal distribution and equal variances. If your data does not meet these assumptions, you will be prompted to apply a transformation (log, Box-Cox, or arcsine-sqrt) to improve suitability for analysis. You can skip or accept the suggested transformation.
-
-![Export Results to Excel](HowToScreenshots/Bild8.png)
-
-**Step 8:** If the assumptions for a parametric test are not met, choose one of the three possible transformations (number 10 in the picture).
+The statistical decision process is documented as a graphical flowchart. The actual path taken through the decision tree is highlighted. The image is included in the exported Excel workbook.
 
 ---
 
+## 12. Exporting Results
 
+After the analysis, all results are exported automatically to a comprehensive Excel file. The exported file contains:
 
-## 7. Post‑Hoc Comparisons
-
-If a group comparison is significant, the app automatically performs post-hoc tests (e.g., Tukey, Dunn, Bonferroni, or Dunnett) to show which groups differ. Results are clearly displayed in the results table and as annotations on the plots.
-
-![Export Results to Excel](HowToScreenshots/Bild9.png)
-
-**Step 9:** After the statistical test has been performed and a significant result is detected, choose one of the available post-hoc tests (number 11 in the picture).
-
----
-
-
-
-## 8. Decision Tree Visualization
-
-The statistical decision process is visualized by a decision tree. The app displays a graphical flowchart showing which tests were chosen and why, with the actual path highlighted. The image is included in the Excel workbook.
-
----
-
-
-
-## 9. Exporting Results
-
-After your analysis, all results are exported automatically to a comprehensive Excel file. The exported file contains:
 - A summary of all tests and p-values
-- Assumption checks
-- Main results and effect sizes
-- Descriptive statistics for each group
+- Assumption check results
+- Main test results and effect sizes
+- Descriptive statistics per group
 - The decision tree image
-- Raw data snapshots
-- Pairwise comparisons
+- Raw data snapshot
+- Pairwise comparison table
 - A chronological analysis log
+
 Each sheet is clearly named for easy navigation.
 
-![Complete Workflow Overview](HowToScreenshots/Bild10.png)
+![Analysis Complete dialog](HowToScreenshots/Bild10.png)
 
-**Step 10:** Final message after a successful analysis.
+The completion dialog confirms the output directory and lists all created files (Excel, PDF, PNG).
 
 ---
 
+## 13. Outlier Detection (Optional)
 
+Under **Analysis → Detect Outliers**, you can identify and flag outliers using:
 
-## 10. Outlier Detection (Optional)
-
-Under **Analysis -> Detect Outliers**, you can identify and flag outliers in your data using:
 - Modified Z-Score Test
 - Grubbs' Test
 - Single-pass or iterative mode
@@ -177,35 +192,27 @@ Results are exported to Excel for further review.
 
 ---
 
-## 11. Multi-Dataset Analysis
-
-If you load an Excel file with one group column and several value columns, for example different genes from an RT-qPCR experiment, it is possible to analyze all datasets in one run.
-1. Load the data as explained.
-2. Choose the "Multiple columns..." button.
-3. In the Select Measurements Window select the "Separate analysis per dataset with shared excel file" and the datasets you want to compare
-4. Next, click on the Start multi-dataset analysis button and now the application follows the same workflow as for a single analysis
-
----
-
-## 12. Quick Workflow
+## 14. Quick Workflow
 
 1. **Launch** the application.
-2. **Browse** and **Load** your data file.
-3. **Select** worksheet (if Excel), group column, and measurement columns.
-4. **Choose** analysis type (basic or advanced).
-5. **Check** assumptions; apply transforms if needed.
-6. **Review** plots and decision tree.
-7. **Export** results; locate your results files in your working folder.
+2. **Load** your Excel or CSV file.
+3. **Select** the worksheet.
+4. **Map** columns in Smart Mapping: Dependent Variable, Factor 1, and optionally Factor 2 and Subject ID.
+5. **Choose** Single or Multi-Dataset Analysis.
+6. **Set** the output file name and group order in the Export section.
+7. **Click** Start Auto Analysis.
+8. **Review** transformation and post-hoc prompts if they appear.
+9. **Find** your results in the output directory.
 
 ---
 
 ### Tips & Best Practices
 
-- Ensure your group column has consistent, non-empty labels.
-- Use data transformations for highly skewed data if prompted.
-- For paired designs, confirm equal sample sizes per group.
+- Group labels (e.g., WT, KO) go into **Factor**, not Subject ID — they define experimental conditions, not individual identities.
+- Subject ID is only needed when the same individual appears in multiple rows (repeated/paired measures).
+- For paired designs, every subject must have exactly one measurement per condition.
 - Use the **Analysis Log** sheet in the exported Excel file for troubleshooting and detailed steps.
-- Preview your plot settings before exporting for best results.
+- For highly skewed data, apply a Log10 transformation when prompted.
 
 ---
 

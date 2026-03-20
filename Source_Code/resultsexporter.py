@@ -825,7 +825,7 @@ class ResultsExporter:
             ("Zero fraction", family_diagnostics.get("zero_fraction", "N/A")),
             ("Overdispersion ratio", family_diagnostics.get("overdispersion_ratio", "N/A")),
             ("Family selection rationale", family_diagnostics.get("selection_reason", "N/A")),
-            ("Omnibus statistic", "Wald Chi-square"),
+            ("Omnibus statistic", results.get("StatisticType", "Wald Chi-square")),
             ("Primary gate policy", results.get("primary_effect_policy", "N/A")),
             ("Primary effect (gate)", (results.get("primary_effect") or {}).get("source", "N/A")),
             ("Interaction significant", results.get("interaction_significant", "N/A")),

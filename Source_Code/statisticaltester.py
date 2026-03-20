@@ -109,9 +109,8 @@ class StatisticalTester:
         Always fits the specified model and tests residuals for normality using Shapiro-Wilk test.
         Levene test is performed on the raw values for variance homogeneity.
         """
-        from scipy.stats import boxcox, boxcox_normmax
-        import numpy as np
-        import pandas as pd
+        boxcox = stats.boxcox
+        boxcox_normmax = stats.boxcox_normmax
         from statsmodels.formula.api import ols
 
         print(f"DEBUG check_normality_and_variance: Starting assumption tests")
@@ -170,7 +169,6 @@ class StatisticalTester:
             adjusted_formula = "Value ~ C(FactorA) * C(FactorB)"
             print(f"DEBUG SHAPIRO: Adjusted formula for Two-Way ANOVA: {adjusted_formula}")
         
-        from scipy import stats
         try:
             # ROBUST FORMULA CREATION: Use actual DataFrame columns, not assumptions
             print(f"DEBUG SHAPIRO: Available columns in df_raw: {list(df_raw.columns)}")
@@ -511,7 +509,7 @@ class StatisticalTester:
         results["effect_size_type"] = "cohen_d"
         n = len(diff)
         stderr = np.std(diff, ddof=1) / np.sqrt(n)
-        from scipy.stats import t
+        t = stats.t
         ci = t.interval(0.95, n-1, loc=np.mean(diff), scale=stderr)
         results["confidence_interval"] = ci
         try:
@@ -592,7 +590,7 @@ class StatisticalTester:
         results["effect_size"] = cohen_d
         results["effect_size_type"] = "cohen_d"
         mean_diff = np.mean(data1) - np.mean(data2)
-        from scipy.stats import t
+        t = stats.t
         ci = t.interval(0.95, df, loc=mean_diff, scale=stderr_diff)
         results["confidence_interval"] = ci
         try:
@@ -1003,10 +1001,8 @@ class StatisticalTester:
             List of pairwise comparison results
         """
         try:
-            import numpy as np
-            from scipy import stats
             from itertools import combinations
-            
+
             pairwise_results = []
             
             # Create all possible pairs of groups
@@ -1119,7 +1115,7 @@ class StatisticalTester:
         std = np.std(arr, ddof=1) if n > 1 else 0
         stderr = std / np.sqrt(n) if n > 1 else 0
         # 95% confidence interval
-        from scipy.stats import t
+        t = stats.t
         if n > 1:
             ci = t.interval(0.95, n-1, loc=mean, scale=stderr)
         else:
@@ -1292,7 +1288,6 @@ class StatisticalTester:
         Checks assumptions, applies transformation if necessary, performs main and post-hoc tests.
         Returns a complete result dict.
         """
-        from scipy import stats
         from datetime import datetime
 
         try:
@@ -1504,13 +1499,13 @@ class StatisticalTester:
                         df_transformed[dv] = df[dv] + shift
                     lambda_val = test_info.get("boxcox_lambda")
                     if lambda_val is None:
-                        from scipy.stats import boxcox_normmax
+                        boxcox_normmax = stats.boxcox_normmax
                         try:
                             lambda_val = boxcox_normmax(df_transformed[dv])
                         except Exception as e:
                             print(f"DEBUG: boxcox_normmax failed: {e}. Using lambda=0 (log transform)")
                             lambda_val = 0
-                    from scipy.stats import boxcox
+                    boxcox = stats.boxcox
                     df_transformed[dv] = boxcox(df_transformed[dv], lambda_val)
                 elif transformation_type == "arcsin_sqrt":
                     min_val = df[dv].min()
@@ -1943,8 +1938,11 @@ class StatisticalTester:
                         if marginaleffects_error not in warnings_list:
                             warnings_list.append(marginaleffects_error)
 
-                    if not fallback_posthoc or (
-                        not fallback_posthoc.get("pairwise_comparisons") and fallback_posthoc.get("error")
+                    _nonparam_classes = {"Friedman", "Freedman-Lane Permutation", "Brunner-Langer ATS"}
+                    if res.get("model_class") not in _nonparam_classes and (
+                        not fallback_posthoc or (
+                            not fallback_posthoc.get("pairwise_comparisons") and fallback_posthoc.get("error")
+                        )
                     ):
                         fallback_posthoc = StatisticalTester._run_modern_fallback_posthoc(
                             df_original.copy(),
@@ -1964,10 +1962,10 @@ class StatisticalTester:
                             if fallback_note.strip() not in analysis_note:
                                 res["analysis_note"] = f"{analysis_note}{fallback_note}".strip()
 
-                    if fallback_posthoc.get("pairwise_comparisons"):
+                    if fallback_posthoc and fallback_posthoc.get("pairwise_comparisons"):
                         res["pairwise_comparisons"] = fallback_posthoc["pairwise_comparisons"]
                         res["posthoc_test"] = fallback_posthoc.get("posthoc_test")
-                    if fallback_posthoc.get("error"):
+                    if fallback_posthoc and fallback_posthoc.get("error"):
                         warnings_list = res.setdefault("warnings", [])
                         if fallback_posthoc["error"] not in warnings_list:
                             warnings_list.append(fallback_posthoc["error"])
@@ -2361,7 +2359,6 @@ class StatisticalTester:
         """
         Performs a Mixed ANOVA. Prefers pingouin, fallback to statsmodels.
         """
-        import numpy as np
         results = {
             "test": "Mixed ANOVA",
             "p_value": None,
@@ -2666,11 +2663,11 @@ class StatisticalTester:
                     ci_upper = None
                     if n > 1:
                         try:
-                            from scipy.stats import t
+                            t = stats.t
                             ci_lower, ci_upper = t.interval(0.95, n-1, loc=mean, scale=stderr)
                         except Exception:
                             pass
-                    
+
                     results["descriptive"][key] = {
                         "n": n,
                         "mean": mean,
@@ -2720,7 +2717,6 @@ class StatisticalTester:
         Performs a Repeated Measures ANOVA (one or more within factors).
         Prefers pingouin, fallback to statsmodels.
         """
-        import numpy as np
         results = {
             "test": "Repeated Measures ANOVA",
             "p_value": None,
@@ -2910,7 +2906,7 @@ class StatisticalTester:
                 ci_upper = None
                 if n > 1:
                     try:
-                        from scipy.stats import t
+                        t = stats.t
                         ci_lower, ci_upper = t.interval(0.95, n-1, loc=mean, scale=stderr)
                     except Exception:
                         pass
@@ -2989,8 +2985,6 @@ class StatisticalTester:
         dict
             Results including main effects, interaction, effect sizes
         """
-        import numpy as np
-        import pandas as pd
         results = {
             "test": f"Two-Way ANOVA ({between[0]} * {between[1]})",
             "factors": [],
@@ -3226,7 +3220,6 @@ class StatisticalTester:
                             group2_values = df[df['interaction_group'] == group2][dv].values
                             effect_size = None
                             try:
-                                from scipy import stats
                                 n1, n2 = len(group1_values), len(group2_values)
                                 s1, s2 = np.var(group1_values, ddof=1), np.var(group2_values, ddof=1)
                                 s_pooled = np.sqrt(((n1-1)*s1 + (n2-1)*s2) / (n1+n2-2))
@@ -3267,7 +3260,7 @@ class StatisticalTester:
                         ci_desc = (None, None)
                         if n_val > 1:
                             try:
-                                from scipy.stats import t
+                                t = stats.t
                                 ci_desc = t.interval(0.95, n_val - 1, loc=mean_val, scale=se_val)
                             except:
                                 pass
@@ -3879,9 +3872,6 @@ class StatisticalTester:
                 if not pairs:
                     result["error"] = "No pairs selected."
                     return result
-                # Import required modules
-                from scipy import stats
-                import numpy as np
                 # Paired t-tests for the selected pairs
                 pvals, stats_list = [], []
                 for g1, g2 in pairs:
@@ -3919,8 +3909,7 @@ class StatisticalTester:
                 if not pairs:
                     result["error"] = "No pairs selected."
                     return result
-                from scipy.stats import mannwhitneyu
-                import numpy as np
+                mannwhitneyu = stats.mannwhitneyu
                 pvals, stats_list = [], []
                 for g1, g2 in pairs:
                     x, y = np.array(samples[g1]), np.array(samples[g2])
@@ -4022,11 +4011,8 @@ class StatisticalTester:
         dict
             Comprehensive sphericity analysis results
         """
-        import numpy as np
-        import pandas as pd
-        
         results = {}
-        
+
         try:
             # Get factor levels and check if sphericity is relevant
             within_levels = df[factor].unique()
@@ -4319,12 +4305,8 @@ class StatisticalTester:
         dict
             Comprehensive between-factor assumption test results
         """
-        import numpy as np
-        import pandas as pd
-        from scipy import stats
-        
         assumption_results = {}
-        
+
         try:
             # Get between-factor groups
             between_groups = df[between_factor].unique()
@@ -4392,12 +4374,12 @@ class StatisticalTester:
     def _perform_levene_test(group_data, group_labels, dv, factor_name):
         """
         Performs Levene's test for homogeneity of variance.
-        
+
         Returns comprehensive results including interpretation.
         """
         try:
-            from scipy.stats import levene
-            
+            levene = stats.levene
+
             # Perform Levene's test
             statistic, p_value = levene(*group_data)
             
@@ -4434,12 +4416,12 @@ class StatisticalTester:
     def _perform_brown_forsythe_test(group_data, group_labels, dv, factor_name):
         """
         Performs Brown-Forsythe test (robust version of Levene's test).
-        
+
         Uses median instead of mean - more robust to non-normality.
         """
         try:
-            from scipy.stats import levene
-            
+            levene = stats.levene
+
             # Brown-Forsythe test uses median instead of mean
             statistic, p_value = levene(*group_data, center='median')
             
@@ -4475,12 +4457,12 @@ class StatisticalTester:
     def _perform_bartlett_test(group_data, group_labels, dv, factor_name):
         """
         Performs Bartlett's test for homogeneity of variance.
-        
+
         Note: Sensitive to departures from normality.
         """
         try:
-            from scipy.stats import bartlett
-            
+            bartlett = stats.bartlett
+
             # Perform Bartlett's test
             statistic, p_value = bartlett(*group_data)
             
@@ -4517,11 +4499,11 @@ class StatisticalTester:
     def _perform_welch_anova(group_data, group_labels, dv, factor_name):
         """
         Performs Welch's ANOVA (does not assume equal variances).
-        
+
         Provides robust alternative when variance homogeneity is violated.
         """
         try:
-            from scipy.stats import f_oneway
+            f_oneway = stats.f_oneway
             
             # Standard F-test (equal variances assumed)
             f_stat_standard, p_val_standard = f_oneway(*group_data)
@@ -4551,7 +4533,7 @@ class StatisticalTester:
                                                          for w, n in zip(weights, group_sizes)))
                 
                 # P-value from F-distribution
-                from scipy.stats import f
+                f = stats.f
                 p_val_welch = 1 - f.cdf(welch_f, df1, df2)
                 
             except Exception:
@@ -4677,9 +4659,6 @@ class StatisticalTester:
         dict
             Comprehensive within-factor sphericity analysis results
         """
-        import numpy as np
-        import pandas as pd
-        
         sphericity_results = {}
         
         try:
@@ -5080,10 +5059,8 @@ class StatisticalTester:
         dict
             Comprehensive interaction assumption test results
         """
-        import numpy as np
-        import pandas as pd
         from itertools import product
-        
+
         interaction_results = {}
         interaction_name = f"{within_factor} * {between_factor}"
         
@@ -5244,9 +5221,10 @@ class StatisticalTester:
         all combinations of between and within factor levels.
         """
         try:
-            from scipy.stats import levene, bartlett
+            levene = stats.levene
+            bartlett = stats.bartlett
             from itertools import product
-            
+
             # Get all factor level combinations
             between_levels = df[between_factor].unique()
             within_levels = df[within_factor].unique()
@@ -5329,9 +5307,8 @@ class StatisticalTester:
         of the within-factor is similar across between-group levels.
         """
         try:
-            import numpy as np
-            from scipy.stats import pearsonr
-            
+            pearsonr = stats.pearsonr
+
             between_levels = df[between_factor].unique()
             within_levels = df[within_factor].unique()
             

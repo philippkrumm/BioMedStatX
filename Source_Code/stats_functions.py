@@ -11,7 +11,10 @@ from datetime import datetime
 from matplotlib.ticker import ScalarFormatter
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QRadioButton, QDialogButtonBox
 from decisiontreevisualizer import DecisionTreeVisualizer
-from lazy_imports import get_pingouin, get_scipy_stats, get_seaborn, get_statsmodels_multitest
+from lazy_imports import (
+    get_pingouin, get_scipy_stats, get_seaborn,
+    get_statsmodels_multitest, get_pairwise_tukeyhsd, get_scikit_posthocs,
+)
 
 # Late import functions to avoid circular imports
 def get_results_exporter():
@@ -28,51 +31,23 @@ def get_statistical_tester():
     """Get StatisticalTester class lazily"""
     from statisticaltester import StatisticalTester
     return StatisticalTester
-# DISABLED: Nonparametric fallbacks are not yet supported
-# from nonparametricanovas import NonParametricFactory, NonParametricRMANOVA
-
-# Lazy imports for heavy modules - only imported when actually needed
-def get_seaborn_module():
-    """Get seaborn module lazily"""
-    try:
-        return get_seaborn()
-    except ImportError:
-        import seaborn as sns
-        return sns
 
 def get_stats_module():
-    """Get scipy.stats module lazily"""
-    try:
-        return get_scipy_stats()
-    except ImportError:
-        from scipy import stats
-        return stats
+    """Get scipy.stats — delegates to canonical lazy_imports loader"""
+    return get_scipy_stats()
 
 def get_pingouin_module():
-    """Get pingouin module lazily"""
-    try:
-        return get_pingouin()
-    except ImportError:
-        import pingouin as pg
-        return pg
+    """Get pingouin — delegates to canonical lazy_imports loader"""
+    return get_pingouin()
 
 def get_multicomp_module():
-    """Get statsmodels multicomp module lazily"""
-    try:
-        from statsmodels.stats.multicomp import pairwise_tukeyhsd
-        multipletests = get_statsmodels_multitest()
-        return pairwise_tukeyhsd, multipletests
-    except ImportError:
-        multipletests = get_statsmodels_multitest()  # This will return fallback
-        return None, multipletests
+    """Get (pairwise_tukeyhsd, multipletests) via canonical lazy_imports loaders"""
+    return get_pairwise_tukeyhsd(), get_statsmodels_multitest()
 
 def get_boxcox_functions():
-    """Get scipy boxcox functions lazily"""
-    try:
-        from scipy.stats import boxcox, boxcox_normmax
-        return boxcox, boxcox_normmax
-    except ImportError:
-        return None, None
+    """Get scipy boxcox and boxcox_normmax via canonical lazy_imports loader"""
+    stats = get_scipy_stats()
+    return stats.boxcox, stats.boxcox_normmax
 
 # --------------------------------------------------------------
 #  Fallback QApplication to prevent dialogs blocking when script
@@ -511,9 +486,7 @@ class TwoWayPostHocAnalyzer(PostHocAnalyzer):
                 print(f"DEBUG POSTHOC: DataFrame head:\n{df.head()}")
                 print(f"DEBUG POSTHOC: factors = {factors}, dv = {dv}")
                 # Manual post-hoc for interaction: generate all interaction group pairs
-                from itertools import combinations
-                import numpy as np
-                from scipy.stats import ttest_ind
+                ttest_ind = get_scipy_stats().ttest_ind
                 # Build all interaction group labels
                 interaction_groups = []
                 group_to_values = {}
@@ -555,7 +528,7 @@ class TwoWayPostHocAnalyzer(PostHocAnalyzer):
                         # For Dunnett, use proper Dunnett test implementation
                         correction_method = "Dunnett"
                         try:
-                            import scikit_posthocs as sp
+                            sp = get_scikit_posthocs()
                             # Prepare data for scikit_posthocs
                             all_data = []
                             all_groups = []
@@ -635,7 +608,7 @@ class TwoWayPostHocAnalyzer(PostHocAnalyzer):
                     # Confidence interval for mean difference
                     mean_diff = np.mean(vals1) - np.mean(vals2)
                     stderr_diff = np.sqrt(s1/n1 + s2/n2) if n1 > 0 and n2 > 0 else 0
-                    from scipy.stats import t
+                    t = get_scipy_stats().t
                     df_ = n1 + n2 - 2
                     if df_ > 0 and stderr_diff > 0:
                         t_crit = t.ppf(1 - alpha/2, df_)
@@ -664,7 +637,7 @@ class TwoWayPostHocAnalyzer(PostHocAnalyzer):
                     missing = normalized_selected - available_pairs
                     if missing:
                         print(f"WARNING: The following selected pairs were not found in the available post-hoc comparisons: {missing}")
-                from statsmodels.stats.multicomp import pairwise_tukeyhsd
+                pairwise_tukeyhsd = get_pairwise_tukeyhsd()
                 # Create interaction group for Tukey HSD
                 df['interaction_group'] = df[factors[0]].astype(str) + "_" + df[factors[1]].astype(str)
                 # Run Tukey HSD on the interaction groups
@@ -803,10 +776,8 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
                 print(f"WARNING: {len(incomplete_cases)} subject-between-factor combinations have incomplete within-factor data")
             
             # Import required modules
-            from itertools import combinations
-            import numpy as np
-            from scipy import stats as scipy_stats
-            
+            scipy_stats = get_scipy_stats()
+
             # Build interaction group labels and classify comparison types
             interaction_groups = []
             group_to_data = {}
@@ -1037,8 +1008,7 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
     @staticmethod
     def _within_subject_test(group1_data, group2_data, dv, subject, alpha):
         """Perform within-subject test for Mixed ANOVA."""
-        from scipy import stats as scipy_stats
-        import numpy as np
+        scipy_stats = get_scipy_stats()
         
         # Get common subjects between both groups
         subjects1 = set(group1_data['subjects'])
@@ -1076,8 +1046,7 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
     @staticmethod
     def _between_subject_test(group1_data, group2_data, dv, alpha):
         """Perform between-subject test for Mixed ANOVA."""
-        from scipy import stats as scipy_stats
-        import numpy as np
+        scipy_stats = get_scipy_stats()
         
         values1 = group1_data['values']
         values2 = group2_data['values']
@@ -1113,12 +1082,12 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
     @staticmethod 
     def _tukey_p_value(q_stat, k, df):
         """Calculate p-value for Tukey's q statistic."""
-        from scipy.stats import studentized_range
+        studentized_range = get_scipy_stats().studentized_range
         try:
             return 1 - studentized_range.cdf(q_stat, k, df)
         except:
             # Fallback to t-distribution approximation
-            from scipy.stats import t
+            t = get_scipy_stats().t
             import math
             t_equiv = q_stat / math.sqrt(2)
             return 2 * (1 - t.cdf(abs(t_equiv), df))
@@ -1172,9 +1141,8 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
             print(f"DEBUG POSTHOC: filtered_pairs = {filtered_pairs}")
             
             # Import required functions
-            from scipy.stats import ttest_rel, ttest_ind
-            from itertools import combinations
-            import numpy as np
+            ttest_rel = get_scipy_stats().ttest_rel
+            ttest_ind = get_scipy_stats().ttest_ind
             
             # Perform appropriate tests for each pair
             pvals = []
@@ -1304,8 +1272,8 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
                     s1, s2 = np.var(data1['values'], ddof=1), np.var(data2['values'], ddof=1)
                     se = np.sqrt(s1/n1 + s2/n2)
                     df_val = n1 + n2 - 2
-                
-                from scipy.stats import t
+
+                t = get_scipy_stats().t
                 if df_val > 0 and se > 0:
                     t_crit = t.ppf(1 - alpha/2, df_val)
                     ci = (mean_diff - t_crit * se, mean_diff + t_crit * se)
@@ -1404,10 +1372,8 @@ class RMAnovaPostHocAnalyzer(PostHocAnalyzer):
             print(f"DEBUG RM POSTHOC: Complete subjects: {len(complete_subjects)}, Total levels: {expected_measures}")
             
             # Import required modules
-            from itertools import combinations
-            import numpy as np
-            from scipy import stats as scipy_stats
-            
+            scipy_stats = get_scipy_stats()
+
             # Collect all pairwise comparisons with proper within-subject handling
             available_pairs = set()
             comparisons = []
@@ -1607,7 +1573,7 @@ class RMAnovaPostHocAnalyzer(PostHocAnalyzer):
     def _get_tukey_critical_value(k, df, alpha=0.05):
         """Get critical value for Tukey's HSD test (simplified implementation)."""
         # This is a simplified implementation - in practice, use statistical tables
-        from scipy.stats import studentized_range
+        studentized_range = get_scipy_stats().studentized_range
         try:
             return studentized_range.ppf(1 - alpha, k, df)
         except:
@@ -1618,12 +1584,12 @@ class RMAnovaPostHocAnalyzer(PostHocAnalyzer):
     @staticmethod 
     def _tukey_p_value(q_stat, k, df):
         """Calculate p-value for Tukey's q statistic (simplified implementation)."""
-        from scipy.stats import studentized_range
+        studentized_range = get_scipy_stats().studentized_range
         try:
             return 1 - studentized_range.cdf(q_stat, k, df)
         except:
             # Fallback to t-distribution approximation
-            from scipy.stats import t
+            t = get_scipy_stats().t
             import math
             t_equiv = q_stat / math.sqrt(2)
             return 2 * (1 - t.cdf(abs(t_equiv), df))
@@ -1645,7 +1611,6 @@ class RMAnovaPostHocAnalyzer(PostHocAnalyzer):
             print(f"DEBUG POSTHOC: normalized_selected = {normalized_selected}")
             available_pairs = set()
             
-            from itertools import combinations
             stats = get_stats_module()
 
             within_factor = within[0]
@@ -1676,7 +1641,7 @@ class RMAnovaPostHocAnalyzer(PostHocAnalyzer):
 
                 n = len(diff)
                 stderr = std_diff / np.sqrt(n)
-                from scipy.stats import t
+                t = get_scipy_stats().t
                 # Sidak-adjusted alpha for family-wise confidence intervals
                 alpha_sidak = 1 - (1-alpha)**(1/n_tests) 
                 t_crit = t.ppf(1 - alpha_sidak/2, n-1)
@@ -1790,8 +1755,6 @@ class PostHocStatistics:
     @staticmethod
     def calculate_cohens_d(group1_data, group2_data, paired=False):
         """Calculates Cohen's d effect size with appropriate adjustments."""
-        import numpy as np
-        
         if paired:
             diff = np.array(group1_data) - np.array(group2_data)
             return np.mean(diff) / np.std(diff, ddof=1) if np.std(diff, ddof=1) > 0 else 0
@@ -1804,8 +1767,7 @@ class PostHocStatistics:
     @staticmethod
     def calculate_ci_mean_diff(group1_data, group2_data, alpha=0.05, paired=False):
         """Calculates confidence intervals for the mean difference."""
-        import numpy as np
-        from scipy.stats import t
+        t = get_scipy_stats().t
         
         try:
             if paired:
@@ -1834,8 +1796,7 @@ class TukeyHSD(PostHocAnalyzer):
     @staticmethod
     def perform_test(valid_groups, samples, alpha=0.05):
         """Performs the Tukey HSD test."""
-        import numpy as np
-        from statsmodels.stats.multicomp import pairwise_tukeyhsd
+        pairwise_tukeyhsd = get_pairwise_tukeyhsd()
         
         result = PostHocAnalyzer.create_result_template("Tukey HSD Test")
         
@@ -1910,7 +1871,7 @@ class DunnettTest(PostHocAnalyzer):
         result["control_group"] = control_group
 
         try:
-            import scikit_posthocs as sp
+            sp = get_scikit_posthocs()
             all_data = []
             group_labels = []
             for group in valid_groups:
@@ -1957,7 +1918,7 @@ class DunnettTest(PostHocAnalyzer):
                 pooled_std = np.sqrt(((n1 - 1) * (s1 ** 2) + (n2 - 1) * (s2 ** 2)) / (n1 + n2 - 2))
                 se_diff = pooled_std * np.sqrt(1 / n1 + 1 / n2)
                 df_val = n1 + n2 - 2
-                from scipy.stats import t
+                t = get_scipy_stats().t
                 t_crit = t.ppf(1 - alpha_sidak / 2, df_val)
                 ci_lower = mean_diff - t_crit * se_diff
                 ci_upper = mean_diff + t_crit * se_diff
@@ -2006,7 +1967,7 @@ class DunnTest(PostHocAnalyzer):
         result = PostHocAnalyzer.create_result_template("Dunn-Test")
 
         try:
-            import scikit_posthocs as sp
+            sp = get_scikit_posthocs()
         except ImportError:
             result["error"] = "scikit-posthocs is not installed."
             return result
@@ -2278,10 +2239,6 @@ class DataImporter:
                 values = df[df[group_col] == group][value_cols[0]].dropna().tolist()
                 samples[group] = values
         return samples, df
-
-import numpy as np
-import pandas as pd
-import scipy.stats as stats
 
 try:
     import scikit_posthocs as sp
@@ -2763,8 +2720,6 @@ class AnalysisManager:
         """
         Multiple dataset analysis with unified Excel output
         """
-        from datetime import datetime
-        
         all_results = {}
         failed_datasets = {}
         
@@ -2871,7 +2826,6 @@ class AnalysisManager:
         if error_type not in ["sd", "se"]:
             raise ValueError("Error bar type must be 'sd' or 'se'")
 
-        from datetime import datetime
         analysis_log = f"Analysis Report\n"
         analysis_log += f"Date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
         analysis_log += f"File: {file_path}\n"
@@ -2972,19 +2926,6 @@ class AnalysisManager:
                         print(f"WARNING: {error_message}")
                         analysis_log += "\nAnalysis continues with warning, results may be unreliable."
                         
-            # Legacy non-parametric switching is disabled by default.
-            # Advanced ANOVAs now stay on the advanced path and let perform_advanced_test()
-            # decide between parametric and robust fallback models internally.
-            if kwargs.get('force_legacy_nonparametric', False) and test_recommendation == 'non_parametric':
-                if kwargs.get('test') == 'two_way_anova':
-                    kwargs['test'] = 'nonparametric_two_way_anova'
-                    analysis_log += "\nSwitching to nonparametric two-way ANOVA based on assumption check.\n"
-                elif kwargs.get('test') == 'repeated_measures_anova':
-                    kwargs['test'] = 'nonparametric_rm_anova'
-                    analysis_log += "\nSwitching to nonparametric repeated measures ANOVA based on assumption check.\n"
-                elif kwargs.get('test') == 'mixed_anova':
-                    kwargs['test'] = 'nonparametric_mixed_anova'
-                    analysis_log += "\nSwitching to nonparametric mixed ANOVA based on assumption check.\n"            
 
             # Perform the appropriate statistical test - only call ONCE
             if kwargs.get('test') == 'mixed_anova':
@@ -3110,123 +3051,7 @@ class AnalysisManager:
                 test_results = StatisticalTester.perform_statistical_test(
                     groups, transformed_samples, filtered_samples,
                     dependent=dependent, test_recommendation=test_recommendation, test_info=test_info
-                )
-
-                
-            if kwargs.get('test') == 'nonparametric_two_way_anova':
-                # DISABLED: Nonparametric fallbacks are not yet supported
-                # from nonparametricanovas import NonParametricTwoWayANOVA, NonParametricFactory
-                
-                # Return informational message instead of running nonparametric test
-                test_results = {
-                    "test": "Two-Way ANOVA (parametric assumptions violated)",
-                    "recommendation": "non_parametric", 
-                    "error": "Nonparametric alternatives are currently disabled. The NonParametricTwoWayANOVA class is available in nonparametricanovas.py but nonparametric fallbacks are disabled.",
-                    "parametric_violated": True,
-                    "suggested_alternative": "NonParametricTwoWayANOVA class (rank transformation + permutation test)"
-                }
-                
-                # Create standardized results for Excel export
-                results = {
-                    "test_results": test_results,
-                    "transformed_samples": transformed_samples,
-                    "samples": filtered_samples,
-                    "transformation": test_info.get("transformation"),
-                    "normality_tests": test_info["normality_tests"],
-                    "variance_test": test_info["variance_test"],
-                    "test_type": "non-parametric",
-                    "groups": groups,
-                    "permutation_test": False,
-                    "analysis_log": "Nonparametric Two-Way ANOVA requested but not supported"
-                }
-                
-            elif kwargs.get('test') == 'nonparametric_rm_anova':
-                # DISABLED: Nonparametric fallbacks are not yet supported
-                # from nonparametricanovas import NonParametricFactory
-                
-                # Return informational message instead of running nonparametric test  
-                test_results = {
-                    "test": "Repeated-Measures ANOVA (parametric assumptions violated)",
-                    "recommendation": "non_parametric",
-                    "error": "Nonparametric alternatives are currently disabled. The NonParametricRMANOVA class is available in nonparametricanovas.py but nonparametric fallbacks are disabled.",
-                    "parametric_violated": True,
-                    "suggested_alternative": "NonParametricRMANOVA class (rank transformation + permutation test)"
-                }
-                
-                # Create standardized results for Excel export
-                results = {
-                    "test_results": test_results,
-                    "transformed_samples": transformed_samples,
-                    "samples": filtered_samples,
-                    "transformation": test_info.get("transformation"),
-                    "normality_tests": test_info["normality_tests"],
-                    "variance_test": test_info["variance_test"],
-                    "test_type": "non-parametric",
-                    "groups": groups,
-                    "analysis_log": "Nonparametric Repeated-Measures ANOVA requested but not supported"
-                }
-                
-                # Handle Excel export if needed
-                if not skip_excel:
-                    print(f"DEBUG EXCEL: About to export Excel file")
-                    print(f"DEBUG EXCEL: Current working directory: {os.getcwd()}")
-                    
-                    # Store original directory
-                    original_dir = os.getcwd()
-                    
-                    # Generate excel file path using absolute path
-                    dataset_str = f"{dataset_name}_" if dataset_name else ""
-                    file_base = f"{dataset_str}{file_name}" if file_name else f"{groups[0]}_vs_{groups[1]}"
-                    excel_file = get_output_path(file_base, "xlsx")
-                    print(f"DEBUG EXCEL: Will save to: {excel_file}")
-                    
-                    # Export only once
-                    ResultsExporter = get_results_exporter()
-                    ResultsExporter.export_results_to_excel(results, excel_file, analysis_log)
-                    print(f"DEBUG EXCEL: Export completed, file exists: {os.path.exists(excel_file)}")
-                    
-                    # Update analysis log with the absolute path
-                    if os.path.exists(excel_file):
-                        analysis_log += f"\nResults were saved to {excel_file}.\n"
-                        # Store the path in results for later reference
-                        results["excel_output_path"] = excel_file
-                    else:
-                        error_msg = f"Failed to create Excel file at: {excel_file}"
-                        analysis_log += f"\nERROR: {error_msg}\n"
-                        print(f"ERROR: {error_msg}")
-                        
-                    # Ensure we're back in the original directory
-                    if os.getcwd() != original_dir:
-                        os.chdir(original_dir)
-                        print(f"DEBUG: Restored original directory: {original_dir}")
-            
-            elif kwargs.get('test') == 'nonparametric_mixed_anova':
-                # DISABLED: Nonparametric fallbacks are not yet supported
-                # from nonparametricanovas import NonParametricMixedANOVA, NonParametricFactory
-                
-                # Return informational message instead of running nonparametric test
-                test_results = {
-                    "test": "Mixed-Design ANOVA (parametric assumptions violated)",
-                    "recommendation": "non_parametric",
-                    "error": "Nonparametric alternatives are currently disabled. The NonParametricMixedANOVA class is available in nonparametricanovas.py but nonparametric fallbacks are disabled.",
-                    "parametric_violated": True,
-                    "suggested_alternative": "NonParametricMixedANOVA class (rank transformation + permutation test)"
-                }
-                
-                # Create standardized results for Excel export
-                results = {
-                    "test_results": test_results,
-                    "transformed_samples": transformed_samples,
-                    "samples": filtered_samples,
-                    "transformation": test_info.get("transformation"),
-                    "normality_tests": test_info["normality_tests"],
-                    "variance_test": test_info["variance_test"],
-                    "test_type": "non-parametric",
-                    "groups": groups,
-                    "analysis_log": "Nonparametric Mixed-Design ANOVA requested but not supported"
-                }    
-
-            # Log before transformation (only for standard tests that went through normality checking)
+                )            # Log before transformation (only for standard tests that went through normality checking)
             if test_info:
                 analysis_log += "\nResults of assumption tests before transformation:\n"
                 
@@ -3305,8 +3130,7 @@ class AnalysisManager:
                                 pairs = UIDialogManager.select_custom_pairs_dialog(valid_groups)
                                 if pairs:
                                     # Import required modules
-                                    from scipy import stats
-                                    import numpy as np
+                                    stats = get_scipy_stats()
                                     multipletests = get_statsmodels_multitest()
                                     
                                     # Paired t-tests for the selected pairs
@@ -3684,7 +3508,6 @@ class AnalysisManager:
                 analysis_log += f"\nPlots were saved as:\n"
                 analysis_log += f"  {file_base}.pdf\n"
                 analysis_log += f"  {file_base}.png\n"
-                import matplotlib.pyplot as plt
                 plt.close(fig)
                 results["_file_paths"] = {
                     "excel": os.path.abspath(excel_file),
@@ -3705,7 +3528,6 @@ class AnalysisManager:
                         save_plot=save_plot, file_name=file_base+"_lines",
                         show_individual=show_individual_lines
                     )
-                    import matplotlib.pyplot as plt
                     plt.close(line_fig)
                     line_plot_base = file_base+"_lines"
                     results["_file_paths"]["pdf_lines"] = os.path.abspath(f"{line_plot_base}.pdf")
@@ -4239,7 +4061,6 @@ class OutlierDetector:
             
             if file_exists:
                 # Create a backup of the original file with a timestamp
-                from datetime import datetime
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 output_dir = os.path.dirname(output_path)
                 base_name = os.path.splitext(os.path.basename(output_path))[0]
@@ -4806,8 +4627,7 @@ class OutlierDetector:
     def _add_visualization_sheet(wb, all_results, dataset_columns):
         """Add visualization sheet with swarm plots showing outliers."""
         from openpyxl.drawing.image import Image
-        import matplotlib.pyplot as plt
-        import seaborn as sns
+        sns = get_seaborn()
         import tempfile
         # import os  # Already imported at top
         
@@ -5008,8 +4828,7 @@ class OutlierDetector:
     def _add_single_visualization_sheet(wb, detector, dataset_name=None):
         """Add visualization sheet with swarm plot showing outliers in modern, minimalist style."""
         from openpyxl.drawing.image import Image
-        import matplotlib.pyplot as plt
-        import seaborn as sns
+        sns = get_seaborn()
         import tempfile
         # import os  # Already imported at top
 
