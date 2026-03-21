@@ -7,8 +7,7 @@ from lazy_imports import get_pingouin, get_scipy_stats, get_statsmodels_multites
 from stats_functions import UIDialogManager, PostHocFactory, get_pingouin_module, get_output_path, PostHocAnalyzer, PostHocStatistics
 from resultsexporter import ResultsExporter
 from nonparametricanovas import (
-    GLMMTwoWayANOVA, GEERMANOVA, GLMMMixedANOVA,
-    auto_anova_decision, fallback_modern_models, posthoc_marginaleffects,
+    posthoc_marginaleffects,
     perform_friedman_test, perform_freedman_lane_test, perform_brunner_langer_ats,
 )
 
@@ -537,8 +536,12 @@ class StatisticalTester:
     def _wilcoxon_test(results, g1, g2, data1, data2, alpha):
         statistic, p_value = stats.wilcoxon(data1, data2)
         test_name = "Wilcoxon test"
-        n = len(data1)
-        r = statistic / (n * (n + 1) / 2)
+        # scipy wilcoxon() returns min(T+, T-), not T+.
+        # Correct rank-biserial: r = |1 - 2*min / N| where N = n_eff*(n_eff+1)/2
+        diffs = np.asarray(data1) - np.asarray(data2)
+        n_eff = int(np.sum(diffs != 0))
+        _N = n_eff * (n_eff + 1) / 2
+        r = float(abs(1.0 - 2.0 * statistic / _N)) if _N > 0 else 0.0
         results["effect_size"] = r
         results["effect_size_type"] = "r"
         results["confidence_interval"] = (None, None)
@@ -546,7 +549,7 @@ class StatisticalTester:
             from statsmodels.stats.power import TTestPower
             effect_size_corrected = r * 0.955
             power_analysis = TTestPower()
-            results["power"] = float(power_analysis.power(effect_size=effect_size_corrected, nobs=n, alpha=alpha))
+            results["power"] = float(power_analysis.power(effect_size=effect_size_corrected, nobs=n_eff, alpha=alpha))
         except Exception as e:
             results["power"] = None
         results["test"] = test_name
@@ -747,8 +750,10 @@ class StatisticalTester:
                         # Extract the main ANOVA results
                         results["test"] = "One-way ANOVA (Pingouin)"
                         results["statistic"] = float(row_between["F"])
-                        results["p_value"] = float(row_between["p-unc"])
-                        results["effect_size"] = float(row_between["np2"])
+                        p_col = "p_unc" if "p_unc" in row_between.index else "p-unc"
+                        results["p_value"] = float(row_between[p_col])
+                        np2_col = "np2" if "np2" in row_between.index else "n2"
+                        results["effect_size"] = float(row_between[np2_col])
                         results["effect_size_type"] = "partial_eta_squared"
                         results["confidence_interval"] = (None, None)
                         results["power"] = None
@@ -942,9 +947,16 @@ class StatisticalTester:
                 "posthoc_tests": None  # We'll add post-hoc separately if needed
             }]
             
-            # Add test-level results 
+            # Cohen's f (approx.) — no MS_within available for Welch, so use F*df/N
+            n_total = len(df_pg)
+            cohens_f = float(np.sqrt(max(F_value * df1 / n_total, 0.0)))
+            results["effects"][0]["effect_size"] = cohens_f
+
+            # Add test-level results
             results["p_value"] = p_value
             results["statistic"] = F_value
+            results["effect_size"] = cohens_f
+            results["effect_size_type"] = "Cohen's f"
             results["df1"] = df1
             results["df2"] = df2
             results["anova_table"] = welch_results
@@ -1842,15 +1854,13 @@ class StatisticalTester:
                         alpha=alpha,
                     )
                 else:
-                    res = fallback_modern_models(
-                        data=df_original.copy(),
-                        dependent_var=dv,
-                        formula=f"{dv} ~ 1",
-                        design_type=test,
-                        subject_col=subject,
-                        cov_struct_option="auto",
-                        time_col=within[0] if within else None,
-                    )
+                    res = {
+                        "test": f"{test} (non-parametric fallback not available)",
+                        "error": f"No non-parametric fallback implemented for test type: {test}",
+                        "p_value": None,
+                        "statistic": None,
+                        "model_class": "Unknown",
+                    }
 
                 res["test_info"] = test_info
                 res["parametric_assumptions_violated"] = True
@@ -2032,82 +2042,14 @@ class StatisticalTester:
 
                 return res
 
-            else:  # robust fallback path (GLMM/GEE-based)
-                # Select and run the appropriate robust method
-                robust_result = None
-                robust_method = None
-                try:
-                    if test == 'two_way_anova':
-                        robust_method = GLMMTwoWayANOVA
-                        robust_result = GLMMTwoWayANOVA(df=df, dv=dv, factors=between, alpha=alpha).run()
-                    elif test == 'repeated_measures_anova':
-                        robust_method = GEERMANOVA
-                        robust_result = GEERMANOVA(df=df, dv=dv, subject=subject, within=within, alpha=alpha).run()
-                    elif test == 'mixed_anova':
-                        robust_method = GLMMMixedANOVA
-                        robust_result = GLMMMixedANOVA(df=df, dv=dv, subject=subject, between=between, within=within, alpha=alpha).run()
-                    else:
-                        # Fallback: use auto decision logic
-                        robust_method = auto_anova_decision
-                        robust_result = auto_anova_decision(df=df, dv=dv, subject=subject, between=between, within=within, alpha=alpha)
-                except Exception as robust_e:
-                    import traceback
-                    print(f"ERROR in robust fallback: {str(robust_e)}")
-                    traceback.print_exc()
-                    robust_result = {
-                        "test": f"Robust {test} (failed)",
-                        "test_info": test_info,
-                        "recommendation": "robust_fallback",
-                        "error": f"Error running robust fallback: {str(robust_e)}",
-                        "parametric_violated": True
-                    }
-
-                # Format result to match parametric structure
-                result = {
-                    "test": robust_result.get("test", f"Robust {test}"),
-                    "test_info": test_info,
-                    "recommendation": "robust_fallback",
-                    "robust_method": robust_method.__name__ if robust_method else None,
-                    "parametric_violated": True,
-                    "raw_data": original_samples,
-                    "robust_result": robust_result
+            else:  # unknown recommendation — should never happen
+                print(f"WARNING: Unknown recommendation '{recommendation}' for {test} — returning error.")
+                return {
+                    "error": f"Unknown test recommendation: {recommendation}",
+                    "test": test,
+                    "p_value": None,
+                    "statistic": None,
                 }
-                # Copy over key stats if present
-                for key in ["p_value", "statistic", "summary", "model", "diagnostics", "pairwise_comparisons", "posthoc_test"]:
-                    if key in robust_result:
-                        result[key] = robust_result[key]
-                # Add transformation info if present
-                if transformation_type:
-                    result["transformation"] = transformation_type
-                # Excel export
-                if not skip_excel:
-                    analysis_log = []
-                    analysis_log.append(f"Advanced Test Analysis: {test}")
-                    analysis_log.append(f"Dataset: {dv}")
-                    analysis_log.append(f"Test recommendation: robust_fallback (GLMM/GEE)")
-                    if transformation_type:
-                        analysis_log.append(f"Applied transformation: {transformation_type}")
-                    if "p_value" in result:
-                        if result["p_value"] is not None and result["p_value"] < alpha:
-                            analysis_log.append(f"Result: Significant difference found (p = {result['p_value']:.4f})")
-                        elif result["p_value"] is not None:
-                            analysis_log.append(f"Result: No significant difference (p = {result['p_value']:.4f})")
-                        else:
-                            analysis_log.append("Result: No p-value available")
-                    else:
-                        analysis_log.append("Result: Robust test performed (see details)")
-                    analysis_log_text = "\n".join(analysis_log)
-                    output_file = f"{file_name}_results.xlsx" if file_name else get_output_path(
-                        f"{test}_{datetime.now().strftime('%Y%m%d_%H%M%S')}", "xlsx"
-                    )
-                    try:
-                        ResultsExporter.export_results_to_excel(result, output_file, analysis_log_text)
-                        result["excel_file"] = output_file
-                        print(f"Results exported to: {output_file}")
-                    except Exception as export_e:
-                        print(f"Excel export could not be performed: {export_e}")
-                        result["excel_export_error"] = str(export_e)
-                return result
             
         except Exception as e:
             import traceback

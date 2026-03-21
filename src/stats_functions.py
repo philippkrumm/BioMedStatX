@@ -2246,23 +2246,7 @@ try:
 except ImportError:
     HAS_SCPH = False
 
-# Robust import for nonparametricanovas: works as script or module
-try:
-    from nonparametricanovas import GLMMTwoWayANOVA, GEERMANOVA, GLMMMixedANOVA, auto_anova_decision
-except ImportError:
-    import sys as _sys
-    import os as _os
-    _src_dir = _os.path.dirname(_os.path.abspath(__file__))
-    _parent_dir = _os.path.abspath(_os.path.join(_src_dir, os.pardir))
-    if _parent_dir not in _sys.path:
-        _sys.path.insert(0, _parent_dir)
-    try:
-        from nonparametricanovas import GLMMTwoWayANOVA, GEERMANOVA, GLMMMixedANOVA, auto_anova_decision
-    except ImportError as e:
-        raise ImportError(
-            "Could not import nonparametricanovas. Tried both absolute and sys.path hack. "
-            "Current sys.path: {}. Error: {}".format(_sys.path, e)
-        )
+# GLMMTwoWayANOVA, GEERMANOVA, GLMMMixedANOVA, auto_anova_decision removed (dead code).
 
 
             

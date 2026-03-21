@@ -1,6 +1,14 @@
 import sys
 import time
 import os
+# --- FIX FÜR MACOS QT PLUGIN FEHLER ---
+# PyQt5 über pip bündelt eigene Qt5-Libs, die auf macOS 26 Tahoe nicht laden.
+# Stattdessen: Homebrew qt@5 Platform-Plugins verwenden.
+if sys.platform == "darwin":
+    _hb_qt_plugins = "/opt/homebrew/opt/qt@5/plugins"
+    if os.path.isdir(_hb_qt_plugins):
+        os.environ.setdefault("QT_QPA_PLATFORM_PLUGIN_PATH", _hb_qt_plugins)
+# --------------------------------------
 from PyQt5.QtWidgets import QDesktopWidget
 # Core imports - always needed
 import numpy as np
@@ -838,7 +846,7 @@ class StatisticalAnalyzerApp(QMainWindow):
             (screen.width() - width) // 2,
             (screen.height() - height) // 2
         )
-        self.setWindowTitle("BioMedStatX v1.0.1 - Comprehensive Statistical Analysis Tool")
+        self.setWindowTitle("BioMedStatX v2.0 - Comprehensive Statistical Analysis Tool")
         self.setGeometry(100, 50, 1600, 1300)
         
         # Set window icon
@@ -2995,6 +3003,22 @@ class StatisticalAnalyzerApp(QMainWindow):
                     # Use centralized success dialog
                     analysis_type = f"Multi-dataset analysis ({len(all_results)} datasets: {', '.join(all_results.keys())})"
                     self.show_analysis_success_dialog(analysis_type, files, output_dir)
+
+                    # Update cockpit to reflect multi-dataset completion
+                    n = len(all_results)
+                    names = ", ".join(all_results.keys())
+                    multi_summary = {
+                        "subtitle": f"Multi-dataset analysis complete — {n} dataset(s) analyzed.",
+                        "metric_normality": "—",
+                        "metric_variance": "—",
+                        "metric_main_test": f"{n} dataset(s) analyzed:\n{names}\n\nSee Excel file for full results.",
+                        "metric_effect_size": "—",
+                        "detected_test": "Multi-dataset mode — each dataset analyzed separately.",
+                        "rationale": "Results combined in shared Excel file.",
+                        "posthoc": "—",
+                    }
+                    self.result_cockpit.set_summary(multi_summary, enable_plot=False, enable_output=True)
+                    self.current_output_dir = output_dir
                 else:
                     print("DEBUG MULTI: all_results is empty, skipping export")
                     QMessageBox.warning(self, "No Results", "No analysis results were generated.")
@@ -3939,9 +3963,16 @@ class ResultCockpitWidget(QFrame):
         self.metric_grid.setContentsMargins(0, 0, 0, 0)
         self.metric_grid.setHorizontalSpacing(12)
         self.metric_grid.setVerticalSpacing(12)
-        self._metric_breakpoint_width = 500
-        self._metric_grid_columns = None
-        self._update_metric_grid_columns(2)
+        self.metric_grid.setColumnStretch(0, 1)
+        self.metric_grid.setColumnStretch(1, 1)
+        cards_in_order = [
+            self.metric_cards["metric_normality"],
+            self.metric_cards["metric_variance"],
+            self.metric_cards["metric_main_test"],
+            self.metric_cards["metric_effect_size"],
+        ]
+        for index, card in enumerate(cards_in_order):
+            self.metric_grid.addWidget(card, index // 2, index % 2)
         layout.addWidget(self.metric_grid_widget)
 
         context_title = QLabel("Context")
@@ -3970,56 +4001,6 @@ class ResultCockpitWidget(QFrame):
 
         self.clear()
 
-    def _sync_metric_grid_layout(self):
-        # Use the cockpit width as primary signal so startup resize quirks do not lock into 1-column mode.
-        available_width = max(
-            self.width(),
-            self.metric_grid_widget.width(),
-            self.contentsRect().width(),
-        )
-        if available_width < self._metric_breakpoint_width:
-            self._update_metric_grid_columns(1)
-        else:
-            self._update_metric_grid_columns(2)
-
-    def _update_metric_grid_columns(self, columns):
-        if self._metric_grid_columns == columns:
-            return
-
-        self._metric_grid_columns = columns
-        while self.metric_grid.count():
-            item = self.metric_grid.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                self.metric_grid.removeWidget(widget)
-
-        cards_in_order = [
-            self.metric_cards["metric_normality"],
-            self.metric_cards["metric_variance"],
-            self.metric_cards["metric_main_test"],
-            self.metric_cards["metric_effect_size"],
-        ]
-
-        for index, card in enumerate(cards_in_order):
-            row = index // columns
-            column = index % columns
-            self.metric_grid.addWidget(card, row, column)
-
-        # Ensure opacity side-effects from card animations do not hide cards
-        # after relayout or scrolling in the main dashboard.
-        self._clear_card_effects()
-
-        # Keep columns balanced in desktop mode and single full width in compact mode.
-        self.metric_grid.setColumnStretch(0, 1)
-        self.metric_grid.setColumnStretch(1, 1 if columns > 1 else 0)
-
-    def resizeEvent(self, event):
-        self._sync_metric_grid_layout()
-        super().resizeEvent(event)
-
-    def showEvent(self, event):
-        self._sync_metric_grid_layout()
-        super().showEvent(event)
 
     def clear(self):
         self.subtitle.setText("Run an analysis to populate the cockpit.")
@@ -4053,24 +4034,9 @@ class ResultCockpitWidget(QFrame):
         self._animate_cards()
 
     def _animate_cards(self):
+        # Animation disabled: QSequentialAnimationGroup crashes on macOS 26 Tahoe
+        # with dual Qt binaries (Homebrew + conda). Cards appear instantly instead.
         self._clear_card_effects()
-        self._animation_group = QSequentialAnimationGroup(self)
-        ordered_cards = [
-            *self.metric_cards.values(),
-            *self.context_cards.values(),
-        ]
-        for card in ordered_cards:
-            effect = QGraphicsOpacityEffect(card)
-            card.setGraphicsEffect(effect)
-            effect.setOpacity(0.0)
-            animation = QPropertyAnimation(effect, b"opacity", self)
-            animation.setDuration(180)
-            animation.setStartValue(0.0)
-            animation.setEndValue(1.0)
-            animation.setEasingCurve(QEasingCurve.OutCubic)
-            self._animation_group.addAnimation(animation)
-        self._animation_group.finished.connect(self._clear_card_effects)
-        self._animation_group.start()
 
     def _clear_card_effects(self):
         cards = []

@@ -643,11 +643,16 @@ class ResultsExporter:
                 elif abs(effect_size) < 0.08: magnitude = "small"; format_to_use = fmt["effect_weak"]
                 elif abs(effect_size) < 0.26: magnitude = "medium"; format_to_use = fmt["effect_medium"]
                 else: magnitude = "large"; format_to_use = fmt["effect_strong"]
-            elif effect_type.lower() == "kendall_w":
+            elif effect_type.lower() in ["kendall_w", "kendall's w"]:
                 effect_desc = "Kendall's W"
+                if abs(effect_size) < 0.1: magnitude = "weak"; format_to_use = fmt["effect_weak"]
+                elif abs(effect_size) < 0.3: magnitude = "moderate"; format_to_use = fmt["effect_weak"]
+                else: magnitude = "strong"; format_to_use = fmt["effect_strong"]
+            elif effect_type.lower() in ["cohen's f", "cohen's f (approx.)"]:
+                effect_desc = effect_type
                 if abs(effect_size) < 0.1: magnitude = "very small"; format_to_use = fmt["effect_weak"]
-                elif abs(effect_size) < 0.3: magnitude = "small"; format_to_use = fmt["effect_weak"]
-                elif abs(effect_size) < 0.5: magnitude = "medium"; format_to_use = fmt["effect_medium"]
+                elif abs(effect_size) < 0.25: magnitude = "small"; format_to_use = fmt["effect_weak"]
+                elif abs(effect_size) < 0.4: magnitude = "medium"; format_to_use = fmt["effect_medium"]
                 else: magnitude = "large"; format_to_use = fmt["effect_strong"]
             elif effect_type.lower() == "r": # For Wilcoxon, Mann-Whitney U
                 effect_desc = "r (rank correlation)"
@@ -2175,6 +2180,20 @@ class ResultsExporter:
                 elif effect_size < 0.08: effect_str = f"{effect_size:.4f} (small)"
                 elif effect_size < 0.26: effect_str = f"{effect_size:.4f} (medium)"
                 else: effect_str = f"{effect_size:.4f} (large)"
+            elif effect_type == "Kendall's W":
+                if effect_size < 0.1: effect_str = f"{effect_size:.4f} (weak)"
+                elif effect_size < 0.3: effect_str = f"{effect_size:.4f} (moderate)"
+                else: effect_str = f"{effect_size:.4f} (strong)"
+            elif effect_type in ["Cohen's f", "Cohen's f (approx.)"]:
+                if effect_size < 0.1: effect_str = f"{effect_size:.4f} (very small)"
+                elif effect_size < 0.25: effect_str = f"{effect_size:.4f} (small)"
+                elif effect_size < 0.4: effect_str = f"{effect_size:.4f} (medium)"
+                else: effect_str = f"{effect_size:.4f} (large)"
+            elif effect_type == "r":
+                if effect_size < 0.1: effect_str = f"{effect_size:.4f} (very small)"
+                elif effect_size < 0.3: effect_str = f"{effect_size:.4f} (small)"
+                elif effect_size < 0.5: effect_str = f"{effect_size:.4f} (medium)"
+                else: effect_str = f"{effect_size:.4f} (large)"
             else:
                 effect_str = f"{effect_size:.4f}"
         else:
@@ -2200,6 +2219,101 @@ class ResultsExporter:
             fmtx = fmt["significant"] if (col == 2 and is_significant) or (col == 6 and is_significant) else fmt["cell"]
             ws.write(row, col, val, fmtx)
         row += 2
+
+        # --- Factor / interaction breakdown (Friedman, Freedman-Lane, Brunner-Langer ATS) ---
+        factors_list = results.get("factors", [])
+        interactions_list = results.get("interactions", [])
+        if factors_list or interactions_list:
+            ws.merge_range(f'A{row+1}:G{row+1}', "EFFECTS BREAKDOWN (all factors & interactions)", fmt["section_header"])
+            row += 2
+            eff_hdrs = ["Source", "Statistic", "df1", "df2", "p-Value", "Effect size", "Effect size type"]
+            for col, h in enumerate(eff_hdrs):
+                ws.write(row, col, h, fmt["header"])
+            row += 1
+
+            def _fmt_num(v, decimals=4):
+                return f"{v:.{decimals}f}" if isinstance(v, (float, int)) else ("N/A" if v is None else str(v))
+
+            def _eff_interp(es, et):
+                if es is None:
+                    return "N/A"
+                s = f"{es:.4f}"
+                if et in ["Cohen's f", "Cohen's f (approx.)"]:
+                    label = "very small" if es < 0.1 else ("small" if es < 0.25 else ("medium" if es < 0.4 else "large"))
+                    return f"{s} ({label})"
+                if et == "Kendall's W":
+                    label = "weak" if es < 0.1 else ("moderate" if es < 0.3 else "strong")
+                    return f"{s} ({label})"
+                if et in ["eta_squared", "partial_eta_squared"]:
+                    label = "very small" if es < 0.01 else ("small" if es < 0.06 else ("medium" if es < 0.14 else "large"))
+                    return f"{s} ({label})"
+                return s
+
+            for f in factors_list:
+                f_stat = f.get("F") or f.get("Wald_Chi2") or f.get("chi2")
+                f_p = f.get("p_value")
+                f_sig = isinstance(f_p, (float, int)) and f_p < results.get("alpha", 0.05)
+                f_es = f.get("effect_size")
+                f_et = f.get("effect_size_type") or ""
+                row_vals = [
+                    f.get("factor", "?"),
+                    _fmt_num(f_stat),
+                    _fmt_num(f.get("df1")),
+                    _fmt_num(f.get("df2")),
+                    _fmt_num(f_p),
+                    _eff_interp(f_es, f_et),
+                    f_et or "—",
+                ]
+                for col, val in enumerate(row_vals):
+                    ws.write(row, col, val, fmt["significant"] if f_sig and col in (4,) else fmt["cell"])
+                row += 1
+
+            for inter in interactions_list:
+                inter_name = " × ".join(inter.get("factors", ["?"])) if "factors" in inter else inter.get("factor", "Interaction")
+                i_stat = inter.get("F") or inter.get("Wald_Chi2")
+                i_p = inter.get("p_value")
+                i_sig = isinstance(i_p, (float, int)) and i_p < results.get("alpha", 0.05)
+                i_es = inter.get("effect_size")
+                i_et = inter.get("effect_size_type") or ""
+                row_vals = [
+                    f"Interaction: {inter_name}",
+                    _fmt_num(i_stat),
+                    _fmt_num(inter.get("df1")),
+                    _fmt_num(inter.get("df2")),
+                    _fmt_num(i_p),
+                    _eff_interp(i_es, i_et),
+                    i_et or "—",
+                ]
+                for col, val in enumerate(row_vals):
+                    ws.write(row, col, val, fmt["significant"] if i_sig and col in (4,) else fmt["cell"])
+                row += 1
+            row += 1
+
+        # --- Relative Treatment Effects (Brunner-Langer ATS only) ---
+        rte_df = results.get("RTE")
+        if rte_df is not None and isinstance(rte_df, pd.DataFrame) and not rte_df.empty:
+            ws.merge_range(f'A{row+1}:E{row+1}', "RELATIVE TREATMENT EFFECTS (RTE)", fmt["section_header"])
+            row += 2
+            ws.merge_range(f'A{row+1}:E{row+1}',
+                "Relative Treatment Effects (RTE) measure the probability that a randomly chosen "
+                "observation from one cell is smaller than from another. RTE = 0.5 means no effect; "
+                "values above/below 0.5 indicate the direction of the effect.",
+                fmt["explanation"])
+            ws.set_row(row, 40)
+            row += 2
+            rte_cols = list(rte_df.columns)
+            for col, h in enumerate(rte_cols):
+                ws.write(row, col, str(h), fmt["header"])
+            row += 1
+            for _, rte_row in rte_df.iterrows():
+                for col, h in enumerate(rte_cols):
+                    val = rte_row[h]
+                    if isinstance(val, float):
+                        ws.write(row, col, f"{val:.4f}", fmt["cell"])
+                    else:
+                        ws.write(row, col, str(val) if val is not None else "N/A", fmt["cell"])
+                row += 1
+            row += 1
 
         # Show sphericity corrections if present
         if "sphericity_corrections" in results:
