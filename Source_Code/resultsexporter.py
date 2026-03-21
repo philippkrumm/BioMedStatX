@@ -99,6 +99,16 @@ class ResultsExporter:
         ResultsExporter._write_decision_tree_sheet(workbook, results, fmt)
         ResultsExporter._write_rawdata_sheet(workbook, results, fmt)
         ResultsExporter._write_pairwise_sheet(workbook, results, fmt)
+
+        # Clinical model-specific sheets
+        model_type = results.get("model_type", "")
+        if model_type == "ANCOVA":
+            ResultsExporter._write_ancova_sheet(workbook, results, fmt)
+        elif model_type == "LMM":
+            ResultsExporter._write_lmm_sheet(workbook, results, fmt)
+        elif model_type == "LogisticRegression":
+            ResultsExporter._write_logistic_regression_sheet(workbook, results, fmt)
+
         if analysis_log:
             ResultsExporter._write_analysislog_sheet(workbook, analysis_log, fmt)
             
@@ -4153,5 +4163,363 @@ class ResultsExporter:
             row += 1
         
         return row
-        
+
         return cleaned_count
+
+    # ========================================================================
+    # Clinical Model Export Sheets
+    # ========================================================================
+
+    @staticmethod
+    def _write_data_health_section(ws, row, results, fmt):
+        """Write the Clinical Data Health warnings block into any clinical sheet."""
+        health = results.get("data_health")
+        if not health:
+            return
+
+        warnings = health.get("warnings", [])
+        checks = health.get("checks", {})
+
+        ws.write(row, 0, "Clinical Data Health Check", fmt["section_header"])
+        row += 1
+
+        if not warnings:
+            ws.write(row, 0, "No data quality issues detected.", fmt["cell"])
+            row += 1
+        else:
+            for w in warnings:
+                ws.write(row, 0, f"⚠  {w}", fmt["significant"])
+                row += 1
+
+        row += 1
+
+        # VIF detail table
+        vif = checks.get("vif")
+        if vif and isinstance(vif, dict) and "error" not in vif:
+            ws.write(row, 0, "Variance Inflation Factors (VIF)", fmt["header"])
+            row += 1
+            for col, val in vif.items():
+                ws.write(row, 0, col, fmt["cell"])
+                ws.write(row, 1, val, fmt["cell"])
+                ws.write(row, 2, "HIGH" if val > 10 else ("elevated" if val > 5 else "ok"),
+                         fmt["significant"] if val > 10 else fmt["cell"])
+                row += 1
+            row += 1
+
+        # Little's MCAR detail
+        mcar = checks.get("mcar")
+        if mcar and isinstance(mcar, dict) and "error" not in mcar and "note" not in mcar:
+            ws.write(row, 0, "Little's MCAR Test", fmt["header"])
+            row += 1
+            ws.write(row, 0, "χ²", fmt["cell"])
+            ws.write(row, 1, mcar.get("chi2"), fmt["cell"])
+            row += 1
+            ws.write(row, 0, "df", fmt["cell"])
+            ws.write(row, 1, mcar.get("df"), fmt["cell"])
+            row += 1
+            ws.write(row, 0, "p-value", fmt["cell"])
+            ws.write(row, 1, mcar.get("p_value"), fmt["cell"])
+            row += 1
+            interp = mcar.get("interpretation",
+                               "Significant: non-random missing data (MAR/MNAR)" if
+                               (mcar.get("p_value") or 1) < 0.05 else
+                               "MCAR not rejected")
+            ws.write(row, 0, "Interpretation", fmt["cell"])
+            ws.write(row, 1, interp, fmt["cell"])
+            row += 1
+
+    @staticmethod
+    def _write_ancova_sheet(workbook, results, fmt):
+        ws = workbook.add_worksheet("ANCOVA Details")
+        ws.set_column('A:A', 35)
+        ws.set_column('B:G', 18)
+        row = 0
+
+        ws.write(row, 0, "ANCOVA Analysis Details", fmt["title"])
+        row += 2
+
+        # ANOVA Table (Type II SS)
+        ws.write(row, 0, "ANOVA Table (Type II Sum of Squares)", fmt["section_header"])
+        row += 1
+        headers = ["Source", "Sum of Sq.", "df", "F", "p-value"]
+        for c, h in enumerate(headers):
+            ws.write(row, c, h, fmt["header"])
+        row += 1
+        for entry in results.get("anova_table", []):
+            ws.write(row, 0, str(entry.get("source", "")), fmt["cell"])
+            ws.write(row, 1, entry.get("sum_sq"), fmt["cell"])
+            ws.write(row, 2, entry.get("df"), fmt["cell"])
+            f_val = entry.get("F")
+            ws.write(row, 3, f_val if f_val is not None else "N/A", fmt["cell"])
+            p_val = entry.get("p_value")
+            if p_val is not None and isinstance(p_val, (float, int)):
+                cell_fmt = fmt["significant"] if p_val < 0.05 else fmt["cell"]
+                ws.write(row, 4, p_val, cell_fmt)
+            else:
+                ws.write(row, 4, "N/A", fmt["cell"])
+            row += 1
+        row += 1
+
+        # Covariate Effects
+        cov_effects = results.get("covariate_effects", [])
+        if cov_effects:
+            ws.write(row, 0, "Covariate Effects", fmt["section_header"])
+            row += 1
+            cov_headers = ["Covariate", "Coefficient", "Std. Error", "t-value", "p-value", "CI Lower", "CI Upper"]
+            for c, h in enumerate(cov_headers):
+                ws.write(row, c, h, fmt["header"])
+            row += 1
+            for cov in cov_effects:
+                ws.write(row, 0, str(cov.get("covariate", "")), fmt["cell"])
+                ws.write(row, 1, cov.get("coefficient"), fmt["cell"])
+                ws.write(row, 2, cov.get("std_err"), fmt["cell"])
+                ws.write(row, 3, cov.get("t_value"), fmt["cell"])
+                p_val = cov.get("p_value")
+                if p_val is not None:
+                    cell_fmt = fmt["significant"] if p_val < 0.05 else fmt["cell"]
+                    ws.write(row, 4, p_val, cell_fmt)
+                else:
+                    ws.write(row, 4, "N/A", fmt["cell"])
+                ws.write(row, 5, cov.get("ci_lower"), fmt["cell"])
+                ws.write(row, 6, cov.get("ci_upper"), fmt["cell"])
+                row += 1
+            row += 1
+
+        # Adjusted Means
+        adj_means = results.get("adjusted_means", {})
+        if adj_means:
+            ws.write(row, 0, "Adjusted Means (Estimated Marginal Means)", fmt["section_header"])
+            row += 1
+            am_headers = ["Factor", "Level", "Adjusted Mean", "Raw Mean", "Raw SD", "n"]
+            for c, h in enumerate(am_headers):
+                ws.write(row, c, h, fmt["header"])
+            row += 1
+            for factor, levels in adj_means.items():
+                for level, vals in levels.items():
+                    ws.write(row, 0, str(factor), fmt["cell"])
+                    ws.write(row, 1, str(level), fmt["cell"])
+                    ws.write(row, 2, vals.get("adjusted_mean"), fmt["cell"])
+                    ws.write(row, 3, vals.get("raw_mean"), fmt["cell"])
+                    ws.write(row, 4, vals.get("raw_sd"), fmt["cell"])
+                    ws.write(row, 5, vals.get("n"), fmt["cell"])
+                    row += 1
+            row += 1
+
+        # Regression Slope Homogeneity Test
+        slope_hom = results.get("slope_homogeneity", {})
+        if slope_hom:
+            ws.write(row, 0, "Homogeneity of Regression Slopes (ANCOVA Assumption)", fmt["section_header"])
+            row += 1
+            sh_headers = ["Interaction", "F", "p-value", "df", "Assumption Holds"]
+            for c, h in enumerate(sh_headers):
+                ws.write(row, c, h, fmt["header"])
+            row += 1
+            for interaction, vals in slope_hom.items():
+                ws.write(row, 0, str(interaction), fmt["cell"])
+                ws.write(row, 1, vals.get("F"), fmt["cell"])
+                p_val = vals.get("p_value")
+                if p_val is not None:
+                    cell_fmt = fmt["significant"] if p_val < 0.05 else fmt["cell"]
+                    ws.write(row, 2, p_val, cell_fmt)
+                else:
+                    ws.write(row, 2, "N/A", fmt["cell"])
+                ws.write(row, 3, vals.get("df"), fmt["cell"])
+                holds = vals.get("assumption_holds")
+                ws.write(row, 4, "Yes" if holds else ("No - WARNING" if holds is False else "N/A"),
+                         fmt["cell"] if holds else fmt["significant"])
+                row += 1
+            row += 1
+
+        # Model Fit
+        ws.write(row, 0, "Model Fit", fmt["section_header"])
+        row += 1
+        ws.write(row, 0, "R-squared", fmt["cell"])
+        ws.write(row, 1, results.get("r_squared"), fmt["cell"])
+        row += 1
+        ws.write(row, 0, "Adjusted R-squared", fmt["cell"])
+        ws.write(row, 1, results.get("r_squared_adj"), fmt["cell"])
+        row += 1
+        ws.write(row, 0, "AIC", fmt["cell"])
+        ws.write(row, 1, results.get("aic"), fmt["cell"])
+        row += 1
+        ws.write(row, 0, "N observations", fmt["cell"])
+        ws.write(row, 1, results.get("n_observations"), fmt["cell"])
+        row += 2
+        ResultsExporter._write_data_health_section(ws, row, results, fmt)
+
+    @staticmethod
+    def _write_lmm_sheet(workbook, results, fmt):
+        ws = workbook.add_worksheet("LMM Details")
+        ws.set_column('A:A', 40)
+        ws.set_column('B:G', 18)
+        row = 0
+
+        ws.write(row, 0, "Linear Mixed Model Details", fmt["title"])
+        row += 2
+
+        # Fixed Effects Table
+        ws.write(row, 0, "Fixed Effects", fmt["section_header"])
+        row += 1
+        fe_headers = ["Parameter", "Coefficient", "Std. Error", "z-value", "p-value", "CI Lower", "CI Upper"]
+        for c, h in enumerate(fe_headers):
+            ws.write(row, c, h, fmt["header"])
+        row += 1
+        for fe in results.get("fixed_effects_table", []):
+            ws.write(row, 0, str(fe.get("parameter", "")), fmt["cell"])
+            ws.write(row, 1, fe.get("coefficient"), fmt["cell"])
+            ws.write(row, 2, fe.get("std_err"), fmt["cell"])
+            ws.write(row, 3, fe.get("z_value"), fmt["cell"])
+            p_val = fe.get("p_value")
+            if p_val is not None:
+                cell_fmt = fmt["significant"] if p_val < 0.05 else fmt["cell"]
+                ws.write(row, 4, p_val, cell_fmt)
+            else:
+                ws.write(row, 4, "N/A", fmt["cell"])
+            ws.write(row, 5, fe.get("ci_lower"), fmt["cell"])
+            ws.write(row, 6, fe.get("ci_upper"), fmt["cell"])
+            row += 1
+        row += 1
+
+        # Random Effects
+        ws.write(row, 0, "Random Effects", fmt["section_header"])
+        row += 1
+        ws.write(row, 0, "Random Intercept Variance", fmt["cell"])
+        ws.write(row, 1, results.get("random_effects_variance"), fmt["cell"])
+        row += 1
+        ws.write(row, 0, "Residual Variance", fmt["cell"])
+        ws.write(row, 1, results.get("residual_variance"), fmt["cell"])
+        row += 1
+        icc = results.get("icc")
+        ws.write(row, 0, "ICC (Intraclass Correlation)", fmt["cell"])
+        ws.write(row, 1, icc if icc is not None else "N/A", fmt["cell"])
+        row += 2
+
+        # Model Fit
+        ws.write(row, 0, "Model Fit Statistics", fmt["section_header"])
+        row += 1
+        for key, label in [("aic", "AIC"), ("bic", "BIC"), ("log_likelihood", "Log-Likelihood")]:
+            ws.write(row, 0, label, fmt["cell"])
+            ws.write(row, 1, results.get(key), fmt["cell"])
+            row += 1
+        row += 1
+
+        # Sample Info
+        ws.write(row, 0, "Sample Information", fmt["section_header"])
+        row += 1
+        ws.write(row, 0, "Number of subjects", fmt["cell"])
+        ws.write(row, 1, results.get("n_subjects"), fmt["cell"])
+        row += 1
+        ws.write(row, 0, "Total observations", fmt["cell"])
+        ws.write(row, 1, results.get("n_observations"), fmt["cell"])
+        row += 1
+        ws.write(row, 0, "Converged", fmt["cell"])
+        ws.write(row, 1, "Yes" if results.get("converged") else "No", fmt["cell"])
+        row += 2
+
+        # Interpretation note
+        ws.write(row, 0, "Note", fmt["section_header"])
+        row += 1
+        ws.write(row, 0,
+                 "Linear Mixed Models handle missing data via Maximum Likelihood estimation. "
+                 "Unlike repeated-measures ANOVA, patients with missing visits are not dropped — "
+                 "all available data points contribute to the model.",
+                 fmt["cell"])
+        row += 2
+        ResultsExporter._write_data_health_section(ws, row, results, fmt)
+
+    @staticmethod
+    def _write_logistic_regression_sheet(workbook, results, fmt):
+        ws = workbook.add_worksheet("Logistic Regression")
+        ws.set_column('A:A', 35)
+        ws.set_column('B:H', 16)
+        row = 0
+
+        ws.write(row, 0, "Logistic Regression Details", fmt["title"])
+        row += 2
+
+        # Odds Ratios
+        or_table = results.get("odds_ratios", [])
+        if or_table:
+            ws.write(row, 0, "Odds Ratios", fmt["section_header"])
+            row += 1
+            or_headers = ["Parameter", "OR", "CI Lower", "CI Upper", "Coefficient", "Std. Error", "z-value", "p-value"]
+            for c, h in enumerate(or_headers):
+                ws.write(row, c, h, fmt["header"])
+            row += 1
+            for entry in or_table:
+                ws.write(row, 0, str(entry.get("parameter", "")), fmt["cell"])
+                ws.write(row, 1, entry.get("odds_ratio"), fmt["cell"])
+                ws.write(row, 2, entry.get("ci_lower"), fmt["cell"])
+                ws.write(row, 3, entry.get("ci_upper"), fmt["cell"])
+                ws.write(row, 4, entry.get("coefficient"), fmt["cell"])
+                ws.write(row, 5, entry.get("std_err"), fmt["cell"])
+                ws.write(row, 6, entry.get("z_value"), fmt["cell"])
+                p_val = entry.get("p_value")
+                if p_val is not None:
+                    cell_fmt = fmt["significant"] if p_val < 0.05 else fmt["cell"]
+                    ws.write(row, 7, p_val, cell_fmt)
+                else:
+                    ws.write(row, 7, "N/A", fmt["cell"])
+                row += 1
+            row += 1
+
+        # Hosmer-Lemeshow
+        hl = results.get("hosmer_lemeshow", {})
+        ws.write(row, 0, "Hosmer-Lemeshow Goodness-of-Fit Test", fmt["section_header"])
+        row += 1
+        ws.write(row, 0, "Chi-squared", fmt["cell"])
+        ws.write(row, 1, hl.get("chi2"), fmt["cell"])
+        row += 1
+        ws.write(row, 0, "Degrees of freedom", fmt["cell"])
+        ws.write(row, 1, hl.get("df"), fmt["cell"])
+        row += 1
+        hl_p = hl.get("p_value")
+        ws.write(row, 0, "p-value", fmt["cell"])
+        if hl_p is not None:
+            cell_fmt = fmt["significant"] if hl_p < 0.05 else fmt["cell"]
+            ws.write(row, 1, hl_p, cell_fmt)
+        else:
+            ws.write(row, 1, "N/A", fmt["cell"])
+        row += 1
+        ws.write(row, 0, "Interpretation", fmt["cell"])
+        if hl_p is not None:
+            ws.write(row, 1, "Good model fit (p > 0.05)" if hl_p > 0.05 else "Poor model fit (p < 0.05)", fmt["cell"])
+        row += 2
+
+        # Model Fit
+        ws.write(row, 0, "Model Fit Statistics", fmt["section_header"])
+        row += 1
+        for key, label in [("pseudo_r_squared", "Pseudo R-squared (McFadden)"),
+                           ("aic", "AIC"), ("bic", "BIC"),
+                           ("log_likelihood", "Log-Likelihood")]:
+            ws.write(row, 0, label, fmt["cell"])
+            val = results.get(key)
+            ws.write(row, 1, val if val is not None else "N/A", fmt["cell"])
+            row += 1
+        row += 1
+
+        # AUC
+        roc = results.get("roc_data", {})
+        auc = roc.get("auc")
+        ws.write(row, 0, "Discrimination (ROC Analysis)", fmt["section_header"])
+        row += 1
+        ws.write(row, 0, "AUC (Area Under ROC Curve)", fmt["cell"])
+        ws.write(row, 1, auc if auc is not None else "N/A", fmt["cell"])
+        row += 1
+        if auc is not None:
+            if auc >= 0.9:
+                interp = "Excellent discrimination"
+            elif auc >= 0.8:
+                interp = "Good discrimination"
+            elif auc >= 0.7:
+                interp = "Acceptable discrimination"
+            else:
+                interp = "Poor discrimination"
+            ws.write(row, 0, "Interpretation", fmt["cell"])
+            ws.write(row, 1, interp, fmt["cell"])
+        row += 1
+
+        ws.write(row, 0, "N observations", fmt["cell"])
+        ws.write(row, 1, results.get("n_observations"), fmt["cell"])
+        row += 2
+        ResultsExporter._write_data_health_section(ws, row, results, fmt)
