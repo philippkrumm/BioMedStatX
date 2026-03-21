@@ -9,3 +9,6 @@ __pycache__/
 
 # R output artifacts
 Rplots.pdf
+
+# Dead-code audit report (generated artifact)
+tools/audit_report.md
