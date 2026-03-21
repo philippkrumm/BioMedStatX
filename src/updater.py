@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import QMessageBox
 from PyQt5.QtCore import QThread, pyqtSignal, QTimer
 
 # Current version - update this with each release
-CURRENT_VERSION = "1.0.1" 
+CURRENT_VERSION = "2.0" 
 GITHUB_REPO = "philippkrumm/BioMedStatX"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 

@@ -8,7 +8,7 @@
 
 ## Summary
 
-Three clinical model classes implemented in `Source_Code/clinical_models.py` were numerically validated against established reference datasets. The benchmark tests our wrapper classes — not statsmodels directly — to verify that parameter extraction, formula construction, and results serialization produce correct output end-to-end.
+Three clinical model classes implemented in `src/clinical_models.py` were numerically validated against established reference datasets. The benchmark tests our wrapper classes — not statsmodels directly — to verify that parameter extraction, formula construction, and results serialization produce correct output end-to-end.
 
 | Model | Dataset | Reference | Validation Status |
 |-------|---------|-----------|-------------------|
@@ -138,7 +138,7 @@ The Davis dataset resolves both issues: slope homogeneity holds (p = 0.143), and
 
 ## Implementation Architecture
 
-All three model classes reside in `Source_Code/clinical_models.py`. Each exposes:
+All three model classes reside in `src/clinical_models.py`. Each exposes:
 
 - `fit(df, dv, ...)` — fits the model and stores results internally
 - `as_results_dict()` — serializes results to a standardized dict used by the results exporter

@@ -15,7 +15,7 @@ run_python_entrypoint() {
     echo "No Python interpreter found. Please install Python 3 and try again." >&2
     exit 1
   fi
-  exec "$PY" "$REPO_ROOT/Source_Code/statistical_analyzer.py" "$@"
+  exec "$PY" "$REPO_ROOT/src/statistical_analyzer.py" "$@"
 }
 
 # Try common binary locations/names
