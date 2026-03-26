@@ -6,9 +6,25 @@
 # Before building:
 #   python tools/convert_icon.py   (creates .ico and .icns from PNG)
 #
-# For a macOS Universal2 build (runs on both Intel and Apple Silicon):
-#   pyinstaller --target-arch universal2 BioMedStatX.spec
-#   (requires all dependencies installed as universal2 wheels)
+# macOS post-build steps (requires Apple Developer ID):
+#   1. Sign:
+#      codesign --deep --force --options runtime \
+#        --entitlements assets/entitlements.plist \
+#        --sign "Developer ID Application: Ihr Name (TeamID)" \
+#        dist/BioMedStatX.app
+#
+#   2. Notarize:
+#      xcrun notarytool submit dist/BioMedStatX.app \
+#        --apple-id "ihre@mail.de" \
+#        --password "app-spezifisches-passwort" \
+#        --team-id "TEAMID" --wait
+#
+#   3. Staple:
+#      xcrun stapler staple dist/BioMedStatX.app
+#
+# Note: target_arch='universal2' requires all deps as universal2 wheels.
+# Check: pip install --upgrade scipy numpy PyQt5 (on Apple Silicon Mac with
+# universal2 Python from python.org, not Homebrew).
 
 import sys
 from PyInstaller.utils.hooks import collect_all
@@ -70,7 +86,7 @@ exe = EXE(
     console=False,                   # no console window
     disable_windowed_traceback=False,
     argv_emulation=IS_MAC,           # macOS: support file drag-and-drop onto app icon
-    target_arch=None,                # None = current machine arch; use 'universal2' for fat binary
+    target_arch='universal2' if IS_MAC else None,  # universal2 = runs on Intel + Apple Silicon
     codesign_identity=None,          # set to Apple Developer ID for signed distribution
     entitlements_file="assets/entitlements.plist" if IS_MAC else None,
     icon=icon,
