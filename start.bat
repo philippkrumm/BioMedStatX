@@ -18,7 +18,7 @@ rem Fallback to Python entrypoint
 where python >nul 2>&1
 if %errorlevel%==0 (
   echo No native exe found - running Python entrypoint
-  python "%REPO_ROOT%\Source_Code\statistical_analyzer.py" %*
+  python "%REPO_ROOT%\src\statistical_analyzer.py" %*
   goto :eof
 )
 
