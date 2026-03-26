@@ -4,7 +4,7 @@ from PyQt5.QtCore import Qt
 class ComparisonSelectionDialog(QDialog):
     def __init__(self, comparisons, parent=None, checked_by_default=True):
         super().__init__(parent)
-        self.setWindowTitle("Select Group Comparisons for Post-hoc Test")
+        self.setWindowTitle("Select Group Comparisons")
         self.selected = set()
         self.comparisons = comparisons
         self.checkboxes = []
@@ -55,6 +55,7 @@ class ComparisonSelectionDialog(QDialog):
         self.deselect_all_btn.clicked.connect(self._deselect_all)
         button_layout.addWidget(self.select_all_btn)
         button_layout.addWidget(self.deselect_all_btn)
+        button_layout.addSpacing(10)
         button_layout.addStretch()
         layout.addLayout(button_layout)
 

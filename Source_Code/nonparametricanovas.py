@@ -634,7 +634,7 @@ def fallback_modern_models(data, dependent_var, formula, design_type, subject_co
                 "Source": restored_term,
                 "F": statistic,
                 "Wald_Chi2": statistic,
-                "p-unc": p_value,
+                "p_unc": p_value,
                 "DF1": df1,
                 "DF2": None,
                 "StatisticType": "Wald Chi-square"
@@ -871,7 +871,7 @@ def perform_friedman_test(data, dv, within_factor, subject_col, alpha=0.05):
             "Wald_Chi2": chi2_stat,
             "DF1": df1,
             "DF2": None,
-            "p-unc": p_value,
+            "p_unc": p_value,
             "StatisticType": "Friedman Chi-square",
         }])
 
@@ -1105,7 +1105,7 @@ def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05, n_permu
             {"Source": f"{factor_a}:{factor_b}", "F": F_AB, "p-perm": p_perm_AB, "p-parametric": p_par_AB, "DF1": df_AB, "DF2": df2, "StatisticType": "Permutation F (Freedman-Lane)", "Wald_Chi2": F_AB},
         ])
         # Also expose p-perm as p-unc for exporter compatibility
-        anova_table["p-unc"] = anova_table["p-perm"]
+        anova_table["p_unc"] = anova_table["p-perm"]
 
         factors = [
             {"factor": factor_a, "type": "between", "F": F_A,  "Wald_Chi2": F_A,  "p_value": p_perm_A,  "df1": df_A,  "df2": df2, "effect_size": None, "effect_size_type": None},
@@ -1407,9 +1407,9 @@ def perform_brunner_langer_ats(data, dv, between_factor, within_factor, subject_
 
         # --- ANOVA table ---
         anova_table = pd.DataFrame([
-            {"Source": between_factor,                  "ATS": ATS_A,  "F": ATS_A,  "Wald_Chi2": ATS_A,  "df1": f_A,  "df2": round(df2_between, 2) if df2_between else None, "p-value": p_A,  "p-unc": p_A,  "StatisticType": "ANOVA-Type Statistic (ATS)"},
-            {"Source": within_factor,                   "ATS": ATS_T,  "F": ATS_T,  "Wald_Chi2": ATS_T,  "df1": f_T,  "df2": None,                                            "p-value": p_T,  "p-unc": p_T,  "StatisticType": "ANOVA-Type Statistic (ATS)"},
-            {"Source": f"{between_factor}:{within_factor}", "ATS": ATS_AT, "F": ATS_AT, "Wald_Chi2": ATS_AT, "df1": f_AT, "df2": None,                                            "p-value": p_AT, "p-unc": p_AT, "StatisticType": "ANOVA-Type Statistic (ATS)"},
+            {"Source": between_factor,                  "ATS": ATS_A,  "F": ATS_A,  "Wald_Chi2": ATS_A,  "df1": f_A,  "df2": round(df2_between, 2) if df2_between else None, "p-value": p_A,  "p_unc": p_A,  "StatisticType": "ANOVA-Type Statistic (ATS)"},
+            {"Source": within_factor,                   "ATS": ATS_T,  "F": ATS_T,  "Wald_Chi2": ATS_T,  "df1": f_T,  "df2": None,                                            "p-value": p_T,  "p_unc": p_T,  "StatisticType": "ANOVA-Type Statistic (ATS)"},
+            {"Source": f"{between_factor}:{within_factor}", "ATS": ATS_AT, "F": ATS_AT, "Wald_Chi2": ATS_AT, "df1": f_AT, "df2": None,                                            "p-value": p_AT, "p_unc": p_AT, "StatisticType": "ANOVA-Type Statistic (ATS)"},
         ])
 
         factors = [

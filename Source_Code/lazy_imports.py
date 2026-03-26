@@ -4,6 +4,7 @@ Improves startup time by loading heavy modules only when needed
 """
 
 import sys
+import importlib
 from typing import Any, Dict, Optional
 
 class LazyImportManager:
@@ -35,8 +36,7 @@ class LazyImportManager:
             raise self._import_errors[module_name]
             
         try:
-            # Dynamic import
-            module = __import__(import_path, fromlist=[''])
+            module = importlib.import_module(import_path)
             if alias:
                 # For cases like 'import pandas as pd'
                 self._modules[alias] = module

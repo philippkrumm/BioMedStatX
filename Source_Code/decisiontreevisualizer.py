@@ -997,9 +997,8 @@ class DecisionTreeVisualizer:
             import tempfile
             
             # Use system temp directory instead of Documents folder
-            temp_dir = tempfile.gettempdir()
-            temp_filename = f"decision_tree_{int(time.time())}.png"
-            temp_path = os.path.join(temp_dir, temp_filename)
+            fd, temp_path = tempfile.mkstemp(suffix='.png', prefix='decision_tree_')
+            os.close(fd)
 
             print(f"DEBUG: Generating decision tree visualization to: {temp_path}")
 

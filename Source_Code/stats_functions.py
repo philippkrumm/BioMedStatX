@@ -184,9 +184,8 @@ class AssumptionVisualizer:
             plt.tight_layout()
             
             # Save to temporary file
-            temp_dir = tempfile.gettempdir()
-            temp_filename = f"normality_plot_{int(time.time())}.png"
-            temp_path = os.path.join(temp_dir, temp_filename)
+            fd, temp_path = tempfile.mkstemp(suffix='.png', prefix='normality_plot_')
+            os.close(fd)
             
             # Use consistent saving parameters - no tight bbox to ensure consistent sizing
             fig.savefig(temp_path, dpi=300, bbox_inches=None, facecolor='white', pad_inches=0.2)
@@ -278,9 +277,8 @@ class AssumptionVisualizer:
             plt.tight_layout()
             
             # Save to temporary file
-            temp_dir = tempfile.gettempdir()
-            temp_filename = f"homoscedasticity_plot_{int(time.time())}.png"
-            temp_path = os.path.join(temp_dir, temp_filename)
+            fd, temp_path = tempfile.mkstemp(suffix='.png', prefix='homoscedasticity_plot_')
+            os.close(fd)
             
             # Use consistent saving parameters - no tight bbox to ensure consistent sizing
             fig.savefig(temp_path, dpi=300, bbox_inches=None, facecolor='white', pad_inches=0.2)
@@ -2206,8 +2204,11 @@ class PostHocFactory:
 class DataImporter:
     @staticmethod
     def import_data(file_path, sheet_name=0, group_col="Group", value_cols=None, combine_columns=False):
+        file_path = os.path.abspath(file_path)
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"The file {file_path} was not found.")
+        if not os.path.isfile(file_path):
+            raise ValueError(f"Path does not point to a file: {file_path}")
         if file_path.endswith('.csv'):
             df = pd.read_csv(file_path)
         else:
@@ -2646,7 +2647,11 @@ class AnalysisManager:
                 "additional_factors": additional_factors,
             }
 
-        df = AnalysisManager._load_dataframe(file_path, sheet_name=sheet_name).copy()
+        injected_df = analysis_context.get("injected_df")
+        if injected_df is not None:
+            df = injected_df.copy()
+        else:
+            df = AnalysisManager._load_dataframe(file_path, sheet_name=sheet_name).copy()
         context_value_cols = analysis_context.get("dv_columns") or value_cols
         if not context_value_cols:
             raise ValueError("Auto-pilot analysis requires at least one dependent variable.")
@@ -2819,7 +2824,7 @@ class AnalysisManager:
         # Basic parameter validation
         if not file_path or not os.path.exists(file_path):
             raise ValueError("Please specify a valid file")
-        if not groups:
+        if not groups and not kwargs.get("analysis_context"):
             raise ValueError("Please specify at least one group")
         if not group_col:
             raise ValueError("Please specify a valid group column")
@@ -3097,7 +3102,7 @@ class AnalysisManager:
 
             posthoc_results = None
 
-            if test_results.get('p_value') is not None and test_results['p_value'] < 0.05 and len(groups) > 2:
+            if test_results is not None and test_results.get('p_value') is not None and test_results['p_value'] < 0.05 and len(groups) > 2:
                 # Significant result: perform post-hoc tests
                 valid_groups = [g for g in groups if g in transformed_samples and len(transformed_samples[g]) > 0]
                 print("DEBUG: valid_groups after filter:", valid_groups)

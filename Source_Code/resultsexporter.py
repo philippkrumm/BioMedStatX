@@ -522,7 +522,7 @@ class ResultsExporter:
                 if "effect_size_type" in results:
                     effect_type = results["effect_size_type"]
                     # Define magnitude based on effect size type
-                    if effect_type.lower() == "cohen_d":
+                    if effect_type.lower() in ["cohen_d", "hedges_g"]:
                         if abs(effect_size) < 0.2: effect_magnitude = "very small"
                         elif abs(effect_size) < 0.5: effect_magnitude = "small"
                         elif abs(effect_size) < 0.8: effect_magnitude = "medium"
@@ -617,6 +617,12 @@ class ResultsExporter:
 
             if effect_type.lower() == "cohen_d":
                 effect_desc = "Cohen's d"
+                if abs(effect_size) < 0.2: magnitude = "very small"; format_to_use = fmt["effect_weak"]
+                elif abs(effect_size) < 0.5: magnitude = "small"; format_to_use = fmt["effect_weak"]
+                elif abs(effect_size) < 0.8: magnitude = "medium"; format_to_use = fmt["effect_medium"]
+                else: magnitude = "large"; format_to_use = fmt["effect_strong"]
+            elif effect_type.lower() == "hedges_g":
+                effect_desc = "Hedges' g"
                 if abs(effect_size) < 0.2: magnitude = "very small"; format_to_use = fmt["effect_weak"]
                 elif abs(effect_size) < 0.5: magnitude = "small"; format_to_use = fmt["effect_weak"]
                 elif abs(effect_size) < 0.8: magnitude = "medium"; format_to_use = fmt["effect_medium"]
@@ -926,7 +932,7 @@ class ResultsExporter:
                 
                 ("F", "The F-statistic (MS between / MS within):\n• Compares between-group variation to within-group variation\n• Larger F values suggest stronger group differences\n• F = 1 would indicate no difference between groups\n• The critical F value depends on the degrees of freedom and alpha level"),
                 
-                ("p-unc", "Probability value (significance level):\n• p < 0.05 is commonly used to indicate statistical significance, though this threshold is arbitrary\n• 'unc' indicates these are uncorrected p-values (not adjusted for multiple comparisons)\n• Small p-values suggest the observed differences are unlikely under the null hypothesis\n• For multiple tests, consider using corrected p-values to control error rates"),
+                ("p_unc", "Probability value (significance level):\n• p < 0.05 is commonly used to indicate statistical significance, though this threshold is arbitrary\n• 'unc' indicates these are uncorrected p-values (not adjusted for multiple comparisons)\n• Small p-values suggest the observed differences are unlikely under the null hypothesis\n• For multiple tests, consider using corrected p-values to control error rates"),
                 
                 ("np2 (Partial Eta Squared)", "Effect size measure (proportion of variance explained):\n• 0.01 = small effect\n• 0.06 = medium effect\n• 0.14 = large effect\n• Higher values indicate stronger effects\n• Interpretation is context-dependent and varies between research fields\n• Consider field-specific benchmarks when interpreting effect sizes")
             ]
@@ -937,7 +943,7 @@ class ResultsExporter:
                 "DF (Degrees of Freedom)": "anova_df_explanation",
                 "MS (Mean Square)": "anova_ms_explanation",
                 "F": "anova_f_explanation",
-                "p-unc": "anova_p_explanation", 
+                "p_unc": "anova_p_explanation", 
                 "np2 (Partial Eta Squared)": "anova_np2_explanation"
             }
             
@@ -2207,28 +2213,34 @@ class ResultsExporter:
             row += 1
             
             # Greenhouse-Geisser correction
-            gg_corr = results["sphericity_corrections"]["greenhouse_geisser"]
-            gg_p = gg_corr["p_value"]
+            gg_corr = results["sphericity_corrections"].get("greenhouse_geisser", {})
+            gg_p = gg_corr.get("p_value")
+            gg_epsilon = gg_corr.get("epsilon")
+            gg_df1 = gg_corr.get("corrected_df1", gg_corr.get("df1"))
+            gg_df2 = gg_corr.get("corrected_df2", gg_corr.get("df2"))
             gg_sig = gg_p < results.get("alpha", 0.05) if isinstance(gg_p, (float, int)) else False
             ws.write(row, 0, "Greenhouse-Geisser", fmt["cell"])
-            ws.write(row, 1, f"{gg_corr['epsilon']:.4f}", fmt["cell"])
-            ws.write(row, 2, f"{gg_corr['df1']:.4f}", fmt["cell"])
-            ws.write(row, 3, f"{gg_corr['df2']:.4f}", fmt["cell"])
-            ws.write(row, 4, f"{gg_p:.4f}" if isinstance(gg_p, (float, int)) else "N/A", 
+            ws.write(row, 1, f"{gg_epsilon:.4f}" if isinstance(gg_epsilon, (float, int)) else "N/A", fmt["cell"])
+            ws.write(row, 2, f"{gg_df1:.4f}" if isinstance(gg_df1, (float, int)) else "N/A", fmt["cell"])
+            ws.write(row, 3, f"{gg_df2:.4f}" if isinstance(gg_df2, (float, int)) else "N/A", fmt["cell"])
+            ws.write(row, 4, f"{gg_p:.4f}" if isinstance(gg_p, (float, int)) else "N/A",
                     fmt["significant"] if gg_sig else fmt["cell"])
             ws.write(row, 5, "Yes" if gg_sig else "No",
                     fmt["significant"] if gg_sig else fmt["cell"])
             row += 1
-            
+
             # Huynh-Feldt correction
-            hf_corr = results["sphericity_corrections"]["huynh_feldt"]
-            hf_p = hf_corr["p_value"]
+            hf_corr = results["sphericity_corrections"].get("huynh_feldt", {})
+            hf_p = hf_corr.get("p_value")
+            hf_epsilon = hf_corr.get("epsilon")
+            hf_df1 = hf_corr.get("corrected_df1", hf_corr.get("df1"))
+            hf_df2 = hf_corr.get("corrected_df2", hf_corr.get("df2"))
             hf_sig = hf_p < results.get("alpha", 0.05) if isinstance(hf_p, (float, int)) else False
             ws.write(row, 0, "Huynh-Feldt", fmt["cell"])
-            ws.write(row, 1, f"{hf_corr['epsilon']:.4f}", fmt["cell"])
-            ws.write(row, 2, f"{hf_corr['df1']:.4f}", fmt["cell"])
-            ws.write(row, 3, f"{hf_corr['df2']:.4f}", fmt["cell"])
-            ws.write(row, 4, f"{hf_p:.4f}" if isinstance(hf_p, (float, int)) else "N/A", 
+            ws.write(row, 1, f"{hf_epsilon:.4f}" if isinstance(hf_epsilon, (float, int)) else "N/A", fmt["cell"])
+            ws.write(row, 2, f"{hf_df1:.4f}" if isinstance(hf_df1, (float, int)) else "N/A", fmt["cell"])
+            ws.write(row, 3, f"{hf_df2:.4f}" if isinstance(hf_df2, (float, int)) else "N/A", fmt["cell"])
+            ws.write(row, 4, f"{hf_p:.4f}" if isinstance(hf_p, (float, int)) else "N/A",
                     fmt["significant"] if hf_sig else fmt["cell"])
             ws.write(row, 5, "Yes" if hf_sig else "No",
                     fmt["significant"] if hf_sig else fmt["cell"])

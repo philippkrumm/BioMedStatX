@@ -1,7 +1,6 @@
 import sys
 import time
 import os
-from PyQt5.QtWidgets import QDesktopWidget
 # Core imports - always needed
 import numpy as np
 import pandas as pd
@@ -454,14 +453,22 @@ class TwoWayAnovaDialog(QDialog):
         layout.addWidget(button_box)
     
     def get_factor_data(self):
-        factor_name = self.factor_name.text()
+        import re
+        factor_name = self.factor_name.text().strip()
         if not factor_name:
             QMessageBox.warning(self, "Warning", "Please specify a factor name!")
             return None
-        
+        if len(factor_name) > 50:
+            QMessageBox.warning(self, "Warning", "Factor name must be 50 characters or fewer.")
+            return None
+        if not re.match(r'^[A-Za-z0-9_\- ]+$', factor_name):
+            QMessageBox.warning(self, "Warning",
+                "Factor name may only contain letters, digits, spaces, hyphens, and underscores.")
+            return None
+
         factor_data = {}
         for group, field in self.factor_values.items():
-            value = field.text()
+            value = field.text().strip()
             if value:  # Only add values if a value was entered
                 try:
                     # Try to convert the value to a number if possible
@@ -820,13 +827,16 @@ class StatisticalAnalyzerApp(QMainWindow):
     def __init__(self):
         """Initializes the application with all UI elements."""
         super().__init__()
-        screen = QDesktopWidget().screenGeometry()
-        width = int(screen.width() * 0.72)
-        height = int(screen.height() * 0.72)
+        _primary = QApplication.instance().primaryScreen() if QApplication.instance() else None
+        screen = _primary.geometry() if _primary else None
+        _sw = screen.width()  if screen else 1920
+        _sh = screen.height() if screen else 1080
+        width = int(_sw * 0.72)
+        height = int(_sh * 0.72)
         self.resize(width, height)
         self.move(
-            (screen.width() - width) // 2,
-            (screen.height() - height) // 2
+            (_sw - width) // 2,
+            (_sh - height) // 2
         )
         self.setWindowTitle("BioMedStatX v1.0.1 - Comprehensive Statistical Analysis Tool")
         self.setGeometry(100, 50, 1600, 1300)
@@ -879,7 +889,8 @@ class StatisticalAnalyzerApp(QMainWindow):
                
     def _position_debug_console(self):
         """Position the debug console to the right of the main window, or below if no space."""
-        screen = QDesktopWidget().screenGeometry()
+        _primary = QApplication.instance().primaryScreen() if QApplication.instance() else None
+        screen = _primary.geometry() if _primary else None
         main_geo = self.geometry()
         console_w = 700
         console_h = 400
@@ -3221,6 +3232,69 @@ def _looks_like_subject(column_name, series=None):
     return unique_ratio >= 0.60 or unique_count >= 8 or id_like_ratio >= 0.40
 
 
+def _detect_wide_format(df):
+    """
+    Returns {"subject_col": str, "value_cols": list[str]} if df looks like
+    a wide-format paired/repeated design, otherwise returns None.
+
+    Signature: 1 subject-like column + 2–8 numeric columns + no categorical
+    column that looks like a group factor (2 unique values) + the subject column
+    has high uniqueness (each row is a distinct subject, not repeated).
+    """
+    if len(df) < 3:
+        return None
+
+    # Find all numeric columns
+    numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+    non_numeric_cols = [c for c in df.columns if c not in numeric_cols]
+
+    # Find exactly one subject-like column among non-numeric columns first,
+    # then also check numeric columns (subject IDs can be integers like 1,2,3)
+    subject_candidates = []
+    for col in df.columns:
+        if _looks_like_subject(col, df[col]):
+            subject_candidates.append(col)
+
+    if len(subject_candidates) != 1:
+        return None
+
+    subject_col = subject_candidates[0]
+
+    # Value columns = all numeric columns that are not the subject column
+    value_cols = [c for c in numeric_cols if c != subject_col]
+    if not (2 <= len(value_cols) <= 8):
+        return None
+
+    # Guard: no categorical column with exactly 2 unique values (would indicate long format with a Group col)
+    categorical_cols = [c for c in non_numeric_cols if c != subject_col]
+    for col in categorical_cols:
+        if df[col].nunique() == 2:
+            return None
+
+    # Key discriminator: in wide format every row IS a subject, so uniqueness ratio is high.
+    # In long format the subject repeats across rows (once per condition), so ratio is low.
+    unique_ratio = df[subject_col].nunique() / max(len(df), 1)
+    if unique_ratio < 0.8:
+        return None
+
+    return {"subject_col": subject_col, "value_cols": value_cols}
+
+
+def _pivot_wide_to_long(df, subject_col, value_cols):
+    """
+    Melts a wide-format DataFrame into long format.
+    Returns a new DataFrame with columns [subject_col, 'Condition', 'Value'].
+    """
+    var_name = "_Condition" if "Condition" in df.columns else "Condition"
+    return pd.melt(
+        df,
+        id_vars=[subject_col],
+        value_vars=value_cols,
+        var_name=var_name,
+        value_name="Value",
+    )
+
+
 def _sorted_unique(values):
     unique_values = []
     for value in values:
@@ -4330,7 +4404,15 @@ def _ap_on_mapping_changed(self):
         self.start_analysis_button.setEnabled(False)
         return
 
-    self.mapping_feedback_label.setText("Mapping looks valid. Start the analysis when you are ready.")
+    wide_info = getattr(self, '_wide_format_info', None)
+    if wide_info:
+        cond_labels = ', '.join(f'"{c}"' for c in wide_info['value_cols'])
+        self.mapping_feedback_label.setText(
+            f"Wide format detected \u2192 pivoted to long format. "
+            f"Conditions: {cond_labels}. Mapped as paired t-test design."
+        )
+    else:
+        self.mapping_feedback_label.setText("Mapping looks valid. Start the analysis when you are ready.")
     self.start_analysis_button.setEnabled(True)
 
 
@@ -4368,6 +4450,7 @@ def _ap_load_file(self):
         self.auto_file_label.setText(os.path.basename(self.file_path))
         self.selected_columns = []
         self.combine_columns = False
+        self._maybe_pivot()
         self.numeric_columns = [column for column in self.df.columns if pd.api.types.is_numeric_dtype(self.df[column])]
         self._refresh_preview_table()
         self._rebuild_column_cards()
@@ -4392,6 +4475,7 @@ def _ap_load_sheet(self, index):
         return
     try:
         self.df = pd.read_excel(self.file_path, sheet_name=self.auto_sheet_combo.itemText(index))
+        self._maybe_pivot()
         self.numeric_columns = [column for column in self.df.columns if pd.api.types.is_numeric_dtype(self.df[column])]
         self._refresh_preview_table()
         self._rebuild_column_cards()
@@ -4510,6 +4594,8 @@ def _ap_execute_single_analysis(self, context, dv_column, output_dir, skip_plots
     single_context = dict(context)
     single_context["dv_columns"] = [dv_column]
     single_context["current_dv"] = dv_column
+    if getattr(self, '_wide_format_info', None) is not None:
+        single_context["injected_df"] = self.df
 
     result = AnalysisManager.analyze(
         file_path=self.file_path,
@@ -4609,11 +4695,14 @@ def _ap_format_effect_size_metric(self, results):
         return "Not available"
 
     labels = {
-        "cohens_d": "Cohen's d",
+        "cohen_d": "Cohen's d",
+        "hedges_g": "Hedges' g",
+        "r": "r (rank correlation)",
         "eta_squared": "Eta-squared",
         "partial_eta_squared": "Partial eta-squared",
         "epsilon_squared": "Epsilon-squared",
-        "hedges_g": "Hedges' g",
+        "kendall_w": "Kendall's W",
+        "rank_biserial_r": "Rank-biserial r",
     }
     type_label = labels.get(effect_size_type, effect_size_type.replace("_", " ").title() if effect_size_type else "Effect size")
     return f"{type_label} = {effect_size:.4f}"
@@ -4856,12 +4945,28 @@ def _ap_reset_application_state(self):
     self.current_output_dir = None
     self.current_rendered_dataset = None
     self.temp_plot_appearance_settings = None
+    self._wide_format_info = None
     self.result_cockpit.clear()
     self.decision_tree_panel.show_placeholder("Map the columns, then run the auto-pilot analysis.")
     self._set_workflow_state("map" if self.df is not None else "load", "Ready for the next analysis")
     if self.df is not None:
         self._apply_mapping_heuristics()
         self.on_mapping_changed()
+
+
+def _ap_maybe_pivot(self):
+    """
+    Detects wide-format paired/repeated data and, if found, replaces self.df
+    with the melted long-format version. Records the transformation in
+    self._wide_format_info for downstream use and UI feedback. No-op for
+    long-format data.
+    """
+    result = _detect_wide_format(self.df)
+    self._wide_format_info = None
+    if result is None:
+        return
+    self.df = _pivot_wide_to_long(self.df, result["subject_col"], result["value_cols"])
+    self._wide_format_info = result
 
 
 StatisticalAnalyzerApp.init_ui = _ap_init_ui
@@ -4890,6 +4995,7 @@ StatisticalAnalyzerApp.determine_and_run_test = _ap_determine_and_run_test
 StatisticalAnalyzerApp.configure_plot_from_result = _ap_configure_plot_from_result
 StatisticalAnalyzerApp.open_current_output_folder = _ap_open_current_output_folder
 StatisticalAnalyzerApp.reset_application_state = _ap_reset_application_state
+StatisticalAnalyzerApp._maybe_pivot = _ap_maybe_pivot
 
 if __name__ == "__main__":
     try:

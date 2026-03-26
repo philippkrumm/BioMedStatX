@@ -33,10 +33,10 @@ Entry into the advanced-test flow:
 
 ```
 recommendation == 'non_parametric'
-  ├── test == 'repeated_measures_anova' → perform_friedman_test()
-  ├── test == 'two_way_anova'           → perform_freedman_lane_test()
-  ├── test == 'mixed_anova'             → perform_brunner_langer_ats()
-  └── else                              → fallback_modern_models()
+  |---- test == 'repeated_measures_anova' → perform_friedman_test()
+  |---- test == 'two_way_anova'           → perform_freedman_lane_test()
+  |---- test == 'mixed_anova'             → perform_brunner_langer_ats()
+  `---- else                              → fallback_modern_models()
 ```
 
 ---
@@ -90,7 +90,7 @@ Holm step-down correction applied across all comparisons simultaneously.
    `F_obs = ((RSS_reduced − RSS_full) / df_effect) / (RSS_full / df_residual)`
 4. Extract fitted values and residuals of the reduced model
 5. Permute the reduced-model residuals 5000 times, reconstruct pseudo-outcomes
-   (`y_perm = ŷ_reduced + permuted_residuals`), refit full model, record F
+   (`y_perm = y_hat_reduced + permuted_residuals`), refit full model, record F
 6. `p_perm = (#{F_perm ≥ F_obs} + 1) / (n_permutations + 1)`
 
 **Note on reduced models:** Each reduced model retains all effects *except* the one
@@ -113,7 +113,7 @@ and Holm-corrected together.
 | Factor B significant | All pairs of Factor B levels (data collapsed over Factor A) |
 | Interaction significant | All pairs of cells (Factor A level × Factor B level) |
 
-- **Effect size:** rank-biserial correlation r = |2U − n₁n₂| / (n₁n₂)
+- **Effect size:** rank-biserial correlation r = |2U − n_1n_2| / (n_1n_2)
 - **Output:** `pairwise_comparisons` list; `posthoc_test` = `"Pairwise Mann-Whitney U (Holm-corrected)"`
 - If no effect is significant, `pairwise_comparisons` is empty.
 
@@ -146,11 +146,11 @@ Tied observations receive their average rank.
 For each cell (group i, time point s):
 
 ```
-p̂_is = (R̄_is − 0.5) / N
+p_hat_is = (R_bar_is − 0.5) / N
 ```
 
-where R̄_is is the mean rank of observations in cell (i, s) and N is the total
-number of observations. RTEs lie in (0, 1); p̂ = 0.5 indicates no treatment effect
+where R_bar_is is the mean rank of observations in cell (i, s) and N is the total
+number of observations. RTEs lie in (0, 1); p_hat = 0.5 indicates no treatment effect
 (the cell's distribution is stochastically equal to the marginal).
 
 **Step 3 — Per-group rank covariance matrix**
@@ -159,21 +159,21 @@ For between-group i with n_i subjects and t within-levels, pivot ranks to a wide
 matrix R_i of shape (n_i × t). Compute the sample covariance scaled by N:
 
 ```
-Ŝ_i = cov(R_i, ddof=1) / N        shape (t × t)
+S_hat_i = cov(R_i, ddof=1) / N        shape (t × t)
 ```
 
-This is the Brunner et al. (2002) notation: Ŝ_i = (1/N) · (1/(n_i−1)) · Rᵢᵀ Cₙ Rᵢ,
-where Cₙ is the centering matrix. The factor 1/N (not 1/N²) ensures that the total
-covariance matrix V̂_N defined in Step 4 has the correct asymptotic scale.
+This is the Brunner et al. (2002) notation: S_hat_i = (1/N) · (1/(n_i−1)) · R_i^T C_n R_i,
+where C_n is the centering matrix. The factor 1/N (not 1/N^2) ensures that the total
+covariance matrix V_hat_N defined in Step 4 has the correct asymptotic scale.
 
 **Step 4 — Block-diagonal total covariance**
 
 ```
-V̂_N = block_diag(Ŝ_1/n_1,  Ŝ_2/n_2,  ...,  Ŝ_a/n_a)      shape (at × at)
+V_hat_N = block_diag(S_hat_1/n_1,  S_hat_2/n_2,  ...,  S_hat_a/n_a)      shape (at × at)
 ```
 
-This is equivalent to Brunner et al.'s V̂_N = N · block_diag(Ŝ_i/n_i) with
-Ŝ_i = cov(R_i)/N², which gives the same result. The implementation uses the
+This is equivalent to Brunner et al.'s V_hat_N = N · block_diag(S_hat_i/n_i) with
+S_hat_i = cov(R_i)/N^2, which gives the same result. The implementation uses the
 reformulation above to avoid numerical overflow with large N.
 
 **Step 5 — Idempotent projection matrices** (at × at, applied directly — no pseudoinverse):
@@ -189,33 +189,33 @@ where I = identity matrix, J = matrix of ones (all elements = 1).
 **Step 6 — ATS per effect**
 
 ```
-ATS = N · (p̂ᵀ T p̂) / tr(T V̂_N)
+ATS = N · (p_hat^T T p_hat) / tr(T V_hat_N)
 ```
 
-where p̂ is the (at × 1) vector of RTEs arranged row-major (group 1 time 1,
+where p_hat is the (at × 1) vector of RTEs arranged row-major (group 1 time 1,
 group 1 time 2, …, group a time t).
 
 **Step 7 — Box-approximation degrees of freedom (df1)**
 
 ```
-df1 = tr(T V̂_N)² / tr(T V̂_N T V̂_N)
+df1 = tr(T V_hat_N)^2 / tr(T V_hat_N T V_hat_N)
 ```
 
 The ATS is approximately F(df1, ∞)-distributed (Box approximation).
 
 **Step 8 — p-values**
 
-- **Within and Interaction effects:** F(df1, ∞) ≡ χ²(df1)/df1:
+- **Within and Interaction effects:** F(df1, ∞) ≡ χ^2(df1)/df1:
 
   ```
-  p = 1 − χ²_cdf(ATS · df1,  df = df1)
+  p = 1 − χ^2_cdf(ATS · df1,  df = df1)
   ```
 
 - **Between effect:** Finite df2 via Satterthwaite marginal-covariance approximation:
 
   ```
-  λ_i = (1_t^T Ŝ_i 1_t) / (t² · n_i)     marginal variance of group-mean RTE
-  df2 = (Σ λ_i)² / Σ(λ_i² / (n_i − 1))
+  λ_i = (1_t^T S_hat_i 1_t) / (t^2 · n_i)     marginal variance of group-mean RTE
+  df2 = (Σ λ_i)^2 / Σ(λ_i^2 / (n_i − 1))
   p   = 1 − F_cdf(ATS,  dfn = df1,  dfd = df2)
   ```
 
@@ -237,7 +237,7 @@ All comparisons from all triggered effects are pooled and Holm-corrected togethe
 | Within factor significant | All pairs of within-levels (all subjects, paired by subject) | Wilcoxon signed-rank |
 | Interaction significant | All between-group pairs at each individual within-level | Mann-Whitney U |
 
-- **Effect size (MWU):** rank-biserial r = |2U − n₁n₂| / (n₁n₂)
+- **Effect size (MWU):** rank-biserial r = |2U − n_1n_2| / (n_1n_2)
 - **Effect size (Wilcoxon):** rank-biserial r = |2W − n(n+1)/2| / (n(n+1)/2)
 - **Output:** `pairwise_comparisons` list; `posthoc_test` = `"Pairwise Wilcoxon/MWU (Holm-corrected)"`
 - If no effect is significant, `pairwise_comparisons` is empty.
@@ -271,9 +271,9 @@ All statistics matched to 2 decimal places (tolerance 0.005):
 
 | Effect | ATS | df1 | df2 | p-value | Match? |
 |--------|----:|----:|----:|--------:|--------|
-| Sex (between) | 8.798 | 1.00 | 17.57 | 0.0084 | ✓ |
-| Age (within) | 46.191 | 2.56 | — | <0.001 | ✓ |
-| Sex × Age (interaction) | 1.872 | 2.56 | — | 0.141 | ✓ |
+| Sex (between) | 8.798 | 1.00 | 17.57 | 0.0084 | yes |
+| Age (within) | 46.191 | 2.56 | — | <0.001 | yes |
+| Sex × Age (interaction) | 1.872 | 2.56 | — | 0.141 | yes |
 
 All 8 cell RTEs also matched exactly (max absolute difference < 0.0001).
 
@@ -288,11 +288,11 @@ implementations agree.
 ### Covariance scaling — a note
 
 During development, an error in the covariance scaling was identified and corrected.
-The incorrect formula (`V̂_i = cov(R_i)/N²`) produced ATS values inflated by a
+The incorrect formula (`V_hat_i = cov(R_i)/N^2`) produced ATS values inflated by a
 factor of N. The correct formula is:
 
 ```
-Ŝ_i = cov(R_i, ddof=1) / N      [nonparametricanovas.py, line 1187]
+S_hat_i = cov(R_i, ddof=1) / N      [nonparametricanovas.py, line 1187]
 ```
 
 This is consistent with Brunner et al. (2002, eq. 3.1) and confirmed by the
@@ -401,7 +401,7 @@ All post-hoc comparisons use **Holm step-down correction**, implemented directly
 via the `_holm_correct()` helper function in `Source_Code/nonparametricanovas.py`.
 
 The Holm procedure orders all m raw p-values p_(1) ≤ p_(2) ≤ … ≤ p_(m) and
-adjusts each as p̃_(k) = min(1, max_{j≤k}(m − j + 1) · p_(j)). This controls
+adjusts each as p_tilde_(k) = min(1, max_{j≤k}(m − j + 1) · p_(j)). This controls
 the family-wise error rate (FWER) at level alpha without assuming independence
 between tests, and is uniformly more powerful than Bonferroni.
 
@@ -438,7 +438,7 @@ downstream exporter, interpreter, and plotting code. Key fields:
 | `n_permutations` | (Freedman-Lane only) Number of permutations used |
 
 The `F` and `Wald_Chi2` fields in `factors` and `interactions` dicts contain
-the actual test statistic (Chi², permutation F, or ATS), aliased for downstream
+the actual test statistic (Chi^2, permutation F, or ATS), aliased for downstream
 compatibility. They are **not** classical ANOVA F-values.
 
 ---
@@ -451,7 +451,7 @@ compatibility. They are **not** classical ANOVA F-values.
 |---|---|---|
 | Mixed ANOVA with non-normal data | Separate Kruskal-Wallis + Friedman | Ignores the mixed design structure; no joint test for interaction |
 | Two-way ANOVA with non-normal data | Scheirer-Ray-Hare test | Known to have inflated Type I error for unequal group sizes |
-| Repeated measures | Friedman | ✓ Standard and appropriate; used here |
+| Repeated measures | Friedman | yes Standard and appropriate; used here |
 
 ### Relative Treatment Effects vs. means
 
@@ -487,7 +487,7 @@ avoid the asymptotic requirements (n > 30 per subgroup) of the legacy GLM/GEE pi
 
 > "Due to violation of the normality assumption (Shapiro–Wilk test, p < 0.05),
 > a Friedman test was used to assess the effect of [within-factor] on [outcome]
-> (k = [levels], n = [subjects]; Chi²([df1]) = [statistic], p = [p-value]).
+> (k = [levels], n = [subjects]; Chi^2([df1]) = [statistic], p = [p-value]).
 > Post-hoc pairwise comparisons were conducted using Wilcoxon signed-rank tests
 > for all [k·(k−1)/2] level pairs, with Holm correction for multiple comparisons.
 > Effect sizes are reported as rank-biserial correlations (r)."
@@ -538,12 +538,12 @@ avoid the asymptotic requirements (n > 30 per subgroup) of the legacy GLM/GEE pi
    relative to the pooled population. Reviewers unfamiliar with RTEs may require
    explanation in the methods section (see Section 9 above).
 
-4. **Between-effect df₂ (Brunner-Langer):** For unbalanced designs, the
-   Satterthwaite-approximated df₂ may differ substantially from the simple
+4. **Between-effect df_2 (Brunner-Langer):** For unbalanced designs, the
+   Satterthwaite-approximated df_2 may differ substantially from the simple
    Σ(n_i−1)/(a−1) formula. The exact value is reported in `anova_table`.
 
 5. **p-value for the between effect (Brunner-Langer):** The implementation uses
-   an F-distribution with Satterthwaite df₂ (equivalent to R's
+   an F-distribution with Satterthwaite df_2 (equivalent to R's
    `ANOVA.test.mod.Box`). This is more conservative than the raw chi-square
    approximation and is preferred for between-subjects effects with small group
    sizes. Both values are verifiable via the R/nparLD comparison script.

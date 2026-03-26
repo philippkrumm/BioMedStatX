@@ -2,17 +2,22 @@
 Plot Aesthetics Dialog with tabbed interface and live preview.
 Enables comprehensive customization of plot appearance.
 """
-from PyQt5.QtWidgets import QDesktopWidget
 import sys
 import os
+import re as _re
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
                              QWidget, QLabel, QComboBox, QSpinBox, QDoubleSpinBox,
                              QCheckBox, QPushButton, QColorDialog, QSlider,
                              QGroupBox, QGridLayout, QDialogButtonBox, QLineEdit,
                              QApplication, QMainWindow, QSplitter, QFrame,
-                             QListWidget, QScrollArea)
+                             QListWidget, QScrollArea, QMessageBox)
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtGui import QColor, QPalette
+
+# LOW: constants to avoid magic numbers scattered throughout
+_WIDGET_MIN_H = 25       # minimum widget height for consistent UI sizing
+_SCREEN_HIGH_RES = 2560  # 4K / Retina displays
+_SCREEN_MED_RES  = 1920  # Full HD displays
 
 # Import des Preview Widgets
 try:
@@ -76,7 +81,7 @@ class SizeTab(QWidget):
         # Width
         fig_layout.addWidget(QLabel("Width (inches):"), 0, 0)
         self.width_spin = QDoubleSpinBox()
-        self.width_spin.setMinimumHeight(25)
+        self.width_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.width_spin.setRange(1, 20)
         self.width_spin.setValue(self.config.get('width', 8))
         self.width_spin.setSingleStep(0.5)
@@ -86,7 +91,7 @@ class SizeTab(QWidget):
         # Height
         fig_layout.addWidget(QLabel("Height (inches):"), 1, 0)
         self.height_spin = QDoubleSpinBox()
-        self.height_spin.setMinimumHeight(25)
+        self.height_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.height_spin.setRange(1, 20)
         self.height_spin.setValue(self.config.get('height', 6))
         self.height_spin.setSingleStep(0.5)
@@ -96,7 +101,7 @@ class SizeTab(QWidget):
         # DPI
         fig_layout.addWidget(QLabel("DPI:"), 2, 0)
         self.dpi_spin = QSpinBox()
-        self.dpi_spin.setMinimumHeight(25)
+        self.dpi_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.dpi_spin.setRange(72, 600)
         self.dpi_spin.setValue(self.config.get('dpi', 300))
         self.dpi_spin.valueChanged.connect(self.settingsChanged)
@@ -107,17 +112,17 @@ class SizeTab(QWidget):
         aspect_layout = QHBoxLayout(aspect_group)
 
         self.square_btn = QPushButton("Square")
-        self.square_btn.setMinimumHeight(25)
+        self.square_btn.setMinimumHeight(_WIDGET_MIN_H)
         self.square_btn.clicked.connect(lambda: self.apply_aspect_preset('square'))
         aspect_layout.addWidget(self.square_btn)
 
         self.landscape_btn = QPushButton("Landscape (4:3)")
-        self.landscape_btn.setMinimumHeight(25)
+        self.landscape_btn.setMinimumHeight(_WIDGET_MIN_H)
         self.landscape_btn.clicked.connect(lambda: self.apply_aspect_preset('landscape_4_3'))
         aspect_layout.addWidget(self.landscape_btn)
 
         self.portrait_btn = QPushButton("Portrait (3:4)")
-        self.portrait_btn.setMinimumHeight(25)
+        self.portrait_btn.setMinimumHeight(_WIDGET_MIN_H)
         self.portrait_btn.clicked.connect(lambda: self.apply_aspect_preset('portrait_3_4'))
         aspect_layout.addWidget(self.portrait_btn)
 
@@ -188,7 +193,7 @@ class TypographyTab(QWidget):
 
         font_family_layout.addWidget(QLabel("Font Family:"), 0, 0)
         self.font_family_combo = QComboBox()
-        self.font_family_combo.setMinimumHeight(25)
+        self.font_family_combo.setMinimumHeight(_WIDGET_MIN_H)
 
         # Use FontManager to get available system fonts
         try:
@@ -239,7 +244,7 @@ class TypographyTab(QWidget):
         # Title Font Size
         font_layout.addWidget(QLabel("Title:"), 0, 0)
         self.title_size_spin = QSpinBox()
-        self.title_size_spin.setMinimumHeight(25)
+        self.title_size_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.title_size_spin.setRange(8, 48)
         self.title_size_spin.setValue(self.config.get('fontsize_title', 14))
         self.title_size_spin.valueChanged.connect(self.on_title_size_changed)
@@ -248,7 +253,7 @@ class TypographyTab(QWidget):
         # Axis Label Font Size
         font_layout.addWidget(QLabel("Axis Labels:"), 1, 0)
         self.axis_size_spin = QSpinBox()
-        self.axis_size_spin.setMinimumHeight(25)
+        self.axis_size_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.axis_size_spin.setRange(8, 24)
         self.axis_size_spin.setValue(self.config.get('fontsize_axis', 12))
         self.axis_size_spin.valueChanged.connect(self.on_axis_size_changed)
@@ -257,7 +262,7 @@ class TypographyTab(QWidget):
         # Tick Label Font Size
         font_layout.addWidget(QLabel("Tick Labels:"), 2, 0)
         self.ticks_size_spin = QSpinBox()
-        self.ticks_size_spin.setMinimumHeight(25)
+        self.ticks_size_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.ticks_size_spin.setRange(6, 20)
         self.ticks_size_spin.setValue(self.config.get('fontsize_ticks', 10))
         self.ticks_size_spin.valueChanged.connect(self.on_ticks_size_changed)
@@ -271,7 +276,7 @@ class TypographyTab(QWidget):
 
         scale_layout.addWidget(QLabel("Scale:"), 0, 0)
         self.font_scale_slider = QSlider(Qt.Horizontal)
-        self.font_scale_slider.setMinimumHeight(25)
+        self.font_scale_slider.setMinimumHeight(_WIDGET_MIN_H)
         self.font_scale_slider.setRange(50, 200)
         self.font_scale_slider.setValue(int(self.config.get('font_scale_percent', 100)))
         self.font_scale_slider.valueChanged.connect(self.on_font_scale_changed)
@@ -407,7 +412,7 @@ class ColorsTab(QWidget):
         # Style context selector
         seaborn_layout.addWidget(QLabel("Style Context:"), 0, 0)
         self.style_context_combo = QComboBox()
-        self.style_context_combo.setMinimumHeight(25)
+        self.style_context_combo.setMinimumHeight(_WIDGET_MIN_H)
         self.style_context_combo.addItems(['notebook', 'paper', 'talk', 'poster'])
         self.style_context_combo.setCurrentText(self.config.get('seaborn_context', 'notebook'))
         self.style_context_combo.currentTextChanged.connect(self.on_seaborn_settings_changed)
@@ -416,7 +421,7 @@ class ColorsTab(QWidget):
         # Color palette selector
         seaborn_layout.addWidget(QLabel("Color Palette:"), 1, 0)
         self.palette_combo = QComboBox()
-        self.palette_combo.setMinimumHeight(25)
+        self.palette_combo.setMinimumHeight(_WIDGET_MIN_H)
         # Professional palettes - excluding rainbow/childish ones
         professional_palettes = [
             'Nature', 'Science', 'NEJM', 'Lancet',
@@ -638,7 +643,7 @@ class StyleTab(QWidget):
 
         type_layout.addWidget(QLabel("Type:"))
         self.plot_type_combo = QComboBox()
-        self.plot_type_combo.setMinimumHeight(25)
+        self.plot_type_combo.setMinimumHeight(_WIDGET_MIN_H)
         self.plot_type_combo.addItems(['Bar', 'Box', 'Violin', 'Raincloud'])
         self.plot_type_combo.setCurrentText(self.config.get('plot_type', 'Bar'))
         self.plot_type_combo.currentTextChanged.connect(self.settingsChanged)
@@ -654,7 +659,7 @@ class StyleTab(QWidget):
         # Alpha
         appearance_layout.addWidget(QLabel("Transparency:"), 0, 0)
         self.alpha_spin = QDoubleSpinBox()
-        self.alpha_spin.setMinimumHeight(25)
+        self.alpha_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.alpha_spin.setRange(0.1, 1.0)
         self.alpha_spin.setSingleStep(0.1)
         self.alpha_spin.setValue(self.config.get('alpha', 0.8))
@@ -664,7 +669,7 @@ class StyleTab(QWidget):
         # Edge Width
         appearance_layout.addWidget(QLabel("Edge Width:"), 1, 0)
         self.edge_width_spin = QDoubleSpinBox()
-        self.edge_width_spin.setMinimumHeight(25)
+        self.edge_width_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.edge_width_spin.setRange(0.0, 5.0)
         self.edge_width_spin.setSingleStep(0.1)
         self.edge_width_spin.setValue(self.config.get('bar_linewidth', 0.5))
@@ -692,7 +697,7 @@ class StyleTab(QWidget):
         # Axis Thickness
         appearance_layout.addWidget(QLabel("Axis Thickness:"), 4, 0)
         self.axis_thickness_spin = QDoubleSpinBox()
-        self.axis_thickness_spin.setMinimumHeight(25)
+        self.axis_thickness_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.axis_thickness_spin.setRange(0.1, 3.0)
         self.axis_thickness_spin.setSingleStep(0.1)
         self.axis_thickness_spin.setValue(self.config.get('axis_thickness', 0.7))
@@ -717,7 +722,7 @@ class StyleTab(QWidget):
 
         publication_layout.addWidget(QLabel("Tick Direction:"), 2, 0)
         self.tick_direction_combo = QComboBox()
-        self.tick_direction_combo.setMinimumHeight(25)
+        self.tick_direction_combo.setMinimumHeight(_WIDGET_MIN_H)
         self.tick_direction_combo.addItems(['In', 'Out', 'Both'])
         self.tick_direction_combo.setCurrentText(self.config.get('tick_direction', 'Out').title())
         self.tick_direction_combo.currentTextChanged.connect(self.settingsChanged)
@@ -743,7 +748,7 @@ class StyleTab(QWidget):
         # Point Size
         points_layout.addWidget(QLabel("Point Size:"), 1, 0)
         self.point_size_spin = QSpinBox()
-        self.point_size_spin.setMinimumHeight(25)
+        self.point_size_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.point_size_spin.setRange(10, 200)
         self.point_size_spin.setValue(self.config.get('point_size', 80))
         self.point_size_spin.valueChanged.connect(self.settingsChanged)
@@ -752,7 +757,7 @@ class StyleTab(QWidget):
         # Jitter Strength
         points_layout.addWidget(QLabel("Jitter Strength:"), 2, 0)
         self.jitter_spin = QDoubleSpinBox()
-        self.jitter_spin.setMinimumHeight(25)
+        self.jitter_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.jitter_spin.setRange(0.0, 1.0)
         self.jitter_spin.setSingleStep(0.1)
         self.jitter_spin.setValue(self.config.get('jitter_strength', 0.3))
@@ -762,7 +767,7 @@ class StyleTab(QWidget):
         # Point style / layout algorithm
         points_layout.addWidget(QLabel("Point Layout:"), 3, 0)
         self.point_style_combo = QComboBox()
-        self.point_style_combo.setMinimumHeight(25)
+        self.point_style_combo.setMinimumHeight(_WIDGET_MIN_H)
         self.point_style_combo.addItems(['Jitter', 'Beeswarm', 'Strip'])
         point_style_map = {
             'jitter': 'Jitter',
@@ -777,11 +782,14 @@ class StyleTab(QWidget):
         self.superimposed_mode_check = QCheckBox("Superimposed Look (summary low-alpha, points high-contrast)")
         self.superimposed_mode_check.setChecked(self.config.get('superimposed_mode', False))
         self.superimposed_mode_check.toggled.connect(self.settingsChanged)
+        self.superimposed_mode_check.setToolTip(
+            "Fades the summary bars/boxes and makes individual data points stand out.\n"
+            "Useful when you want to show both the distribution summary and individual values.")
         points_layout.addWidget(self.superimposed_mode_check, 4, 0, 1, 2)
 
         points_layout.addWidget(QLabel("Summary Alpha:"), 5, 0)
         self.summary_alpha_spin = QDoubleSpinBox()
-        self.summary_alpha_spin.setMinimumHeight(25)
+        self.summary_alpha_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.summary_alpha_spin.setRange(0.1, 1.0)
         self.summary_alpha_spin.setSingleStep(0.05)
         self.summary_alpha_spin.setValue(self.config.get('summary_alpha', self.config.get('alpha', 0.8)))
@@ -790,7 +798,7 @@ class StyleTab(QWidget):
 
         points_layout.addWidget(QLabel("Point Alpha:"), 6, 0)
         self.point_alpha_spin = QDoubleSpinBox()
-        self.point_alpha_spin.setMinimumHeight(25)
+        self.point_alpha_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.point_alpha_spin.setRange(0.1, 1.0)
         self.point_alpha_spin.setSingleStep(0.05)
         self.point_alpha_spin.setValue(self.config.get('point_alpha', 0.8))
@@ -800,7 +808,7 @@ class StyleTab(QWidget):
         # Violin KDE bandwidth
         points_layout.addWidget(QLabel("Violin Bandwidth:"), 7, 0)
         self.violin_bandwidth_spin = QDoubleSpinBox()
-        self.violin_bandwidth_spin.setMinimumHeight(25)
+        self.violin_bandwidth_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.violin_bandwidth_spin.setRange(0.1, 3.0)
         self.violin_bandwidth_spin.setSingleStep(0.1)
         self.violin_bandwidth_spin.setValue(self.config.get('violin_bandwidth', 1.0))
@@ -826,24 +834,29 @@ class StyleTab(QWidget):
         self.axis_break_check = QCheckBox("Y-Axis Break (Gap)")
         self.axis_break_check.setChecked(self.config.get('axis_break_enabled', False))
         self.axis_break_check.toggled.connect(self.settingsChanged)
+        self.axis_break_check.setToolTip(
+            "Insert a visual gap in the Y-axis to skip a range of values.\n"
+            "Example: Break Start=20, Break End=80 hides values between 20 and 80.")
         dynamics_layout.addWidget(self.axis_break_check, 1, 0, 1, 2)
 
         dynamics_layout.addWidget(QLabel("Break Start:"), 2, 0)
         self.axis_break_start_spin = QDoubleSpinBox()
-        self.axis_break_start_spin.setMinimumHeight(25)
+        self.axis_break_start_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.axis_break_start_spin.setRange(-1e6, 1e6)
         self.axis_break_start_spin.setDecimals(4)
         self.axis_break_start_spin.setValue(self.config.get('axis_break_start', 20.0))
         self.axis_break_start_spin.valueChanged.connect(self.settingsChanged)
+        self.axis_break_start_spin.setToolTip("Y-value where the axis gap begins.")
         dynamics_layout.addWidget(self.axis_break_start_spin, 2, 1)
 
         dynamics_layout.addWidget(QLabel("Break End:"), 3, 0)
         self.axis_break_end_spin = QDoubleSpinBox()
-        self.axis_break_end_spin.setMinimumHeight(25)
+        self.axis_break_end_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.axis_break_end_spin.setRange(-1e6, 1e6)
         self.axis_break_end_spin.setDecimals(4)
         self.axis_break_end_spin.setValue(self.config.get('axis_break_end', 80.0))
         self.axis_break_end_spin.valueChanged.connect(self.settingsChanged)
+        self.axis_break_end_spin.setToolTip("Y-value where the axis gap ends.")
         dynamics_layout.addWidget(self.axis_break_end_spin, 3, 1)
 
         content_layout.addWidget(dynamics_group)
@@ -861,26 +874,32 @@ class StyleTab(QWidget):
         # Stable legend anchoring coordinates
         legend_layout.addWidget(QLabel("Legend Anchor X:"), 1, 0)
         self.legend_anchor_x_spin = QDoubleSpinBox()
-        self.legend_anchor_x_spin.setMinimumHeight(25)
+        self.legend_anchor_x_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.legend_anchor_x_spin.setRange(-5.0, 5.0)
         self.legend_anchor_x_spin.setSingleStep(0.05)
         self.legend_anchor_x_spin.setValue(self.config.get('legend_anchor_x', 1.15))
         self.legend_anchor_x_spin.valueChanged.connect(self.settingsChanged)
+        self.legend_anchor_x_spin.setToolTip(
+            "Relative X position: 0 = left edge, 1 = right edge of plot.\n"
+            "Values > 1 place the legend outside the plot area (default: 1.15).")
         legend_layout.addWidget(self.legend_anchor_x_spin, 1, 1)
 
         legend_layout.addWidget(QLabel("Legend Anchor Y:"), 2, 0)
         self.legend_anchor_y_spin = QDoubleSpinBox()
-        self.legend_anchor_y_spin.setMinimumHeight(25)
+        self.legend_anchor_y_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.legend_anchor_y_spin.setRange(-5.0, 5.0)
         self.legend_anchor_y_spin.setSingleStep(0.05)
         self.legend_anchor_y_spin.setValue(self.config.get('legend_anchor_y', 1.0))
         self.legend_anchor_y_spin.valueChanged.connect(self.settingsChanged)
+        self.legend_anchor_y_spin.setToolTip(
+            "Relative Y position: 0 = bottom, 1 = top of plot.\n"
+            "Use 1.0 to align the legend with the top of the plot.")
         legend_layout.addWidget(self.legend_anchor_y_spin, 2, 1)
 
         # Export padding in millimeters
         legend_layout.addWidget(QLabel("Padding Left (mm):"), 3, 0)
         self.padding_left_mm_spin = QDoubleSpinBox()
-        self.padding_left_mm_spin.setMinimumHeight(25)
+        self.padding_left_mm_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.padding_left_mm_spin.setRange(0.0, 100.0)
         self.padding_left_mm_spin.setSingleStep(0.5)
         self.padding_left_mm_spin.setValue(self.config.get('padding_left_mm', 8.0))
@@ -889,7 +908,7 @@ class StyleTab(QWidget):
 
         legend_layout.addWidget(QLabel("Padding Right (mm):"), 4, 0)
         self.padding_right_mm_spin = QDoubleSpinBox()
-        self.padding_right_mm_spin.setMinimumHeight(25)
+        self.padding_right_mm_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.padding_right_mm_spin.setRange(0.0, 100.0)
         self.padding_right_mm_spin.setSingleStep(0.5)
         self.padding_right_mm_spin.setValue(self.config.get('padding_right_mm', 6.0))
@@ -898,7 +917,7 @@ class StyleTab(QWidget):
 
         legend_layout.addWidget(QLabel("Padding Top (mm):"), 5, 0)
         self.padding_top_mm_spin = QDoubleSpinBox()
-        self.padding_top_mm_spin.setMinimumHeight(25)
+        self.padding_top_mm_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.padding_top_mm_spin.setRange(0.0, 100.0)
         self.padding_top_mm_spin.setSingleStep(0.5)
         self.padding_top_mm_spin.setValue(self.config.get('padding_top_mm', 6.0))
@@ -907,7 +926,7 @@ class StyleTab(QWidget):
 
         legend_layout.addWidget(QLabel("Padding Bottom (mm):"), 6, 0)
         self.padding_bottom_mm_spin = QDoubleSpinBox()
-        self.padding_bottom_mm_spin.setMinimumHeight(25)
+        self.padding_bottom_mm_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.padding_bottom_mm_spin.setRange(0.0, 100.0)
         self.padding_bottom_mm_spin.setSingleStep(0.5)
         self.padding_bottom_mm_spin.setValue(self.config.get('padding_bottom_mm', 6.0))
@@ -1091,7 +1110,7 @@ class RaincloudTab(QWidget):
         # Group Spacing
         spacing_layout.addWidget(QLabel("Group Spacing:"), 0, 0)
         self.group_spacing_spin = QDoubleSpinBox()
-        self.group_spacing_spin.setMinimumHeight(25)
+        self.group_spacing_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.group_spacing_spin.setRange(0.3, 2.0)
         self.group_spacing_spin.setSingleStep(0.1)
         self.group_spacing_spin.setValue(self.config.get('group_spacing', 0.90))
@@ -1101,7 +1120,7 @@ class RaincloudTab(QWidget):
         # Point Vertical Offset
         spacing_layout.addWidget(QLabel("Point Vertical Offset:"), 1, 0)
         self.point_offset_spin = QDoubleSpinBox()
-        self.point_offset_spin.setMinimumHeight(25)
+        self.point_offset_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.point_offset_spin.setRange(0.1, 0.5)
         self.point_offset_spin.setSingleStep(0.05)
         self.point_offset_spin.setValue(self.config.get('point_offset', 0.2))
@@ -1111,7 +1130,7 @@ class RaincloudTab(QWidget):
         # Point Horizontal Jitter
         spacing_layout.addWidget(QLabel("Point Horizontal Jitter:"), 2, 0)
         self.point_jitter_spin = QDoubleSpinBox()
-        self.point_jitter_spin.setMinimumHeight(25)
+        self.point_jitter_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.point_jitter_spin.setRange(0.01, 0.1)
         self.point_jitter_spin.setSingleStep(0.01)
         self.point_jitter_spin.setValue(self.config.get('point_jitter', 0.05))
@@ -1121,7 +1140,7 @@ class RaincloudTab(QWidget):
         # Violin Width
         spacing_layout.addWidget(QLabel("Violin Width:"), 3, 0)
         self.violin_width_spin = QDoubleSpinBox()
-        self.violin_width_spin.setMinimumHeight(25)
+        self.violin_width_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.violin_width_spin.setRange(0.3, 1.5)
         self.violin_width_spin.setSingleStep(0.1)
         self.violin_width_spin.setValue(self.config.get('violin_width', 0.8))
@@ -1131,7 +1150,7 @@ class RaincloudTab(QWidget):
         # Box Width
         spacing_layout.addWidget(QLabel("Box Width:"), 4, 0)
         self.box_width_spin = QDoubleSpinBox()
-        self.box_width_spin.setMinimumHeight(25)
+        self.box_width_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.box_width_spin.setRange(0.1, 0.8)
         self.box_width_spin.setSingleStep(0.1)
         self.box_width_spin.setValue(self.config.get('box_width', 0.2))
@@ -1261,7 +1280,7 @@ class ErrorBarsTab(QWidget):
         # Error Type
         error_layout.addWidget(QLabel("Error Type:"), 1, 0)
         self.error_type_combo = QComboBox()
-        self.error_type_combo.setMinimumHeight(25)
+        self.error_type_combo.setMinimumHeight(_WIDGET_MIN_H)
         self.error_type_combo.addItems(['sd', 'se', 'ci'])
         self.error_type_combo.setCurrentText(self.config.get('error_type', 'sd'))
         self.error_type_combo.currentTextChanged.connect(self.settingsChanged)
@@ -1270,7 +1289,7 @@ class ErrorBarsTab(QWidget):
         # Error Style
         error_layout.addWidget(QLabel("Error Style:"), 2, 0)
         self.error_style_combo = QComboBox()
-        self.error_style_combo.setMinimumHeight(25)
+        self.error_style_combo.setMinimumHeight(_WIDGET_MIN_H)
         self.error_style_combo.addItems(['caps', 'line'])
         self.error_style_combo.setCurrentText(self.config.get('error_style', 'caps'))
         self.error_style_combo.currentTextChanged.connect(self.settingsChanged)
@@ -1279,7 +1298,7 @@ class ErrorBarsTab(QWidget):
         # Cap Size
         error_layout.addWidget(QLabel("Cap Size:"), 3, 0)
         self.capsize_spin = QDoubleSpinBox()
-        self.capsize_spin.setMinimumHeight(25)
+        self.capsize_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.capsize_spin.setRange(0.0, 1.0)
         self.capsize_spin.setSingleStep(0.01)
         self.capsize_spin.setValue(self.config.get('capsize', 0.05))
@@ -1332,7 +1351,7 @@ class SignificanceTab(QWidget):
         # Letters Font Size
         letters_layout.addWidget(QLabel("Font Size:"), 1, 0)
         self.letters_fontsize_spin = QSpinBox()
-        self.letters_fontsize_spin.setMinimumHeight(25)
+        self.letters_fontsize_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.letters_fontsize_spin.setRange(6, 24)
         self.letters_fontsize_spin.setValue(self.config.get('significance_font_size', 12))
         self.letters_fontsize_spin.valueChanged.connect(self.settingsChanged)
@@ -1341,7 +1360,7 @@ class SignificanceTab(QWidget):
         # Letters Height Offset
         letters_layout.addWidget(QLabel("Height Offset:"), 2, 0)
         self.letters_offset_spin = QDoubleSpinBox()
-        self.letters_offset_spin.setMinimumHeight(25)
+        self.letters_offset_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.letters_offset_spin.setRange(0.0, 0.5)
         self.letters_offset_spin.setSingleStep(0.01)
         self.letters_offset_spin.setValue(self.config.get('significance_height_offset', 0.05))
@@ -1357,7 +1376,7 @@ class SignificanceTab(QWidget):
         # Bracket Line Width
         brackets_layout.addWidget(QLabel("Line Width:"), 0, 0)
         self.bracket_linewidth_spin = QDoubleSpinBox()
-        self.bracket_linewidth_spin.setMinimumHeight(25)
+        self.bracket_linewidth_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.bracket_linewidth_spin.setRange(0.5, 5.0)
         self.bracket_linewidth_spin.setSingleStep(0.1)
         self.bracket_linewidth_spin.setValue(self.config.get('bracket_line_width', 2.0))
@@ -1367,7 +1386,7 @@ class SignificanceTab(QWidget):
         # Bracket Font Size
         brackets_layout.addWidget(QLabel("Font Size:"), 1, 0)
         self.bracket_fontsize_spin = QSpinBox()
-        self.bracket_fontsize_spin.setMinimumHeight(25)
+        self.bracket_fontsize_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.bracket_fontsize_spin.setRange(8, 30)
         self.bracket_fontsize_spin.setValue(self.config.get('bracket_font_size', 16))
         self.bracket_fontsize_spin.valueChanged.connect(self.settingsChanged)
@@ -1376,7 +1395,7 @@ class SignificanceTab(QWidget):
         # Bracket Vertical Length
         brackets_layout.addWidget(QLabel("Vertical Length:"), 2, 0)
         self.bracket_vertical_spin = QDoubleSpinBox()
-        self.bracket_vertical_spin.setMinimumHeight(25)
+        self.bracket_vertical_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.bracket_vertical_spin.setRange(0.1, 1.0)
         self.bracket_vertical_spin.setSingleStep(0.05)
         self.bracket_vertical_spin.setValue(self.config.get('bracket_vertical_fraction', 0.25))
@@ -1386,7 +1405,7 @@ class SignificanceTab(QWidget):
         # Bracket Spacing
         brackets_layout.addWidget(QLabel("Spacing:"), 3, 0)
         self.bracket_spacing_spin = QDoubleSpinBox()
-        self.bracket_spacing_spin.setMinimumHeight(25)
+        self.bracket_spacing_spin.setMinimumHeight(_WIDGET_MIN_H)
         self.bracket_spacing_spin.setRange(0.05, 0.5)
         self.bracket_spacing_spin.setSingleStep(0.01)
         self.bracket_spacing_spin.setValue(self.config.get('bracket_spacing', 0.1))
@@ -1396,7 +1415,7 @@ class SignificanceTab(QWidget):
         # P-value style
         brackets_layout.addWidget(QLabel("P-value Style:"), 4, 0)
         self.pvalue_style_combo = QComboBox()
-        self.pvalue_style_combo.setMinimumHeight(25)
+        self.pvalue_style_combo.setMinimumHeight(_WIDGET_MIN_H)
         self.pvalue_style_combo.addItems(['GP: 0.0332 (*)', 'Exact p-value', 'Fixed stars'])
         self.pvalue_style_combo.setCurrentText(self.config.get('p_value_style', 'Fixed stars'))
         self.pvalue_style_combo.currentTextChanged.connect(self.settingsChanged)
@@ -1506,22 +1525,23 @@ class PlotAestheticsDialog(QDialog):
         
         self.setWindowTitle("Plot Appearance Settings")
         self.setModal(True)
-        screen = QDesktopWidget().screenGeometry()
-        
+        # HIGH: replace deprecated QDesktopWidget with primaryScreen()
+        _app = QApplication.instance()
+        _primary = _app.primaryScreen() if _app else None
+        screen = _primary.geometry() if _primary else None
+
         # Adaptive sizing for different display types and resolutions
-        screen_width = screen.width()
-        screen_height = screen.height()
-        
-        # High-resolution displays (Retina, 4K, etc.) - like MacBook Air 2880x1864
-        if screen_width >= 2560:  # High-res displays
+        screen_width  = screen.width()  if screen else 1920
+        screen_height = screen.height() if screen else 1080
+
+        # Use named constants instead of magic numbers (LOW)
+        if screen_width >= _SCREEN_HIGH_RES:
             width = min(1500, int(screen_width * 0.72))
             height = min(980, int(screen_height * 0.82))
-        # Medium resolution displays
-        elif screen_width >= 1920:  # Full HD and similar
+        elif screen_width >= _SCREEN_MED_RES:
             width = min(1320, int(screen_width * 0.78))
             height = min(900, int(screen_height * 0.84))
-        # Standard/smaller displays
-        else:  # < 1920px width
+        else:
             width = min(1180, int(screen_width * 0.88))
             height = min(860, int(screen_height * 0.88))
             
@@ -1689,7 +1709,15 @@ class PlotAestheticsDialog(QDialog):
 
         for tab in tabs:
             tab.blockSignals(False)
-    
+
+    def closeEvent(self, event):
+        """HIGH: Stop timer and clean up on close to prevent memory leaks."""
+        if hasattr(self, '_preview_timer') and self._preview_timer is not None:
+            self._preview_timer.stop()
+            self._preview_timer.deleteLater()
+            self._preview_timer = None
+        super().closeEvent(event)
+
     def update_preview_immediately(self):
         """Sofortige Preview-Aktualisierung für Schriftarten-Änderungen"""
         if hasattr(self, 'preview') and self.preview:
@@ -1805,7 +1833,13 @@ class PlotAestheticsDialog(QDialog):
         config['groups'] = self._get_ordered_groups()
         config['group_order'] = config['groups'][:]
         if hasattr(self, 'file_name_edit') and self.file_name_edit is not None:
-            config['file_name'] = self.file_name_edit.text().strip() or None
+            raw_name = self.file_name_edit.text().strip()
+            if raw_name and _re.search(r'[<>:"/\\|?*]', raw_name):
+                QMessageBox.warning(self, "Invalid filename",
+                    'File name contains invalid characters: < > : " / \\ | ? *\n'
+                    'Please use only letters, digits, spaces, hyphens, or underscores.')
+                return config
+            config['file_name'] = raw_name or None
         config['create_plot'] = True
         config['dependent'] = self.dependent
 
