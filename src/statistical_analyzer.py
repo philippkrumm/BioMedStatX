@@ -1,6 +1,15 @@
 import sys
 import time
 import os
+# --- FIX FÜR MACOS QT PLUGIN FEHLER ---
+# PyQt5 über pip bündelt eigene Qt5-Libs, die auf macOS 26 Tahoe nicht laden.
+# Stattdessen: Homebrew qt@5 Platform-Plugins verwenden.
+if sys.platform == "darwin":
+    _hb_qt_plugins = "/opt/homebrew/opt/qt@5/plugins"
+    if os.path.isdir(_hb_qt_plugins):
+        os.environ.setdefault("QT_QPA_PLATFORM_PLUGIN_PATH", _hb_qt_plugins)
+# --------------------------------------
+from PyQt5.QtWidgets import QDesktopWidget
 # Core imports - always needed
 import numpy as np
 import pandas as pd
@@ -9,7 +18,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QFileDialog, QWidget, QV
                            QTabWidget, QGroupBox, QCheckBox, QSpinBox, QColorDialog, 
                            QMessageBox, QScrollArea, QListWidgetItem, QDialog, QDialogButtonBox,
                            QGridLayout, QLineEdit, QRadioButton, QAction, QFormLayout, QAbstractItemView, QDoubleSpinBox, QButtonGroup,
-                           QFrame, QTableWidget, QTableWidgetItem, QSplitter, QToolButton, QGraphicsOpacityEffect, QSizePolicy, QTextEdit)
+                           QFrame, QTableWidget, QTableWidgetItem, QSplitter, QToolButton, QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QSizePolicy, QTextEdit)
 from PyQt5.QtGui import QColor, QIcon, QPixmap, QDrag, QDesktopServices
 from PyQt5.QtCore import Qt, QMimeData, QPoint, pyqtSignal, QObject, QPropertyAnimation, QEasingCurve, QSequentialAnimationGroup, QTimer, QUrl
 
@@ -68,6 +77,16 @@ def resource_path(relative_path):
         base_path = os.path.dirname(script_dir)
     
     return os.path.join(base_path, relative_path)
+
+
+def _apply_elevation(widget, radius=18, x_offset=0, y_offset=4, opacity=0.18):
+    """Apply a drop shadow to give a widget visual elevation. QSS cannot do this."""
+    shadow = QGraphicsDropShadowEffect(widget)
+    shadow.setBlurRadius(radius)
+    shadow.setOffset(x_offset, y_offset)
+    shadow.setColor(QColor(0, 0, 0, int(255 * opacity)))
+    widget.setGraphicsEffect(shadow)
+
 
 DEFAULT_COLORS = ['#FF69B4', '#32CD32', '#FFD700', '#00BFFF', '#DA70D6', '#D8BFD8']  # Pink, Green, Gold, DeepSkyBlue, Orchid, Thistle
 DEFAULT_HATCHES = ['/', '\\', '|', '-', '+', 'x', 'o', '.', '*', '']
@@ -838,7 +857,7 @@ class StatisticalAnalyzerApp(QMainWindow):
             (_sw - width) // 2,
             (_sh - height) // 2
         )
-        self.setWindowTitle("BioMedStatX v1.0.1 - Comprehensive Statistical Analysis Tool")
+        self.setWindowTitle("BioMedStatX v2.0 - Comprehensive Statistical Analysis Tool")
         self.setGeometry(100, 50, 1600, 1300)
         
         # Set window icon
@@ -2996,6 +3015,22 @@ class StatisticalAnalyzerApp(QMainWindow):
                     # Use centralized success dialog
                     analysis_type = f"Multi-dataset analysis ({len(all_results)} datasets: {', '.join(all_results.keys())})"
                     self.show_analysis_success_dialog(analysis_type, files, output_dir)
+
+                    # Update cockpit to reflect multi-dataset completion
+                    n = len(all_results)
+                    names = ", ".join(all_results.keys())
+                    multi_summary = {
+                        "subtitle": f"Multi-dataset analysis complete — {n} dataset(s) analyzed.",
+                        "metric_normality": "—",
+                        "metric_variance": "—",
+                        "metric_main_test": f"{n} dataset(s) analyzed:\n{names}\n\nSee Excel file for full results.",
+                        "metric_effect_size": "—",
+                        "detected_test": "Multi-dataset mode — each dataset analyzed separately.",
+                        "rationale": "Results combined in shared Excel file.",
+                        "posthoc": "—",
+                    }
+                    self.result_cockpit.set_summary(multi_summary, enable_plot=False, enable_output=True)
+                    self.current_output_dir = output_dir
                 else:
                     print("DEBUG MULTI: all_results is empty, skipping export")
                     QMessageBox.warning(self, "No Results", "No analysis results were generated.")
@@ -3842,7 +3877,110 @@ class DecisionTreePanel(QFrame):
             self.overlay = None
 
 
-class ResultCardWidget(QFrame):
+class GlowFrame(QFrame):
+    """QFrame that softly glows on mouse hover via an animated drop shadow."""
+
+    def __init__(self, parent=None, glow_color=None, radius=22):
+        super().__init__(parent)
+        if glow_color is None:
+            glow_color = QColor(20, 112, 160, 70)
+        self._glow_radius = radius
+        self._shadow = QGraphicsDropShadowEffect(self)
+        self._shadow.setBlurRadius(0)
+        self._shadow.setOffset(0, 0)
+        self._shadow.setColor(glow_color)
+        self.setGraphicsEffect(self._shadow)
+        self._anim = QPropertyAnimation(self._shadow, b"blurRadius", self)
+        self._anim.setDuration(200)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self.setMouseTracking(True)
+
+    def enterEvent(self, event):
+        self._anim.stop()
+        self._anim.setStartValue(self._shadow.blurRadius())
+        self._anim.setEndValue(self._glow_radius)
+        self._anim.start()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._anim.stop()
+        self._anim.setStartValue(self._shadow.blurRadius())
+        self._anim.setEndValue(0)
+        self._anim.start()
+        super().leaveEvent(event)
+
+
+class ConfettiOverlay(QWidget):
+    """Full-window confetti burst overlay. Self-destructs after ~2 s."""
+
+    _COLORS = ["#FF69B4", "#32CD32", "#FFD700", "#00BFFF", "#DA70D6", "#FF8C00", "#7FFF00"]
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.resize(parent.size())
+        self.raise_()
+        self.show()
+
+        import random
+        self._particles = []
+        for _ in range(90):
+            self._particles.append({
+                "x": random.uniform(0.05, 0.95),
+                "y": random.uniform(-0.25, 0.0),
+                "vx": random.uniform(-0.0025, 0.0025),
+                "vy": random.uniform(0.004, 0.010),
+                "size": random.randint(6, 13),
+                "color": QColor(random.choice(self._COLORS)),
+                "angle": random.uniform(0, 360),
+                "spin": random.uniform(-5, 5),
+            })
+
+        self._opacity = 1.0
+        self._tick = 0
+        self._total_ticks = 120  # ~2 s at 60 fps
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._update)
+        self._timer.start(16)
+
+    def _update(self):
+        self._tick += 1
+        for p in self._particles:
+            p["x"] += p["vx"]
+            p["y"] += p["vy"]
+            p["angle"] += p["spin"]
+        fade_start = self._total_ticks * 0.6
+        if self._tick > fade_start:
+            self._opacity = max(0.0, 1.0 - (self._tick - fade_start) / (self._total_ticks * 0.4))
+        if self._tick >= self._total_ticks:
+            self._timer.stop()
+            self.setParent(None)
+            self.deleteLater()
+            return
+        self.update()
+
+    def paintEvent(self, event):
+        from PyQt5.QtGui import QPainter
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+        for p in self._particles:
+            if p["y"] > 1.1:
+                continue
+            color = QColor(p["color"])
+            color.setAlphaF(self._opacity * 0.92)
+            painter.save()
+            painter.translate(p["x"] * w, p["y"] * h)
+            painter.rotate(p["angle"])
+            sz = p["size"]
+            painter.fillRect(-sz // 2, -sz // 4, sz, sz // 2, color)
+            painter.restore()
+        painter.end()
+
+
+class ResultCardWidget(GlowFrame):
     def __init__(self, title, parent=None):
         super().__init__(parent)
         self.setObjectName("resultCard")
@@ -3900,9 +4038,16 @@ class ResultCockpitWidget(QFrame):
         self.metric_grid.setContentsMargins(0, 0, 0, 0)
         self.metric_grid.setHorizontalSpacing(12)
         self.metric_grid.setVerticalSpacing(12)
-        self._metric_breakpoint_width = 500
-        self._metric_grid_columns = None
-        self._update_metric_grid_columns(2)
+        self.metric_grid.setColumnStretch(0, 1)
+        self.metric_grid.setColumnStretch(1, 1)
+        cards_in_order = [
+            self.metric_cards["metric_normality"],
+            self.metric_cards["metric_variance"],
+            self.metric_cards["metric_main_test"],
+            self.metric_cards["metric_effect_size"],
+        ]
+        for index, card in enumerate(cards_in_order):
+            self.metric_grid.addWidget(card, index // 2, index % 2)
         layout.addWidget(self.metric_grid_widget)
 
         context_title = QLabel("Context")
@@ -3931,56 +4076,6 @@ class ResultCockpitWidget(QFrame):
 
         self.clear()
 
-    def _sync_metric_grid_layout(self):
-        # Use the cockpit width as primary signal so startup resize quirks do not lock into 1-column mode.
-        available_width = max(
-            self.width(),
-            self.metric_grid_widget.width(),
-            self.contentsRect().width(),
-        )
-        if available_width < self._metric_breakpoint_width:
-            self._update_metric_grid_columns(1)
-        else:
-            self._update_metric_grid_columns(2)
-
-    def _update_metric_grid_columns(self, columns):
-        if self._metric_grid_columns == columns:
-            return
-
-        self._metric_grid_columns = columns
-        while self.metric_grid.count():
-            item = self.metric_grid.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                self.metric_grid.removeWidget(widget)
-
-        cards_in_order = [
-            self.metric_cards["metric_normality"],
-            self.metric_cards["metric_variance"],
-            self.metric_cards["metric_main_test"],
-            self.metric_cards["metric_effect_size"],
-        ]
-
-        for index, card in enumerate(cards_in_order):
-            row = index // columns
-            column = index % columns
-            self.metric_grid.addWidget(card, row, column)
-
-        # Ensure opacity side-effects from card animations do not hide cards
-        # after relayout or scrolling in the main dashboard.
-        self._clear_card_effects()
-
-        # Keep columns balanced in desktop mode and single full width in compact mode.
-        self.metric_grid.setColumnStretch(0, 1)
-        self.metric_grid.setColumnStretch(1, 1 if columns > 1 else 0)
-
-    def resizeEvent(self, event):
-        self._sync_metric_grid_layout()
-        super().resizeEvent(event)
-
-    def showEvent(self, event):
-        self._sync_metric_grid_layout()
-        super().showEvent(event)
 
     def clear(self):
         self.subtitle.setText("Run an analysis to populate the cockpit.")
@@ -4014,24 +4109,9 @@ class ResultCockpitWidget(QFrame):
         self._animate_cards()
 
     def _animate_cards(self):
+        # Animation disabled: QSequentialAnimationGroup crashes on macOS 26 Tahoe
+        # with dual Qt binaries (Homebrew + conda). Cards appear instantly instead.
         self._clear_card_effects()
-        self._animation_group = QSequentialAnimationGroup(self)
-        ordered_cards = [
-            *self.metric_cards.values(),
-            *self.context_cards.values(),
-        ]
-        for card in ordered_cards:
-            effect = QGraphicsOpacityEffect(card)
-            card.setGraphicsEffect(effect)
-            effect.setOpacity(0.0)
-            animation = QPropertyAnimation(effect, b"opacity", self)
-            animation.setDuration(180)
-            animation.setStartValue(0.0)
-            animation.setEndValue(1.0)
-            animation.setEasingCurve(QEasingCurve.OutCubic)
-            self._animation_group.addAnimation(animation)
-        self._animation_group.finished.connect(self._clear_card_effects)
-        self._animation_group.start()
 
     def _clear_card_effects(self):
         cards = []
@@ -4042,7 +4122,11 @@ class ResultCockpitWidget(QFrame):
         for card in cards:
             effect = card.graphicsEffect()
             if effect is not None:
-                card.setGraphicsEffect(None)
+                # Restore the GlowFrame's own shadow instead of removing all effects
+                if isinstance(card, GlowFrame):
+                    card.setGraphicsEffect(card._shadow)
+                else:
+                    card.setGraphicsEffect(None)
 
 
 def _load_auto_pilot_stylesheet():
@@ -4197,7 +4281,13 @@ def _ap_init_ui(self):
         "Optional: drop a subject identifier here for paired / repeated-measures designs.",
         accepted_kinds={"numeric", "categorical", "datetime"}
     )
-    for bucket in (self.dv_bucket, self.factor1_bucket, self.factor2_bucket, self.subject_bucket):
+    self.covariates_bucket = MappingBucketWidget(
+        "Covariates (optional)",
+        "Drop continuous confounders here (e.g., Age, BMI, Baseline).",
+        accepted_kinds={"numeric"},
+        allow_multiple=True
+    )
+    for bucket in (self.dv_bucket, self.factor1_bucket, self.factor2_bucket, self.subject_bucket, self.covariates_bucket):
         bucket.changed.connect(self.on_mapping_changed)
         center_layout.addWidget(bucket)
 
@@ -4229,6 +4319,8 @@ def _ap_init_ui(self):
     self.result_cockpit.configure_plot_requested.connect(self.configure_plot_from_result)
     self.result_cockpit.open_output_requested.connect(self.open_current_output_folder)
     right_layout.addWidget(self.result_cockpit, 1)
+    _apply_elevation(self.result_cockpit)
+    _apply_elevation(self.decision_tree_panel)
 
     splitter.addWidget(right_panel)
     splitter.setSizes([450, 430, 520])
@@ -4375,6 +4467,7 @@ def _ap_on_mapping_changed(self):
         *self.factor2_bucket.get_assigned_columns(),
     ] if column]
     subject_columns = self.subject_bucket.get_assigned_columns()
+    covariate_columns = self.covariates_bucket.get_assigned_columns()
 
     if not dv_columns:
         self.mapping_feedback_label.setText("Assign at least one measurement column.")
@@ -4410,6 +4503,31 @@ def _ap_on_mapping_changed(self):
         self.mapping_feedback_label.setText(
             f"Wide format detected \u2192 pivoted to long format. "
             f"Conditions: {cond_labels}. Mapped as paired t-test design."
+        )
+        self.start_analysis_button.setEnabled(True)
+        return
+
+    # Check for overlapping assignments (covariates must not overlap with DV/factors/subject)
+    all_assigned = dv_columns + factor_columns + subject_columns + covariate_columns
+    if len(set(all_assigned)) != len(all_assigned):
+        self.mapping_feedback_label.setText("Each mapped role must use a distinct column. Remove duplicates.")
+        self.start_analysis_button.setEnabled(False)
+        return
+
+    # Covariate cardinality check — warn if a "numeric" covariate looks categorical
+    _cov_warnings = []
+    for _cov_col in covariate_columns:
+        if _cov_col in self.df.columns:
+            _n_unique = self.df[_cov_col].nunique()
+            _n_total  = len(self.df[_cov_col].dropna())
+            if _n_unique == 2:
+                _cov_warnings.append(f"'{_cov_col}' has only 2 values → treated as dummy covariate (0/1).")
+            elif _n_unique <= 5 and _n_total > 20:
+                _cov_warnings.append(f"'{_cov_col}' has few unique values — consider mapping as Factor instead.")
+
+    if _cov_warnings:
+        self.mapping_feedback_label.setText(
+            "Mapping valid. Note: " + " | ".join(_cov_warnings)
         )
     else:
         self.mapping_feedback_label.setText("Mapping looks valid. Start the analysis when you are ready.")
@@ -4494,8 +4612,10 @@ def _ap_build_analysis_context(self):
     ] if column]
     subject_columns = self.subject_bucket.get_assigned_columns()
     subject_column = subject_columns[0] if subject_columns else None
+    covariate_columns = self.covariates_bucket.get_assigned_columns()
 
-    if len(set(dv_columns + factor_columns + ([subject_column] if subject_column else []))) != len(dv_columns + factor_columns + ([subject_column] if subject_column else [])):
+    all_assigned = dv_columns + factor_columns + ([subject_column] if subject_column else []) + covariate_columns
+    if len(set(all_assigned)) != len(all_assigned):
         raise ValueError("Each mapped role must use a distinct column.")
 
     if len(factor_columns) == 0 or len(factor_columns) > 2:
@@ -4506,6 +4626,7 @@ def _ap_build_analysis_context(self):
         "dv_columns": dv_columns,
         "factor_columns": factor_columns,
         "subject_column": subject_column,
+        "covariates": covariate_columns,
         "between_factors": [],
         "within_factors": [],
         "dependent": bool(subject_column),
@@ -4513,6 +4634,27 @@ def _ap_build_analysis_context(self):
         "display_group_col": factor_columns[0],
         "inferred_test": None,
     }
+
+    # --- Binary DV detection: Logistic Regression ---
+    if len(dv_columns) == 1:
+        dv_col = dv_columns[0]
+        _series = self.df[dv_col].dropna()
+        _unique = _series.unique()
+        # Conservative check: exactly 2 values that are 0/1 (or two strings),
+        # AND column name does not hint at a grouping variable.
+        _is_01 = set(_unique) <= {0, 1, 0.0, 1.0}
+        _is_str = all(isinstance(v, str) for v in _unique)
+        _group_hints = {"group", "arm", "treatment", "condition", "sex",
+                        "gender", "cohort", "batch", "grp"}
+        _name_is_grouping = any(h in dv_col.lower() for h in _group_hints)
+        is_binary = (
+            len(_unique) == 2
+            and pd.api.types.is_numeric_dtype(self.df[dv_col]) or _is_str
+            and (_is_01 or _is_str)
+            and not _name_is_grouping
+        )
+        if is_binary:
+            context["outcome_type"] = "binary"
 
     if len(factor_columns) == 1:
         factor = factor_columns[0]
@@ -4560,12 +4702,50 @@ def _ap_build_analysis_context(self):
             context["inferred_test"] = "two_way_anova"
             context["dependent"] = False
 
+    # --- Clinical test upgrades ---
+
+    # 1. Binary DV → Logistic Regression (overrides everything)
+    if context.get("outcome_type") == "binary":
+        context["inferred_test"] = "logistic_regression"
+
+    # 2. Unbalanced repeated-measures → LMM (when Subject ID + within-factor present)
+    elif subject_column and context["within_factors"]:
+        within_factor = context["within_factors"][0]
+        dv_col_for_balance = dv_columns[0] if dv_columns else None
+        try:
+            # Case 1: structural missingness (whole Subject×Timepoint combos absent)
+            counts = self.df.groupby([subject_column, within_factor]).size().unstack(fill_value=0)
+            has_structural_missing = (counts == 0).any().any()
+
+            # Case 2: row exists but DV is NaN (patient present at visit but no measurement)
+            has_nan_missing = False
+            if dv_col_for_balance and not has_structural_missing:
+                valid = self.df[[subject_column, within_factor, dv_col_for_balance]].dropna(
+                    subset=[dv_col_for_balance]
+                )
+                valid_counts = valid.groupby([subject_column, within_factor]).size().unstack(fill_value=0)
+                has_nan_missing = (valid_counts == 0).any().any()
+
+            if has_structural_missing or has_nan_missing:
+                context["inferred_test"] = "lmm"
+        except Exception:
+            pass
+
+    # 3. Covariates present → ANCOVA upgrade (only for non-clinical tests)
+    if covariate_columns and context["inferred_test"] in ("independent_ttest", "one_way_anova"):
+        context["inferred_test"] = "ancova"
+    elif covariate_columns and context["inferred_test"] == "two_way_anova":
+        context["inferred_test"] = "two_way_ancova"
+
+    # Covariates also flow into LMM/mixed_anova as additional fixed effects
+    # (handled in dispatch, no test upgrade needed)
+
     if context["mode"] == "single" and len(dv_columns) != 1:
         raise ValueError("Single mode requires exactly one measurement column.")
     if context["mode"] == "multi" and len(dv_columns) < 2:
         raise ValueError("Multi mode requires at least two measurement columns (for example two or more genes).")
-    if context["mode"] == "multi" and context["inferred_test"] in {"independent_ttest", "paired_ttest"}:
-        raise ValueError("Multi mode is restricted to ANOVA-capable designs, not two-level t-test designs.")
+    if context["mode"] == "multi" and context["inferred_test"] in {"independent_ttest", "paired_ttest", "logistic_regression"}:
+        raise ValueError("Multi mode is restricted to ANOVA-capable designs.")
 
     return context
 
@@ -4578,6 +4758,10 @@ def _ap_detected_test_label(self, context):
         "repeated_measures_anova": "Repeated Measures ANOVA",
         "two_way_anova": "Two-Way ANOVA",
         "mixed_anova": "Mixed ANOVA",
+        "ancova": "ANCOVA (One-Way + Covariates)",
+        "two_way_ancova": "Two-Way ANCOVA",
+        "lmm": "Linear Mixed Model (handles missing visits)",
+        "logistic_regression": "Logistic Regression (Binary Outcome)",
     }
     return labels.get(context["inferred_test"], context["inferred_test"])
 
@@ -4648,6 +4832,29 @@ def _ap_format_assumptions(self, results):
 
 
 def _ap_extract_normality_metric(self, results):
+    # Clinical models: override card semantics
+    model_type = results.get("model_type")
+    if model_type == "LogisticRegression":
+        hl = results.get("hosmer_lemeshow", {})
+        p = hl.get("p_value")
+        if p is not None:
+            return f"Hosmer-Lemeshow p = {p:.4f}" + (" (Good fit)" if p > 0.05 else " (Poor fit)")
+        return "Hosmer-Lemeshow: N/A"
+    if model_type == "LMM":
+        converged = results.get("converged")
+        if converged is True:
+            return "Model converged"
+        elif converged is False:
+            return "Model did NOT converge"
+        return "Convergence: N/A"
+    if model_type == "ANCOVA":
+        slope_hom = results.get("slope_homogeneity", {})
+        violations = [k for k, v in slope_hom.items() if v.get("assumption_holds") is False]
+        if violations:
+            return f"Slope homogeneity violated ({', '.join(violations)})"
+        elif slope_hom:
+            return "Slope homogeneity OK"
+
     normality_tests = results.get("normality_tests", {})
     if "model_residuals_transformed" in normality_tests:
         is_normal = normality_tests["model_residuals_transformed"].get("is_normal")
@@ -4665,6 +4872,24 @@ def _ap_extract_normality_metric(self, results):
 
 
 def _ap_extract_variance_metric(self, results):
+    # Clinical models: override card semantics
+    model_type = results.get("model_type")
+    if model_type == "LogisticRegression":
+        roc = results.get("roc_data", {})
+        auc = roc.get("auc")
+        if auc is not None:
+            return f"AUC = {auc:.3f}"
+        return "AUC: N/A"
+    if model_type == "LMM":
+        icc = results.get("icc")
+        if icc is not None:
+            return f"ICC = {icc:.3f}"
+        return "ICC: N/A"
+    if model_type == "ANCOVA":
+        r2 = results.get("r_squared_adj")
+        if r2 is not None:
+            return f"Adj. R² = {r2:.3f}"
+
     variance_test = results.get("variance_test", {})
     variance_source = variance_test.get("transformed", variance_test)
     if variance_source and isinstance(variance_source, dict):
@@ -4689,8 +4914,18 @@ def _ap_format_main_test_metric(self, results):
 
 
 def _ap_format_effect_size_metric(self, results):
+    model_type = results.get("model_type")
     effect_size = results.get("effect_size")
     effect_size_type = results.get("effect_size_type")
+
+    # For logistic regression, show primary OR
+    if model_type == "LogisticRegression":
+        or_table = results.get("odds_ratios", [])
+        if or_table:
+            primary = or_table[0]
+            return f"OR = {primary['odds_ratio']:.2f} [{primary['ci_lower']:.2f}-{primary['ci_upper']:.2f}]"
+        return "OR: N/A"
+
     if effect_size is None:
         return "Not available"
 
@@ -4703,6 +4938,8 @@ def _ap_format_effect_size_metric(self, results):
         "epsilon_squared": "Epsilon-squared",
         "kendall_w": "Kendall's W",
         "rank_biserial_r": "Rank-biserial r",
+        "ICC": "ICC",
+        "AUC": "AUC",
     }
     type_label = labels.get(effect_size_type, effect_size_type.replace("_", " ").title() if effect_size_type else "Effect size")
     return f"{type_label} = {effect_size:.4f}"
@@ -4730,15 +4967,26 @@ def _ap_format_rationale(self, context, results):
     reasons = [f"Structure inferred as {self._detected_test_label(context)}."]
     if context.get("subject_column"):
         reasons.append(f"Subject ID detected via '{context['subject_column']}'.")
-    if results.get("transformation"):
+    if context.get("covariates"):
+        reasons.append(f"Covariates: {', '.join(context['covariates'])}.")
+
+    model_type = results.get("model_type")
+    if model_type == "ANCOVA":
+        reasons.append("Treatment effects are adjusted for covariates (Type II SS).")
+    elif model_type == "LMM":
+        reasons.append("Linear Mixed Model uses all available data (ML estimation) — missing visits do not cause patient dropout.")
+    elif model_type == "LogisticRegression":
+        reasons.append("Binary outcome detected. Logistic regression provides odds ratios and AUC.")
+    elif results.get("transformation"):
         reasons.append(f"Transformation chosen by user: {results['transformation']}.")
+
     if results.get("analysis_note"):
         reasons.append(results["analysis_note"])
     elif results.get("note"):
         reasons.append(results["note"])
     elif results.get("recommendation") == "non_parametric":
         reasons.append("Parametric assumptions failed, so a robust fallback model path was used.")
-    else:
+    elif model_type not in ("ANCOVA", "LMM", "LogisticRegression"):
         reasons.append("Auto-pilot stayed on the default supported path for this design.")
     return " ".join(reasons)
 
@@ -4768,6 +5016,7 @@ def _ap_render_result_summary(self, context, results, output_dir, subtitle):
         "posthoc": self._format_posthoc_status(context, results),
     }
     self.result_cockpit.set_summary(summary, enable_plot=True, enable_output=bool(output_dir))
+    ConfettiOverlay(self)
     self.decision_tree_panel.update_results(results)
     self._set_workflow_state("results", "Results ready")
     self.current_output_dir = output_dir

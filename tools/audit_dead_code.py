@@ -26,7 +26,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-SOURCE_DIR = Path(__file__).parent / "Source_Code"
+SOURCE_DIR = Path(__file__).parent.parent / "src"
 VULTURE_ALLOWLIST = Path(__file__).parent / "vulture_allowlist.py"
 REPORT_FILE = Path(__file__).parent / "audit_report.md"
 

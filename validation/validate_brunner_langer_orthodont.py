@@ -66,7 +66,7 @@ def make_orthodont_df():
 # 2.  Run Python implementation
 # ---------------------------------------------------------------------------
 def run_python(df):
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "Source_Code"))
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
     from nonparametricanovas import perform_brunner_langer_ats
 
     result = perform_brunner_langer_ats(

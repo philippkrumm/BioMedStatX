@@ -2912,3 +2912,88 @@ class DataVisualizer:
         for line in getattr(ax, 'lines', []):
             if hasattr(line, 'get_color') and hasattr(line, 'set_color'):
                 line.set_color(_to_gray(line.get_color()))
+
+    # ========================================================================
+    # Clinical Plot Types
+    # ========================================================================
+
+    @staticmethod
+    def plot_roc_curve(roc_data, output_path=None, title="ROC Curve"):
+        """Plot ROC curve with AUC annotation.
+
+        Parameters
+        ----------
+        roc_data : dict with keys 'fpr', 'tpr', 'auc'
+        output_path : str, optional — save to file if provided
+        title : str
+        """
+        fig, ax = plt.subplots(figsize=(7, 7))
+
+        fpr = roc_data.get("fpr", [])
+        tpr = roc_data.get("tpr", [])
+        auc_val = roc_data.get("auc")
+
+        ax.plot(fpr, tpr, color="#1470A0", linewidth=2.2,
+                label=f"AUC = {auc_val:.3f}" if auc_val is not None else "ROC")
+        ax.plot([0, 1], [0, 1], color="#9CA3AF", linestyle="--", linewidth=1, label="Random (AUC = 0.5)")
+        ax.fill_between(fpr, tpr, alpha=0.12, color="#1470A0")
+
+        ax.set_xlabel("False Positive Rate (1 - Specificity)", fontsize=11)
+        ax.set_ylabel("True Positive Rate (Sensitivity)", fontsize=11)
+        ax.set_title(title, fontsize=13, fontweight="bold")
+        ax.legend(loc="lower right", fontsize=10)
+        ax.set_xlim([-0.02, 1.02])
+        ax.set_ylim([-0.02, 1.02])
+        ax.set_aspect("equal")
+        sns.despine(ax=ax)
+        fig.tight_layout()
+
+        if output_path:
+            fig.savefig(output_path, dpi=200, bbox_inches="tight")
+        return fig, ax
+
+    @staticmethod
+    def plot_forest(odds_ratios, output_path=None, title="Odds Ratios (Forest Plot)"):
+        """Forest plot for odds ratios with 95% CI.
+
+        Parameters
+        ----------
+        odds_ratios : list of dicts with keys 'parameter', 'odds_ratio', 'ci_lower', 'ci_upper', 'p_value'
+        output_path : str, optional
+        title : str
+        """
+        if not odds_ratios:
+            return None, None
+
+        n = len(odds_ratios)
+        fig, ax = plt.subplots(figsize=(8, max(3, 0.6 * n + 1.5)))
+
+        y_positions = list(range(n))
+        labels = []
+        for i, entry in enumerate(odds_ratios):
+            or_val = entry["odds_ratio"]
+            ci_lo = entry["ci_lower"]
+            ci_hi = entry["ci_upper"]
+            p_val = entry.get("p_value")
+            param = entry.get("parameter", f"Predictor {i+1}")
+
+            color = "#DC2626" if (p_val is not None and p_val < 0.05) else "#6B7280"
+            ax.plot(or_val, i, "o", color=color, markersize=8, zorder=3)
+            ax.plot([ci_lo, ci_hi], [i, i], "-", color=color, linewidth=2, zorder=2)
+
+            p_text = f"p = {p_val:.4f}" if p_val is not None else ""
+            labels.append(f"{param}  (OR={or_val:.2f}, {p_text})")
+
+        ax.axvline(x=1.0, color="#9CA3AF", linestyle="--", linewidth=1, zorder=1)
+        ax.set_yticks(y_positions)
+        ax.set_yticklabels(labels, fontsize=9)
+        ax.set_xlabel("Odds Ratio", fontsize=11)
+        ax.set_title(title, fontsize=13, fontweight="bold")
+        ax.set_xscale("log")
+        sns.despine(ax=ax, left=True)
+        ax.tick_params(left=False)
+        fig.tight_layout()
+
+        if output_path:
+            fig.savefig(output_path, dpi=200, bbox_inches="tight")
+        return fig, ax

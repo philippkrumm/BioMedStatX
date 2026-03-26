@@ -16,7 +16,7 @@ import pandas as pd
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC  = ROOT / "Source_Code"
+SRC  = ROOT / "src"
 for _p in [str(ROOT), str(SRC)]:
     if _p not in sys.path:
         sys.path.insert(0, _p)

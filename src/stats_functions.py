@@ -2247,23 +2247,7 @@ try:
 except ImportError:
     HAS_SCPH = False
 
-# Robust import for nonparametricanovas: works as script or module
-try:
-    from nonparametricanovas import GLMMTwoWayANOVA, GEERMANOVA, GLMMMixedANOVA, auto_anova_decision
-except ImportError:
-    import sys as _sys
-    import os as _os
-    _src_dir = _os.path.dirname(_os.path.abspath(__file__))
-    _parent_dir = _os.path.abspath(_os.path.join(_src_dir, os.pardir))
-    if _parent_dir not in _sys.path:
-        _sys.path.insert(0, _parent_dir)
-    try:
-        from nonparametricanovas import GLMMTwoWayANOVA, GEERMANOVA, GLMMMixedANOVA, auto_anova_decision
-    except ImportError as e:
-        raise ImportError(
-            "Could not import nonparametricanovas. Tried both absolute and sys.path hack. "
-            "Current sys.path: {}. Error: {}".format(_sys.path, e)
-        )
+# GLMMTwoWayANOVA, GEERMANOVA, GLMMMixedANOVA, auto_anova_decision removed (dead code).
 
 
             
@@ -2685,10 +2669,13 @@ class AnalysisManager:
 
         local_kwargs = dict(kwargs)
         inferred_test = analysis_context.get("inferred_test")
-        if inferred_test in {"two_way_anova", "mixed_anova", "repeated_measures_anova"}:
+        if inferred_test in {"two_way_anova", "mixed_anova", "repeated_measures_anova",
+                             "ancova", "two_way_ancova", "lmm", "logistic_regression"}:
             local_kwargs["test"] = inferred_test
         if analysis_context.get("subject_column"):
             local_kwargs["subject_column"] = analysis_context.get("subject_column")
+        if analysis_context.get("covariates"):
+            local_kwargs["covariates"] = analysis_context.get("covariates")
 
         resolved_additional_factors = additional_factors
         if inferred_test == "two_way_anova":
@@ -2884,6 +2871,97 @@ class AnalysisManager:
 
             # Initialize the result dictionary (important: before first assignments!)
             results = {}
+
+            # --- Clinical model dispatch (ANCOVA, LMM, Logistic Regression) ---
+            if kwargs.get('test') in ('ancova', 'two_way_ancova', 'lmm', 'logistic_regression'):
+                from clinical_models import (ANCOVAModel, LinearMixedModel,
+                                             LogisticRegressionModel, DataHealthScanner)
+
+                clinical_test = kwargs['test']
+                covariates = kwargs.get('covariates', [])
+                analysis_context = kwargs.get('analysis_context', {})
+                subject_column = kwargs.get('subject_column') or analysis_context.get('subject_column')
+
+                # --- Data Health Scan (runs before model fit, non-blocking) ---
+                _model_type_map = {
+                    'ancova': 'ANCOVA', 'two_way_ancova': 'ANCOVA',
+                    'lmm': 'LMM', 'logistic_regression': 'LogisticRegression',
+                }
+                try:
+                    _scanner = DataHealthScanner(
+                        df=df,
+                        model_type=_model_type_map[clinical_test],
+                        dv=value_cols[0],
+                        covariates=covariates,
+                        factors=analysis_context.get('factor_columns', []),
+                        subject_col=subject_column,
+                    )
+                    _health_report = _scanner.run()
+                except Exception:
+                    _health_report = {"warnings": [], "checks": {}}
+
+                if clinical_test in ('ancova', 'two_way_ancova'):
+                    model = ANCOVAModel()
+                    between_factors = analysis_context.get('between_factors') or analysis_context.get('factor_columns', [])
+                    model.fit(df, dv=value_cols[0], between_factors=between_factors, covariates=covariates)
+                    test_results = model.as_results_dict()
+
+                elif clinical_test == 'lmm':
+                    model = LinearMixedModel()
+                    fixed_effects = analysis_context.get('within_factors', []) + analysis_context.get('between_factors', [])
+                    if not fixed_effects:
+                        fixed_effects = analysis_context.get('factor_columns', [])
+                    model.fit(df, dv=value_cols[0], fixed_effects=fixed_effects,
+                              random_intercept=subject_column, covariates=covariates or None)
+                    test_results = model.as_results_dict()
+
+                elif clinical_test == 'logistic_regression':
+                    model = LogisticRegressionModel()
+                    predictors = analysis_context.get('factor_columns', [])
+                    model.fit(df, dv=value_cols[0], predictors=predictors, covariates=covariates or None)
+                    test_results = model.as_results_dict()
+
+                # Attach health report to results (non-blocking)
+                test_results["data_health"] = _health_report
+
+                # Clinical models handle their own assumptions; skip normality/variance
+                test_info = None
+                test_recommendation = None
+                transformed_samples = filtered_samples
+                results.update(test_results)
+
+                # Skip the rest of the standard flow (normality check, post-hoc, etc.)
+                # Jump straight to export
+                results['groups'] = groups
+                results['raw_data'] = {g: filtered_samples[g][:] for g in groups}
+
+                analysis_log += f"\nClinical model: {test_results.get('test', clinical_test)}\n"
+                p_value = test_results.get('p_value')
+                if p_value is not None:
+                    analysis_log += f"p-Value: {p_value:.6f}\n"
+
+                if file_name:
+                    file_base = file_name
+                else:
+                    file_base = "_".join(map(str, groups))
+                excel_file = f"{file_base}_results.xlsx"
+
+                if not skip_excel:
+                    original_dir = os.getcwd()
+                    try:
+                        output_dir = os.path.dirname(os.path.abspath(excel_file))
+                        if output_dir:
+                            os.makedirs(output_dir, exist_ok=True)
+                        ResultsExporter.export_results_to_excel(results, excel_file, analysis_log)
+                        print(f"Results exported to: {excel_file}")
+                    except Exception as export_error:
+                        print(f"Error exporting to Excel: {export_error}")
+                    finally:
+                        os.chdir(original_dir)
+
+                results["analysis_log"] = analysis_log
+                results["excel_file"] = excel_file
+                return results
 
             # For advanced tests that use prepare_advanced_test, skip the normality check here
             # as it will be handled in the advanced test flow

@@ -143,7 +143,7 @@ BioMedStatX/
 ├─ CODE_OF_CONDUCT.md             # Contributor Covenant Code of Conduct
 ├─ Start_BioMedStatX_on_Linux.sh  # Launcher for Linux/macOS source/binary startup
 ├─ start.bat                      # Launcher for Windows source/binary startup
-├─ Source_Code/                   # Main application source code
+├─ src/                   # Main application source code
 ├─ docs/                          # User-facing documentation
 │  ├─ HowTo.md                    # Screenshot-based user guide (GUI)
 │  └─ ADVANCED_ANOVA_GUIDE.md     # Advanced ANOVA explanations

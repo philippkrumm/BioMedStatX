@@ -28,7 +28,7 @@ import openpyxl
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC  = ROOT / "Source_Code"
+SRC  = ROOT / "src"
 R_TEMPLATES = Path(__file__).resolve().parent / "r_templates"
 
 for _p in [str(ROOT), str(SRC)]:
