@@ -108,6 +108,12 @@ class ResultsExporter:
             ResultsExporter._write_lmm_sheet(workbook, results, fmt)
         elif model_type == "LogisticRegression":
             ResultsExporter._write_logistic_regression_sheet(workbook, results, fmt)
+        elif model_type == "Correlation":
+            ResultsExporter._write_correlation_sheet(workbook, results, fmt)
+        elif model_type == "LinearRegression":
+            ResultsExporter._write_linear_regression_sheet(workbook, results, fmt)
+        elif model_type == "CorrelationMatrix":
+            ResultsExporter._write_correlation_matrix_sheet(workbook, results, fmt)
 
         if analysis_log:
             ResultsExporter._write_analysislog_sheet(workbook, analysis_log, fmt)
@@ -4649,3 +4655,187 @@ class ResultsExporter:
         ws.write(row, 1, results.get("n_observations"), fmt["cell"])
         row += 2
         ResultsExporter._write_data_health_section(ws, row, results, fmt)
+
+    # ------------------------------------------------------------------
+    # Correlation sheet
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _write_correlation_sheet(workbook, results, fmt):
+        ws = workbook.add_worksheet("Korrelation")
+        ws.set_column('A:A', 35)
+        ws.set_column('B:D', 20)
+        row = 0
+
+        ws.write(row, 0, "Korrelationsanalyse", fmt["title"])
+        row += 2
+
+        fields = [
+            ("Methode", results.get("method", "N/A")),
+            ("r (Korrelationskoeffizient)", results.get("r")),
+            ("p-Wert", results.get("p_value")),
+            ("95% CI Untergrenze", results.get("ci_lower")),
+            ("95% CI Obergrenze", results.get("ci_upper")),
+            ("n (Wertepaare)", results.get("n")),
+            ("Interpretation", results.get("interpretation", "N/A")),
+            ("X-Variable", results.get("x_variable", "N/A")),
+            ("Y-Variable (Outcome)", results.get("y_variable", "N/A")),
+        ]
+        for label, val in fields:
+            ws.write(row, 0, label, fmt["cell"])
+            p_val = results.get("p_value")
+            if label == "p-Wert" and p_val is not None:
+                cell_fmt = fmt["significant"] if p_val < 0.05 else fmt["cell"]
+                ws.write(row, 1, val if val is not None else "N/A", cell_fmt)
+            else:
+                ws.write(row, 1, val if val is not None else "N/A", fmt["cell"])
+            row += 1
+
+        row += 1
+        ResultsExporter._write_data_health_section(ws, row, results, fmt)
+
+    # ------------------------------------------------------------------
+    # Linear Regression sheet
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _write_linear_regression_sheet(workbook, results, fmt):
+        ws = workbook.add_worksheet("Lineare Regression")
+        ws.set_column('A:A', 35)
+        ws.set_column('B:H', 16)
+        row = 0
+
+        ws.write(row, 0, "Lineare Regression (OLS)", fmt["title"])
+        row += 2
+
+        # Model summary
+        ws.write(row, 0, "Modell-Übersicht", fmt["section_header"])
+        row += 1
+        summary_fields = [
+            ("R² (Bestimmtheitsmaß)", results.get("r_squared")),
+            ("R² (adjustiert)", results.get("r_squared_adj")),
+            ("F-Statistik", results.get("f_statistic")),
+            ("F p-Wert", results.get("f_p_value")),
+            ("AIC", results.get("aic")),
+            ("BIC", results.get("bic")),
+            ("N Beobachtungen", results.get("n_observations")),
+        ]
+        for label, val in summary_fields:
+            ws.write(row, 0, label, fmt["cell"])
+            ws.write(row, 1, val if val is not None else "N/A", fmt["cell"])
+            row += 1
+        row += 1
+
+        # Coefficient table
+        ws.write(row, 0, "Koeffizienten-Tabelle", fmt["section_header"])
+        row += 1
+        headers = ["Parameter", "Beta", "Std.-Fehler", "t-Wert", "p-Wert", "CI Untere", "CI Obere"]
+        for c, h in enumerate(headers):
+            ws.write(row, c, h, fmt["header"])
+        row += 1
+        for coef in results.get("coefficient_table", []):
+            ws.write(row, 0, str(coef.get("parameter", "")), fmt["cell"])
+            ws.write(row, 1, coef.get("coefficient"), fmt["cell"])
+            ws.write(row, 2, coef.get("std_err"), fmt["cell"])
+            ws.write(row, 3, coef.get("t_value"), fmt["cell"])
+            p_val = coef.get("p_value")
+            if p_val is not None:
+                cell_fmt = fmt["significant"] if p_val < 0.05 else fmt["cell"]
+                ws.write(row, 4, p_val, cell_fmt)
+            else:
+                ws.write(row, 4, "N/A", fmt["cell"])
+            ws.write(row, 5, coef.get("ci_lower"), fmt["cell"])
+            ws.write(row, 6, coef.get("ci_upper"), fmt["cell"])
+            row += 1
+        row += 1
+
+        # Diagnostics
+        ws.write(row, 0, "Annahmen-Diagnostik", fmt["section_header"])
+        row += 1
+        diag_headers = ["Test", "Statistik", "p-Wert", "Annahme erfüllt?"]
+        for c, h in enumerate(diag_headers):
+            ws.write(row, c, h, fmt["header"])
+        row += 1
+        diag_order = [
+            ("normality", "Shapiro-Wilk (Residuen)"),
+            ("homoscedasticity", "Breusch-Pagan"),
+            ("linearity", "Ramsey RESET"),
+        ]
+        for key, label in diag_order:
+            d = results.get("diagnostics", {}).get(key, {})
+            ws.write(row, 0, d.get("test", label), fmt["cell"])
+            stat_val = d.get("statistic")
+            ws.write(row, 1, stat_val if stat_val is not None else "N/A", fmt["cell"])
+            p_d = d.get("p_value")
+            if p_d is not None:
+                cell_fmt = fmt["significant"] if not d.get("assumption_holds", True) else fmt["cell"]
+                ws.write(row, 2, p_d, cell_fmt)
+            else:
+                ws.write(row, 2, d.get("error", "N/A"), fmt["cell"])
+            holds = d.get("assumption_holds")
+            ws.write(row, 3, ("Ja" if holds else "Nein — prüfen") if holds is not None else "N/A", fmt["cell"])
+            row += 1
+        row += 1
+
+        ResultsExporter._write_data_health_section(ws, row, results, fmt)
+
+    # ------------------------------------------------------------------
+    # Exploratory Correlation Matrix sheet
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _write_correlation_matrix_sheet(workbook, results, fmt):
+        cols = results.get("variables", [])
+        if not cols:
+            return
+
+        def _write_matrix(ws, start_row, label, matrix_dict, cols, highlight_sig=False, p_corrected=None):
+            ws.write(start_row, 0, label, fmt["section_header"])
+            start_row += 1
+            for j, c in enumerate(cols):
+                ws.write(start_row, j + 1, c, fmt["header"])
+            start_row += 1
+            for i, ri in enumerate(cols):
+                ws.write(start_row + i, 0, ri, fmt["header"])
+                for j, cj in enumerate(cols):
+                    val = matrix_dict.get(ri, {}).get(cj)
+                    if highlight_sig and p_corrected is not None:
+                        p_val = p_corrected.get(ri, {}).get(cj)
+                        cell_fmt = fmt["significant"] if (p_val is not None and p_val < 0.05) else fmt["cell"]
+                    else:
+                        cell_fmt = fmt["cell"]
+                    ws.write(start_row + i, j + 1, val if val is not None else "N/A", cell_fmt)
+            return start_row + len(cols) + 2
+
+        ws = workbook.add_worksheet("Korrelationsmatrix")
+        ws.set_column('A:A', 38)
+        for j in range(len(cols) + 1):
+            ws.set_column(j + 1, j + 1, 14)
+        row = 0
+
+        ws.write(row, 0, "Explorative Korrelationsmatrix", fmt["title"])
+        row += 1
+        ws.write(row, 0,
+                 f"Methode: {results.get('method', 'N/A')} | "
+                 f"Korrektur: {results.get('correction', 'keine')} | "
+                 f"Missing: {'pairwise' if results.get('pairwise_deletion') else 'listwise'}",
+                 fmt["cell"])
+        row += 2
+
+        row = _write_matrix(ws, row, "r-Matrix (Korrelationskoeffizienten)",
+                            results.get("r_matrix", {}), cols,
+                            highlight_sig=True, p_corrected=results.get("p_corrected_matrix"))
+        row = _write_matrix(ws, row, "p-Werte (korrigiert)",
+                            results.get("p_corrected_matrix", {}), cols, highlight_sig=True,
+                            p_corrected=results.get("p_corrected_matrix"))
+        row = _write_matrix(ws, row, "n pro Variablenpaar",
+                            results.get("n_matrix", {}), cols)
+
+        strata = results.get("strata", {})
+        for grp, mats in strata.items():
+            row = _write_matrix(ws, row, f"r-Matrix — Gruppe: {grp}",
+                                mats.get("r_matrix", {}), cols,
+                                highlight_sig=True, p_corrected=mats.get("p_corrected_matrix"))
+            row = _write_matrix(ws, row, f"p (korrigiert) — Gruppe: {grp}",
+                                mats.get("p_corrected_matrix", {}), cols, highlight_sig=True,
+                                p_corrected=mats.get("p_corrected_matrix"))

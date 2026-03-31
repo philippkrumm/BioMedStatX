@@ -37,14 +37,16 @@ After loading, select the **Worksheet** from the dropdown. A **Table Preview** s
 
 After loading your data, the right panel shows **Smart Mapping**. The app tries to auto-detect the correct mapping, but you can adjust it by dragging header cards from the **Excel Headers** section into the appropriate bucket.
 
-There are four buckets:
+There are six buckets:
 
 | Bucket | What goes here |
 |---|---|
 | **Dependent Variable** | The column with your measurements (e.g., `Value`, gene expression, weight) |
-| **Factor 1** | The main grouping variable (e.g., `Group`, `Timepoint`) |
+| **Factor 1** | The main predictor — categorical (e.g., `Group`) → ANOVA/t-Test; continuous (e.g., `Pump time`) → Correlation/Regression |
 | **Factor 2** *(optional)* | A second grouping variable for Two-Way or Mixed ANOVA |
 | **Subject ID** *(optional)* | Identifies individual subjects for repeated/paired measurements |
+| **Covariates** *(optional)* | Continuous confounders to control for (e.g., Age, BMI) → ANCOVA or Multiple Regression |
+| **Filter** *(optional)* | Restrict the analysis to a subset of rows (see Section 15) |
 
 ### What is the difference between Factor and Subject ID?
 
@@ -148,8 +150,13 @@ BioMedStatX automatically selects the appropriate test. Supported designs includ
 - Repeated Measures ANOVA (one within-subject factor)
 - Two-Way ANOVA (two between-subject factors)
 - Mixed ANOVA (one between-subject factor, one within-subject factor)
+- ANCOVA / Two-Way ANCOVA (categorical Factor 1 + continuous Covariates)
+- Linear Mixed Model (LMM) — for longitudinal designs with a Subject ID and continuous Factor 1
+- Logistic Regression — for binary outcomes (0/1 dependent variable)
+- Correlation (Pearson/Spearman) — continuous Factor 1, no Covariates
+- Linear Regression (OLS) — continuous Factor 1 + Covariates
 
-> **Note:** Nonparametric fallbacks for Two-Way ANOVA, Mixed ANOVA, and Repeated Measures ANOVA are experimental and should be considered with caution in the current version.
+Nonparametric fallbacks for Repeated Measures ANOVA (Friedman), Two-Way ANOVA (Freedman-Lane), and Mixed ANOVA (Brunner-Langer ATS) are fully implemented and applied automatically when normality assumptions cannot be met.
 
 ---
 
@@ -213,6 +220,135 @@ Results are exported to Excel for further review.
 - For paired designs, every subject must have exactly one measurement per condition.
 - Use the **Analysis Log** sheet in the exported Excel file for troubleshooting and detailed steps.
 - For highly skewed data, apply a Log10 transformation when prompted.
+
+---
+
+## 15. Filter Bucket — Subgroup Analysis
+
+The **Filter** bucket lets you restrict any analysis to a subset of rows before the statistical test runs. This is useful for subgroup analyses (e.g., "only On-Pump patients", "only female subjects").
+
+### How to use
+
+1. Drag any **categorical column** (e.g., `OP-Group`, `Sex`, `Treatment`) into the Filter bucket.
+2. A dropdown appears with all unique values in that column (e.g., `1`, `7` or `On-Pump`, `Off-Pump`).
+3. Select the value you want to analyse.
+4. The bucket shows the filtered row count: *"Analyse auf n=93 Zeilen beschränkt."*
+5. Click **Start Auto Analysis** — the entire pipeline (assumption checks, test selection, output) runs only on the filtered subset.
+
+> **Tip:** The ⓘ button on the Filter bucket title explains its purpose at any time.
+
+> **Warning:** If the filter results in fewer than 5 rows, the analysis will abort with a warning.
+
+---
+
+## 16. Correlation Analysis
+
+BioMedStatX automatically selects **Correlation** when:
+- Factor 1 contains a **continuous variable** (more than 10 unique numeric values), AND
+- No Subject ID is set, AND
+- No Covariates are assigned.
+
+### Configuration
+
+| Bucket | What to drop |
+|---|---|
+| **Dependent Variable** | Outcome variable (e.g., NK cell count) |
+| **Factor 1** | Continuous predictor (e.g., miRNA expression) |
+| **Filter** *(optional)* | Restrict to a subgroup (e.g., On-Pump only) |
+
+### How the method is chosen
+
+BioMedStatX runs Shapiro-Wilk normality tests on both variables:
+- Both normally distributed → **Pearson r**
+- At least one non-normal → **Spearman ρ**
+
+### What is reported
+
+| Statistic | Description |
+|---|---|
+| r / ρ | Correlation coefficient |
+| p-value | Two-tailed significance |
+| 95% CI | Fisher z-transform confidence interval |
+| n | Number of valid pairs (pairwise deletion) |
+| Method | Pearson or Spearman |
+| Interpretation | Weak / Moderate / Strong, direction |
+
+Results are exported to the **Correlation** sheet in the Excel output.
+
+---
+
+## 17. Linear Regression (OLS)
+
+BioMedStatX automatically selects **Linear Regression** when:
+- Factor 1 contains a **continuous variable**, AND
+- At least one variable is placed in the **Covariates** bucket.
+
+Without covariates: Simple Regression (1 predictor). With covariates: Multiple Regression.
+
+### Configuration
+
+| Bucket | What to drop |
+|---|---|
+| **Dependent Variable** | Outcome / dependent variable |
+| **Factor 1** | Primary continuous predictor (e.g., Pump time) |
+| **Covariates** | Additional predictors to control for (e.g., Age, BMI) |
+| **Filter** *(optional)* | Subgroup restriction |
+
+### What is reported
+
+**Model summary:** R², Adjusted R², F-statistic, p(F), AIC, BIC
+
+**Coefficient table:**
+
+| Column | Description |
+|---|---|
+| Beta | Regression coefficient |
+| SE | Standard error |
+| t | t-statistic |
+| p | p-value (two-tailed) |
+| 95% CI | Confidence interval for Beta |
+
+**Residual diagnostics:**
+
+| Test | Checks for |
+|---|---|
+| Shapiro-Wilk on residuals | Normality of residuals |
+| Breusch-Pagan | Homoscedasticity (equal variance) |
+| Ramsey RESET | Linearity / model specification |
+
+Results are exported to the **LinearRegression** sheet in the Excel output.
+
+For detailed guidance on interpreting diagnostics, see [CORRELATION_REGRESSION_GUIDE.md](./CORRELATION_REGRESSION_GUIDE.md).
+
+---
+
+## 18. Exploratory Correlation Matrix
+
+The **Explorative Korrelationsmatrix** button (in the Auto-pilot center panel, below Start Analysis) opens a dedicated dialog for exploring pairwise correlations across all numeric variables in your dataset.
+
+### Dialog options
+
+| Option | Description |
+|---|---|
+| Variable selection | Check/uncheck which numeric columns to include |
+| Method | Auto (Shapiro-Wilk per pair), Spearman, or Pearson |
+| Missing data | Pairwise deletion (each pair uses its own n) or Listwise (complete cases only) |
+| Multiple testing correction | FDR (Benjamini-Hochberg), Bonferroni, or None |
+| Stratify by | Optional: run the matrix separately per group (categorical column) |
+
+### Output
+
+Three Excel sheets are generated:
+
+| Sheet | Content |
+|---|---|
+| Corr_r | Matrix of correlation coefficients |
+| Corr_p_corrected | Matrix of corrected p-values |
+| Corr_n | Matrix of sample sizes per pair |
+
+The n-matrix is essential when data has missing values — it makes the impact of pairwise deletion transparent.
+
+> **Recommendation:** Use **FDR (Benjamini-Hochberg)** for exploratory analyses to control the false discovery rate while maintaining power. Use **Bonferroni** only when a few pre-specified hypotheses are tested.
 
 ---
 

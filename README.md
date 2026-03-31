@@ -32,8 +32,17 @@ BioMedStatX is designed for experimental and biomedical research workflows:
   - Direct import of `.xlsx` and `.csv` files  
   - Provided template: [`StatisticalAnalyzer_Excel_Template.xlsx`](./docs/StatisticalAnalyzer_Excel_Template.xlsx)
 
-- **Transparent methodology**  
+- **Correlation & Regression**
+  - Pearson / Spearman correlation with 95% confidence intervals (auto-selected via Shapiro-Wilk)
+  - Simple and multiple linear regression (OLS) with full residual diagnostics (Ramsey RESET, Breusch-Pagan, Shapiro-Wilk on residuals)
+  - Exploratory correlation matrix across all numeric variables with FDR (Benjamini-Hochberg) or Bonferroni correction, pairwise deletion, and optional stratification
+
+- **Subgroup analysis via Filter-Bucket**
+  - Drag any categorical column into the Filter bucket to restrict the analysis to a subset of rows (e.g. On-Pump patients only)
+
+- **Transparent methodology**
   - Advanced explanations for ANOVA workflows: see [Advanced ANOVA Guide](./docs/ADVANCED_ANOVA_GUIDE.md)
+  - Correlation and regression methodology: see [Correlation & Regression Guide](./docs/CORRELATION_REGRESSION_GUIDE.md)
 
 ---
 
@@ -112,11 +121,14 @@ For a complete, screenshot-based walkthrough, including which button to click at
 
 ## Documentation & Guides
 
--- **User Guide (GUI, step-by-step with screenshots):**  
+- **User Guide (GUI, step-by-step with screenshots):**
    -> [docs/HowTo.md](./docs/HowTo.md)
 
--- **Advanced ANOVA methodology and interpretation:**  
+- **Advanced ANOVA methodology and interpretation:**
    -> [docs/ADVANCED_ANOVA_GUIDE.md](./docs/ADVANCED_ANOVA_GUIDE.md)
+
+- **Correlation & Regression methodology and interpretation:**
+   -> [docs/CORRELATION_REGRESSION_GUIDE.md](./docs/CORRELATION_REGRESSION_GUIDE.md)
 
 Additional documentation can be added to the [`docs/`](./docs) folder.
 
@@ -126,7 +138,12 @@ Additional documentation can be added to the [`docs/`](./docs) folder.
 
 - Standard nonparametric workflows are available for common one-factor designs such as Mann-Whitney, Wilcoxon, Kruskal-Wallis, Friedman, and related post-hoc analyses.
 - Advanced parametric workflows are available for Two-Way ANOVA, Repeated Measures ANOVA, and Mixed ANOVA.
-- Automatic nonparametric fallbacks for advanced ANOVA designs are not yet production-ready in the current codebase and should be treated as a known limitation.
+- Nonparametric fallbacks for advanced ANOVA designs are fully implemented: Friedman test (Repeated Measures fallback), Freedman-Lane permutation test (Two-Way ANOVA fallback), and Brunner-Langer ATS (Mixed ANOVA fallback), each with appropriate post-hoc comparisons.
+- ANCOVA (One-Way and Two-Way) is supported when continuous covariates are placed in the Covariates bucket alongside a categorical Factor 1.
+- Linear Mixed Models (LMM) and Logistic Regression are available for longitudinal and binary outcome designs via the Auto-pilot.
+- Correlation (Pearson/Spearman) and linear regression (OLS) are supported via the Auto-pilot when a continuous variable is assigned to the Factor 1 bucket.
+- Exploratory correlation matrices are available via the dedicated button in the Auto-pilot panel.
+- Subgroup analyses can be performed using the Filter bucket to restrict any analysis to a subset of rows.
 - For Windows and macOS end users, the recommended path is to use the packaged application from the GitHub Releases page. The repository launcher scripts are mainly intended for source-based usage.
 
 ---
@@ -145,8 +162,9 @@ BioMedStatX/
 ├─ start.bat                      # Launcher for Windows source/binary startup
 ├─ src/                   # Main application source code
 ├─ docs/                          # User-facing documentation
-│  ├─ HowTo.md                    # Screenshot-based user guide (GUI)
-│  └─ ADVANCED_ANOVA_GUIDE.md     # Advanced ANOVA explanations
+│  ├─ HowTo.md                           # Screenshot-based user guide (GUI)
+│  ├─ ADVANCED_ANOVA_GUIDE.md            # Advanced ANOVA explanations
+│  └─ CORRELATION_REGRESSION_GUIDE.md    # Correlation & regression methodology
 └─ .github/
    └─ ISSUE_TEMPLATE/
       ├─ bug_report.yml           # Bug report issue template

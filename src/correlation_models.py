@@ -1,0 +1,630 @@
+"""
+Correlation and Regression Models for BioMedStatX.
+
+Provides Pearson/Spearman correlation, OLS linear regression with diagnostics,
+and an exploratory correlation matrix with multiple-testing correction.
+
+All model classes follow the pattern established in clinical_models.py:
+    model = SomeModel()
+    model.fit(df, ...)
+    results = model.as_results_dict()
+"""
+
+import re
+import numpy as np
+import pandas as pd
+from scipy import stats as scipy_stats
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+
+def _sanitize_columns(df, columns):
+    """Rename columns with special characters so patsy / statsmodels can parse them.
+
+    Returns a dict mapping original name -> sanitized name.
+    The DataFrame is renamed in-place (same pattern as clinical_models.py).
+    """
+    mapping = {}
+    for col in columns:
+        safe = re.sub(r'[^A-Za-z0-9_]', '_', str(col))
+        if safe != col:
+            base = safe
+            i = 2
+            while safe in df.columns and safe != col:
+                safe = f"{base}_{i}"
+                i += 1
+            df.rename(columns={col: safe}, inplace=True)
+        mapping[col] = safe
+    return mapping
+
+
+def _is_continuous(df, col, threshold=10):
+    """Return True if col is numeric with more than `threshold` unique values.
+
+    Used by the auto-pilot to distinguish continuous predictors from
+    categorical group columns.
+    """
+    if col not in df.columns:
+        return False
+    if not pd.api.types.is_numeric_dtype(df[col]):
+        return False
+    return df[col].nunique() > threshold
+
+
+def _fisher_z_ci(r, n, alpha=0.05):
+    """95 % CI for a Pearson or Spearman r via Fisher z-transform."""
+    if n < 4:
+        return (None, None)
+    try:
+        r_clamped = float(np.clip(r, -0.9999, 0.9999))
+        z = np.arctanh(r_clamped)
+        se = 1.0 / np.sqrt(n - 3)
+        z_crit = scipy_stats.norm.ppf(1 - alpha / 2)
+        lo = float(np.tanh(z - z_crit * se))
+        hi = float(np.tanh(z + z_crit * se))
+        return (lo, hi)
+    except Exception:
+        return (None, None)
+
+
+# ---------------------------------------------------------------------------
+# 1. CorrelationModel
+# ---------------------------------------------------------------------------
+
+class CorrelationModel:
+    """Pearson or Spearman correlation with 95 % CI (Fisher z-transform).
+
+    method='auto' applies Shapiro-Wilk to both variables and uses Pearson when
+    both are normally distributed (p > alpha), otherwise Spearman.
+    Pairwise deletion: only rows without NaN in x_col or y_col are used.
+    """
+
+    def __init__(self):
+        self.r = None
+        self.p = None
+        self.ci = (None, None)
+        self.n = None
+        self._method_used = None
+        self._x = None
+        self._y = None
+        self._alpha = 0.05
+
+    def fit(self, df, x_col, y_col, method='auto', alpha=0.05):
+        """Fit the correlation model.
+
+        Args:
+            df:       DataFrame
+            x_col:   first variable (predictor)
+            y_col:   second variable (outcome)
+            method:  'auto', 'pearson', or 'spearman'
+            alpha:   significance level (used for auto-detection and CI width)
+        """
+        self._alpha = alpha
+        work = df.dropna(subset=[x_col, y_col]).copy()
+        self.n = len(work)
+
+        if self.n < 4:
+            raise ValueError(
+                f"Korrelation benötigt mindestens 4 vollständige Wertepaare "
+                f"(nach Pairwise Deletion: n={self.n})."
+            )
+
+        col_map = _sanitize_columns(work, [x_col, y_col])
+        self._x = col_map[x_col]
+        self._y = col_map[y_col]
+
+        x_vals = work[self._x].values.astype(float)
+        y_vals = work[self._y].values.astype(float)
+
+        # --- Determine method ---
+        if method == 'auto':
+            _, px = scipy_stats.shapiro(x_vals[:5000])
+            _, py = scipy_stats.shapiro(y_vals[:5000])
+            self._method_used = 'pearson' if (px > alpha and py > alpha) else 'spearman'
+        else:
+            self._method_used = method
+
+        # --- Compute r and p ---
+        if self._method_used == 'pearson':
+            self.r, self.p = scipy_stats.pearsonr(x_vals, y_vals)
+        else:
+            self.r, self.p = scipy_stats.spearmanr(x_vals, y_vals)
+
+        self.r = float(self.r)
+        self.p = float(self.p)
+        self.ci = _fisher_z_ci(self.r, self.n, alpha)
+
+        return self
+
+    @staticmethod
+    def _interpret(r):
+        abs_r = abs(r)
+        direction = "positiv" if r >= 0 else "negativ"
+        if abs_r < 0.2:
+            strength = "vernachlässigbar"
+        elif abs_r < 0.4:
+            strength = "schwach"
+        elif abs_r < 0.6:
+            strength = "moderat"
+        elif abs_r < 0.8:
+            strength = "stark"
+        else:
+            strength = "sehr stark"
+        return f"{direction.capitalize()}, {strength} (|r| = {abs_r:.3f})"
+
+    def as_results_dict(self):
+        if self.r is None:
+            return {"error": "Model not fitted"}
+
+        return {
+            "test": f"Korrelation ({self._method_used.capitalize()})",
+            "model_type": "Correlation",
+            "p_value": self.p,
+            "statistic": self.r,
+            "statistic_type": "r",
+            "effect_size": abs(self.r),
+            "effect_size_type": "r",
+            "r": self.r,
+            "method": self._method_used,
+            "ci_lower": self.ci[0],
+            "ci_upper": self.ci[1],
+            "n": self.n,
+            "alpha": self._alpha,
+            "interpretation": self._interpret(self.r),
+            "x_variable": self._x,
+            "y_variable": self._y,
+        }
+
+
+# ---------------------------------------------------------------------------
+# 2. SimpleLinearRegressionModel
+# ---------------------------------------------------------------------------
+
+class SimpleLinearRegressionModel:
+    """OLS linear regression with a continuous primary predictor + optional covariates.
+
+    Regression diagnostics included (all non-blocking):
+      - Shapiro-Wilk on residuals     (normality assumption)
+      - Breusch-Pagan test            (homoscedasticity)
+      - Ramsey RESET test             (linearity / functional form)
+
+    For categorical group predictors use ANCOVAModel (clinical_models.py).
+    Covariates are added as additional continuous predictors to the OLS formula.
+    """
+
+    def __init__(self):
+        self.result = None
+        self._df = None
+        self._x = None
+        self._y = None
+        self._covariates = None
+        self._alpha = 0.05
+
+    def fit(self, df, x_col, y_col, covariates=None, alpha=0.05):
+        """Fit OLS model.
+
+        Args:
+            x_col:      continuous primary predictor column name
+            y_col:      outcome column name
+            covariates: list of additional continuous predictor column names
+            alpha:      significance level for diagnostics
+        """
+        import statsmodels.formula.api as smf
+
+        self._alpha = alpha
+        all_cols = [x_col, y_col] + (covariates or [])
+        work = df.dropna(subset=all_cols).copy()
+        n = len(work)
+
+        min_obs = max(5, len(all_cols) + 2)
+        if n < min_obs:
+            raise ValueError(
+                f"Zu wenige Beobachtungen nach Listenausschluss (n={n}, "
+                f"benötigt: ≥{min_obs} für {len(all_cols)} Variablen)."
+            )
+
+        col_map = _sanitize_columns(work, all_cols)
+        self._x = col_map[x_col]
+        self._y = col_map[y_col]
+        self._covariates = [col_map[c] for c in (covariates or [])]
+        self._df = work
+
+        terms = [self._x] + self._covariates
+        formula = f"{self._y} ~ {' + '.join(terms)}"
+
+        self.result = smf.ols(formula, data=self._df).fit()
+        return self
+
+    def diagnostics(self):
+        """Run regression assumption checks. Returns dict (all non-blocking)."""
+        if self.result is None:
+            return {}
+
+        diag = {}
+        residuals = self.result.resid.values
+        n = len(residuals)
+
+        # 1. Normality of residuals (Shapiro-Wilk)
+        try:
+            sw_stat, sw_p = scipy_stats.shapiro(residuals[:5000])
+            diag["normality"] = {
+                "test": "Shapiro-Wilk (Residuen)",
+                "statistic": float(sw_stat),
+                "p_value": float(sw_p),
+                "assumption_holds": bool(sw_p > self._alpha),
+            }
+        except Exception as exc:
+            diag["normality"] = {"test": "Shapiro-Wilk", "error": str(exc)}
+
+        # 2. Homoscedasticity (Breusch-Pagan)
+        try:
+            from statsmodels.stats.diagnostic import het_breuschpagan
+            X_exog = self.result.model.exog
+            bp_lm, bp_p, _, _ = het_breuschpagan(residuals, X_exog)
+            diag["homoscedasticity"] = {
+                "test": "Breusch-Pagan",
+                "statistic": float(bp_lm),
+                "p_value": float(bp_p),
+                "assumption_holds": bool(bp_p > self._alpha),
+            }
+        except Exception as exc:
+            diag["homoscedasticity"] = {"test": "Breusch-Pagan", "error": str(exc)}
+
+        # 3. Linearity (Ramsey RESET, power=2)
+        try:
+            from statsmodels.stats.diagnostic import linear_reset
+            reset = linear_reset(self.result, power=2, use_f=True)
+            diag["linearity"] = {
+                "test": "Ramsey RESET",
+                "statistic": float(reset.statistic),
+                "p_value": float(reset.pvalue),
+                "assumption_holds": bool(reset.pvalue > self._alpha),
+            }
+        except Exception as exc:
+            diag["linearity"] = {"test": "Ramsey RESET", "error": str(exc)}
+
+        return diag
+
+    def as_results_dict(self):
+        if self.result is None:
+            return {"error": "Model not fitted"}
+
+        diag = self.diagnostics()
+
+        # Coefficient table
+        conf = self.result.conf_int()
+        coef_table = []
+        for param in self.result.params.index:
+            coef_table.append({
+                "parameter": str(param),
+                "coefficient": float(self.result.params[param]),
+                "std_err": float(self.result.bse[param]),
+                "t_value": float(self.result.tvalues[param]),
+                "p_value": float(self.result.pvalues[param]),
+                "ci_lower": float(conf.loc[param, 0]),
+                "ci_upper": float(conf.loc[param, 1]),
+            })
+
+        # Primary predictor stats
+        main_beta = main_p = main_t = None
+        if self._x in self.result.params.index:
+            main_beta = float(self.result.params[self._x])
+            main_p = float(self.result.pvalues[self._x])
+            main_t = float(self.result.tvalues[self._x])
+
+        f_stat = float(self.result.fvalue) if hasattr(self.result, 'fvalue') and self.result.fvalue is not None else None
+        f_p = float(self.result.f_pvalue) if hasattr(self.result, 'f_pvalue') and self.result.f_pvalue is not None else None
+
+        return {
+            "test": "Lineare Regression (OLS)",
+            "model_type": "LinearRegression",
+            "p_value": main_p,
+            "statistic": main_t,
+            "statistic_type": "t",
+            "effect_size": float(self.result.rsquared),
+            "effect_size_type": "R_squared",
+            "beta": main_beta,
+            "r_squared": float(self.result.rsquared),
+            "r_squared_adj": float(self.result.rsquared_adj),
+            "f_statistic": f_stat,
+            "f_p_value": f_p,
+            "aic": float(self.result.aic),
+            "bic": float(self.result.bic),
+            "n_observations": int(self.result.nobs),
+            "coefficient_table": coef_table,
+            "diagnostics": diag,
+            "x_variable": self._x,
+            "y_variable": self._y,
+            "covariates_used": self._covariates,
+        }
+
+
+# ---------------------------------------------------------------------------
+# 3. ExploratoryCorrelationMatrix
+# ---------------------------------------------------------------------------
+
+class ExploratoryCorrelationMatrix:
+    """Pairwise correlation matrix with multiple-testing correction.
+
+    Pairwise deletion (default): each variable pair uses all available rows
+    independently — n per pair is reported in the n-matrix.
+    Listwise deletion: only complete cases across ALL selected variables.
+
+    Supports optional stratification: computes a separate matrix per level of
+    a categorical column (e.g. OP-Group).
+    """
+
+    def __init__(self):
+        self._columns = None
+        self._method = None
+        self._correction = None
+        self._pairwise = True
+        self._stratify_by = None
+        self._alpha = 0.05
+        self.r_matrix = None
+        self.p_matrix = None
+        self.p_corrected_matrix = None
+        self.n_matrix = None
+        self.strata_results = None
+
+    def fit(self, df, columns, method='spearman', correction='fdr_bh',
+            pairwise=True, stratify_by=None, alpha=0.05):
+        """Compute the correlation matrix.
+
+        Args:
+            df:           DataFrame
+            columns:      list of numeric column names to include
+            method:       'spearman', 'pearson', or 'auto'
+            correction:   'fdr_bh' (Benjamini-Hochberg), 'bonferroni', or None
+            pairwise:     True = pairwise deletion (recommended, preserves n)
+                          False = listwise deletion (only complete cases)
+            stratify_by:  column name for group-stratified matrices (optional)
+            alpha:        significance level for auto method-selection
+        """
+        self._columns = list(columns)
+        self._method = method
+        self._correction = correction
+        self._pairwise = pairwise
+        self._stratify_by = stratify_by
+        self._alpha = alpha
+
+        # Prepare base DataFrame
+        extra = [stratify_by] if (stratify_by and stratify_by in df.columns) else []
+        base = df[self._columns + extra].copy()
+
+        if not pairwise:
+            base = base.dropna(subset=self._columns)
+
+        # Unstratified matrix (always computed)
+        r_m, p_m, pc_m, n_m = self._compute_matrix(base[self._columns])
+        self.r_matrix = r_m
+        self.p_matrix = p_m
+        self.p_corrected_matrix = pc_m
+        self.n_matrix = n_m
+
+        # Stratified matrices (optional)
+        if stratify_by and stratify_by in base.columns:
+            self.strata_results = {}
+            for grp_val, grp_df in base.groupby(stratify_by):
+                r_s, p_s, pc_s, n_s = self._compute_matrix(grp_df[self._columns])
+                self.strata_results[str(grp_val)] = {
+                    "r_matrix": r_s,
+                    "p_matrix": p_s,
+                    "p_corrected_matrix": pc_s,
+                    "n_matrix": n_s,
+                }
+
+        return self
+
+    def _compute_matrix(self, data):
+        """Core computation: returns (r_mat, p_mat, p_corrected_mat, n_mat) as ndarrays."""
+        cols = self._columns
+        k = len(cols)
+        r_mat = np.full((k, k), np.nan)
+        p_mat = np.full((k, k), np.nan)
+        n_mat = np.zeros((k, k))
+        np.fill_diagonal(r_mat, 1.0)
+        np.fill_diagonal(n_mat, data[cols].notna().sum().values.astype(float))
+
+        all_p = []
+        ij_indices = []
+
+        for i in range(k):
+            for j in range(i + 1, k):
+                pair = data[[cols[i], cols[j]]].dropna()
+                n = len(pair)
+                n_mat[i, j] = n_mat[j, i] = float(n)
+                if n < 4:
+                    continue
+
+                x = pair.iloc[:, 0].values.astype(float)
+                y = pair.iloc[:, 1].values.astype(float)
+
+                m = self._method
+                if m == 'auto':
+                    _, px = scipy_stats.shapiro(x[:5000])
+                    _, py = scipy_stats.shapiro(y[:5000])
+                    m = 'pearson' if (px > self._alpha and py > self._alpha) else 'spearman'
+
+                try:
+                    if m == 'pearson':
+                        r, p = scipy_stats.pearsonr(x, y)
+                    else:
+                        r, p = scipy_stats.spearmanr(x, y)
+                    r_mat[i, j] = r_mat[j, i] = float(r)
+                    p_mat[i, j] = p_mat[j, i] = float(p)
+                    all_p.append(float(p))
+                    ij_indices.append((i, j))
+                except Exception:
+                    pass
+
+        # Multiple testing correction
+        pc_mat = p_mat.copy()
+        if self._correction and all_p:
+            try:
+                from statsmodels.stats.multitest import multipletests
+                _, p_adj, _, _ = multipletests(all_p, method=self._correction)
+                for idx, (i, j) in enumerate(ij_indices):
+                    pc_mat[i, j] = pc_mat[j, i] = float(p_adj[idx])
+            except Exception:
+                pass  # Fall back to uncorrected p-values
+
+        return r_mat, p_mat, pc_mat, n_mat
+
+    @staticmethod
+    def _ndarray_to_nested_dict(mat, cols):
+        """Convert k×k ndarray to {col_i: {col_j: value}} dict, NaN → None."""
+        out = {}
+        for i, ci in enumerate(cols):
+            out[ci] = {}
+            for j, cj in enumerate(cols):
+                val = mat[i, j]
+                out[ci][cj] = None if np.isnan(val) else float(val)
+        return out
+
+    @staticmethod
+    def _n_mat_to_dict(mat, cols):
+        """Same as above but casts to int (or None)."""
+        out = {}
+        for i, ci in enumerate(cols):
+            out[ci] = {}
+            for j, cj in enumerate(cols):
+                val = mat[i, j]
+                out[ci][cj] = None if np.isnan(val) else int(val)
+        return out
+
+    def as_results_dict(self):
+        if self.r_matrix is None:
+            return {"error": "Matrix not computed"}
+
+        cols = self._columns
+        _d = self._ndarray_to_nested_dict
+        _n = self._n_mat_to_dict
+
+        result = {
+            "test": "Explorative Korrelationsmatrix",
+            "model_type": "CorrelationMatrix",
+            "method": self._method,
+            "correction": self._correction,
+            "pairwise_deletion": self._pairwise,
+            "variables": cols,
+            "r_matrix": _d(self.r_matrix, cols),
+            "p_matrix": _d(self.p_matrix, cols),
+            "p_corrected_matrix": _d(self.p_corrected_matrix, cols),
+            "n_matrix": _n(self.n_matrix, cols),
+        }
+
+        if self.strata_results:
+            strat_out = {}
+            for grp, mats in self.strata_results.items():
+                strat_out[grp] = {
+                    "r_matrix": _d(mats["r_matrix"], cols),
+                    "p_corrected_matrix": _d(mats["p_corrected_matrix"], cols),
+                    "n_matrix": _n(mats["n_matrix"], cols),
+                }
+            result["strata"] = strat_out
+
+        return result
+
+
+# ---------------------------------------------------------------------------
+# 4. RegressionHealthScanner
+# ---------------------------------------------------------------------------
+
+class RegressionHealthScanner:
+    """Pre-analysis data quality checks specific to linear regression.
+
+    Checks:
+      1. Outliers in predictor and covariates (MAD-based Modified Z-Score)
+      2. Multicollinearity among predictors (VIF, when ≥2 continuous predictors)
+      3. Minimum sample size (n ≥ 10 per predictor recommended)
+      4. Missing data summary (n complete vs. dropped)
+
+    Returns the same interface as DataHealthScanner.run():
+        {"warnings": [...], "checks": {...}}
+    """
+
+    def __init__(self, df, x_col, y_col, covariates=None):
+        self._df = df.copy()
+        self._x = x_col
+        self._y = y_col
+        self._covariates = covariates or []
+        self.warnings = []
+        self.checks = {}
+
+    def run(self):
+        all_pred = [self._x] + self._covariates
+        all_cols = [self._y] + all_pred
+
+        # Missing data summary
+        n_total = len(self._df)
+        n_complete = self._df.dropna(subset=all_cols).shape[0]
+        n_dropped = n_total - n_complete
+        self.checks["missing_data"] = {
+            "n_total": n_total,
+            "n_complete": n_complete,
+            "n_dropped": n_dropped,
+        }
+        if n_dropped > 0:
+            self.warnings.append(
+                f"Fehlende Werte: {n_dropped} von {n_total} Zeilen wurden "
+                f"ausgeschlossen (Listenausschluss)."
+            )
+
+        # Minimum sample size
+        n_preds = len(all_pred)
+        if n_complete < 10 * n_preds:
+            self.warnings.append(
+                f"Stichprobengröße: n={n_complete} für {n_preds} Prädiktoren "
+                f"— Faustregel: ≥10 Beobachtungen pro Prädiktor empfohlen."
+            )
+        self.checks["sample_size"] = {"n_complete": n_complete, "n_predictors": n_preds}
+
+        # Outliers in predictors (MAD-based, same as DataHealthScanner)
+        outlier_info = {}
+        for col in all_pred:
+            if col not in self._df.columns:
+                continue
+            vals = self._df[col].dropna().values
+            if len(vals) < 4:
+                continue
+            median = np.median(vals)
+            mad = np.median(np.abs(vals - median))
+            if mad == 0:
+                continue
+            mod_z = 0.6745 * (vals - median) / mad
+            n_extreme = int(np.sum(np.abs(mod_z) > 3.5))
+            if n_extreme > 0:
+                outlier_info[col] = n_extreme
+                self.warnings.append(
+                    f"Ausreißer in '{col}': {n_extreme} Wert(e) mit |mod. Z-Score| > 3.5."
+                )
+        self.checks["predictor_outliers"] = outlier_info
+
+        # VIF (multicollinearity) when ≥2 continuous predictors
+        if len(all_pred) >= 2:
+            try:
+                import statsmodels.api as sm
+                from statsmodels.stats.outliers_influence import variance_inflation_factor
+                cov_data = self._df[all_pred].dropna()
+                if len(cov_data) >= len(all_pred) + 2:
+                    X = sm.add_constant(cov_data.values, has_constant='add')
+                    vif_vals = {}
+                    high_vif = []
+                    for i, col in enumerate(all_pred):
+                        vif = float(variance_inflation_factor(X, i + 1))
+                        vif_vals[col] = round(vif, 2)
+                        if vif > 10:
+                            high_vif.append(f"{col} (VIF={vif:.1f})")
+                    self.checks["vif"] = vif_vals
+                    if high_vif:
+                        self.warnings.append(
+                            f"Multikollinearität: {', '.join(high_vif)} — "
+                            "VIF > 10, Koeffizienteninterpretation eingeschränkt."
+                        )
+            except Exception as exc:
+                self.checks["vif"] = {"error": str(exc)}
+
+        return {"warnings": self.warnings, "checks": self.checks}

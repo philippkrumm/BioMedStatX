@@ -2670,7 +2670,8 @@ class AnalysisManager:
         local_kwargs = dict(kwargs)
         inferred_test = analysis_context.get("inferred_test")
         if inferred_test in {"two_way_anova", "mixed_anova", "repeated_measures_anova",
-                             "ancova", "two_way_ancova", "lmm", "logistic_regression"}:
+                             "ancova", "two_way_ancova", "lmm", "logistic_regression",
+                             "correlation", "linear_regression"}:
             local_kwargs["test"] = inferred_test
         if analysis_context.get("subject_column"):
             local_kwargs["subject_column"] = analysis_context.get("subject_column")
@@ -2872,8 +2873,9 @@ class AnalysisManager:
             # Initialize the result dictionary (important: before first assignments!)
             results = {}
 
-            # --- Clinical model dispatch (ANCOVA, LMM, Logistic Regression) ---
-            if kwargs.get('test') in ('ancova', 'two_way_ancova', 'lmm', 'logistic_regression'):
+            # --- Clinical model dispatch (ANCOVA, LMM, Logistic Regression, Correlation, Linear Regression) ---
+            if kwargs.get('test') in ('ancova', 'two_way_ancova', 'lmm', 'logistic_regression',
+                                      'correlation', 'linear_regression'):
                 from clinical_models import (ANCOVAModel, LinearMixedModel,
                                              LogisticRegressionModel, DataHealthScanner)
 
@@ -2920,6 +2922,45 @@ class AnalysisManager:
                     predictors = analysis_context.get('factor_columns', [])
                     model.fit(df, dv=value_cols[0], predictors=predictors, covariates=covariates or None)
                     test_results = model.as_results_dict()
+
+                elif clinical_test in ('correlation', 'linear_regression'):
+                    from correlation_models import (CorrelationModel, SimpleLinearRegressionModel,
+                                                    RegressionHealthScanner)
+
+                    # Apply optional filter (e.g. only On-Pump patients)
+                    filter_spec = analysis_context.get('filter')
+                    analysis_df = df.copy()
+                    if filter_spec:
+                        filter_col, filter_val = filter_spec
+                        analysis_df = analysis_df[analysis_df[filter_col] == filter_val]
+                        if len(analysis_df) < 5:
+                            raise ValueError(
+                                f"Zu wenige Beobachtungen nach Filter "
+                                f"'{filter_col} = {filter_val}' (n={len(analysis_df)})."
+                            )
+
+                    x_col = analysis_context.get('x_variable') or analysis_context.get('factor_columns', [None])[0]
+                    y_col = value_cols[0]
+
+                    # Data Health Scan (replaces DataHealthScanner for regression)
+                    try:
+                        _scanner = RegressionHealthScanner(
+                            analysis_df, x_col=x_col, y_col=y_col,
+                            covariates=covariates or None,
+                        )
+                        _health_report = _scanner.run()
+                    except Exception:
+                        _health_report = {"warnings": [], "checks": {}}
+
+                    if clinical_test == 'correlation':
+                        model = CorrelationModel()
+                        model.fit(analysis_df, x_col=x_col, y_col=y_col, method='auto')
+                        test_results = model.as_results_dict()
+                    else:  # linear_regression
+                        model = SimpleLinearRegressionModel()
+                        model.fit(analysis_df, x_col=x_col, y_col=y_col,
+                                  covariates=covariates or None)
+                        test_results = model.as_results_dict()
 
                 # Attach health report to results (non-blocking)
                 test_results["data_health"] = _health_report

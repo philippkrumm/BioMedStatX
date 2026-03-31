@@ -734,6 +734,150 @@ import numpy as np
 
 
 # ---------------------------------------------------------------------------
+# Exploratory Correlation Matrix Dialog
+# ---------------------------------------------------------------------------
+
+class ExploratoryMatrixDialog(QDialog):
+    """Dialog for running an exploratory pairwise correlation matrix.
+
+    Lets the user select variables, choose correlation method and missing-data
+    handling, apply multiple-testing correction, and optionally stratify by a
+    categorical column.  Results are exported to Excel.
+    """
+
+    def __init__(self, df, output_dir=None, parent=None):
+        super().__init__(parent)
+        self.df = df
+        self.output_dir = output_dir or os.getcwd()
+        self.setWindowTitle("Explorative Korrelationsmatrix")
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self.setMinimumWidth(520)
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+
+        # Variable selection
+        var_label = QLabel("Variablen auswählen (numerische Spalten):")
+        var_label.setObjectName("panelDescription")
+        layout.addWidget(var_label)
+
+        numeric_cols = [c for c in self.df.columns
+                        if pd.api.types.is_numeric_dtype(self.df[c])]
+        self._var_list = QListWidget()
+        self._var_list.setSelectionMode(QListWidget.MultiSelection)
+        self._var_list.setMaximumHeight(200)
+        for col in numeric_cols:
+            self._var_list.addItem(col)
+        # Select all by default
+        for i in range(self._var_list.count()):
+            self._var_list.item(i).setSelected(True)
+        layout.addWidget(self._var_list)
+
+        # Method
+        method_row = QHBoxLayout()
+        method_row.addWidget(QLabel("Methode:"))
+        from PyQt5.QtWidgets import QComboBox
+        self._method_combo = QComboBox()
+        self._method_combo.addItems(["spearman", "pearson", "auto"])
+        method_row.addWidget(self._method_combo)
+        layout.addLayout(method_row)
+
+        # Missing data handling
+        missing_row = QHBoxLayout()
+        missing_row.addWidget(QLabel("Fehlende Werte:"))
+        from PyQt5.QtWidgets import QRadioButton, QButtonGroup
+        self._pairwise_radio = QRadioButton("Pairwise Deletion (empfohlen)")
+        self._listwise_radio = QRadioButton("Listwise Deletion")
+        self._pairwise_radio.setChecked(True)
+        missing_grp = QButtonGroup(self)
+        missing_grp.addButton(self._pairwise_radio)
+        missing_grp.addButton(self._listwise_radio)
+        missing_row.addWidget(self._pairwise_radio)
+        missing_row.addWidget(self._listwise_radio)
+        layout.addLayout(missing_row)
+
+        # Correction
+        corr_row = QHBoxLayout()
+        corr_row.addWidget(QLabel("Multiple Testing Korrektur:"))
+        self._corr_combo = QComboBox()
+        self._corr_combo.addItems(["fdr_bh (Benjamini-Hochberg)", "bonferroni", "keine"])
+        corr_row.addWidget(self._corr_combo)
+        layout.addLayout(corr_row)
+
+        # Stratify
+        strat_row = QHBoxLayout()
+        strat_row.addWidget(QLabel("Stratifizieren nach (optional):"))
+        self._strat_combo = QComboBox()
+        cat_cols = ["— keine —"] + [
+            c for c in self.df.columns
+            if not pd.api.types.is_numeric_dtype(self.df[c])
+            or self.df[c].nunique() <= 10
+        ]
+        self._strat_combo.addItems(cat_cols)
+        strat_row.addWidget(self._strat_combo)
+        layout.addLayout(strat_row)
+
+        # Buttons
+        btn_row = QHBoxLayout()
+        run_btn = QPushButton("Analyse starten")
+        run_btn.setObjectName("primaryButton")
+        run_btn.clicked.connect(self._run)
+        cancel_btn = QPushButton("Abbrechen")
+        cancel_btn.clicked.connect(self.reject)
+        btn_row.addWidget(run_btn)
+        btn_row.addWidget(cancel_btn)
+        layout.addLayout(btn_row)
+
+        self._status_label = QLabel("")
+        self._status_label.setWordWrap(True)
+        layout.addWidget(self._status_label)
+
+    def _run(self):
+        selected_items = [item.text() for item in self._var_list.selectedItems()]
+        if len(selected_items) < 2:
+            self._status_label.setText("Bitte mindestens 2 Variablen auswählen.")
+            return
+
+        method = self._method_combo.currentText()
+        pairwise = self._pairwise_radio.isChecked()
+
+        corr_raw = self._corr_combo.currentText()
+        if corr_raw.startswith("fdr_bh"):
+            correction = "fdr_bh"
+        elif corr_raw == "bonferroni":
+            correction = "bonferroni"
+        else:
+            correction = None
+
+        strat_raw = self._strat_combo.currentText()
+        stratify_by = None if strat_raw == "— keine —" else strat_raw
+
+        try:
+            from correlation_models import ExploratoryCorrelationMatrix
+            matrix_model = ExploratoryCorrelationMatrix()
+            matrix_model.fit(self.df, selected_items, method=method,
+                             correction=correction, pairwise=pairwise,
+                             stratify_by=stratify_by)
+            results = matrix_model.as_results_dict()
+
+            # Export to Excel
+            import os
+            from resultsexporter import ResultsExporter
+            out_file = os.path.join(self.output_dir,
+                                    "exploratory_correlation_matrix.xlsx")
+            results["pairwise_comparisons"] = []
+            ResultsExporter.export_results_to_excel(results, out_file)
+
+            self._status_label.setText(
+                f"Fertig! Gespeichert unter:\n{out_file}"
+            )
+        except Exception as exc:
+            self._status_label.setText(f"Fehler: {exc}")
+
+
+# ---------------------------------------------------------------------------
 # Debug Console — redirects sys.stdout/stderr to a floating Qt window
 # ---------------------------------------------------------------------------
 class _DebugStream(QObject):
@@ -3493,7 +3637,8 @@ class BucketChip(QFrame):
 class MappingBucketWidget(QFrame):
     changed = pyqtSignal()
 
-    def __init__(self, title, placeholder, accepted_kinds=None, allow_multiple=False, parent=None):
+    def __init__(self, title, placeholder, accepted_kinds=None, allow_multiple=False,
+                 info_text="", parent=None):
         super().__init__(parent)
         self.setObjectName("mappingBucket")
         self.setAcceptDrops(True)
@@ -3507,7 +3652,24 @@ class MappingBucketWidget(QFrame):
 
         self.title_label = QLabel(title)
         self.title_label.setObjectName("mappingBucketTitle")
-        layout.addWidget(self.title_label)
+        if info_text:
+            title_row = QHBoxLayout()
+            title_row.setContentsMargins(0, 0, 0, 0)
+            title_row.setSpacing(4)
+            title_row.addWidget(self.title_label)
+            title_row.addStretch()
+            _info_btn = QPushButton("ⓘ")
+            _info_btn.setObjectName("bucketInfoButton")
+            _info_btn.setFlat(True)
+            _info_btn.setFocusPolicy(Qt.NoFocus)
+            _captured_text = info_text
+            _captured_title = title
+            _info_btn.clicked.connect(
+                lambda: QMessageBox.information(self, _captured_title, _captured_text))
+            title_row.addWidget(_info_btn)
+            layout.addLayout(title_row)
+        else:
+            layout.addWidget(self.title_label)
 
         self.placeholder_label = QLabel(placeholder)
         self.placeholder_label.setObjectName("mappingBucketPlaceholder")
@@ -3602,6 +3764,103 @@ class MappingBucketWidget(QFrame):
 
     def _refresh_placeholder(self):
         self.placeholder_label.setVisible(len(self._assignments) == 0)
+
+
+class FilterBucketWidget(MappingBucketWidget):
+    """Bucket that accepts any column and shows a value-picker dropdown after drop.
+
+    Lets the user restrict the analysis to a subset of rows before running any
+    statistical model (e.g. 'OP-Group = 1' → only On-Pump patients).
+
+    Usage:
+        bucket = FilterBucketWidget(get_df=lambda: self.df)
+        bucket.get_filter()  # → ('OP-Group ...', 1)  or  None
+    """
+
+    def __init__(self, get_df, parent=None):
+        super().__init__(
+            title="Filter (optional)",
+            placeholder="Drop any column here to restrict the analysis to a subset of rows.",
+            accepted_kinds={"numeric", "categorical", "datetime"},
+            allow_multiple=False,
+            info_text=(
+                "Schränkt die Analyse auf eine Teilmenge ein. Kategorische Spalte hereinziehen, "
+                "dann Wert aus dem Dropdown wählen — die Analyse läuft nur auf den gefilterten "
+                "Zeilen. Geeignet für Subgruppenanalysen (z. B. nur On-Pump-Patienten). "
+                "Die Zeilen-Anzahl (n) wird nach der Auswahl angezeigt."
+            ),
+            parent=parent,
+        )
+        self._get_df = get_df
+        self._filter_col = None
+        self._filter_val = None
+
+        # Value picker — hidden until a column is dropped
+        self._value_combo = QComboBox()
+        self._value_combo.setVisible(False)
+        self._value_combo.currentIndexChanged.connect(self._on_value_changed)
+        self.layout().addWidget(self._value_combo)
+
+        self._filter_label = QLabel("")
+        self._filter_label.setObjectName("panelDescription")
+        self._filter_label.setWordWrap(True)
+        self.layout().addWidget(self._filter_label)
+
+    def assign_column(self, column_name, column_kind):
+        accepted = super().assign_column(column_name, column_kind)
+        if accepted:
+            self._filter_col = column_name
+            self._populate_values(column_name)
+        return accepted
+
+    def remove_column(self, column_name):
+        super().remove_column(column_name)
+        self._filter_col = None
+        self._filter_val = None
+        self._value_combo.setVisible(False)
+        self._value_combo.clear()
+        self._filter_label.setText("")
+
+    def clear_assignments(self):
+        super().clear_assignments()
+        self._filter_col = None
+        self._filter_val = None
+        self._value_combo.setVisible(False)
+        self._value_combo.clear()
+        self._filter_label.setText("")
+
+    def _populate_values(self, column_name):
+        df = self._get_df()
+        if df is None or column_name not in df.columns:
+            return
+        unique_vals = sorted(df[column_name].dropna().unique(), key=lambda v: str(v))
+        self._value_combo.blockSignals(True)
+        self._value_combo.clear()
+        for v in unique_vals:
+            self._value_combo.addItem(str(v), userData=v)
+        self._value_combo.blockSignals(False)
+        self._value_combo.setVisible(True)
+        # Set default
+        if unique_vals:
+            self._filter_val = unique_vals[0]
+            n = (df[column_name] == unique_vals[0]).sum()
+            self._filter_label.setText(f"Analyse auf n={n} Zeilen beschränkt.")
+        self.changed.emit()
+
+    def _on_value_changed(self, index):
+        val = self._value_combo.itemData(index)
+        self._filter_val = val
+        df = self._get_df()
+        if df is not None and self._filter_col in df.columns and val is not None:
+            n = (df[self._filter_col] == val).sum()
+            self._filter_label.setText(f"Analyse auf n={n} Zeilen beschränkt.")
+        self.changed.emit()
+
+    def get_filter(self):
+        """Return (col, val) tuple or None if no filter is set."""
+        if self._filter_col and self._filter_val is not None:
+            return (self._filter_col, self._filter_val)
+        return None
 
 
 class DecisionTreeOverlayWidget(QFrame):
@@ -3981,7 +4240,7 @@ class ConfettiOverlay(QWidget):
 
 
 class ResultCardWidget(GlowFrame):
-    def __init__(self, title, parent=None):
+    def __init__(self, title, info_text="", parent=None):
         super().__init__(parent)
         self.setObjectName("resultCard")
         layout = QVBoxLayout(self)
@@ -3990,7 +4249,24 @@ class ResultCardWidget(GlowFrame):
 
         self.title_label = QLabel(title)
         self.title_label.setObjectName("resultCardTitle")
-        layout.addWidget(self.title_label)
+        if info_text:
+            title_row = QHBoxLayout()
+            title_row.setContentsMargins(0, 0, 0, 0)
+            title_row.setSpacing(4)
+            title_row.addWidget(self.title_label)
+            title_row.addStretch()
+            _info_btn = QPushButton("ⓘ")
+            _info_btn.setObjectName("bucketInfoButton")
+            _info_btn.setFlat(True)
+            _info_btn.setFocusPolicy(Qt.NoFocus)
+            _captured_text = info_text
+            _captured_title = title
+            _info_btn.clicked.connect(
+                lambda: QMessageBox.information(self, _captured_title, _captured_text))
+            title_row.addWidget(_info_btn)
+            layout.addLayout(title_row)
+        else:
+            layout.addWidget(self.title_label)
 
         self.value_label = QLabel("Waiting for analysis")
         self.value_label.setObjectName("resultCardValue")
@@ -4055,7 +4331,17 @@ class ResultCockpitWidget(QFrame):
         layout.addWidget(context_title)
 
         self.context_cards = {
-            "detected_test": ResultCardWidget("Detected Test"),
+            "detected_test": ResultCardWidget(
+                "Detected Test",
+                info_text=(
+                    "BioMedStatX wählt den statistischen Test automatisch anhand von "
+                    "Bucket-Belegung, Datentypen und Normalverteilungsannahmen (Shapiro-Wilk).\n\n"
+                    "Kategorischer Faktor → t-Test / ANOVA / nonparametrische Alternativen.\n"
+                    "Kontinuierlicher Faktor → Korrelation (Spearman/Pearson) oder Regression (OLS).\n"
+                    "Mit Subject ID → verbundene/Messwiederholungs-Designs (LMM / Repeated ANOVA).\n\n"
+                    "Bei Normalverteilung: parametrische Tests. Sonst: nonparametrische Varianten."
+                ),
+            ),
             "rationale": ResultCardWidget("Why This Path"),
             "posthoc": ResultCardWidget("Post-hoc Status"),
         }
@@ -4264,30 +4550,69 @@ def _ap_init_ui(self):
         "Dependent Variable",
         "Drop numeric measurement columns here. Single mode uses one column; multi mode uses multiple columns (for example several genes).",
         accepted_kinds={"numeric"},
-        allow_multiple=False
+        allow_multiple=False,
+        info_text=(
+            "Die abhängige Variable ist das Messergebnis, das analysiert werden soll "
+            "(z. B. Zellzahl, miRNA-Expression, Proteinkonzentration). "
+            "Muss numerisch sein.\n\n"
+            "Single-Modus: eine Spalte.\n"
+            "Multi-Modus: mehrere Spalten für simultane Analyse (z. B. mehrere Gene)."
+        ),
     )
     self.factor1_bucket = MappingBucketWidget(
         "Factor 1",
         "Drop the primary grouping factor here.",
-        accepted_kinds={"numeric", "categorical", "datetime"}
+        accepted_kinds={"numeric", "categorical", "datetime"},
+        info_text=(
+            "Der primäre Prädiktor — bestimmt maßgeblich den gewählten statistischen Test.\n\n"
+            "Kategorisch (z. B. Behandlungsgruppe, Geschlecht) → t-Test oder ANOVA.\n"
+            "Kontinuierlich (z. B. Pumpdauer, BMI, Alter) → Korrelation oder Regression.\n\n"
+            "Nur eine Variable erlaubt. Für multiple Prädiktoren das Covariates-Bucket verwenden."
+        ),
     )
     self.factor2_bucket = MappingBucketWidget(
         "Factor 2",
         "Optional: drop a second factor here for Two-Way or Mixed ANOVA.",
-        accepted_kinds={"numeric", "categorical", "datetime"}
+        accepted_kinds={"numeric", "categorical", "datetime"},
+        info_text=(
+            "Zweiter Faktor für Two-Way ANOVA oder Mixed ANOVA.\n\n"
+            "Nur setzen, wenn Interaktionseffekte von Interesse sind "
+            "(z. B. Behandlung × Zeitpunkt, Genotyp × Kondition).\n\n"
+            "Ohne Subject ID: Two-Way ANOVA (between-subjects).\n"
+            "Mit Subject ID: Mixed ANOVA (between + within)."
+        ),
     )
     self.subject_bucket = MappingBucketWidget(
         "Subject ID",
         "Optional: drop a subject identifier here for paired / repeated-measures designs.",
-        accepted_kinds={"numeric", "categorical", "datetime"}
+        accepted_kinds={"numeric", "categorical", "datetime"},
+        info_text=(
+            "Patienten- oder Probandenkennung für verbundene Stichproben.\n\n"
+            "Nötig für:\n"
+            "  • Paired t-Test (zwei Messzeitpunkte pro Person)\n"
+            "  • Repeated-Measures ANOVA (≥3 Zeitpunkte)\n"
+            "  • Linear Mixed Models (LMM)\n\n"
+            "Fehlt die ID bei Längsschnittdaten, wird ein unverbundener Test gewählt — "
+            "das erhöht den Fehler und senkt die statistische Power."
+        ),
     )
     self.covariates_bucket = MappingBucketWidget(
         "Covariates (optional)",
         "Drop continuous confounders here (e.g., Age, BMI, Baseline).",
         accepted_kinds={"numeric"},
-        allow_multiple=True
+        allow_multiple=True,
+        info_text=(
+            "Kontinuierliche Störvariablen (Confounder), die statistisch herausgerechnet werden "
+            "(z. B. Alter, BMI, Baseline-Wert, Komorbiditätsscore).\n\n"
+            "Bei kategorischem Faktor in Factor 1 → ANCOVA.\n"
+            "Bei kontinuierlichem Faktor in Factor 1 → Multiple Regression (OLS).\n\n"
+            "Mehrere Variablen gleichzeitig möglich (allow_multiple = True)."
+        ),
     )
-    for bucket in (self.dv_bucket, self.factor1_bucket, self.factor2_bucket, self.subject_bucket, self.covariates_bucket):
+    self.filter_bucket = FilterBucketWidget(get_df=lambda: self.df)
+
+    for bucket in (self.dv_bucket, self.factor1_bucket, self.factor2_bucket,
+                   self.subject_bucket, self.covariates_bucket, self.filter_bucket):
         bucket.changed.connect(self.on_mapping_changed)
         center_layout.addWidget(bucket)
 
@@ -4301,6 +4626,13 @@ def _ap_init_ui(self):
     self.start_analysis_button.clicked.connect(self.determine_and_run_test)
     self.start_analysis_button.setEnabled(False)
     center_layout.addWidget(self.start_analysis_button)
+
+    self.exploratory_matrix_button = QPushButton("Explorative Korrelationsmatrix")
+    self.exploratory_matrix_button.setObjectName("secondaryButton")
+    self.exploratory_matrix_button.clicked.connect(self.open_exploratory_matrix_dialog)
+    self.exploratory_matrix_button.setEnabled(False)
+    center_layout.addWidget(self.exploratory_matrix_button)
+
     center_layout.addStretch()
 
     splitter.addWidget(center_panel)
@@ -4580,6 +4912,7 @@ def _ap_load_file(self):
         self.current_analysis_result = None
         self.current_multi_results = {}
         self.current_output_dir = None
+        self.exploratory_matrix_button.setEnabled(True)
         self.on_mapping_changed()
     except Exception as exc:
         self.df = None
@@ -4613,6 +4946,8 @@ def _ap_build_analysis_context(self):
     subject_columns = self.subject_bucket.get_assigned_columns()
     subject_column = subject_columns[0] if subject_columns else None
     covariate_columns = self.covariates_bucket.get_assigned_columns()
+    active_filter = getattr(self, 'filter_bucket', None)
+    filter_spec = active_filter.get_filter() if active_filter else None
 
     all_assigned = dv_columns + factor_columns + ([subject_column] if subject_column else []) + covariate_columns
     if len(set(all_assigned)) != len(all_assigned):
@@ -4633,6 +4968,7 @@ def _ap_build_analysis_context(self):
         "group_labels": [],
         "display_group_col": factor_columns[0],
         "inferred_test": None,
+        "filter": filter_spec,
     }
 
     # --- Binary DV detection: Logistic Regression ---
@@ -4740,6 +5076,21 @@ def _ap_build_analysis_context(self):
     # Covariates also flow into LMM/mixed_anova as additional fixed effects
     # (handled in dispatch, no test upgrade needed)
 
+    # 4. Continuous primary factor → Correlation or Linear Regression
+    #    Applied AFTER all other upgrades so it takes precedence over ANCOVA/t-test
+    #    inferences when the factor is not a grouping variable.
+    if len(factor_columns) == 1 and not subject_column:
+        try:
+            from correlation_models import _is_continuous as _corr_is_continuous
+            if _corr_is_continuous(self.df, factor_columns[0]):
+                if covariate_columns:
+                    context["inferred_test"] = "linear_regression"
+                else:
+                    context["inferred_test"] = "correlation"
+                context["x_variable"] = factor_columns[0]
+        except Exception:
+            pass  # correlation_models not available — skip silently
+
     if context["mode"] == "single" and len(dv_columns) != 1:
         raise ValueError("Single mode requires exactly one measurement column.")
     if context["mode"] == "multi" and len(dv_columns) < 2:
@@ -4762,6 +5113,8 @@ def _ap_detected_test_label(self, context):
         "two_way_ancova": "Two-Way ANCOVA",
         "lmm": "Linear Mixed Model (handles missing visits)",
         "logistic_regression": "Logistic Regression (Binary Outcome)",
+        "correlation": "Korrelationsanalyse (Spearman/Pearson)",
+        "linear_regression": "Lineare Regression (OLS)",
     }
     return labels.get(context["inferred_test"], context["inferred_test"])
 
@@ -5245,6 +5598,21 @@ StatisticalAnalyzerApp.configure_plot_from_result = _ap_configure_plot_from_resu
 StatisticalAnalyzerApp.open_current_output_folder = _ap_open_current_output_folder
 StatisticalAnalyzerApp.reset_application_state = _ap_reset_application_state
 StatisticalAnalyzerApp._maybe_pivot = _ap_maybe_pivot
+
+
+def _ap_open_exploratory_matrix_dialog(self):
+    """Open the ExploratoryMatrixDialog with the currently loaded DataFrame."""
+    if self.df is None or self.df.empty:
+        QMessageBox.warning(self, "Keine Daten", "Bitte zuerst eine Datei laden.")
+        return
+    output_dir = getattr(self, 'current_output_dir', None) or os.path.dirname(
+        getattr(self, 'file_path', '') or ''
+    ) or os.getcwd()
+    dlg = ExploratoryMatrixDialog(self.df, output_dir=output_dir, parent=self)
+    dlg.exec_()
+
+
+StatisticalAnalyzerApp.open_exploratory_matrix_dialog = _ap_open_exploratory_matrix_dialog
 
 if __name__ == "__main__":
     try:

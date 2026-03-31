@@ -15,7 +15,7 @@ fontsize: 11pt
 
 This guide explains how to properly configure different types of ANOVA tests in BioMedStatX. Choosing the correct ANOVA type and variable assignments is crucial for obtaining valid statistical results.
 
-This guide describes the advanced parametric ANOVA workflows currently implemented in the main application. Automatic nonparametric fallback workflows for advanced ANOVA designs are not yet fully supported in the production workflow and should be treated as a known limitation.
+This guide describes the advanced ANOVA workflows implemented in the main application. Nonparametric fallbacks are fully supported for all three advanced ANOVA types: Friedman test (Repeated Measures), Freedman-Lane permutation test (Two-Way ANOVA), and Brunner-Langer ATS (Mixed ANOVA). BioMedStatX selects parametric or nonparametric automatically based on Shapiro-Wilk residual normality checks after any transformation attempt.
 
 ## ANOVA Types Available
 
