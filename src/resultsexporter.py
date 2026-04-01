@@ -113,8 +113,6 @@ class ResultsExporter:
             ResultsExporter._write_ancova_sheet(workbook, results, fmt)
         elif model_type == "LMM":
             ResultsExporter._write_lmm_sheet(workbook, results, fmt)
-        elif model_type in ("GEE", "GLM"):
-            ResultsExporter._write_gee_glm_details_sheet(workbook, results, fmt)
         elif model_type == "Correlation":
             ResultsExporter._write_correlation_sheet(workbook, results, fmt)
         elif model_type == "CorrelationMatrix":
@@ -266,12 +264,125 @@ class ResultsExporter:
             row += 1
 
     @staticmethod
+    def _write_assumptions_sheet(workbook, results, fmt, sheet_name="Assumptions"):
+        """Write a single-analysis assumptions worksheet.
+
+        This method is intentionally compact and defensive because result payloads
+        vary heavily across analysis types. It surfaces the currently available
+        normality, variance, sphericity, transformation, and assumption-related
+        notes without failing when optional structures are missing.
+        """
+        ws = workbook.add_worksheet(sheet_name)
+        ws.set_column(0, 0, 34)
+        ws.set_column(1, 3, 18)
+        row = 0
+
+        ws.merge_range(row, 0, row, 3, "ASSUMPTION CHECKS", fmt["title"])
+        row += 1
+        ws.merge_range(
+            row, 0, row, 3,
+            "This sheet summarizes normality, variance, sphericity, and transformation-related diagnostics.",
+            fmt.get("explanation", fmt["cell"])
+        )
+        row += 2
+
+        transformation = results.get("transformation", "None")
+        ws.write(row, 0, "Transformation", fmt["header"])
+        ws.write(row, 1, str(transformation), fmt["cell"])
+        row += 2
+
+        headers = ["Check", "Statistic", "p-value", "Status"]
+        for col, header in enumerate(headers):
+            ws.write(row, col, header, fmt["header"])
+        row += 1
+
+        def _fmt_num(val):
+            if isinstance(val, (float, int)):
+                return "<0.001" if val < 0.001 else f"{val:.4f}"
+            return "N/A"
+
+        def _status_text(value):
+            if value is True:
+                return "Passed"
+            if value is False:
+                return "Flagged"
+            return "N/A"
+
+        def _status_fmt(value):
+            if value is True:
+                return fmt["cell"]
+            if value is False:
+                return fmt.get("sig_highlight", fmt["cell"])
+            return fmt["cell"]
+
+        normality_tests = results.get("normality_tests", {}) or {}
+        for label, payload in normality_tests.items():
+            if not isinstance(payload, dict):
+                continue
+            p_value = payload.get("p_value")
+            status = payload.get("is_normal")
+            ws.write(row, 0, f"Normality: {str(label)}", fmt["cell"])
+            ws.write(row, 1, _fmt_num(payload.get("statistic")), fmt["cell"])
+            ws.write(row, 2, _fmt_num(p_value), fmt.get("sig_highlight", fmt["cell"]) if isinstance(p_value, (float, int)) and p_value < 0.05 else fmt["cell"])
+            ws.write(row, 3, _status_text(status), _status_fmt(status))
+            row += 1
+
+        variance_test = results.get("variance_test", {}) or {}
+        if isinstance(variance_test, dict) and variance_test:
+            p_value = variance_test.get("p_value")
+            status = variance_test.get("equal_variance")
+            ws.write(row, 0, "Variance homogeneity", fmt["cell"])
+            ws.write(row, 1, _fmt_num(variance_test.get("statistic")), fmt["cell"])
+            ws.write(row, 2, _fmt_num(p_value), fmt.get("sig_highlight", fmt["cell"]) if isinstance(p_value, (float, int)) and p_value < 0.05 else fmt["cell"])
+            ws.write(row, 3, _status_text(status), _status_fmt(status))
+            row += 1
+
+            transformed = variance_test.get("transformed")
+            if isinstance(transformed, dict):
+                p_value = transformed.get("p_value")
+                status = transformed.get("equal_variance")
+                ws.write(row, 0, "Variance homogeneity (transformed)", fmt["cell"])
+                ws.write(row, 1, _fmt_num(transformed.get("statistic")), fmt["cell"])
+                ws.write(row, 2, _fmt_num(p_value), fmt.get("sig_highlight", fmt["cell"]) if isinstance(p_value, (float, int)) and p_value < 0.05 else fmt["cell"])
+                ws.write(row, 3, _status_text(status), _status_fmt(status))
+                row += 1
+
+        sphericity_test = results.get("sphericity_test", {}) or {}
+        if isinstance(sphericity_test, dict) and sphericity_test:
+            p_value = sphericity_test.get("p_value")
+            status = sphericity_test.get("sphericity_met")
+            if status is None and isinstance(p_value, (float, int)):
+                status = p_value >= 0.05
+            ws.write(row, 0, "Sphericity", fmt["cell"])
+            ws.write(row, 1, _fmt_num(sphericity_test.get("W", sphericity_test.get("statistic"))), fmt["cell"])
+            ws.write(row, 2, _fmt_num(p_value), fmt.get("sig_highlight", fmt["cell"]) if isinstance(p_value, (float, int)) and p_value < 0.05 else fmt["cell"])
+            ws.write(row, 3, _status_text(status), _status_fmt(status))
+            row += 1
+
+        if row == 4:
+            ws.merge_range(row, 0, row, 3, "No structured assumption diagnostics available.", fmt.get("explanation", fmt["cell"]))
+            row += 2
+
+        note_candidates = [
+            results.get("analysis_note"),
+            results.get("posthoc_skip_reason"),
+            results.get("design_note"),
+        ]
+        notes = [str(note) for note in note_candidates if note]
+        if notes:
+            ws.merge_range(row, 0, row, 3, "NOTES", fmt["section_header"])
+            row += 1
+            for note in notes:
+                ws.merge_range(row, 0, row, 3, note, fmt.get("explanation", fmt["cell"]))
+                row += 1
+
+    @staticmethod
     def export_multi_dataset_results(all_results, excel_path):
         print(f"DEBUG: Current working directory before export: {os.getcwd()}")
         print(f"DEBUG MULTI: export_multi_dataset_results called with excel_path='{excel_path}'")
         print("DEBUG MULTI: Received all_results with contents:")   
         for ds_name, results in all_results.items():
-            print(f"  Dataset: {ds_name} → Keys in results: {list(results.keys())}")
+            print(f"  Dataset: {ds_name} -> Keys in results: {list(results.keys())}")
             print(f"    p_value: {results.get('p_value')} | pairwise_comparisons: {len(results.get('pairwise_comparisons', []))}")
         
         """Exports the results of all dataset analyses into a shared Excel file."""
@@ -1705,6 +1816,7 @@ class ResultsExporter:
             ws.write(3, col, header, fmt["header"])
 
         # Original data
+        from scipy.stats import t as _scipy_t
         desc = results.get('descriptive', results.get('descriptive_stats', {}))
         row = 4
         for group, grp in desc.items():
@@ -1715,16 +1827,15 @@ class ResultsExporter:
             stderr = grp.get('stderr', None)
             minv = grp.get('min', None)
             maxv = grp.get('max', None)
-            
+
             # Calculate confidence interval if needed
             ci_lower = grp.get('ci_lower', None)
             ci_upper = grp.get('ci_upper', None)
-            
+
             if ci_lower is None or ci_upper is None:
                 try:
-                    from scipy.stats import t
                     if n and n > 1 and stderr is not None:
-                        ci_lower, ci_upper = t.interval(0.95, n - 1, loc=mean, scale=stderr)
+                        ci_lower, ci_upper = _scipy_t.interval(0.95, n - 1, loc=mean, scale=stderr)
                     else:
                         ci_lower, ci_upper = None, None
                 except Exception:
@@ -1784,9 +1895,8 @@ class ResultsExporter:
                 
                 if ci_lower is None or ci_upper is None:
                     try:
-                        from scipy.stats import t
                         if n and n > 1 and stderr is not None:
-                            ci_lower, ci_upper = t.interval(0.95, n - 1, loc=mean, scale=stderr)
+                            ci_lower, ci_upper = _scipy_t.interval(0.95, n - 1, loc=mean, scale=stderr)
                         else:
                             ci_lower, ci_upper = None, None
                     except Exception:

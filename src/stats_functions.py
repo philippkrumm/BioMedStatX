@@ -22,6 +22,11 @@ def get_results_exporter():
     from resultsexporter import ResultsExporter
     return ResultsExporter
 
+def get_export_dispatcher():
+    """Get ExportDispatcher class lazily"""
+    from export_dispatcher import ExportDispatcher
+    return ExportDispatcher
+
 def get_data_visualizer():
     """Get DataVisualizer class lazily"""
     from datavisualizer import DataVisualizer
@@ -392,12 +397,13 @@ class PostHocAnalyzer:
         }
     
     @staticmethod
-    def add_comparison(results, group1, group2, test, p_value, statistic=None, 
-                       corrected=True, correction_method=None, effect_size=None, 
-                       effect_size_type=None, confidence_interval=(None, None), 
-                       alpha=0.05):
+    def add_comparison(results, group1, group2, test, p_value, statistic=None,
+                       corrected=True, correction_method=None, effect_size=None,
+                       effect_size_type=None, confidence_interval=(None, None),
+                       alpha=0.05, significant=None, **extra_fields):
         """Adds a standardized pairwise comparison to the results."""
-        significant = p_value < alpha if isinstance(p_value, (float, int)) else False
+        if significant is None:
+            significant = p_value < alpha if isinstance(p_value, (float, int)) else False
         
         comparison = {
             "group1": str(group1),
@@ -414,6 +420,8 @@ class PostHocAnalyzer:
         
         if correction_method:
             comparison["correction"] = correction_method
+        for key, value in extra_fields.items():
+            comparison[key] = value
             
         results["pairwise_comparisons"].append(comparison)
         return comparison
@@ -2097,6 +2105,7 @@ class DunnTest(PostHocAnalyzer):
 class DependentPostHoc(PostHocAnalyzer):
     @staticmethod
     def perform_test(valid_groups, samples, alpha=0.05, parametric=True):
+        stats = get_stats_module()
         name = "Parametric paired t-tests" if parametric else "Wilcoxon signed-rank tests"
         result = PostHocAnalyzer.create_result_template(name)
 
@@ -2858,8 +2867,10 @@ class AnalysisManager:
             excel_path = f"{base_name}_combined_results.xlsx"
             
             try:
-                ResultsExporter = get_results_exporter()
-                ResultsExporter.export_multi_dataset_results(all_results, excel_path)
+                ExportDispatcher = get_export_dispatcher()
+                export_result = ExportDispatcher.export_multi_dataset_results(all_results, excel_path)
+                if export_result.get("warning"):
+                    print(f"WARNING: {export_result['warning']}")
                 print(f"Combined results saved to: {excel_path}")
             except Exception as e:
                 print(f"Error creating combined Excel file: {str(e)}")
@@ -3076,11 +3087,15 @@ class AnalysisManager:
 
                 if not skip_excel:
                     original_dir = os.getcwd()
+                    export_result = {}
                     try:
                         output_dir = os.path.dirname(os.path.abspath(excel_file))
                         if output_dir:
                             os.makedirs(output_dir, exist_ok=True)
-                        ResultsExporter.export_results_to_excel(results, excel_file, analysis_log)
+                        ExportDispatcher = get_export_dispatcher()
+                        export_result = ExportDispatcher.export_analysis_results(results, excel_file, analysis_log)
+                        if export_result.get("warning"):
+                            print(f"WARNING: {export_result['warning']}")
                         print(f"Results exported to: {excel_file}")
                     except Exception as export_error:
                         print(f"Error exporting to Excel: {export_error}")
@@ -3088,7 +3103,7 @@ class AnalysisManager:
                         os.chdir(original_dir)
 
                 results["analysis_log"] = analysis_log
-                results["excel_file"] = excel_file
+                results["excel_file"] = export_result.get("excel_path", excel_file) if not skip_excel else excel_file
                 return results
 
             # For advanced tests that use prepare_advanced_test, skip the normality check here
@@ -3613,8 +3628,11 @@ class AnalysisManager:
                 # Use absolute path for Excel file
                 excel_file = get_output_path(file_base, "xlsx") 
                 
-                ResultsExporter = get_results_exporter()
-                ResultsExporter.export_results_to_excel(results, excel_file, analysis_log)
+                ExportDispatcher = get_export_dispatcher()
+                export_result = ExportDispatcher.export_analysis_results(results, excel_file, analysis_log)
+                if export_result.get("warning"):
+                    print(f"WARNING: {export_result['warning']}")
+                excel_file = export_result.get("excel_path", excel_file)
                 analysis_log += f"\nResults were saved to {excel_file}.\n"
                 
                 # Ensure we're back in the original directory

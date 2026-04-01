@@ -6,7 +6,7 @@ from datetime import datetime
 from scipy import stats
 from lazy_imports import get_pingouin, get_scipy_stats, get_statsmodels_multitest
 from stats_functions import UIDialogManager, PostHocFactory, get_pingouin_module, get_output_path, PostHocAnalyzer, PostHocStatistics
-from resultsexporter import ResultsExporter
+from export_dispatcher import ExportDispatcher
 from methodology_trace import MethodologyTrace
 from nonparametricanovas import (
     posthoc_marginaleffects,
@@ -546,7 +546,7 @@ class StatisticalTester:
             )
 
         return StatisticalTester._stat_test_multi_groups(
-        results, valid_groups, samples_to_use, dependent, test_recommendation, alpha, test_info=test_info
+        results, valid_groups, samples_to_use, dependent, test_recommendation, alpha, test_info=test_info, trace=trace
         )
 
     @staticmethod
@@ -777,7 +777,7 @@ class StatisticalTester:
         return StatisticalTester._standardize_results(results)
 
     @staticmethod
-    def _stat_test_multi_groups(results, valid_groups, samples_to_use, dependent, test_recommendation, alpha, test_info=None, df=None, dv=None, subject=None, within=None):
+    def _stat_test_multi_groups(results, valid_groups, samples_to_use, dependent, test_recommendation, alpha, test_info=None, df=None, dv=None, subject=None, within=None, trace: "MethodologyTrace | None" = None):
         # Welch ANOVA: If explicitly requested OR if parametric but variances are unequal
         welch_condition = (
             test_recommendation == "welch"  # Direct request for Welch ANOVA
@@ -1888,8 +1888,10 @@ class StatisticalTester:
                     logger.debug(f"DEBUG: Current working directory before export: {os.getcwd()}")
                     excel_file = file_name if file_name else get_output_path(f"{test}_{datetime.now().strftime('%Y%m%d_%H%M%S')}", "xlsx")
                     print("DEBUG: Results dict before Excel export:", res)  # <--- Add this line
-                    ResultsExporter.export_results_to_excel(res, excel_file, res.get("analysis_log", None))
-                    res["excel_file"] = excel_file
+                    export_result = ExportDispatcher.export_analysis_results(res, excel_file, res.get("analysis_log", None))
+                    if export_result.get("warning"):
+                        logger.warning(export_result["warning"])
+                    res["excel_file"] = export_result.get("excel_path", excel_file)
                 if res.get("test") and not res.get("final_test_label"):
                     res["final_test_label"] = res["test"]
                 if res.get("final_test_label") and not res.get("tested_against"):
@@ -1993,13 +1995,7 @@ class StatisticalTester:
                 if res.get("error") is None and res.get("p_value") is not None and res["p_value"] < alpha:
                     fallback_posthoc = None
                     marginaleffects_error = None
-                    if test == "two_way_anova" and res.get("model_class") == "GLM":
-                        fallback_posthoc = StatisticalTester._run_two_way_marginaleffects_posthoc(
-                            res,
-                            between,
-                            alpha=alpha
-                        )
-                    elif test == "repeated_measures_anova" and within:
+                    if test == "repeated_measures_anova" and within:
                         fallback_posthoc = StatisticalTester._run_rm_marginaleffects_posthoc(
                             res,
                             within[0],
@@ -2114,8 +2110,10 @@ class StatisticalTester:
                     excel_file = file_name if file_name else get_output_path(
                         f"{test}_modern_model_fallback_{datetime.now().strftime('%Y%m%d_%H%M%S')}", "xlsx"
                     )
-                    ResultsExporter.export_results_to_excel(res, excel_file, res.get("analysis_log", None))
-                    res["excel_file"] = excel_file
+                    export_result = ExportDispatcher.export_analysis_results(res, excel_file, res.get("analysis_log", None))
+                    if export_result.get("warning"):
+                        logger.warning(export_result["warning"])
+                    res["excel_file"] = export_result.get("excel_path", excel_file)
                     logger.debug(f"DEBUG: Excel file created with modern-model fallback: {excel_file}")
 
                 if res.get("test") and not res.get("final_test_label"):
@@ -3528,6 +3526,7 @@ class StatisticalTester:
         fitted_model = results.get("fitted_model")
         if fitted_model is None or not within_factor:
             return None
+        # GEE not yet implemented — this function is disabled until GEE model_class is set
         if results.get("model_class") != "GEE":
             return None
 
@@ -3570,6 +3569,7 @@ class StatisticalTester:
         fitted_model = results.get("fitted_model")
         if fitted_model is None or not between or not within:
             return None
+        # GEE not yet implemented — this function is disabled until GEE model_class is set
         if results.get("model_class") != "GEE":
             return None
 

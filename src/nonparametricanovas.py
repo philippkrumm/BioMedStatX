@@ -94,12 +94,6 @@ from scipy.linalg import block_diag
 import statsmodels.formula.api as smf
 
 
-def fallback_modern_models(*args, **kwargs):
-    raise NotImplementedError("fallback_modern_models has been removed.")
-
-
-
-
 def _holm_correct(p_values):
     """Holm step-down correction. Returns list of corrected p-values (same order)."""
     n = len(p_values)

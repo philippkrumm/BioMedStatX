@@ -15,10 +15,9 @@ if exist "%REPO_ROOT%\dist\BioMedStatX.exe" (
 )
 
 rem Fallback to Python entrypoint
-where python >nul 2>&1
-if %errorlevel%==0 (
+if exist "%REPO_ROOT%\tools\run_python.cmd" (
   echo No native exe found - running Python entrypoint
-  python "%REPO_ROOT%\src\statistical_analyzer.py" %*
+  call "%REPO_ROOT%\tools\run_python.cmd" "%REPO_ROOT%\src\statistical_analyzer.py" %*
   goto :eof
 )
 

@@ -4,7 +4,26 @@
 		{
 			"type": "shell",
 			"label": "Run all tests",
-			"command": "python -m pytest --maxfail=5 --disable-warnings -v",
+			"command": "${workspaceFolder}\\tools\\run_python.cmd",
+			"args": [
+				"-m",
+				"pytest",
+				"--maxfail=5",
+				"--disable-warnings",
+				"-v"
+			],
+			"group": "test"
+		},
+		{
+			"type": "shell",
+			"label": "Run HTML exporter tests",
+			"command": "${workspaceFolder}\\tools\\run_python.cmd",
+			"args": [
+				"-m",
+				"pytest",
+				"validation\\test_html_exporter.py",
+				"-q"
+			],
 			"group": "test"
 		}
 	]

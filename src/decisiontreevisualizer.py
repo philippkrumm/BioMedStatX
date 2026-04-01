@@ -76,7 +76,12 @@ class DecisionTreeVisualizer:
             test_type = results.get("test_recommendation", results.get("test_type", ""))
             transformation = results.get("transformation", "None")
             p_value = results.get("p_value", None)
-            
+
+            # Route to specialized visualizers for association/regression tests
+            _model_type = results.get("model_type", "")
+            if _model_type in ["Correlation", "LinearRegression", "LogisticRegression", "ANCOVA", "CorrelationMatrix"]:
+                return DecisionTreeVisualizer._visualize_association_test(results, _model_type, output_path)
+
             # Get test_info for more detailed analysis
             test_info = results.get("test_info", {})
             normality_tests = test_info.get("normality_tests", results.get("normality_tests", {}))
@@ -565,9 +570,7 @@ class DecisionTreeVisualizer:
                 (
                     is_modern_or_robust_fallback or
                     "freedman" in model_class_text or
-                    "permutation" in model_class_text or
-                    "glm" in model_class_text or
-                    "gee" in model_class_text
+                    "permutation" in model_class_text
                 )
             )
 
@@ -575,8 +578,7 @@ class DecisionTreeVisualizer:
                 ("repeated" in test_name_text or "rm anova" in test_name_text) and
                 (
                     is_modern_or_robust_fallback or
-                    "friedman" in model_class_text or
-                    "gee" in model_class_text
+                    "friedman" in model_class_text
                 )
             )
 
@@ -585,8 +587,7 @@ class DecisionTreeVisualizer:
                 (
                     is_modern_or_robust_fallback or
                     "brunner" in model_class_text or
-                    "ats" in model_class_text or
-                    "gee" in model_class_text
+                    "ats" in model_class_text
                 )
             )
             
@@ -1020,6 +1021,428 @@ class DecisionTreeVisualizer:
             traceback.print_exc()
             return None
     
+    @staticmethod
+    def _visualize_association_test(results, model_type, output_path=None):
+        """
+        Generates a decision tree for association/regression tests:
+        Correlation (Pearson/Spearman), Linear Regression, Logistic Regression, ANCOVA.
+        """
+        try:
+            plt.style.use('seaborn-v0_8-whitegrid')
+
+            test_name = results.get("test", results.get("test_name", model_type))
+            p_value = results.get("p_value", None)
+            alpha = results.get("alpha", 0.05)
+            method = results.get("method", "")
+
+            # ── Extract assumption check results ──────────────────────────────
+            normality_check = results.get("normality_check") or {}
+            diagnostics = results.get("diagnostics") or {}
+            slope_homogeneity = results.get("slope_homogeneity") or {}
+
+            # Correlation: normality of both variables
+            norm_x_ok = normality_check.get(list(normality_check.keys())[0], {}).get("normal", None) if normality_check and len(normality_check) >= 1 else None
+            norm_y_ok = normality_check.get(list(normality_check.keys())[1], {}).get("normal", None) if normality_check and len(normality_check) >= 2 else None
+            both_normal = normality_check.get("both_normal", None)
+
+            # Linear Regression diagnostics
+            norm_resid_ok = diagnostics.get("normality", {}).get("assumption_holds", None)
+            homosced_ok = diagnostics.get("homoscedasticity", {}).get("assumption_holds", None)
+            linearity_ok = diagnostics.get("linearity", {}).get("assumption_holds", None)
+
+            # ANCOVA: slope homogeneity
+            slopes_ok = all(v.get("assumption_holds", True) for v in slope_homogeneity.values()) if slope_homogeneity else None
+
+            # Logistic Regression: Hosmer-Lemeshow
+            hl = results.get("hosmer_lemeshow") or {}
+            hl_p = hl.get("p_value", None)
+            hl_ok = (hl_p is not None and hl_p > 0.05) if hl_p is not None else None
+
+            sig = (p_value is not None and p_value < alpha)
+
+            # ── Helper: bool → label ──────────────────────────────────────────
+            def _yn(val):
+                if val is True:  return "Yes"
+                if val is False: return "No"
+                return "n/a"
+
+            # ── Build nodes & edges depending on model type ───────────────────
+            G = nx.DiGraph()
+            nodes_info = {}
+            edges = set()
+            highlighted = set()
+
+            if model_type == "Correlation":
+                # Determine which method was used
+                used_pearson = method.lower() == "pearson" or (both_normal is True)
+
+                r_val   = results.get("r", None)
+                r_label = f"r = {r_val:.3f}" if r_val is not None else ""
+                p_label = f"p = {p_value:.4f}" if p_value is not None else ""
+                sig_label = "Significant" if sig else "Not Significant"
+
+                nodes_info = {
+                    'START':      {"label": "Start\nCorrelation Analysis", "pos": (0, 10)},
+                    'OUTLIER':    {"label": "Check for Outliers\n(Visual / MAD)", "pos": (0, 8.5)},
+                    'NORMALITY':  {"label": f"Shapiro-Wilk\nX normal: {_yn(norm_x_ok)}  Y normal: {_yn(norm_y_ok)}", "pos": (0, 7)},
+                    'BOTH_NORM':  {"label": f"Both Normal?\n{_yn(both_normal)}", "pos": (0, 5.5)},
+                    'PEARSON':    {"label": "Pearson Correlation\n(parametric)", "pos": (-3, 4)},
+                    'SPEARMAN':   {"label": "Spearman Correlation\n(non-parametric)", "pos": (3, 4)},
+                    'RESULT':     {"label": f"Result\n{r_label}  {p_label}\n{sig_label}", "pos": (0, 2.5)},
+                    'CI':         {"label": "95% CI\n(Fisher z-transform)", "pos": (-2, 1)},
+                    'EFFECT':     {"label": "Effect Size  |r|\n(small≥.1 med≥.3 large≥.5)", "pos": (2, 1)},
+                }
+                edges = {
+                    ('START', 'OUTLIER'),
+                    ('OUTLIER', 'NORMALITY'),
+                    ('NORMALITY', 'BOTH_NORM'),
+                    ('BOTH_NORM', 'PEARSON'),
+                    ('BOTH_NORM', 'SPEARMAN'),
+                    ('PEARSON', 'RESULT'),
+                    ('SPEARMAN', 'RESULT'),
+                    ('RESULT', 'CI'),
+                    ('RESULT', 'EFFECT'),
+                }
+                # Highlight path
+                highlighted = {('START', 'OUTLIER'), ('OUTLIER', 'NORMALITY'), ('NORMALITY', 'BOTH_NORM')}
+                if used_pearson:
+                    highlighted.add(('BOTH_NORM', 'PEARSON'))
+                    highlighted.add(('PEARSON', 'RESULT'))
+                else:
+                    highlighted.add(('BOTH_NORM', 'SPEARMAN'))
+                    highlighted.add(('SPEARMAN', 'RESULT'))
+                highlighted.add(('RESULT', 'CI'))
+                highlighted.add(('RESULT', 'EFFECT'))
+
+            elif model_type == "LinearRegression":
+                r2 = results.get("r_squared", None)
+                r2_label = f"R² = {r2:.3f}" if r2 is not None else ""
+                f_p = results.get("f_p_value", None)
+                f_p_label = f"F p = {f_p:.4f}" if f_p is not None else ""
+                f_sig = (f_p is not None and f_p < alpha)
+                covariates = results.get("covariates_used", [])
+                is_multiple = len(covariates) > 0
+
+                nodes_info = {
+                    'START':     {"label": "Start\nLinear Regression (OLS)", "pos": (0, 12)},
+                    'TYPE':      {"label": f"{'Multiple' if is_multiple else 'Simple'} Regression\n({'≥2 predictors' if is_multiple else '1 predictor'})", "pos": (0, 10.5)},
+                    'DIAG':      {"label": "Check Assumptions\n(Residual Diagnostics)", "pos": (0, 9)},
+                    'NORM_RES':  {"label": f"Shapiro-Wilk\nResiduals normal: {_yn(norm_resid_ok)}", "pos": (-4, 7.5)},
+                    'HOMOSC':    {"label": f"Breusch-Pagan\nHomoscedasticity: {_yn(homosced_ok)}", "pos": (0, 7.5)},
+                    'LINEAR':    {"label": f"Ramsey RESET\nLinearity: {_yn(linearity_ok)}", "pos": (4, 7.5)},
+                    'FIT':       {"label": f"Overall Model Fit\n{r2_label}  {f_p_label}", "pos": (0, 5.5)},
+                    'SIG_YES':   {"label": "Model Significant\nInterpret Coefficients", "pos": (-3, 4)},
+                    'SIG_NO':    {"label": "Model Not Significant\n(No reliable inference)", "pos": (3, 4)},
+                    'COEFF':     {"label": "Coefficient Table\n(β, SE, t, p, 95% CI)", "pos": (-3, 2.5)},
+                    'EFFECT':    {"label": "Effect Size\nR² (small≥.01 med≥.09 large≥.25)", "pos": (0, 1)},
+                    'AIC_BIC':   {"label": "Model Comparison\nAIC / BIC", "pos": (3, 2.5)},
+                }
+                edges = {
+                    ('START', 'TYPE'),
+                    ('TYPE', 'DIAG'),
+                    ('DIAG', 'NORM_RES'),
+                    ('DIAG', 'HOMOSC'),
+                    ('DIAG', 'LINEAR'),
+                    ('NORM_RES', 'FIT'),
+                    ('HOMOSC', 'FIT'),
+                    ('LINEAR', 'FIT'),
+                    ('FIT', 'SIG_YES'),
+                    ('FIT', 'SIG_NO'),
+                    ('SIG_YES', 'COEFF'),
+                    ('SIG_YES', 'AIC_BIC'),
+                    ('COEFF', 'EFFECT'),
+                    ('AIC_BIC', 'EFFECT'),
+                }
+                highlighted = {
+                    ('START', 'TYPE'), ('TYPE', 'DIAG'),
+                    ('DIAG', 'NORM_RES'), ('DIAG', 'HOMOSC'), ('DIAG', 'LINEAR'),
+                    ('NORM_RES', 'FIT'), ('HOMOSC', 'FIT'), ('LINEAR', 'FIT'),
+                }
+                if f_sig:
+                    highlighted.add(('FIT', 'SIG_YES'))
+                    highlighted.add(('SIG_YES', 'COEFF'))
+                    highlighted.add(('SIG_YES', 'AIC_BIC'))
+                    highlighted.add(('COEFF', 'EFFECT'))
+                    highlighted.add(('AIC_BIC', 'EFFECT'))
+                else:
+                    highlighted.add(('FIT', 'SIG_NO'))
+
+            elif model_type == "ANCOVA":
+                n_factors = len(results.get("between_factors", []))
+                is_two_way = n_factors >= 2
+                eta2 = results.get("effect_size", None)
+                eta2_label = f"η² = {eta2:.3f}" if eta2 is not None else ""
+                p_label = f"p = {p_value:.4f}" if p_value is not None else ""
+
+                nodes_info = {
+                    'START':       {"label": f"Start\n{'Two-Way' if is_two_way else 'One-Way'} ANCOVA", "pos": (0, 12)},
+                    'COVAR':       {"label": "Define Covariate(s)\n& Between-Factor(s)", "pos": (0, 10.5)},
+                    'SLOPE_HOM':   {"label": f"Homogeneity of\nRegression Slopes\n(Factor × Covariate)\n{_yn(slopes_ok)}", "pos": (0, 9)},
+                    'SLOPE_OK':    {"label": "Slopes Homogeneous\nANCOVA valid", "pos": (-4, 7.5)},
+                    'SLOPE_FAIL':  {"label": "Slopes Heterogeneous\nConsider interaction model", "pos": (4, 7.5)},
+                    'FIT':         {"label": f"ANCOVA\n(Type II SS)\n{p_label}  {eta2_label}", "pos": (0, 5.5)},
+                    'SIG_YES':     {"label": "Factor Significant\nAdjusted Means differ", "pos": (-3, 4)},
+                    'SIG_NO':      {"label": "Factor Not Significant", "pos": (3, 4)},
+                    'ADJ_MEANS':   {"label": "Estimated Marginal Means\n(Adjusted for Covariates)", "pos": (-4, 2.5)},
+                    'POSTHOC':     {"label": "Post-hoc Comparisons\n(Adjusted Means)", "pos": (-1.5, 1)},
+                    'EFFECT':      {"label": "Effect Size  η²\n(small≥.01 med≥.06 large≥.14)", "pos": (3, 2.5)},
+                    'COVAR_EFF':   {"label": "Covariate Effects\n(β, SE, t, p, 95% CI)", "pos": (0, -0.5)},
+                }
+                edges = {
+                    ('START', 'COVAR'),
+                    ('COVAR', 'SLOPE_HOM'),
+                    ('SLOPE_HOM', 'SLOPE_OK'),
+                    ('SLOPE_HOM', 'SLOPE_FAIL'),
+                    ('SLOPE_OK', 'FIT'),
+                    ('SLOPE_FAIL', 'FIT'),
+                    ('FIT', 'SIG_YES'),
+                    ('FIT', 'SIG_NO'),
+                    ('SIG_YES', 'ADJ_MEANS'),
+                    ('SIG_YES', 'EFFECT'),
+                    ('ADJ_MEANS', 'POSTHOC'),
+                    ('POSTHOC', 'COVAR_EFF'),
+                    ('SIG_NO', 'EFFECT'),
+                    ('EFFECT', 'COVAR_EFF'),
+                }
+                highlighted = {
+                    ('START', 'COVAR'), ('COVAR', 'SLOPE_HOM'),
+                }
+                if slopes_ok is False:
+                    highlighted.add(('SLOPE_HOM', 'SLOPE_FAIL'))
+                    highlighted.add(('SLOPE_FAIL', 'FIT'))
+                else:
+                    highlighted.add(('SLOPE_HOM', 'SLOPE_OK'))
+                    highlighted.add(('SLOPE_OK', 'FIT'))
+                if sig:
+                    highlighted.add(('FIT', 'SIG_YES'))
+                    highlighted.add(('SIG_YES', 'ADJ_MEANS'))
+                    highlighted.add(('SIG_YES', 'EFFECT'))
+                    highlighted.add(('ADJ_MEANS', 'POSTHOC'))
+                    highlighted.add(('POSTHOC', 'COVAR_EFF'))
+                    highlighted.add(('EFFECT', 'COVAR_EFF'))
+                else:
+                    highlighted.add(('FIT', 'SIG_NO'))
+                    highlighted.add(('SIG_NO', 'EFFECT'))
+                    highlighted.add(('EFFECT', 'COVAR_EFF'))
+
+            elif model_type == "LMM":
+                icc_val = results.get("icc", results.get("effect_size", None))
+                icc_label = f"ICC = {icc_val:.3f}" if icc_val is not None else ""
+                p_label = f"p = {p_value:.4f}" if p_value is not None else ""
+                converged = results.get("converged", None)
+                aic = results.get("aic", None)
+                bic = results.get("bic", None)
+                fit_label = f"AIC = {aic:.1f}  BIC = {bic:.1f}" if (aic is not None and bic is not None) else ""
+
+                nodes_info = {
+                    'START':      {"label": "Start\nLinear Mixed Model", "pos": (0, 12)},
+                    'DEFINE':     {"label": "Define Fixed Effects\n& Random Intercept", "pos": (0, 10.5)},
+                    'CONVERGE':   {"label": f"Model Converged?\n{_yn(converged)}", "pos": (0, 9)},
+                    'FIT':        {"label": f"LMM Fixed Effects\n{p_label}", "pos": (0, 7.5)},
+                    'SIG_YES':    {"label": "Fixed Effect Significant", "pos": (-3, 6)},
+                    'SIG_NO':     {"label": "Fixed Effect Not Significant", "pos": (3, 6)},
+                    'FIXEF':      {"label": "Fixed Effects Table\n(β, SE, z, p, 95% CI)", "pos": (-4, 4.5)},
+                    'ICC':        {"label": f"Intraclass Correlation\n{icc_label}\n(clustering strength)", "pos": (0, 4.5)},
+                    'MODEL_FIT':  {"label": f"Model Fit\n{fit_label}", "pos": (3, 3)},
+                }
+                edges = {
+                    ('START', 'DEFINE'),
+                    ('DEFINE', 'CONVERGE'),
+                    ('CONVERGE', 'FIT'),
+                    ('FIT', 'SIG_YES'),
+                    ('FIT', 'SIG_NO'),
+                    ('SIG_YES', 'FIXEF'),
+                    ('SIG_YES', 'ICC'),
+                    ('SIG_NO', 'ICC'),
+                    ('ICC', 'MODEL_FIT'),
+                    ('SIG_NO', 'MODEL_FIT'),
+                }
+                highlighted = {('START', 'DEFINE'), ('DEFINE', 'CONVERGE'), ('CONVERGE', 'FIT')}
+                if sig:
+                    highlighted.add(('FIT', 'SIG_YES'))
+                    highlighted.add(('SIG_YES', 'FIXEF'))
+                    highlighted.add(('SIG_YES', 'ICC'))
+                else:
+                    highlighted.add(('FIT', 'SIG_NO'))
+                    highlighted.add(('SIG_NO', 'ICC'))
+                    highlighted.add(('SIG_NO', 'MODEL_FIT'))
+                highlighted.add(('ICC', 'MODEL_FIT'))
+
+            elif model_type == "LogisticRegression":
+                auc = results.get("effect_size", results.get("roc_data", {}).get("auc", None))
+                auc_label = f"AUC = {auc:.3f}" if auc is not None else ""
+                pseudo_r2 = results.get("pseudo_r_squared", None)
+                pr2_label = f"McFadden R² = {pseudo_r2:.3f}" if pseudo_r2 is not None else ""
+                p_label = f"p = {p_value:.4f}" if p_value is not None else ""
+                hl_label = f"HL p = {hl_p:.4f}" if hl_p is not None else ""
+
+                nodes_info = {
+                    'START':     {"label": "Start\nLogistic Regression", "pos": (0, 12)},
+                    'BINARY':    {"label": "Binary Outcome\n(0 / 1 encoding)", "pos": (0, 10.5)},
+                    'FIT':       {"label": f"Model Fit\n{p_label}  {pr2_label}", "pos": (0, 9)},
+                    'GOF':       {"label": f"Hosmer-Lemeshow\nGoodness-of-Fit\n{hl_label}\n{_yn(hl_ok)} (p>.05 = good fit)", "pos": (0, 7.5)},
+                    'SIG_YES':   {"label": "Model Significant\nInterpret Odds Ratios", "pos": (-3, 5.5)},
+                    'SIG_NO':    {"label": "Model Not Significant\n(No reliable inference)", "pos": (3, 5.5)},
+                    'OR_TABLE':  {"label": "Odds Ratio Table\n(OR, 95% CI, p)", "pos": (-4, 4)},
+                    'ROC':       {"label": f"ROC Curve\n{auc_label}", "pos": (-1.5, 4)},
+                    'EFFECT':    {"label": "Discrimination\nAUC (≥.7 acceptable ≥.8 good)", "pos": (-3, 2.5)},
+                    'CALIB':     {"label": "Calibration\n(Hosmer-Lemeshow)", "pos": (0, 2.5)},
+                    'AIC_BIC':   {"label": "Model Comparison\nAIC / BIC", "pos": (3, 4)},
+                }
+                edges = {
+                    ('START', 'BINARY'),
+                    ('BINARY', 'FIT'),
+                    ('FIT', 'GOF'),
+                    ('GOF', 'SIG_YES'),
+                    ('GOF', 'SIG_NO'),
+                    ('SIG_YES', 'OR_TABLE'),
+                    ('SIG_YES', 'ROC'),
+                    ('SIG_YES', 'AIC_BIC'),
+                    ('OR_TABLE', 'EFFECT'),
+                    ('ROC', 'EFFECT'),
+                    ('EFFECT', 'CALIB'),
+                    ('SIG_NO', 'AIC_BIC'),
+                }
+                highlighted = {
+                    ('START', 'BINARY'), ('BINARY', 'FIT'), ('FIT', 'GOF'),
+                }
+                if sig:
+                    highlighted.add(('GOF', 'SIG_YES'))
+                    highlighted.add(('SIG_YES', 'OR_TABLE'))
+                    highlighted.add(('SIG_YES', 'ROC'))
+                    highlighted.add(('SIG_YES', 'AIC_BIC'))
+                    highlighted.add(('OR_TABLE', 'EFFECT'))
+                    highlighted.add(('ROC', 'EFFECT'))
+                    highlighted.add(('EFFECT', 'CALIB'))
+                else:
+                    highlighted.add(('GOF', 'SIG_NO'))
+                    highlighted.add(('SIG_NO', 'AIC_BIC'))
+
+            else:
+                # CorrelationMatrix: simple overview tree
+                method_label = results.get("method", "auto").capitalize()
+                correction_label = results.get("correction", "None") or "None"
+                variables = results.get("variables", [])
+                n_vars = len(variables)
+
+                nodes_info = {
+                    'START':    {"label": f"Start\nExploratory Correlation Matrix\n({n_vars} variables)", "pos": (0, 8)},
+                    'METHOD':   {"label": f"Method: {method_label}\n(auto = Shapiro-Wilk per pair)", "pos": (0, 6.5)},
+                    'CORRECT':  {"label": f"Multiple Testing Correction\n{correction_label}", "pos": (0, 5)},
+                    'MATRIX':   {"label": "Correlation Matrix\n(r / ρ per pair)", "pos": (-2.5, 3.5)},
+                    'SIG_MAP':  {"label": "Significance Map\n(corrected p-values)", "pos": (2.5, 3.5)},
+                    'INTERPRET':{"label": "Interpret significant pairs\n(effect size, direction)", "pos": (0, 2)},
+                }
+                edges = {
+                    ('START', 'METHOD'),
+                    ('METHOD', 'CORRECT'),
+                    ('CORRECT', 'MATRIX'),
+                    ('CORRECT', 'SIG_MAP'),
+                    ('MATRIX', 'INTERPRET'),
+                    ('SIG_MAP', 'INTERPRET'),
+                }
+                highlighted = {
+                    ('START', 'METHOD'), ('METHOD', 'CORRECT'),
+                    ('CORRECT', 'MATRIX'), ('CORRECT', 'SIG_MAP'),
+                    ('MATRIX', 'INTERPRET'), ('SIG_MAP', 'INTERPRET'),
+                }
+
+            # ── Build graph ───────────────────────────────────────────────────
+            for node_id, info in nodes_info.items():
+                G.add_node(node_id, label=info["label"], pos=info["pos"])
+            for edge in edges:
+                G.add_edge(*edge)
+
+            pos_dict = {nid: info["pos"] for nid, info in nodes_info.items()}
+
+            highlighted_edges = [(u, v) for u, v in G.edges() if (u, v) in highlighted]
+            regular_edges     = [(u, v) for u, v in G.edges() if (u, v) not in highlighted]
+
+            highlighted_nodes = set()
+            for u, v in highlighted:
+                highlighted_nodes.add(u)
+                highlighted_nodes.add(v)
+
+            # ── Figure size ───────────────────────────────────────────────────
+            x_vals = [xy[0] for xy in pos_dict.values()]
+            y_vals = [xy[1] for xy in pos_dict.values()]
+            x_span = max(x_vals) - min(x_vals)
+            y_span = max(y_vals) - min(y_vals)
+            fig_width  = max(14.0, min(28.0, x_span * 1.6 + 6.0))
+            fig_height = max(10.0, min(22.0, y_span * 0.9 + 4.0))
+
+            plt.figure(figsize=(fig_width, fig_height))
+
+            node_labels = nx.get_node_attributes(G, 'label')
+
+            # Decision/structural nodes use squares, test results use circles
+            square_keywords = {"Start", "Check", "Both Normal", "Define", "Binary",
+                               "Slopes", "Assumptions", "Method", "Multiple Testing",
+                               "Overall Model", "Model Fit", "Hosmer"}
+
+            def _is_square(node_id):
+                lbl = nodes_info[node_id]["label"]
+                return any(kw in lbl for kw in square_keywords)
+
+            sq_nodes = [n for n in G.nodes() if _is_square(n)]
+            rd_nodes = [n for n in G.nodes() if n not in sq_nodes]
+
+            nx.draw_networkx_nodes(G, pos_dict,
+                nodelist=[n for n in sq_nodes if n in highlighted_nodes],
+                node_size=3000, node_color='#ffcccc', edgecolors='black', linewidths=1.5, node_shape='s')
+            nx.draw_networkx_nodes(G, pos_dict,
+                nodelist=[n for n in sq_nodes if n not in highlighted_nodes],
+                node_size=3000, node_color='white', edgecolors='black', linewidths=1.5, node_shape='s')
+            nx.draw_networkx_nodes(G, pos_dict,
+                nodelist=[n for n in rd_nodes if n in highlighted_nodes],
+                node_size=3000, node_color='#ffcccc', edgecolors='black', linewidths=1.5, node_shape='o')
+            nx.draw_networkx_nodes(G, pos_dict,
+                nodelist=[n for n in rd_nodes if n not in highlighted_nodes],
+                node_size=3000, node_color='white', edgecolors='black', linewidths=1.5, node_shape='o')
+
+            nx.draw_networkx_edges(G, pos_dict, edgelist=highlighted_edges, width=4, edge_color='red')
+            nx.draw_networkx_edges(G, pos_dict, edgelist=regular_edges, width=1, edge_color='black')
+
+            nx.draw_networkx_labels(G, pos_dict, labels=node_labels, font_size=11,
+                font_family='sans-serif', font_weight='bold',
+                bbox=dict(boxstyle='round,pad=0.28', facecolor='white', alpha=0.7, edgecolor='lightgray'))
+
+            plt.gcf().suptitle(f"Statistical Decision Path: {test_name}", fontsize=15, y=0.98)
+
+            from matplotlib.lines import Line2D
+            from matplotlib.patches import Patch
+            legend_elements = [
+                Line2D([0], [0], color='red', lw=4, label='Taken path'),
+                Patch(facecolor='#ffcccc', edgecolor='black', label='Steps performed'),
+                Patch(facecolor='white', edgecolor='black', label='Alternative steps'),
+            ]
+            plt.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(0.99, 0.99),
+                       fontsize=10, frameon=True, facecolor='white', edgecolor='black',
+                       framealpha=0.9, shadow=True)
+
+            plt.axis('off')
+            plt.tight_layout(rect=[0, 0, 1, 0.97])
+
+            if output_path:
+                out_file = f"{output_path}.png"
+                plt.savefig(out_file, format="png", dpi=200, transparent=False,
+                            facecolor='white', bbox_inches='tight')
+                plt.close('all')
+                return out_file
+            else:
+                with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+                    plt.savefig(tmp.name, format="png", dpi=200, transparent=False,
+                                facecolor='white', bbox_inches='tight')
+                    path = tmp.name
+                plt.close('all')
+                return path
+
+        except Exception as e:
+            print(f"Error generating association decision tree: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
     @staticmethod
     def _highlight_posthoc_path(results, highlighted):
         """

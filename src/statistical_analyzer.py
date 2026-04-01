@@ -23,25 +23,14 @@ from PyQt5.QtGui import QColor, QIcon, QPixmap, QDrag, QDesktopServices
 from PyQt5.QtCore import Qt, QMimeData, QPoint, pyqtSignal, QObject, QPropertyAnimation, QEasingCurve, QSequentialAnimationGroup, QTimer, QUrl
 
 # Initialize lazy loading system
-from lazy_imports import preload_critical_modules
+from lazy_imports import preload_critical_modules, get_matplotlib_pyplot as get_matplotlib
 preload_critical_modules()
-
-# Heavy modules will be imported lazily when needed
-_matplotlib_plt = None
-
-def get_matplotlib():
-    """Lazy import matplotlib.pyplot"""
-    global _matplotlib_plt
-    if _matplotlib_plt is None:
-        import matplotlib.pyplot as plt
-        _matplotlib_plt = plt
-    return _matplotlib_plt
 
 from stats_functions import (
     DataImporter, AnalysisManager, 
     UIDialogManager, OutlierDetector, OUTLIER_IMPORTS_AVAILABLE
 )
-from resultsexporter import ResultsExporter
+from export_dispatcher import ExportDispatcher
 from datavisualizer import DataVisualizer
 from decisiontreevisualizer import DecisionTreeVisualizer
 from statisticaltester import StatisticalTester
@@ -864,11 +853,13 @@ class ExploratoryMatrixDialog(QDialog):
 
             # Export to Excel
             import os
-            from resultsexporter import ResultsExporter
+            from export_dispatcher import ExportDispatcher
             out_file = os.path.join(self.output_dir,
                                     "exploratory_correlation_matrix.xlsx")
             results["pairwise_comparisons"] = []
-            ResultsExporter.export_results_to_excel(results, out_file)
+            export_result = ExportDispatcher.export_analysis_results(results, out_file)
+            if export_result.get("warning"):
+                print(f"WARNING: {export_result['warning']}")
 
             self._status_label.setText(
                 f"Done! Saved to:\n{out_file}"
@@ -3136,7 +3127,9 @@ class StatisticalAnalyzerApp(QMainWindow):
                     print("DEBUG MULTI: About to call export_multi_dataset_results()")
                     excel_path = os.path.join(output_dir, "All_Datasets_Analysis.xlsx")
                     print(f"DEBUG MULTI: Excel path will be: {excel_path}")
-                    ResultsExporter.export_multi_dataset_results(all_results, excel_path)
+                    export_result = ExportDispatcher.export_multi_dataset_results(all_results, excel_path)
+                    if export_result.get("warning"):
+                        print(f"WARNING: {export_result['warning']}")
                     print("DEBUG MULTI: export_multi_dataset_results() completed successfully")
 
                     # Collect all output files for centralized success dialog
@@ -5421,7 +5414,9 @@ def _ap_determine_and_run_test(self):
 
             base_name = _safe_file_slug(os.path.splitext(os.path.basename(self.file_path))[0])
             combined_excel = os.path.join(output_dir, f"{base_name}_multi_dataset_results.xlsx")
-            ResultsExporter.export_multi_dataset_results(all_results, combined_excel)
+            export_result = ExportDispatcher.export_multi_dataset_results(all_results, combined_excel)
+            if export_result.get("warning"):
+                print(f"WARNING: {export_result['warning']}")
 
             lead_dv = context["dv_columns"][0]
             lead_result = all_results[lead_dv]

@@ -15,6 +15,8 @@ networkx
 requests
 packaging
 marginaleffects
+jinja2
+plotly
 
 # Optional / alternatives:
 # PySide2  # use instead of PyQt5 if preferred
