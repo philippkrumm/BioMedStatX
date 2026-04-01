@@ -1,5 +1,3 @@
-import matplotlib.pyplot as plt
-import networkx as nx
 import tempfile
 import os
 
@@ -68,6 +66,8 @@ class DecisionTreeVisualizer:
             Path to the saved visualization file
         """
         try:
+            import matplotlib.pyplot as plt
+            import networkx as nx
             # Apply a clean style for better aesthetics
             plt.style.use('seaborn-v0_8-whitegrid')
 
@@ -1022,12 +1022,419 @@ class DecisionTreeVisualizer:
             return None
     
     @staticmethod
+    def get_tree_json(results: dict) -> dict | None:
+        """
+        Returns the decision tree topology as a JSON-serializable dict.
+        Nodes and edges carry an isActive flag marking the taken path.
+        Association/regression test types return None (not yet supported).
+        """
+        try:
+            _model_type = results.get("model_type", "")
+            if _model_type in ["Correlation", "LinearRegression", "LogisticRegression", "ANCOVA", "CorrelationMatrix"]:
+                return None
+
+            test_name = results.get("test_name", results.get("test", ""))
+            test_type = results.get("test_recommendation", results.get("test_type", ""))
+            transformation = results.get("transformation", "None")
+            p_value = results.get("p_value", None)
+
+            test_info = results.get("test_info", {})
+            normality_tests = test_info.get("normality_tests", results.get("normality_tests", {}))
+            variance_test = test_info.get("variance_test", results.get("variance_test", {}))
+            sphericity_test = results.get("sphericity_test", {})
+            posthoc_test = str(results.get("posthoc_test") or "")
+
+            # dependence_type
+            dependence_type = "independent"
+            dependent_param = results.get("dependent", None)
+            dependent_samples_param = results.get("dependent_samples", None)
+            if isinstance(dependent_param, bool):
+                dependence_type = "dependent" if dependent_param else "independent"
+            elif isinstance(dependent_samples_param, bool):
+                dependence_type = "dependent" if dependent_samples_param else "independent"
+            elif str(dependent_param or "").lower() in ("true", "1"):
+                dependence_type = "dependent"
+            elif str(dependent_samples_param or "").lower() in ("true", "1"):
+                dependence_type = "dependent"
+            elif any(kw in test_name.lower() for kw in ("repeated", "rm ", "within", "mixed", "paired")):
+                dependence_type = "dependent"
+
+            # normality / variance
+            if isinstance(normality_tests, dict):
+                group_results = [
+                    v.get("is_normal", v.get("p_value", None) is not None and v.get("p_value", 0) > 0.05)
+                    for k, v in normality_tests.items() if k not in ("all_data", "transformed_data")
+                ]
+                is_normal = all(group_results) if group_results else (
+                    normality_tests.get("transformed_data", {}).get("is_normal", False)
+                    if "transformed_data" in normality_tests
+                    else normality_tests.get("all_data", {}).get("is_normal", False)
+                )
+            else:
+                is_normal = False
+
+            has_equal_variance = (
+                variance_test.get("transformed", {}).get("equal_variance", False)
+                if "transformed" in variance_test
+                else variance_test.get("equal_variance", False)
+            )
+            has_sphericity = sphericity_test.get("has_sphericity", None)
+            was_transformed = transformation != "None"
+
+            auto_switched = (
+                "Switching to nonparametric" in str(results.get("analysis_log", "")) or
+                test_name.lower().startswith("nonparametric_")
+            )
+
+            # n_groups
+            n_groups = 0
+            for src in ("groups", ):
+                if results.get(src):
+                    n_groups = len(results[src]); break
+            if not n_groups:
+                for src in [
+                    lambda: results.get("descriptive_stats", {}).get("groups"),
+                    lambda: list(results.get("raw_data", {}).keys()) if results.get("raw_data") else None,
+                    lambda: list(results.get("descriptive", {}).keys()) if results.get("descriptive") else None,
+                    lambda: list((results.get("descriptive_stats", {}).get("means") or {}).keys()),
+                ]:
+                    v = src()
+                    if v:
+                        n_groups = len(v); break
+            if n_groups == 0:
+                n_groups = 2
+
+            n_within_levels = results.get("n_within_levels", None)
+            actual_test_type = test_type or results.get("recommendation", "")
+            correction_used = str(results.get("correction_used", "None"))
+            within_correction = str(results.get("within_correction_used", "None"))
+
+            welch_t_condition = (
+                ("welch" in test_name.lower() and "t-test" in test_name.lower()) or
+                ("welch" in test_name.lower() and n_groups == 2) or
+                (is_normal and not has_equal_variance and n_groups == 2 and
+                 ("welch" in test_name.lower() or "independent" in test_name.lower()))
+            )
+            welch_anova_condition = (
+                ("welch" in test_name.lower() and "anova" in test_name.lower()) or
+                ("welch" in test_name.lower() and n_groups > 2) or
+                (is_normal and not has_equal_variance and n_groups > 2 and
+                 ("welch" in test_name.lower() or "anova" in test_name.lower()))
+            )
+
+            # labels
+            if welch_t_condition or welch_anova_condition:
+                f_label = "Test Recommendation:\nNormal distributed\nbut unequal variances"
+            elif actual_test_type.lower() == "parametric":
+                f_label = "Test Recommendation:\nParametric Test"
+            elif actual_test_type.lower() in ("non_parametric", "non-parametric"):
+                f_label = "Test Recommendation:\nNon-parametric Test"
+            else:
+                f_label = "Test Recommendation"
+
+            # nodes
+            nodes_info = {
+                'A':  {"label": "Start", "pos": (0, 14)},
+                'B':  {"label": f"Check Assumptions\nShapiro-Wilk: {is_normal}\nBrown-Forsythe: {has_equal_variance}", "pos": (0, 12.5)},
+                'C':  {"label": f"Assumptions: {'Met' if is_normal and has_equal_variance else 'Not Met'}", "pos": (0, 11)},
+                'D1': {"label": "No Transformation\nNeeded", "pos": (-2, 9.5)},
+                'D2': {"label": f"Apply Transformation\n{transformation}", "pos": (2, 9.5)},
+                'E':  {"label": "Re-check Assumptions", "pos": (2, 8)},
+                'F':  {"label": f_label, "pos": (0, 6.5)},
+                'WELCH_T_TEST':   {"label": "Welch's t-test\n(2 groups)", "pos": (-1.5, 4.5)},
+                'WELCH_ANOVA':    {"label": "Welch-ANOVA\n(>2 groups)", "pos": (1.5, 4.5)},
+                'WELCH_DUNNETT_T3': {"label": "Dunnett T3\nPost-hoc", "pos": (1.5, 3)},
+                'G1': {"label": "Parametric Test", "pos": (-10, 5)},
+                'H1': {"label": "Group Structure", "pos": (-10, 4)},
+                'I1_2': {"label": "Two Groups", "pos": (-13, 3)},
+                'I1_M': {"label": "Multiple Groups", "pos": (-3, 3)},
+                'J1_INDEP': {"label": "Independent\nSamples", "pos": (-14, 2)},
+                'J1_DEP':   {"label": "Dependent\nSamples", "pos": (-12, 2)},
+                'K1_2_IND': {"label": "Independent t-test", "pos": (-14, 1)},
+                'K1_2_DEP': {"label": "Paired t-test", "pos": (-12, 1)},
+                'INDEPENDENT_GROUPS': {"label": "Independent\nGroups", "pos": (-8, 2)},
+                'REPEATED_MEASURES':  {"label": "Repeated\nMeasures", "pos": (-2, 2)},
+                'MIXED_DESIGN':        {"label": "Mixed\nDesign", "pos": (4, 2)},
+                'IND_ONE_WAY':   {"label": "One-way ANOVA", "pos": (-9, 1)},
+                'IND_TWO_WAY':   {"label": "Two-way ANOVA", "pos": (-7, 1)},
+                'IND_POSTHOC':   {"label": "Independent\nPost-hoc Tests", "pos": (-8, 0)},
+                'IND_TUKEY':     {"label": "Tukey HSD", "pos": (-9.5, -1)},
+                'IND_DUNNETT':   {"label": "Dunnett Test", "pos": (-8, -1)},
+                'IND_HOLM_SIDAK':{"label": "Pairwise t-tests\n(Holm-Sidak)", "pos": (-6.5, -1)},
+                'RM_MAUCHLY':            {"label": "Mauchly's Test\nfor Sphericity", "pos": (-2, 1)},
+                'RM_SPHERICITY_OK':      {"label": "Sphericity\nAssumption Met", "pos": (-3.5, 0)},
+                'RM_SPHERICITY_VIOLATED':{"label": "Sphericity\nViolated", "pos": (-0.5, 0)},
+                'RM_CHOOSE_CORRECTION':  {"label": "Choose\nCorrection", "pos": (-0.5, -1)},
+                'RM_GG_CORRECTION':      {"label": "Greenhouse-Geisser\nCorrection", "pos": (-1.5, -2)},
+                'RM_HF_CORRECTION':      {"label": "Huynh-Feldt\nCorrection", "pos": (0.5, -2)},
+                'RM_ANOVA_STANDARD':     {"label": "RM ANOVA", "pos": (-3.5, -1)},
+                'RM_ANOVA_CORRECTED':    {"label": "RM ANOVA\n(Corrected)", "pos": (-0.5, -3)},
+                'RM_POSTHOC':            {"label": "RM Post-hoc Tests", "pos": (-2, -4)},
+                'RM_TUKEY':              {"label": "Tukey HSD\n(RM)", "pos": (-3.5, -5)},
+                'RM_PAIRED_TESTS':       {"label": "Pairwise Paired t-tests\n(Holm-Sidak)", "pos": (-0.5, -5)},
+                'MIXED_MAUCHLY':             {"label": "Mauchly's Test\nfor Sphericity", "pos": (4, 1)},
+                'MIXED_SPHERICITY_OK':       {"label": "Sphericity\nAssumption Met", "pos": (2.5, 0)},
+                'MIXED_SPHERICITY_VIOLATED': {"label": "Sphericity\nViolated", "pos": (5.5, 0)},
+                'MIXED_CHOOSE_CORRECTION':   {"label": "Choose\nCorrection", "pos": (5.5, -1)},
+                'MIXED_GG_CORRECTION':       {"label": "Greenhouse-Geisser\nCorrection", "pos": (4.5, -2)},
+                'MIXED_HF_CORRECTION':       {"label": "Huynh-Feldt\nCorrection", "pos": (6.5, -2)},
+                'MIXED_ANOVA_STANDARD':      {"label": "Mixed ANOVA", "pos": (2.5, -1)},
+                'MIXED_ANOVA_CORRECTED':     {"label": "Mixed ANOVA\n(Within Corrected)", "pos": (5.5, -3)},
+                'MIXED_POSTHOC':             {"label": "Mixed Post-hoc Tests", "pos": (4, -4)},
+                'MIXED_TUKEY':   {"label": "Mixed Tukey\n(Between/Within)", "pos": (2, -5)},
+                'MIXED_BETWEEN': {"label": "Between-Subjects\nComparisons", "pos": (4, -5)},
+                'MIXED_WITHIN':  {"label": "Within-Subjects\nComparisons", "pos": (6, -5)},
+                'G2': {"label": "Non-parametric Test", "pos": (10, 5)},
+                'H2': {"label": "Group Structure", "pos": (10, 4)},
+                'I2_2': {"label": "Two Groups", "pos": (8, 3)},
+                'I2_M': {"label": "Multiple Groups", "pos": (14, 3)},
+                'J2_INDEP': {"label": "Independent\nSamples", "pos": (7, 2)},
+                'J2_DEP':   {"label": "Dependent\nSamples", "pos": (9, 2)},
+                'K2_2_IND': {"label": "Mann-Whitney U", "pos": (7, 1)},
+                'K2_2_DEP': {"label": "Wilcoxon\nSigned-Rank", "pos": (9, 1)},
+                'NP_INDEPENDENT_GROUPS': {"label": "Independent\nGroups", "pos": (12.5, 2)},
+                'NP_REPEATED_MEASURES':  {"label": "Repeated\nMeasures", "pos": (16, 2)},
+                'NP_MIXED_DESIGN':       {"label": "Mixed\nDesign", "pos": (20, 2)},
+                'K2_M_IND':           {"label": "Kruskal-Wallis", "pos": (11.5, 1)},
+                'NP_POSTHOC':         {"label": "Non-parametric\nPost-hoc Tests", "pos": (11.5, 0)},
+                'NP_DUNN':            {"label": "Dunn Test", "pos": (10.5, -1)},
+                'NP_MANN_WHITNEY':    {"label": "Pairwise\nMann-Whitney U", "pos": (12.5, -1)},
+                'NP_TWO_WAY_ROBUST':  {"label": "Freedman-Lane\nPermutation", "pos": (13.5, 1)},
+                'NP_TWO_WAY_POSTHOC': {"label": "Two-way\nPost-hoc", "pos": (13.5, 0)},
+                'NP_TWO_WAY_PAIRWISE':{"label": "Marginal Effects\nPairwise", "pos": (13.5, -1)},
+                'NP_RM_ROBUST':   {"label": "Friedman Test", "pos": (16, 1)},
+                'NP_RM_POSTHOC':  {"label": "Friedman\nPost-hoc", "pos": (16, 0)},
+                'NP_RM_PAIRWISE': {"label": "RM Pairwise\nComparisons", "pos": (16, -1)},
+                'NP_MIXED_ROBUST':   {"label": "Brunner-Langer\nATS", "pos": (20, 1)},
+                'NP_MIXED_POSTHOC':  {"label": "Mixed Robust\nPost-hoc", "pos": (20, 0)},
+                'NP_MIXED_BETWEEN':  {"label": "Between-Subjects\nComparisons", "pos": (19, -1)},
+                'NP_MIXED_WITHIN':   {"label": "Within-Subjects\nComparisons", "pos": (21, -1)},
+            }
+            nodes_info = DecisionTreeVisualizer._apply_wide_canvas_layout(nodes_info)
+
+            edges = {
+                ('A','B'),('B','C'),('C','D1'),('C','D2'),('D2','E'),('E','F'),('D1','F'),
+                ('F','WELCH_T_TEST'),('F','WELCH_ANOVA'),('WELCH_ANOVA','WELCH_DUNNETT_T3'),
+                ('F','G1'),('F','G2'),
+                ('G1','H1'),('H1','I1_2'),('H1','I1_M'),
+                ('I1_2','J1_INDEP'),('I1_2','J1_DEP'),('J1_INDEP','K1_2_IND'),('J1_DEP','K1_2_DEP'),
+                ('I1_M','INDEPENDENT_GROUPS'),('I1_M','REPEATED_MEASURES'),('I1_M','MIXED_DESIGN'),
+                ('INDEPENDENT_GROUPS','IND_ONE_WAY'),('INDEPENDENT_GROUPS','IND_TWO_WAY'),
+                ('IND_ONE_WAY','IND_POSTHOC'),('IND_TWO_WAY','IND_POSTHOC'),
+                ('IND_POSTHOC','IND_TUKEY'),('IND_POSTHOC','IND_DUNNETT'),('IND_POSTHOC','IND_HOLM_SIDAK'),
+                ('REPEATED_MEASURES','RM_MAUCHLY'),
+                ('RM_MAUCHLY','RM_SPHERICITY_OK'),('RM_MAUCHLY','RM_SPHERICITY_VIOLATED'),
+                ('RM_SPHERICITY_OK','RM_ANOVA_STANDARD'),
+                ('RM_SPHERICITY_VIOLATED','RM_CHOOSE_CORRECTION'),
+                ('RM_CHOOSE_CORRECTION','RM_GG_CORRECTION'),('RM_CHOOSE_CORRECTION','RM_HF_CORRECTION'),
+                ('RM_GG_CORRECTION','RM_ANOVA_CORRECTED'),('RM_HF_CORRECTION','RM_ANOVA_CORRECTED'),
+                ('RM_ANOVA_STANDARD','RM_POSTHOC'),('RM_ANOVA_CORRECTED','RM_POSTHOC'),
+                ('RM_POSTHOC','RM_TUKEY'),('RM_POSTHOC','RM_PAIRED_TESTS'),
+                ('MIXED_DESIGN','MIXED_MAUCHLY'),
+                ('MIXED_MAUCHLY','MIXED_SPHERICITY_OK'),('MIXED_MAUCHLY','MIXED_SPHERICITY_VIOLATED'),
+                ('MIXED_SPHERICITY_OK','MIXED_ANOVA_STANDARD'),
+                ('MIXED_SPHERICITY_VIOLATED','MIXED_CHOOSE_CORRECTION'),
+                ('MIXED_CHOOSE_CORRECTION','MIXED_GG_CORRECTION'),('MIXED_CHOOSE_CORRECTION','MIXED_HF_CORRECTION'),
+                ('MIXED_GG_CORRECTION','MIXED_ANOVA_CORRECTED'),('MIXED_HF_CORRECTION','MIXED_ANOVA_CORRECTED'),
+                ('MIXED_ANOVA_STANDARD','MIXED_POSTHOC'),('MIXED_ANOVA_CORRECTED','MIXED_POSTHOC'),
+                ('MIXED_POSTHOC','MIXED_TUKEY'),('MIXED_POSTHOC','MIXED_BETWEEN'),('MIXED_POSTHOC','MIXED_WITHIN'),
+                ('G2','H2'),('H2','I2_2'),('H2','I2_M'),
+                ('I2_2','J2_INDEP'),('I2_2','J2_DEP'),('J2_INDEP','K2_2_IND'),('J2_DEP','K2_2_DEP'),
+                ('I2_M','NP_INDEPENDENT_GROUPS'),('I2_M','NP_REPEATED_MEASURES'),('I2_M','NP_MIXED_DESIGN'),
+                ('NP_INDEPENDENT_GROUPS','K2_M_IND'),('K2_M_IND','NP_POSTHOC'),
+                ('NP_POSTHOC','NP_DUNN'),('NP_POSTHOC','NP_MANN_WHITNEY'),
+                ('NP_INDEPENDENT_GROUPS','NP_TWO_WAY_ROBUST'),
+                ('NP_TWO_WAY_ROBUST','NP_TWO_WAY_POSTHOC'),('NP_TWO_WAY_POSTHOC','NP_TWO_WAY_PAIRWISE'),
+                ('NP_REPEATED_MEASURES','NP_RM_ROBUST'),('NP_RM_ROBUST','NP_RM_POSTHOC'),
+                ('NP_RM_POSTHOC','NP_RM_PAIRWISE'),
+                ('NP_MIXED_DESIGN','NP_MIXED_ROBUST'),('NP_MIXED_ROBUST','NP_MIXED_POSTHOC'),
+                ('NP_MIXED_POSTHOC','NP_MIXED_BETWEEN'),('NP_MIXED_POSTHOC','NP_MIXED_WITHIN'),
+            }
+
+            # highlighted path — same logic as visualize()
+            highlighted = set()
+            highlighted.add(('A', 'B'))
+            highlighted.add(('B', 'C'))
+            if transformation and transformation != "None":
+                highlighted.update([('C','D2'),('D2','E'),('E','F')])
+            else:
+                highlighted.update([('C','D1'),('D1','F')])
+
+            recommendation_text = str(results.get("recommendation", "")).lower()
+            model_class_text    = str(results.get("model_class", "")).lower()
+            analysis_log_text   = str(results.get("analysis_log", "")).lower()
+            test_name_text      = test_name.lower()
+
+            is_modern_or_robust_fallback = any(kw in t for kw in ("fallback","modern model","robust") for t in (recommendation_text, analysis_log_text))
+            is_nonparam_two_way_advanced = (("two-way" in test_name_text or "two way" in test_name_text) and (is_modern_or_robust_fallback or "freedman" in model_class_text or "permutation" in model_class_text))
+            is_nonparam_rm_advanced      = (("repeated" in test_name_text or "rm anova" in test_name_text) and (is_modern_or_robust_fallback or "friedman" in model_class_text))
+            is_nonparam_mixed_advanced   = ("mixed" in test_name_text and (is_modern_or_robust_fallback or "brunner" in model_class_text or "ats" in model_class_text))
+            is_nonparametric_test = (
+                actual_test_type.lower() in ("non-parametric","non_parametric") or
+                test_name.lower().startswith(("non-parametric","nonparametric")) or
+                "rank + permutation" in test_name.lower() or auto_switched or
+                results.get("recommendation") == "non_parametric" or
+                results.get("parametric_assumptions_violated", False)
+            )
+
+            alpha = results.get("alpha", 0.05)
+
+            if (welch_t_condition or welch_anova_condition) and not auto_switched and not is_nonparametric_test:
+                if welch_t_condition:
+                    highlighted.add(('F','WELCH_T_TEST'))
+                else:
+                    highlighted.add(('F','WELCH_ANOVA'))
+                    if p_value is not None and p_value < alpha:
+                        if "dunnett" in posthoc_test.lower() and "t3" in posthoc_test.lower():
+                            highlighted.add(('WELCH_ANOVA','WELCH_DUNNETT_T3'))
+
+            elif is_nonparametric_test:
+                if not auto_switched:
+                    highlighted.add(('F','G2'))
+                highlighted.add(('G2','H2'))
+                if n_groups == 2:
+                    highlighted.add(('H2','I2_2'))
+                    if dependence_type == "dependent" or "paired" in test_name_text or "wilcoxon" in test_name_text:
+                        highlighted.update([('I2_2','J2_DEP'),('J2_DEP','K2_2_DEP')])
+                    else:
+                        highlighted.update([('I2_2','J2_INDEP'),('J2_INDEP','K2_2_IND')])
+                else:
+                    highlighted.add(('H2','I2_M'))
+                    if is_nonparam_two_way_advanced:
+                        highlighted.update([('I2_M','NP_INDEPENDENT_GROUPS'),('NP_INDEPENDENT_GROUPS','NP_TWO_WAY_ROBUST')])
+                        if p_value is not None and p_value < alpha:
+                            highlighted.update([('NP_TWO_WAY_ROBUST','NP_TWO_WAY_POSTHOC'),('NP_TWO_WAY_POSTHOC','NP_TWO_WAY_PAIRWISE')])
+                    elif is_nonparam_rm_advanced:
+                        highlighted.update([('I2_M','NP_REPEATED_MEASURES'),('NP_REPEATED_MEASURES','NP_RM_ROBUST')])
+                        if p_value is not None and p_value < alpha:
+                            highlighted.update([('NP_RM_ROBUST','NP_RM_POSTHOC'),('NP_RM_POSTHOC','NP_RM_PAIRWISE')])
+                    elif is_nonparam_mixed_advanced:
+                        highlighted.update([('I2_M','NP_MIXED_DESIGN'),('NP_MIXED_DESIGN','NP_MIXED_ROBUST')])
+                        if p_value is not None and p_value < alpha:
+                            highlighted.add(('NP_MIXED_ROBUST','NP_MIXED_POSTHOC'))
+                            ph = posthoc_test.lower()
+                            if "between" in ph:
+                                highlighted.add(('NP_MIXED_POSTHOC','NP_MIXED_BETWEEN'))
+                            elif "within" in ph:
+                                highlighted.add(('NP_MIXED_POSTHOC','NP_MIXED_WITHIN'))
+                            else:
+                                highlighted.update([('NP_MIXED_POSTHOC','NP_MIXED_BETWEEN'),('NP_MIXED_POSTHOC','NP_MIXED_WITHIN')])
+                    else:
+                        highlighted.update([('I2_M','NP_INDEPENDENT_GROUPS'),('NP_INDEPENDENT_GROUPS','K2_M_IND')])
+                        if p_value is not None and p_value < alpha:
+                            highlighted.add(('K2_M_IND','NP_POSTHOC'))
+                            ph = posthoc_test.lower()
+                            highlighted.add(('NP_POSTHOC','NP_DUNN') if "dunn" in ph else ('NP_POSTHOC','NP_MANN_WHITNEY'))
+
+            elif (actual_test_type.lower() == "parametric" or ("anova" in test_name.lower() and "non" not in test_name.lower())) and not welch_t_condition and not welch_anova_condition:
+                if not auto_switched:
+                    highlighted.add(('F','G1'))
+                highlighted.add(('G1','H1'))
+                if n_groups == 2:
+                    highlighted.add(('H1','I1_2'))
+                    if dependence_type == "dependent":
+                        highlighted.update([('I1_2','J1_DEP'),('J1_DEP','K1_2_DEP')])
+                    else:
+                        highlighted.update([('I1_2','J1_INDEP'),('J1_INDEP','K1_2_IND')])
+                else:
+                    highlighted.add(('H1','I1_M'))
+                    if "repeated" in test_name_text or ("rm" in test_name_text and "anova" in test_name_text):
+                        highlighted.update([('I1_M','REPEATED_MEASURES'),('REPEATED_MEASURES','RM_MAUCHLY')])
+                        if any(kw in correction_used.lower() for kw in ("greenhouse","gg")) or "greenhouse" in within_correction.lower():
+                            highlighted.update([('RM_MAUCHLY','RM_SPHERICITY_VIOLATED'),('RM_SPHERICITY_VIOLATED','RM_CHOOSE_CORRECTION'),('RM_CHOOSE_CORRECTION','RM_GG_CORRECTION'),('RM_GG_CORRECTION','RM_ANOVA_CORRECTED')])
+                        elif any(kw in correction_used.lower() for kw in ("huynh","hf")) or "huynh" in within_correction.lower():
+                            highlighted.update([('RM_MAUCHLY','RM_SPHERICITY_VIOLATED'),('RM_SPHERICITY_VIOLATED','RM_CHOOSE_CORRECTION'),('RM_CHOOSE_CORRECTION','RM_HF_CORRECTION'),('RM_HF_CORRECTION','RM_ANOVA_CORRECTED')])
+                        else:
+                            highlighted.update([('RM_MAUCHLY','RM_SPHERICITY_OK'),('RM_SPHERICITY_OK','RM_ANOVA_STANDARD')])
+                        if p_value is not None and p_value < alpha:
+                            if any(kw in correction_used.lower() for kw in ("greenhouse","huynh")) or any(kw in within_correction.lower() for kw in ("greenhouse","huynh")):
+                                highlighted.add(('RM_ANOVA_CORRECTED','RM_POSTHOC'))
+                            else:
+                                highlighted.add(('RM_ANOVA_STANDARD','RM_POSTHOC'))
+                            highlighted.add(('RM_POSTHOC','RM_TUKEY') if "tukey" in posthoc_test.lower() else ('RM_POSTHOC','RM_PAIRED_TESTS'))
+                    elif "mixed" in test_name_text:
+                        highlighted.update([('I1_M','MIXED_DESIGN'),('MIXED_DESIGN','MIXED_MAUCHLY')])
+                        if any(kw in within_correction.lower() for kw in ("greenhouse","gg")) or "greenhouse" in correction_used.lower():
+                            highlighted.update([('MIXED_MAUCHLY','MIXED_SPHERICITY_VIOLATED'),('MIXED_SPHERICITY_VIOLATED','MIXED_CHOOSE_CORRECTION'),('MIXED_CHOOSE_CORRECTION','MIXED_GG_CORRECTION'),('MIXED_GG_CORRECTION','MIXED_ANOVA_CORRECTED')])
+                        elif any(kw in within_correction.lower() for kw in ("huynh","hf")) or "huynh" in correction_used.lower():
+                            highlighted.update([('MIXED_MAUCHLY','MIXED_SPHERICITY_VIOLATED'),('MIXED_SPHERICITY_VIOLATED','MIXED_CHOOSE_CORRECTION'),('MIXED_CHOOSE_CORRECTION','MIXED_HF_CORRECTION'),('MIXED_HF_CORRECTION','MIXED_ANOVA_CORRECTED')])
+                        else:
+                            highlighted.update([('MIXED_MAUCHLY','MIXED_SPHERICITY_OK'),('MIXED_SPHERICITY_OK','MIXED_ANOVA_STANDARD')])
+                        if p_value is not None and p_value < alpha:
+                            if any(kw in within_correction.lower() for kw in ("greenhouse","huynh")):
+                                highlighted.add(('MIXED_ANOVA_CORRECTED','MIXED_POSTHOC'))
+                            else:
+                                highlighted.add(('MIXED_ANOVA_STANDARD','MIXED_POSTHOC'))
+                            ph = posthoc_test.lower()
+                            if "tukey" in ph:
+                                highlighted.add(('MIXED_POSTHOC','MIXED_TUKEY'))
+                            elif "between" in ph:
+                                highlighted.add(('MIXED_POSTHOC','MIXED_BETWEEN'))
+                            else:
+                                highlighted.add(('MIXED_POSTHOC','MIXED_WITHIN'))
+                    elif "two-way" in test_name_text or "two way" in test_name_text:
+                        highlighted.update([('I1_M','INDEPENDENT_GROUPS'),('INDEPENDENT_GROUPS','IND_TWO_WAY')])
+                        if p_value is not None and p_value < alpha:
+                            highlighted.add(('IND_TWO_WAY','IND_POSTHOC'))
+                            ph = posthoc_test.lower()
+                            if "tukey" in ph: highlighted.add(('IND_POSTHOC','IND_TUKEY'))
+                            elif "dunnett" in ph: highlighted.add(('IND_POSTHOC','IND_DUNNETT'))
+                            else: highlighted.add(('IND_POSTHOC','IND_HOLM_SIDAK'))
+                    else:
+                        highlighted.update([('I1_M','INDEPENDENT_GROUPS'),('INDEPENDENT_GROUPS','IND_ONE_WAY')])
+                        if p_value is not None and p_value < alpha:
+                            highlighted.add(('IND_ONE_WAY','IND_POSTHOC'))
+                            ph = posthoc_test.lower()
+                            if "tukey" in ph: highlighted.add(('IND_POSTHOC','IND_TUKEY'))
+                            elif "dunnett" in ph: highlighted.add(('IND_POSTHOC','IND_DUNNETT'))
+                            else: highlighted.add(('IND_POSTHOC','IND_HOLM_SIDAK'))
+
+            # active node set
+            active_nodes = set()
+            for u, v in highlighted:
+                active_nodes.add(u)
+                active_nodes.add(v)
+
+            _square_keywords = {
+                "Start","Check Assumptions","Assumptions","Parametric Test","Non-parametric Test",
+                "Group Structure","Two Groups","Multiple Groups","Independent Samples","Dependent Samples",
+                "Repeated Measures","Mixed Design","Post-hoc Tests","Independent Groups",
+                "Mauchly's Test","Sphericity","Choose Correction","RM Post-hoc","Mixed Post-hoc",
+            }
+            def _is_square(node_id):
+                lbl = nodes_info[node_id]["label"].replace('\n',' ')
+                return any(kw in lbl for kw in _square_keywords)
+
+            node_list = [
+                {
+                    "id": nid,
+                    "x": float(info["pos"][0]),
+                    "y": float(info["pos"][1]),
+                    "label": info["label"],
+                    "isActive": nid in active_nodes,
+                    "isSquare": _is_square(nid),
+                }
+                for nid, info in nodes_info.items()
+            ]
+            edge_list = [
+                {"source": u, "target": v, "isActive": (u, v) in highlighted}
+                for u, v in edges
+            ]
+            return {"nodes": node_list, "edges": edge_list}
+
+        except Exception as exc:
+            print(f"WARNING DecisionTreeVisualizer.get_tree_json: {exc}")
+            return None
+
+    @staticmethod
     def _visualize_association_test(results, model_type, output_path=None):
         """
         Generates a decision tree for association/regression tests:
         Correlation (Pearson/Spearman), Linear Regression, Logistic Regression, ANCOVA.
         """
         try:
+            import matplotlib.pyplot as plt
+            import networkx as nx
             plt.style.use('seaborn-v0_8-whitegrid')
 
             test_name = results.get("test", results.get("test_name", model_type))
