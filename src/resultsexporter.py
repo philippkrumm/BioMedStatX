@@ -91,32 +91,44 @@ class ResultsExporter:
         workbook = xlsxwriter.Workbook(output_file, {'nan_inf_to_errors': True})
         fmt = ResultsExporter._get_excel_formats(workbook)
 
+        # ── Sheet order (academic report layout) ────────────────────────────
+        # 1. Cover
+        ResultsExporter._write_cover_sheet(workbook, results, fmt)
+        # 2. Summary
         ResultsExporter._write_summary_sheet(workbook, results, fmt)
-        ResultsExporter._write_methodology_sheet(workbook, results, fmt)
-        ResultsExporter._write_assumptions_sheet(workbook, results, fmt)
+        # 3. Statistical Results
         ResultsExporter._write_results_sheet(workbook, results, fmt)
+        # 4. Descriptives
         ResultsExporter._write_descriptive_sheet(workbook, results, fmt)
-        ResultsExporter._write_decision_tree_sheet(workbook, results, fmt)
-        ResultsExporter._write_rawdata_sheet(workbook, results, fmt)
-        ResultsExporter._write_pairwise_sheet(workbook, results, fmt)
-
-        # Clinical model-specific sheets
+        # 5. Pairwise — only if 3+ groups AND post-hoc was computed
+        _groups = results.get("groups", [])
+        _pairwise = results.get("pairwise_comparisons", [])
+        if len(_groups) >= 3 and _pairwise:
+            ResultsExporter._write_pairwise_sheet(workbook, results, fmt)
+        # 6. Assumptions
+        ResultsExporter._write_assumptions_sheet(workbook, results, fmt)
+        # 7–12. Model-specific sheets
         model_type = results.get("model_type", "")
         if model_type == "ANCOVA":
             ResultsExporter._write_ancova_sheet(workbook, results, fmt)
         elif model_type == "LMM":
             ResultsExporter._write_lmm_sheet(workbook, results, fmt)
-        elif model_type == "LogisticRegression":
-            ResultsExporter._write_logistic_regression_sheet(workbook, results, fmt)
+        elif model_type in ("GEE", "GLM"):
+            ResultsExporter._write_gee_glm_details_sheet(workbook, results, fmt)
         elif model_type == "Correlation":
             ResultsExporter._write_correlation_sheet(workbook, results, fmt)
-        elif model_type == "LinearRegression":
-            ResultsExporter._write_linear_regression_sheet(workbook, results, fmt)
         elif model_type == "CorrelationMatrix":
             ResultsExporter._write_correlation_matrix_sheet(workbook, results, fmt)
-
-        if analysis_log:
-            ResultsExporter._write_analysislog_sheet(workbook, analysis_log, fmt)
+        elif model_type == "LinearRegression":
+            ResultsExporter._write_linear_regression_sheet(workbook, results, fmt)
+        elif model_type == "LogisticRegression":
+            ResultsExporter._write_logistic_regression_sheet(workbook, results, fmt)
+        # 13. Decision Tree
+        ResultsExporter._write_decision_tree_sheet(workbook, results, fmt)
+        # 14. Methodology Log (replaces old Methodology + Analysis Log sheets)
+        ResultsExporter._write_methodology_log_sheet(workbook, results, fmt, trace=None)
+        # 15. Raw Data
+        ResultsExporter._write_rawdata_sheet(workbook, results, fmt)
             
         workbook.close()
         print(f"DEBUG: Excel export attempted to: {output_file}")
@@ -142,6 +154,116 @@ class ResultsExporter:
                     except Exception as e:
                         print(f"DEBUG MULTI: Failed to remove temp file: {str(e)}")
             ResultsExporter._temp_files.clear()
+
+    @staticmethod
+    def _write_assumption_summary_sheet(workbook, all_results, fmt):
+        """Single-page summary of all assumption test results across datasets.
+
+        Columns: Dataset | Test | Normality SW-W | SW-p | Normal? |
+                 BF-F | BF-p | Equal var? | Sphericity W | Sph-p | Sph OK? |
+                 Recommendation
+        Red highlight = assumption violated. Green/neutral = met.
+        """
+        ws = workbook.add_worksheet("Assumption Summary")
+        ws.set_column(0, 0, 28)   # Dataset
+        ws.set_column(1, 1, 22)   # Test
+        ws.set_column(2, 2, 14)   # SW-W
+        ws.set_column(3, 3, 10)   # SW-p
+        ws.set_column(4, 4, 12)   # Normal?
+        ws.set_column(5, 5, 12)   # BF-F
+        ws.set_column(6, 6, 10)   # BF-p
+        ws.set_column(7, 7, 14)   # Equal var?
+        ws.set_column(8, 8, 14)   # Mauchly-W
+        ws.set_column(9, 9, 12)   # Sph-p
+        ws.set_column(10, 10, 12) # Sphericity?
+        ws.set_column(11, 11, 30) # Recommendation
+
+        row = 0
+        ws.merge_range(row, 0, row, 11, "ASSUMPTION TEST SUMMARY (all datasets)", fmt["title"])
+        row += 1
+        ws.merge_range(row, 0, row, 11,
+            "SW = Shapiro-Wilk on model residuals  |  BF = Brown-Forsythe (variance homogeneity)  |  "
+            "Sph = Mauchly sphericity (RM/Mixed ANOVA only)  |  Red = assumption violated",
+            fmt.get("explanation", fmt["cell"]))
+        row += 2
+
+        headers = [
+            "Dataset", "Statistical Test",
+            "SW-W", "SW p-value", "Residuals Normal?",
+            "BF-F", "BF p-value", "Equal Variance?",
+            "Mauchly-W", "Sph. p-value", "Sphericity OK?",
+            "Recommendation",
+        ]
+        for col, h in enumerate(headers):
+            ws.write(row, col, h, fmt["header"])
+        row += 1
+
+        def _fmt_num(val):
+            if isinstance(val, (float, int)):
+                return "<0.001" if val < 0.001 else f"{val:.4f}"
+            return "N/A"
+
+        def _cell(ok):
+            """Return (text, format_key) for a pass/fail cell."""
+            if ok is True:
+                return "Yes", "cell"
+            if ok is False:
+                return "No", "significant"
+            return "N/A", "cell"
+
+        for dataset_name, results in all_results.items():
+            test_name = results.get("test", "N/A")
+            test_info = results.get("test_info", {})
+            pre = test_info.get("pre_transformation", {}) if test_info else {}
+            post = test_info.get("post_transformation", {}) if test_info else {}
+            transformation = results.get("transformation", "None")
+            use_post = bool(transformation and transformation not in ("None", "No further") and post)
+
+            # --- Normality (Shapiro-Wilk on residuals) ---
+            norm_src = post.get("residuals_normality", {}) if use_post else pre.get("residuals_normality", {})
+            if not norm_src:
+                # fallback: new normality_tests structure
+                nt = results.get("normality_tests", {})
+                norm_src = nt.get("model_residuals_transformed" if use_post else "model_residuals", {})
+            sw_w = norm_src.get("statistic")
+            sw_p = norm_src.get("p_value")
+            is_normal = norm_src.get("is_normal", (isinstance(sw_p, (float, int)) and sw_p > 0.05) if sw_p is not None else None)
+
+            # --- Variance homogeneity (Brown-Forsythe) ---
+            var_src = post.get("variance", {}) if use_post else pre.get("variance", {})
+            if not var_src:
+                vt = results.get("variance_test", {})
+                var_src = vt.get("transformed", vt) if (use_post and "transformed" in vt) else vt
+            bf_f = var_src.get("statistic")
+            bf_p = var_src.get("p_value")
+            equal_var = var_src.get("equal_variance", (isinstance(bf_p, (float, int)) and bf_p > 0.05) if bf_p is not None else None)
+
+            # --- Sphericity (Mauchly, only RM/Mixed) ---
+            sph = results.get("sphericity_test", {})
+            sph_w = sph.get("W") if sph else None
+            sph_p = sph.get("p_value") if sph else None
+            sph_ok = sph.get("has_sphericity") if sph else None
+
+            # --- Recommendation ---
+            rec = results.get("recommendation", results.get("test_recommendation", results.get("test_type", "N/A")))
+
+            norm_text, norm_fmt = _cell(is_normal)
+            var_text, var_fmt = _cell(equal_var)
+            sph_text, sph_fmt = _cell(sph_ok)
+
+            ws.write(row, 0, str(dataset_name), fmt["cell"])
+            ws.write(row, 1, str(test_name), fmt["cell"])
+            ws.write(row, 2, _fmt_num(sw_w), fmt["cell"])
+            ws.write(row, 3, _fmt_num(sw_p), fmt["sig_highlight"] if sw_p is not None and isinstance(sw_p, (float, int)) and sw_p < 0.05 else fmt["cell"])
+            ws.write(row, 4, norm_text, fmt[norm_fmt])
+            ws.write(row, 5, _fmt_num(bf_f), fmt["cell"])
+            ws.write(row, 6, _fmt_num(bf_p), fmt["sig_highlight"] if bf_p is not None and isinstance(bf_p, (float, int)) and bf_p < 0.05 else fmt["cell"])
+            ws.write(row, 7, var_text, fmt[var_fmt])
+            ws.write(row, 8, _fmt_num(sph_w), fmt["cell"])
+            ws.write(row, 9, _fmt_num(sph_p), fmt["sig_highlight"] if sph_p is not None and isinstance(sph_p, (float, int)) and sph_p < 0.05 else fmt["cell"])
+            ws.write(row, 10, sph_text, fmt[sph_fmt])
+            ws.write(row, 11, str(rec), fmt["cell"])
+            row += 1
 
     @staticmethod
     def export_multi_dataset_results(all_results, excel_path):
@@ -186,18 +308,22 @@ class ResultsExporter:
         overview_sheet.set_column('B:E', 15)
         
         # Write overview headers
+        overview_sheet.set_column('F:F', 22)
+        overview_sheet.set_column('G:G', 22)
         overview_sheet.write(0, 0, "Dataset", fmt["header"])
         overview_sheet.write(0, 1, "Test", fmt["header"])
         overview_sheet.write(0, 2, "p-value", fmt["header"])
         overview_sheet.write(0, 3, "Significant", fmt["header"])
         overview_sheet.write(0, 4, "Transformation", fmt["header"])
-        
+        overview_sheet.write(0, 5, "p-value (FDR-corrected)", fmt["header"])
+        overview_sheet.write(0, 6, "Significant (FDR)", fmt["header"])
+
         # For each dataset: write overview row with basic info
         row = 1
         for dataset_name, results in all_results.items():
             overview_sheet.write(row, 0, str(dataset_name), fmt["header"])
             overview_sheet.write(row, 1, str(results.get("test", "N/A")), fmt["cell"])
-            
+
             p_value = results.get("p_value", None)
             if p_value is not None and isinstance(p_value, (float, int)):
                 if p_value < 0.001:
@@ -206,14 +332,26 @@ class ResultsExporter:
                     overview_sheet.write(row, 2, f"{p_value:.4f}", fmt["cell"])
             else:
                 overview_sheet.write(row, 2, "N/A", fmt["cell"])
-            
+
             is_significant = p_value is not None and isinstance(p_value, (float, int)) and p_value < 0.05
-            sig_fmt = fmt["significant"] if is_significant else fmt["cell"]
+            sig_fmt = fmt["sig_highlight"] if is_significant else fmt["cell"]
             overview_sheet.write(row, 3, "Yes" if is_significant else "No", sig_fmt)
-            
+
             transformation = results.get("transformation", "None")
             overview_sheet.write(row, 4, str(transformation), fmt["cell"])
-            
+
+            # FDR-corrected p-value
+            p_fdr = results.get("p_value_fdr", None)
+            if p_fdr is not None:
+                fdr_str = "<0.001" if p_fdr < 0.001 else f"{p_fdr:.4f}"
+                overview_sheet.write(row, 5, fdr_str, fmt["cell"])
+                is_sig_fdr = p_fdr < 0.05
+                fdr_sig_fmt = fmt["sig_highlight"] if is_sig_fdr else fmt["cell"]
+                overview_sheet.write(row, 6, "Yes" if is_sig_fdr else "No", fdr_sig_fmt)
+            else:
+                overview_sheet.write(row, 5, "N/A", fmt["cell"])
+                overview_sheet.write(row, 6, "N/A", fmt["cell"])
+
             row += 1
             
         # Add detailed information for each dataset
@@ -354,6 +492,12 @@ class ResultsExporter:
             # Add separator between datasets
             row += 3
         
+        # Assumption Summary — second sheet, right after Overview
+        try:
+            ResultsExporter._write_assumption_summary_sheet(workbook, all_results, fmt)
+        except Exception as e:
+            print(f"DEBUG MULTI: Error creating assumption summary sheet: {str(e)}")
+
         # For each dataset: create all detail sheets as in single analysis
         for dataset_name, results in all_results.items():
             # Use the pre-generated decision tree path
@@ -362,17 +506,16 @@ class ResultsExporter:
             try:
                 # Create all the detailed sheets for this dataset
                 ResultsExporter._write_summary_sheet(workbook, results, fmt, f"{dataset_name}_Summary")
-                ResultsExporter._write_methodology_sheet(workbook, results, fmt, f"{dataset_name}_Methodology")
-                ResultsExporter._write_assumptions_sheet(workbook, results, fmt, f"{dataset_name}_Assumptions")
                 ResultsExporter._write_results_sheet(workbook, results, fmt, f"{dataset_name}_Results")
                 ResultsExporter._write_descriptive_sheet(workbook, results, fmt, f"{dataset_name}_Descriptive")
+                _groups = results.get("groups", [])
+                _pairwise = results.get("pairwise_comparisons", [])
+                if len(_groups) >= 3 and _pairwise:
+                    ResultsExporter._write_pairwise_sheet(workbook, results, fmt, f"{dataset_name}_Pairwise")
+                ResultsExporter._write_assumptions_sheet(workbook, results, fmt, f"{dataset_name}_Assumptions")
                 ResultsExporter._write_decision_tree_sheet(workbook, results, fmt, f"{dataset_name}_DecisionTree", pre_generated_tree)
+                ResultsExporter._write_methodology_log_sheet(workbook, results, fmt, trace=None, sheet_name=f"{dataset_name}_MethodLog")
                 ResultsExporter._write_rawdata_sheet(workbook, results, fmt, f"{dataset_name}_RawData")
-                ResultsExporter._write_pairwise_sheet(workbook, results, fmt, f"{dataset_name}_Pairwise")
-                
-                # Add analysis log if available
-                if results.get("analysis_log"):
-                    ResultsExporter._write_analysislog_sheet(workbook, results["analysis_log"], fmt, f"{dataset_name}_Log")
                     
             except Exception as e:
                 print(f"DEBUG MULTI: Error creating sheets for {dataset_name}: {str(e)}")
@@ -410,18 +553,121 @@ class ResultsExporter:
             "title": workbook.add_format({'bold': True, 'font_size': 14, 'align': 'center', 'valign': 'vcenter'}),
             "header": workbook.add_format({'bold': True, 'font_size': 12, 'align': 'center', 'bottom': 2}),
             "cell": workbook.add_format({'align': 'center', 'text_wrap': True}),
-            "significant": workbook.add_format({'align': 'center', 'color': 'red', 'bold': True, 'text_wrap': True}),
+            "sig_highlight": workbook.add_format({'align': 'center', 'color': 'red', 'bold': True, 'text_wrap': True}),
             "explanation": workbook.add_format({'text_wrap': True, 'valign': 'top', 'font_color': '#1F4E78'}),
             "section_header": workbook.add_format({'bold': True, 'bg_color': '#B4C6E7', 'border': 1}),
             "section_header_center": workbook.add_format({'bold': True, 'bg_color': '#B4C6E7', 'border': 1, 'align': 'center'}),
             "effect_strong": workbook.add_format({'align': 'center', 'color': '#006400', 'bold': True, 'text_wrap': True}),
-            "effect_medium": workbook.add_format({'align': 'center', 'color': '#FFA500', 'bold': True, 'text_wrap': True}),
+            "effect_med_text": workbook.add_format({'align': 'center', 'color': '#FFA500', 'bold': True, 'text_wrap': True}),
             "effect_weak": workbook.add_format({'align': 'center', 'color': '#A52A2A', 'bold': True, 'text_wrap': True}),
             "key": workbook.add_format({'bold': True, 'align': 'right'}),
             "bold": workbook.add_format({'bold': True}),
-            "recommended": workbook.add_format({'align': 'center', 'bg_color': '#E6F3FF', 'font_color': '#0066CC', 'bold': True, 'text_wrap': True})
+            "recommended": workbook.add_format({'align': 'center', 'bg_color': '#E6F3FF', 'font_color': '#0066CC', 'bold': True, 'text_wrap': True}),
+            # ── New academic navy/grey palette ──────────────────────────────────────
+            "navy_header":     workbook.add_format({'bold': True, 'font_size': 11, 'font_name': 'Calibri',
+                                                    'bg_color': '#1F3864', 'font_color': '#FFFFFF', 'text_wrap': True}),
+            "section_blue":    workbook.add_format({'bold': True, 'font_size': 10, 'font_name': 'Calibri',
+                                                    'bg_color': '#2F5496', 'font_color': '#FFFFFF', 'text_wrap': True}),
+            "subheader_light": workbook.add_format({'bold': True, 'font_size': 10, 'font_name': 'Calibri',
+                                                    'bg_color': '#D6E4F7', 'font_color': '#1F3864', 'text_wrap': True}),
+            "significant":     workbook.add_format({'font_size': 10, 'font_name': 'Calibri',
+                                                    'bg_color': '#E2EFDA', 'font_color': '#375623', 'text_wrap': True}),
+            "not_significant": workbook.add_format({'font_size': 10, 'font_name': 'Calibri',
+                                                    'bg_color': '#F5F5F5', 'font_color': '#808080', 'text_wrap': True}),
+            "warning":         workbook.add_format({'font_size': 10, 'font_name': 'Calibri',
+                                                    'bg_color': '#FFF2CC', 'font_color': '#7F6000', 'text_wrap': True}),
+            "critical":        workbook.add_format({'font_size': 10, 'font_name': 'Calibri',
+                                                    'bg_color': '#FCE4D6', 'font_color': '#833C00', 'text_wrap': True}),
+            "alternating":     workbook.add_format({'font_size': 10, 'font_name': 'Calibri',
+                                                    'bg_color': '#F5F8FD', 'font_color': '#2F2F2F', 'text_wrap': True}),
+            "number_4dp":      workbook.add_format({'font_size': 10, 'font_name': 'Calibri',
+                                                    'align': 'right', 'num_format': '0.0000'}),
+            "pvalue":          workbook.add_format({'font_size': 10, 'font_name': 'Calibri',
+                                                    'align': 'right', 'num_format': '0.0000'}),
+            "effect_low":      workbook.add_format({'font_size': 10, 'font_name': 'Calibri',
+                                                    'bg_color': '#F5F5F5', 'font_color': '#808080', 'text_wrap': True}),
+            "effect_medium":   workbook.add_format({'font_size': 10, 'font_name': 'Calibri',
+                                                    'bg_color': '#FFF2CC', 'font_color': '#7F6000', 'text_wrap': True}),
+            "effect_high":     workbook.add_format({'bold': True, 'font_size': 10, 'font_name': 'Calibri',
+                                                    'bg_color': '#E2EFDA', 'font_color': '#375623', 'text_wrap': True}),
+            "italic_grey":     workbook.add_format({'italic': True, 'font_size': 10, 'font_name': 'Calibri',
+                                                    'font_color': '#808080', 'text_wrap': True}),
+            "plain_language":  workbook.add_format({'font_size': 10, 'font_name': 'Calibri',
+                                                    'bg_color': '#D6E4F7', 'font_color': '#1F3864', 'text_wrap': True}),
         }
     
+    @staticmethod
+    def _interpret_effect_size(metric: str, value: float):
+        """Return (label, fmt_key) for an effect size value based on standard thresholds.
+
+        Parameters
+        ----------
+        metric : str
+            The effect_size_type string from the results dict.
+        value : float
+            The numeric effect size (absolute value is used).
+
+        Returns
+        -------
+        tuple[str, str]
+            (human-readable label, fmt dict key)
+        """
+        v = abs(value)
+        m = metric.lower().strip()
+
+        # Eta-squared family
+        if m in ("eta_squared", "partial_eta_squared", "omega_squared"):
+            if v < 0.01: return ("Negligible", "effect_low")
+            if v < 0.06: return ("Small",      "effect_low")
+            if v < 0.14: return ("Medium",     "effect_medium")
+            return ("Large", "effect_high")
+
+        # Cohen's d family (includes Hedges' g and RM/mixed variants)
+        if m in ("cohen_d", "cohen_d_mixed", "cohen_d_rm",
+                 "hedges_g", "hedges_g (undefined — zero pooled variance)"):
+            if v < 0.20: return ("Negligible", "effect_low")
+            if v < 0.50: return ("Small",      "effect_low")
+            if v < 0.80: return ("Medium",     "effect_medium")
+            return ("Large", "effect_high")
+
+        # Correlation r
+        if m in ("r", "r (spearman)"):
+            if v < 0.10: return ("Negligible", "effect_low")
+            if v < 0.30: return ("Small",      "effect_low")
+            if v < 0.50: return ("Medium",     "effect_medium")
+            return ("Large", "effect_high")
+
+        # Cohen's f
+        if m in ("cohen_f", "cohen's f", "cohen's f (approx.)"):
+            if v < 0.10: return ("Negligible", "effect_low")
+            if v < 0.25: return ("Small",      "effect_low")
+            if v < 0.40: return ("Medium",     "effect_medium")
+            return ("Large", "effect_high")
+
+        # Epsilon-squared (Kruskal-Wallis analog)
+        if m == "epsilon_squared":
+            if v < 0.01: return ("Negligible", "effect_low")
+            if v < 0.08: return ("Small",      "effect_low")
+            if v < 0.26: return ("Medium",     "effect_medium")
+            return ("Large", "effect_high")
+
+        # Kendall's W (concordance coefficient)
+        if m in ("kendall_w", "kendall's w"):
+            if v < 0.10: return ("Negligible", "effect_low")
+            if v < 0.30: return ("Small",      "effect_low")
+            if v < 0.50: return ("Medium",     "effect_medium")
+            return ("Large", "effect_high")
+
+        # Intraclass correlation coefficient
+        if m == "icc":
+            if v < 0.10: return ("Negligible", "effect_low")
+            if v < 0.40: return ("Small",      "effect_low")
+            if v < 0.75: return ("Medium",     "effect_medium")
+            return ("Large", "effect_high")
+
+        # AUC, R-squared, and unknowns — no standard magnitude label
+        return ("", "cell")
+
     @staticmethod
     def _validate_excel_inputs(workbook, results, fmt, ws, function_name="Excel function"):
         """
@@ -449,7 +695,7 @@ class ResultsExporter:
                 
         # Format validation
         if fmt is not None:
-            required_formats = ["header", "cell", "significant", "section_header"]
+            required_formats = ["header", "cell", "sig_highlight", "section_header"]
             missing_formats = [f for f in required_formats if f not in fmt]
             if missing_formats:
                 error_messages.append(f"Missing required formats: {', '.join(missing_formats)}")
@@ -502,6 +748,146 @@ class ResultsExporter:
             for col, val in enumerate(row):
                 ws.write(start_row + 1 + row_idx, col, val, fmt["cell"])
         return start_row + 1 + len(anova_table)
+
+    @staticmethod
+    def _write_cover_sheet(workbook, results, fmt):
+        """Professional cover sheet — first tab of every export."""
+        from datetime import datetime
+
+        ws = workbook.add_worksheet("Cover")
+        ws.hide_gridlines(2)
+        ws.set_column(0, 0, 30)   # A — labels
+        ws.set_column(1, 1, 45)   # B — values
+
+        # Helper: merge two columns and write with given format
+        def merge_write(r, text, cell_fmt):
+            ws.merge_range(r, 0, r, 1, text, cell_fmt)
+
+        row = 3   # rows 0-2 are top margin
+
+        # ── Main title ───────────────────────────────────────────────────────
+        ws.set_row(row, 24)
+        merge_write(row, "BioMedStatX 2.0 \u2014 Statistical Analysis Report", fmt["navy_header"])
+        row += 2  # blank
+
+        # ── Analysis Information ─────────────────────────────────────────────
+        merge_write(row, "Analysis Information", fmt["section_blue"])
+        row += 1
+
+        model_type = results.get("model_type", results.get("test", "Unknown"))
+        dep_var    = results.get("dependent_variable", results.get("value_column", "\u2014"))
+        factors    = results.get("group_column", "")
+        if results.get("factors"):
+            factors = ", ".join(results["factors"]) if isinstance(results["factors"], list) else str(results["factors"])
+        covariates = results.get("covariates", [])
+        if isinstance(covariates, list):
+            cov_text = ", ".join(str(c) for c in covariates) if covariates else "None"
+        else:
+            cov_text = str(covariates) if covariates else "None"
+        filter_text = str(results.get("filter_applied", "None")) or "None"
+        n_val = results.get("n_total", results.get("n", "\u2014"))
+
+        info_rows = [
+            ("Analysis Type:",       model_type),
+            ("Dependent Variable:",  dep_var),
+            ("Factor(s):",           factors or "\u2014"),
+            ("Covariates:",          cov_text),
+            ("Filter applied:",      filter_text),
+            ("Sample size (N):",     str(n_val) if n_val is not None else "\u2014"),
+        ]
+        for label, value in info_rows:
+            ws.write(row, 0, label, fmt["key"])
+            ws.write(row, 1, str(value), fmt["cell"])
+            row += 1
+        row += 1  # blank
+
+        # ── Results at a Glance ──────────────────────────────────────────────
+        merge_write(row, "Results at a Glance", fmt["section_blue"])
+        row += 1
+
+        p_value = results.get("p_value")
+        alpha   = results.get("alpha", 0.05)
+        is_sig  = p_value is not None and isinstance(p_value, (float, int)) and p_value < alpha
+
+        if p_value is not None and isinstance(p_value, (float, int)):
+            p_text = "<0.001" if p_value < 0.001 else f"{p_value:.4f}"
+        else:
+            p_text = "Not available"
+
+        p_fmt = fmt["significant"] if is_sig else fmt["critical"]
+        ws.write(row, 0, "Main p-value:", fmt["key"])
+        ws.write(row, 1, p_text, p_fmt)
+        row += 1
+
+        sig_fmt  = fmt["significant"] if is_sig else fmt["not_significant"]
+        sig_text = "Yes" if is_sig else "No"
+        ws.write(row, 0, "Significant:", fmt["key"])
+        ws.write(row, 1, sig_text, sig_fmt)
+        row += 1
+
+        eff_val  = results.get("effect_size")
+        eff_type = results.get("effect_size_type", "")
+        if eff_val is not None and isinstance(eff_val, (float, int)):
+            mag_label, eff_fmt_key = ResultsExporter._interpret_effect_size(eff_type, eff_val)
+            eff_display = f"{eff_val:.4f}"
+            if mag_label:
+                eff_display += f" \u2014 {mag_label}"
+            if eff_type:
+                eff_display += f" ({eff_type})"
+            eff_fmt = fmt.get(eff_fmt_key, fmt["cell"])
+        else:
+            eff_display = "Not available"
+            eff_fmt = fmt["cell"]
+        ws.write(row, 0, "Effect size:", fmt["key"])
+        ws.write(row, 1, eff_display, eff_fmt)
+        row += 1
+
+        ws.write(row, 0, "Test used:", fmt["key"])
+        ws.write(row, 1, str(results.get("test", "Not specified")), fmt["cell"])
+        row += 2  # blank
+
+        # ── Report Contents ──────────────────────────────────────────────────
+        merge_write(row, "Report Contents", fmt["section_blue"])
+        row += 1
+
+        _sheet_desc = [
+            ("Cover",                "This overview page"),
+            ("Summary",              "Key statistics, effect size, confidence interval, power"),
+            ("Statistical Results",  "Full test output, ANOVA table, omnibus results"),
+            ("Descriptives",         "Group means, SDs, medians, quartiles"),
+        ]
+        _groups  = results.get("groups", [])
+        _pairwise = results.get("pairwise_comparisons", [])
+        if len(_groups) >= 3 and _pairwise:
+            _sheet_desc.append(("Pairwise Comparisons", "Post-hoc test results with corrected p-values"))
+        _sheet_desc.append(("Assumptions", "Normality, variance homogeneity, sphericity, diagnostic plots"))
+        _mt = results.get("model_type", "")
+        if _mt == "ANCOVA":
+            _sheet_desc.append(("ANCOVA Details", "Adjusted means, regression slope homogeneity"))
+        elif _mt == "LMM":
+            _sheet_desc.append(("LMM Details", "Fixed and random effects, ICC, model fit indices"))
+        elif _mt == "Correlation":
+            _sheet_desc.append(("Correlation", "Pearson/Spearman coefficient, scatter plot"))
+        elif _mt == "CorrelationMatrix":
+            _sheet_desc.append(("Correlation Matrix", "Full pairwise correlation matrix by group"))
+        elif _mt == "LinearRegression":
+            _sheet_desc.append(("Linear Regression", "Model summary, coefficients, diagnostics"))
+        elif _mt == "LogisticRegression":
+            _sheet_desc.append(("Logistic Regression", "Odds ratios, Hosmer-Lemeshow, ROC/AUC"))
+        _sheet_desc += [
+            ("Decision Tree",    "Visual flowchart of statistical decisions made"),
+            ("Methodology Log",  "Step-by-step audit trail and suggested Methods section text"),
+            ("Raw Data",         "Original data used in this analysis"),
+        ]
+        for sheet_name, desc in _sheet_desc:
+            ws.write(row, 0, sheet_name, fmt["bold"])
+            ws.write(row, 1, desc, fmt["cell"])
+            row += 1
+        row += 1
+
+        # ── Footer ───────────────────────────────────────────────────────────
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        merge_write(row, f"Generated by BioMedStatX 2.0 \u2014 {now}", fmt["italic_grey"])
 
     @staticmethod
     def _write_summary_sheet(workbook, results, fmt, sheet_name="Summary"):
@@ -627,56 +1013,28 @@ class ResultsExporter:
         if "effect_size" in results and results["effect_size"] is not None:
             effect_size = results["effect_size"]
             effect_type = results.get("effect_size_type", "")
-            effect_desc = ""
-            magnitude = ""
-            format_to_use = fmt["cell"] # Default format
 
-            if effect_type.lower() == "cohen_d":
-                effect_desc = "Cohen's d"
-                if abs(effect_size) < 0.2: magnitude = "very small"; format_to_use = fmt["effect_weak"]
-                elif abs(effect_size) < 0.5: magnitude = "small"; format_to_use = fmt["effect_weak"]
-                elif abs(effect_size) < 0.8: magnitude = "medium"; format_to_use = fmt["effect_medium"]
-                else: magnitude = "large"; format_to_use = fmt["effect_strong"]
-            elif effect_type.lower() == "hedges_g":
-                effect_desc = "Hedges' g"
-                if abs(effect_size) < 0.2: magnitude = "very small"; format_to_use = fmt["effect_weak"]
-                elif abs(effect_size) < 0.5: magnitude = "small"; format_to_use = fmt["effect_weak"]
-                elif abs(effect_size) < 0.8: magnitude = "medium"; format_to_use = fmt["effect_medium"]
-                else: magnitude = "large"; format_to_use = fmt["effect_strong"]
-            elif effect_type.lower() in ["eta_squared", "partial_eta_squared", "omega_squared"]:
-                effect_desc = effect_type.replace("_", " ").title()
-                if abs(effect_size) < 0.01: magnitude = "very small"; format_to_use = fmt["effect_weak"]
-                elif abs(effect_size) < 0.06: magnitude = "small"; format_to_use = fmt["effect_weak"]
-                elif abs(effect_size) < 0.14: magnitude = "medium"; format_to_use = fmt["effect_medium"]
-                else: magnitude = "large"; format_to_use = fmt["effect_strong"]
-            elif effect_type.lower() == "epsilon_squared":
-                effect_desc = "Epsilon²"
-                if abs(effect_size) < 0.01: magnitude = "very small"; format_to_use = fmt["effect_weak"]
-                elif abs(effect_size) < 0.08: magnitude = "small"; format_to_use = fmt["effect_weak"]
-                elif abs(effect_size) < 0.26: magnitude = "medium"; format_to_use = fmt["effect_medium"]
-                else: magnitude = "large"; format_to_use = fmt["effect_strong"]
-            elif effect_type.lower() in ["kendall_w", "kendall's w"]:
-                effect_desc = "Kendall's W"
-                if abs(effect_size) < 0.1: magnitude = "weak"; format_to_use = fmt["effect_weak"]
-                elif abs(effect_size) < 0.3: magnitude = "moderate"; format_to_use = fmt["effect_weak"]
-                else: magnitude = "strong"; format_to_use = fmt["effect_strong"]
-            elif effect_type.lower() in ["cohen's f", "cohen's f (approx.)"]:
-                effect_desc = effect_type
-                if abs(effect_size) < 0.1: magnitude = "very small"; format_to_use = fmt["effect_weak"]
-                elif abs(effect_size) < 0.25: magnitude = "small"; format_to_use = fmt["effect_weak"]
-                elif abs(effect_size) < 0.4: magnitude = "medium"; format_to_use = fmt["effect_medium"]
-                else: magnitude = "large"; format_to_use = fmt["effect_strong"]
-            elif effect_type.lower() == "r": # For Wilcoxon, Mann-Whitney U
-                effect_desc = "r (rank correlation)"
-                if abs(effect_size) < 0.1: magnitude = "very small"; format_to_use = fmt["effect_weak"]
-                elif abs(effect_size) < 0.3: magnitude = "small"; format_to_use = fmt["effect_weak"]
-                elif abs(effect_size) < 0.5: magnitude = "medium"; format_to_use = fmt["effect_medium"]
-                else: magnitude = "large"; format_to_use = fmt["effect_strong"]
-            else:
-                effect_desc = effect_type if effect_type else "Effect size"
-                magnitude = "not classified"
+            # Human-readable label for the effect size type
+            _type_labels = {
+                "cohen_d": "Cohen's d", "cohen_d_mixed": "Cohen's d", "cohen_d_rm": "Cohen's d",
+                "hedges_g": "Hedges' g",
+                "eta_squared": "Eta\u00b2", "partial_eta_squared": "Partial \u03b7\u00b2",
+                "omega_squared": "Omega\u00b2", "epsilon_squared": "Epsilon\u00b2",
+                "kendall_w": "Kendall's W", "kendall's w": "Kendall's W",
+                "cohen_f": "Cohen's f", "cohen's f": "Cohen's f",
+                "cohen's f (approx.)": "Cohen's f (approx.)",
+                "r": "r (rank correlation)", "r (spearman)": "r (Spearman)",
+                "icc": "ICC", "auc": "AUC", "r_squared": "R\u00b2",
+            }
+            effect_desc = _type_labels.get(effect_type.lower(), effect_type if effect_type else "Effect size")
 
-            key_value_pairs.append((f"{effect_desc}:", f"{effect_size:.4f} ({magnitude})"))
+            magnitude, fmt_key = ResultsExporter._interpret_effect_size(effect_type, effect_size)
+            format_to_use = fmt.get(fmt_key, fmt["cell"])
+
+            label_parts = [f"{effect_size:.4f}"]
+            if magnitude:
+                label_parts.append(magnitude)
+            key_value_pairs.append((f"{effect_desc}:", " — ".join(label_parts)))
         else:
             format_to_use = fmt["cell"] # Ensure format_to_use is defined
 
@@ -722,13 +1080,26 @@ class ResultsExporter:
             ws.write(row, 0, key, fmt["key"])
             current_format = fmt["cell"]
             if key == "Significant:" and value == "Yes":
-                current_format = fmt["significant"]
+                current_format = fmt["sig_highlight"]
             elif key == "p-Value:" and is_significant:
-                current_format = fmt["significant"]
-            elif "Effect size" in key or "Cohen's d" in key or "Eta²" in key or "Epsilon²" in key or "Kendall's W" in key or "r (" in key:
-                    # Use the format_to_use determined during effect size magnitude check
+                current_format = fmt["sig_highlight"]
+            elif any(token in key for token in (
+                    "Effect size", "Cohen's d", "Cohen's f", "Hedges'",
+                    "Eta²", "Partial η²", "Omega²", "Epsilon²",
+                    "Kendall's W", "r (rank", "r (Spearman)", "ICC", "AUC", "R²")):
                 current_format = format_to_use
             ws.write(row, 1, value, current_format)
+            row += 1
+
+        # Analysis Warnings
+        _warnings = results.get("warnings") or []
+        if _warnings:
+            row += 1
+            ws.merge_range(f'A{row}:F{row}', "ANALYSIS WARNINGS", fmt["warning"])
+            row += 1
+            for _w in _warnings:
+                ws.merge_range(f'A{row}:F{row}', str(_w), fmt["warning"])
+                row += 1
             row += 1
 
         # Navigation
@@ -819,1287 +1190,88 @@ class ResultsExporter:
             row += 1
 
     @staticmethod
-    def _write_methodology_sheet(workbook, results, fmt, sheet_name="Methodology"):
+    def _write_methodology_log_sheet(workbook, results, fmt, trace=None, sheet_name="Methodology Log"):
+        """Write the Methodology Log sheet — decision audit trail + suggested Methods paragraph.
+
+        Parameters
+        ----------
+        trace : MethodologyTrace | None
+            If None the sheet is still created but contains only a notice.
+        """
         ws = workbook.add_worksheet(sheet_name)
-        ws.set_column(0, 0, 45)
-        ws.set_column(1, 1, 75)
-        ws.set_row(0, 30)
-        ws.merge_range("A1:B1", "METHODIK UND MODELLPARAMETER", fmt["title"])
+        ws.set_column(0, 0, 6)    # Step
+        ws.set_column(1, 1, 20)   # Category
+        ws.set_column(2, 2, 60)   # Decision
+        ws.set_column(3, 3, 25)   # Detail
+        ws.freeze_panes(3, 0)
 
-        family_diagnostics = results.get("family_diagnostics") or {}
-        pairwise = results.get("pairwise_comparisons") or []
-        corrections = sorted({
-            str(comp.get("correction"))
-            for comp in pairwise
-            if comp.get("correction")
-        })
-        posthoc_path = "marginaleffects"
-        posthoc_test = str(results.get("posthoc_test") or "")
-        if "non-parametric" in posthoc_test.lower():
-            posthoc_path = "fallback_nonparametric"
+        row = 0
 
-        interpretation_order = results.get("interpretation_order")
-        if isinstance(interpretation_order, (list, tuple)):
-            interpretation_order = " -> ".join(str(item) for item in interpretation_order)
-
-        methodology_rows = [
-            ("Model class", results.get("model_class", "N/A")),
-            ("Selected family", results.get("model_family", "N/A")),
-            ("Link function", results.get("model_link", "N/A")),
-            ("Covariance structure (working)", results.get("cov_struct_used", "N/A")),
-            ("Covariance estimator", results.get("covariance_estimator", "N/A")),
-            ("Pearson phi", family_diagnostics.get("pearson_phi", "N/A")),
-            ("Zero fraction", family_diagnostics.get("zero_fraction", "N/A")),
-            ("Overdispersion ratio", family_diagnostics.get("overdispersion_ratio", "N/A")),
-            ("Family selection rationale", family_diagnostics.get("selection_reason", "N/A")),
-            ("Omnibus statistic", results.get("StatisticType", "Wald Chi-square")),
-            ("Primary gate policy", results.get("primary_effect_policy", "N/A")),
-            ("Primary effect (gate)", (results.get("primary_effect") or {}).get("source", "N/A")),
-            ("Interaction significant", results.get("interaction_significant", "N/A")),
-            ("Interpretation order", interpretation_order or "N/A"),
-            ("Post-hoc path used", posthoc_path),
-            ("Multiplicity method(s)", ", ".join(corrections) if corrections else "None"),
-        ]
-
-        row = 2
-        ws.write(row, 0, "Parameter", fmt["header"])
-        ws.write(row, 1, "Value", fmt["header"])
+        # ── Title ────────────────────────────────────────────────────────────
+        ws.merge_range(f'A{row+1}:D{row+1}',
+                       "Methodology Log \u2014 Analysis Decision Trail", fmt["navy_header"])
+        ws.set_row(row, 22)
         row += 1
 
-        for key, value in methodology_rows:
-            ws.write(row, 0, key, fmt["key"])
-            if isinstance(value, float):
-                ws.write(row, 1, f"{value:.6f}", fmt["cell"])
-            else:
-                ws.write(row, 1, str(value), fmt["cell"])
-            row += 1
-
-        warnings_list = results.get("warnings") or []
-        if warnings_list:
-            row += 1
-            ws.write(row, 0, "Methodik-Hinweise", fmt["section_header"])
-            ws.write(row, 1, " | ".join(str(item) for item in warnings_list), fmt["explanation"])
-
-        anova_table = results.get("anova_table")
-        if anova_table is not None:
-            row += 2
-            ws.merge_range(f'A{row}:F{row}', "ANOVA TABLE", fmt["section_header"])
-            row += 1
-            next_row = ResultsExporter._write_anova_table(ws, anova_table, fmt, start_row=row)
-            row = next_row + 2  # Add space after the table
-            
-            # Add explanation section for ANOVA table
-            ws.merge_range(f'A{row}:F{row}', "UNDERSTANDING THE ANOVA TABLE", fmt["section_header"])
-            row += 1
-            
-            # Determine which type of ANOVA is being used
-            test_name = results.get("test", "").lower()
-            is_welch = "welch" in test_name
-            is_rm = "repeated measures" in test_name or "rm anova" in test_name
-            is_mixed = "mixed" in test_name
-            is_two_way = "two-way" in test_name or "two way" in test_name
-            
-            # Introduction text based on ANOVA type
-            if is_welch:
-                intro_text = (
-                    "This is a Welch's ANOVA table, which does not assume equal variances between groups. "
-                    "Welch's ANOVA is more robust when the homogeneity of variance assumption is violated."
-                )
-            elif is_rm:
-                intro_text = (
-                    "This is a Repeated Measures ANOVA table, which analyzes differences between repeated measurements "
-                    "on the same subjects, accounting for the dependency between observations."
-                )
-            elif is_mixed:
-                intro_text = (
-                    "This is a Mixed ANOVA table, which combines between-subjects factors (different groups) "
-                    "and within-subjects factors (repeated measures) in the same analysis."
-                )
-            elif is_two_way:
-                intro_text = (
-                    "This is a Two-Way ANOVA table, which analyzes the effect of two independent variables (factors) "
-                    "on one dependent variable, including their potential interaction."
-                )
-            else:
-                intro_text = (
-                    "This is a standard One-Way ANOVA table, which compares means across multiple groups "
-                    "to determine if there are significant differences between them."
-                )
-            
-            # Use robust single cell for ANOVA intro text
-            intro_wrap_fmt = workbook.add_format({
-                'text_wrap': True, 
-                'valign': 'top',
-                'border': 1,
-                'bg_color': '#F0F8FF'
-            })
-            ws.write(row, 0, intro_text, intro_wrap_fmt)
-            intro_anova_height = ResultsExporter.get_fixed_row_height("intro_anova_text")
-            ws.set_row(row, intro_anova_height)
-            row += 2
-            
-            # Column explanations
-            ws.merge_range(f'A{row}:F{row}', "EXPLANATION OF ANOVA TABLE COLUMNS:", fmt["key"])
-            row += 1
-            
-            explanations = [
-                ("Source", "Identifies the component being analyzed:\n• Group/factor names indicate variation between groups/factors\n• Residual (or Error/Within) represents unexplained variation within groups\n• Interaction terms (in factorial designs) show how factors work together"),
-                
-                ("SS (Sum of Squares)", "Measures the total variation attributed to each source:\n• Higher values indicate more variation explained by that source\n• SS between groups shows variation due to group differences\n• SS within groups (residual) shows variation due to individual differences\n• The ratio of SS(between) to SS(total) provides an estimate of effect size"),
-                
-                ("DF (Degrees of Freedom)", "The number of values that are free to vary:\n• For between-groups: DF = number of groups - 1\n• For residuals (simple design): DF = total observations - number of groups\n• For residuals (factorial design): DF = total sample size - number of estimated parameters\n• For factors: DF = number of levels - 1\n• For interactions: DF = product of the individual factors' DFs"),
-                
-                ("MS (Mean Square)", "Average variation per degree of freedom (MS = SS/DF):\n• MS between represents average between-group variation\n• MS within (residual) represents average within-group variation (error variance)\n• The ratio MS(between)/MS(within) forms the F-statistic"),
-                
-                ("F", "The F-statistic (MS between / MS within):\n• Compares between-group variation to within-group variation\n• Larger F values suggest stronger group differences\n• F = 1 would indicate no difference between groups\n• The critical F value depends on the degrees of freedom and alpha level"),
-                
-                ("p_unc", "Probability value (significance level):\n• p < 0.05 is commonly used to indicate statistical significance, though this threshold is arbitrary\n• 'unc' indicates these are uncorrected p-values (not adjusted for multiple comparisons)\n• Small p-values suggest the observed differences are unlikely under the null hypothesis\n• For multiple tests, consider using corrected p-values to control error rates"),
-                
-                ("np2 (Partial Eta Squared)", "Effect size measure (proportion of variance explained):\n• 0.01 = small effect\n• 0.06 = medium effect\n• 0.14 = large effect\n• Higher values indicate stronger effects\n• Interpretation is context-dependent and varies between research fields\n• Consider field-specific benchmarks when interpreting effect sizes")
-            ]
-            
-            explanation_heights = {
-                "Source": "anova_source_explanation",
-                "SS (Sum of Squares)": "anova_ss_explanation", 
-                "DF (Degrees of Freedom)": "anova_df_explanation",
-                "MS (Mean Square)": "anova_ms_explanation",
-                "F": "anova_f_explanation",
-                "p_unc": "anova_p_explanation", 
-                "np2 (Partial Eta Squared)": "anova_np2_explanation"
-            }
-            
-            for term, explanation in explanations:
-                ws.write(row, 0, term, fmt["key"])
-                ws.write(row, 1, explanation, fmt["explanation"])
-                height_key = explanation_heights.get(term, "medium_text")
-                ws.set_row(row, ResultsExporter.get_fixed_row_height(height_key))
-                row += 1
-            
-            row += 1
-            
-            # How to interpret section
-            ws.merge_range(f'A{row}:F{row}', "HOW TO INTERPRET THE RESULTS", fmt["key"])
-            row += 1
-            
-            if is_two_way or is_mixed:
-                interpret_text = (
-                    "1. Check main effects: Look at p-values for each factor. If p < 0.05, that factor has a significant effect.\n\n"
-                    "2. Check interaction: If the interaction p-value is < 0.05, the effect of one factor depends on the level of the other factor. "
-                    "In this case, interpret main effects with caution and focus on pairwise comparisons.\n\n"
-                    "3. Effect size (np2): Indicates the practical significance - how much variance is explained by each factor.\n\n"
-                    "4. Post-hoc tests: For significant effects, examine post-hoc tests to identify which specific groups differ."
-                )
-            else:
-                interpret_text = (
-                    "1. Statistical significance: If the p-value for the between-groups factor is < 0.05, there are significant differences between at least some groups.\n\n"
-                    "2. Effect size (np2): Indicates the practical significance - how much variance is explained by group differences.\n\n"
-                    "3. F-statistic: Higher values indicate stronger evidence against the null hypothesis.\n\n"
-                    "4. Post-hoc tests: For significant results, examine post-hoc tests to identify which specific groups differ from each other."
-                )
-
-            
-            # Use robust single cell for interpretation text
-            interpret_wrap_fmt = workbook.add_format({
-                'text_wrap': True, 
-                'valign': 'top',
-                'border': 1,
-                'bg_color': '#F0F8FF'
-            })
-            ws.write(row, 0, interpret_text, interpret_wrap_fmt)
-            interpret_height = ResultsExporter.get_fixed_row_height("results_interpretation")
-            ws.set_row(row, interpret_height)
-            row += 1
-    
-    @staticmethod
-    def _write_assumptions_sheet(workbook, results, fmt, sheet_name="Assumptions"):
-        ws = workbook.add_worksheet(sheet_name)
-        # Set column widths
-        ws.set_column(0, 0, 55)   # Column A reduced from 80 to 55
-        ws.set_column(1, 5, 20)   # Other columns smaller
-        ws.set_row(0, 30)
-        ws.merge_range('A1:F1', 'TEST ASSUMPTIONS CHECK', fmt["title"])
-
-        # Introduction
-        introduction = (
-            "This sheet documents the tests for checking the assumptions for the statistical analysis. "
-            "Depending on the type of test (parametric or non-parametric), different assumptions must be met."
+        # ── Intro ─────────────────────────────────────────────────────────────
+        intro = (
+            "This log documents every automated decision made during the analysis. "
+            "It can be used as a basis for the Methods section of a manuscript."
         )
-        
-        # Use robust single cell instead of merge_range for text
-        intro_wrap_fmt = workbook.add_format({
-            'text_wrap': True, 
-            'valign': 'top',
-            'border': 1,
-            'bg_color': '#F0F8FF'
-        })
-        ws.write(1, 0, introduction, intro_wrap_fmt)
-        # Use fixed optimal height for introduction
-        intro_height = ResultsExporter.get_fixed_row_height("assumptions_intro")
-        ws.set_row(1, intro_height)
+        ws.merge_range(f'A{row+1}:D{row+1}', intro, fmt["italic_grey"])
+        ws.set_row(row, 30)
+        row += 1
 
-        row = 4
+        # ── Column headers ────────────────────────────────────────────────────
+        col_headers = ["Step", "Category", "Decision", "Detail"]
+        for i, h in enumerate(col_headers):
+            ws.write(row, i, h, fmt["subheader_light"])
+        row += 1
 
-        # Test type and general notes with INTELLIGENT CONTEXT-AWARE EXPLANATIONS
-        test_type = results.get("recommendation", results.get("test_type", "Not specified"))
-        test_name = results.get("test", "")
-        
-        # Detect if this is RM or Mixed ANOVA for context-aware explanations
-        is_rm_anova = "repeated measures" in test_name.lower() or "rm" in test_name.lower()
-        is_mixed_anova = "mixed" in test_name.lower()
-        has_sphericity = "sphericity_test" in results
-        
-        if test_type == "parametric":
-            if is_rm_anova or is_mixed_anova:
-                # ENHANCED EXPLANATION FOR RM/MIXED ANOVA
-                assumptions_overview = (
-                    f"🔬 SPECIAL ASSUMPTIONS FOR {test_name.upper()}:\n\n"
-                    "Your analysis uses advanced statistical methods that require additional assumptions beyond basic ANOVA:\n\n"
-                    
-                    "📊 BASIC PARAMETRIC ASSUMPTIONS:\n"
-                    "  • Normal distribution of model residuals\n"
-                    "  • Independence of observations\n"
-                    "  • Interval scale of the dependent variable\n\n"
-                )
-                
-                if is_rm_anova:
-                    assumptions_overview += (
-                        "🔄 REPEATED MEASURES SPECIFIC ASSUMPTIONS:\n"
-                        "  • SPHERICITY: Equal variances of differences between all condition pairs\n"
-                        "    → Why important: RM ANOVA compares differences between conditions\n"
-                        "    → When violated: F-test becomes too liberal (more Type I errors)\n"
-                        "    → Solution: Greenhouse-Geisser or Huynh-Feldt corrections\n\n"
-                        
-                        "💡 WHAT ARE THESE CORRECTIONS?\n"
-                        "  • Greenhouse-Geisser: Conservative correction (reduces degrees of freedom more)\n"
-                        "  • Huynh-Feldt: Less conservative (closer to original degrees of freedom)\n"
-                        "  • Automatic selection: ε > 0.75 → Huynh-Feldt, ε ≤ 0.75 → Greenhouse-Geisser\n\n"
-                        
-                        "🎯 PRACTICAL IMPACT:\n"
-                        "If sphericity is violated, use corrected p-values instead of uncorrected ones!"
-                    )
-                
-                elif is_mixed_anova:
-                    assumptions_overview += (
-                        "🔄🔀 MIXED ANOVA SPECIFIC ASSUMPTIONS:\n"
-                        "  • BETWEEN-FACTOR: Homogeneity of variances (like regular ANOVA)\n"
-                        "  • WITHIN-FACTOR: Sphericity (like Repeated Measures ANOVA)\n"
-                        "  • INTERACTION: Both factors together must meet compound assumptions\n\n"
-                        
-                        "🧪 MULTIPLE ASSUMPTION TESTS:\n"
-                        "  • Levene's Test: Checks if groups have equal variances\n"
-                        "  • Brown-Forsythe: Robust version of Levene's test\n"
-                        "  • Mauchly's Test: Checks sphericity for within-subject factor\n"
-                        "  • Box's M Test: Checks if covariance patterns are similar across groups\n\n"
-                        
-                        "🎯 PRACTICAL IMPACT:\n"
-                        "Mixed ANOVA is complex - multiple assumption violations may require different statistical approaches!"
-                    )
-                
-                assumptions_overview += (
-                    "\n\n✅ WHAT TO LOOK FOR IN RESULTS:\n"
-                    "  • Green/Normal formatting = Assumptions met\n"
-                    "  • Red/Warning formatting = Assumptions violated\n"
-                    "  • Corrected p-values = Use these when corrections are applied\n"
-                    "  • Recommendations = Follow these for best statistical practice"
-                )
-            else:
-                # Standard parametric explanation
-                assumptions_overview = (
-                    "For parametric tests (such as t-test, ANOVA), the following assumptions apply:\n"
-                    "  • Normal distribution of model residuals (NEW: tested on residuals, not raw group data)\n"
-                    "  • Homogeneity of variances between groups\n"
-                    "  • Independence of observations\n"
-                    "  • Interval scale of the dependent variable\n\n"
-                    "IMPORTANT CHANGE: Normality is now tested on model residuals rather than raw group data. "
-                    "This provides a more accurate assessment of whether the statistical model assumptions are met. "
-                    "Points 1 and 2 are tested statistically. Points 3 and 4 are ensured by the study design and data collection."
-                )
+        # ── Decision rows ─────────────────────────────────────────────────────
+        _cat_fmt_map = {
+            "normality":     "subheader_light",
+            "assumption":    "warning",
+            "test selection": "section_blue",
+            "post-hoc":      "subheader_light",
+            "correction":    "subheader_light",
+            "data check":    "subheader_light",
+        }
+
+        steps = trace.to_list() if trace else []
+        if steps:
+            for i, step in enumerate(steps):
+                row_bg = fmt["alternating"] if i % 2 == 0 else fmt["cell"]
+                cat_key = _cat_fmt_map.get(step["category"].lower(), "cell")
+                cat_fmt = fmt.get(cat_key, fmt["cell"])
+
+                ws.write(row, 0, step["step"], row_bg)
+                ws.write(row, 1, step["category"], cat_fmt)
+                ws.write(row, 2, step["decision"], row_bg)
+                ws.write(row, 3, step.get("detail", ""), fmt["italic_grey"])
+                row += 1
         else:
-            assumptions_overview = (
-                "For non-parametric tests (such as Mann-Whitney U, Kruskal-Wallis), the following assumptions apply:\n"
-                "  • Similar distribution shape in all groups (not necessarily normal distribution)\n"
-                "  • Independence of observations\n"
-                "  • At least ordinal scale of the dependent variable\n\n"
-                "Assumption 1 is assessed visually. Points 2 and 3 are ensured by the study design and data collection."
-            )
-        ws.merge_range(f'A{row}:F{row}', "OVERVIEW OF ASSUMPTIONS", fmt["section_header"])
-        row += 1
-        
-        # Use robust single cell for assumptions overview text - ONLY cell A gets formatting
-        assumptions_wrap_fmt = workbook.add_format({
-            'text_wrap': True, 
-            'valign': 'top',
-            'border': 1,
-            'bg_color': '#F0F8FF'
-        })
-        ws.write(row, 0, assumptions_overview, assumptions_wrap_fmt)
-        # Use fixed optimal height for assumptions overview
-        overview_height = ResultsExporter.get_fixed_row_height("assumptions_overview")
-        ws.set_row(row, overview_height)
-        row += 2
+            ws.merge_range(f'A{row+1}:D{row+1}',
+                           "No methodology trace available for this analysis.",
+                           fmt["italic_grey"])
+            row += 1
 
-        # Sphericity (only for Repeated Measures ANOVA)
-        if "sphericity_test" in results:
-            row += 1
-            ws.write(row, 0, "Sphericity (Mauchly test):", fmt["section_header"])
-            row += 1
-            
-            # Check if we have a two-level within factor (where sphericity is always met)
-            has_two_levels = False
-            
-            # Method 1: Check ANOVA table for epsilon=1.0
-            if "anova_table" in results and isinstance(results["anova_table"], pd.DataFrame):
-                if "eps" in results["anova_table"].columns:
-                    eps_values = results["anova_table"]["eps"].dropna()
-                    if not eps_values.empty and (eps_values == 1.0).all():
-                        has_two_levels = True
-            
-            # Method 2: Check within factor directly if available
-            if "factors" in results:
-                for factor in results["factors"]:
-                    if factor.get("type") == "within":
-                        within_factor = factor.get("factor")
-                        if within_factor and "df1" in factor and factor["df1"] == 1:
-                            has_two_levels = True
-                            break
-            
-            if has_two_levels:
-                # Special explanation for two-level within factors
-                explanation = (
-                    "With only two levels of the within-factor, sphericity is automatically satisfied mathematically.\n\n"
-                    "Sphericity concerns the equality of variances of differences between all combinations of within-subject levels. "
-                    "When there are only two levels, there is only one possible difference (level 1 - level 2), "
-                    "so no comparison of different variances is possible and sphericity is perfectly met by definition.\n\n"
-                    "Therefore, no sphericity test is necessary, and no corrections (Greenhouse-Geisser or Huynh-Feldt) are needed."
-                )
-                
-                # Use robust single cell for sphericity explanation
-                sphericity_wrap_fmt = workbook.add_format({
-                    'text_wrap': True, 
-                    'valign': 'top',
-                    'border': 1,
-                    'bg_color': '#F0F8FF'
-                })
-                ws.write(row, 0, explanation, sphericity_wrap_fmt)
-                sphericity_height = ResultsExporter.get_fixed_row_height("sphericity_detail")
-                ws.set_row(row, sphericity_height)
-                row += 2
-            else:
-                # Regular sphericity test information
-                sph_headers = ["Mauchly's W", "p-Value", "Sphericity assumed?", "Interpretation"]
-                for i, h in enumerate(sph_headers):
-                    ws.write(row, i, h, fmt["header"])
-                row += 1
-                
-                sphericity = results["sphericity_test"]
-                w_val = sphericity.get("W", "N/A")
-                p_val = sphericity.get("p_value", "N/A")
-                has_sphericity = sphericity.get("has_sphericity", None)
-                sph_text = "Yes" if has_sphericity else "No" if has_sphericity is not None else "Indeterminable"
-                
-                interpretation = (
-                    "No significant deviation from sphericity"
-                    if has_sphericity else
-                    "Significant deviation from sphericity, correction necessary"
-                    if has_sphericity is not None else
-                    "Sphericity could not be tested"
-                )
-                
-                values = [
-                    f"{w_val:.4f}" if isinstance(w_val, (float, int)) else w_val,
-                    f"{p_val:.4f}" if isinstance(p_val, (float, int)) else p_val,
-                    sph_text,
-                    interpretation
-                ]
-                
-                for col, val in enumerate(values):
-                    ws.write(row, col, val, fmt["cell"])
-                row += 1
-    
-        # Normality tests per group
-        ws.write(row, 0, "Normality of Model Residuals (Shapiro-Wilk test):", fmt["section_header"])
-        row += 1
-        
-        # Check if we have the new test_info structure with residual-based tests
-        has_residual_tests = (
-            "test_info" in results 
-            and "pre_transformation" in results["test_info"]
-            and "residuals_normality" in results["test_info"]["pre_transformation"]
-        )
-        
-        # ALSO check if we have the new normality_tests structure with model_residuals
-        has_new_normality_structure = (
-            "normality_tests" in results 
-            and isinstance(results["normality_tests"], dict)
-            and "model_residuals" in results["normality_tests"]
-        )
-        
-        if has_residual_tests or has_new_normality_structure:
-            # NEW: Display residual-based normality tests
-            norm_explanation = (
-                "Note: Normality is tested on the residuals of the statistical model."
-            )
-            
-            # Use robust single cell for normality explanation
-            norm_wrap_fmt = workbook.add_format({
-                'text_wrap': True, 
-                'valign': 'top',
-                'border': 1,
-                'bg_color': '#F0F8FF'
-            })
-            ws.write(row, 0, norm_explanation, norm_wrap_fmt)
-            norm_height = ResultsExporter.get_fixed_row_height("normality_detail")
-            ws.set_row(row, norm_height)
-            row += 2
-            
-            norm_headers = ["Data Type", "Shapiro-Wilk statistic", "p-Value", "Residuals normally distributed?", "Interpretation"]
-            for i, h in enumerate(norm_headers):
-                ws.write(row, i, h, fmt["header"])
-            row += 1
-            
-            # Get test info from either test_info structure or compatible structure
-            test_info = results.get("test_info", {})
-            
-            # Pre-transformation residual test
-            if has_residual_tests and "pre_transformation" in test_info and "residuals_normality" in test_info["pre_transformation"]:
-                pre_norm = test_info["pre_transformation"]["residuals_normality"]
-                stat = pre_norm.get('statistic', 'N/A')
-                p_val = pre_norm.get('p_value', 'N/A')
-                is_normal = pre_norm.get('is_normal', False)
-            elif has_new_normality_structure and "model_residuals" in results["normality_tests"]:
-                pre_norm = results["normality_tests"]["model_residuals"]
-                stat = pre_norm.get('statistic', 'N/A')
-                p_val = pre_norm.get('p_value', 'N/A')
-                is_normal = pre_norm.get('is_normal', False)
-            else:
-                stat = p_val = 'N/A'
-                is_normal = False
-                
-            # Write pre-transformation row if we have data
-            if stat != 'N/A' or p_val != 'N/A':
-                normal_text = "Yes" if is_normal else "No"
-                interpretation = (
-                    "Model residuals show no significant deviation from normality"
-                    if is_normal else
-                    "Model residuals show significant deviation from normality"
-                )
-                values = [
-                    "Original Data (Model Residuals)",
-                    f"{stat:.4f}" if isinstance(stat, (float, int)) else stat,
-                    f"{p_val:.4f}" if isinstance(p_val, (float, int)) else p_val,
-                    normal_text,
-                    interpretation
-                ]
-                for col, val in enumerate(values):
-                    cell_fmt = fmt["significant"] if not is_normal else fmt["cell"]
-                    ws.write(row, col, val, cell_fmt)
-                row += 1
-            
-            # Post-transformation residual test (if transformation was applied)
-            transformation = results.get("transformation", "None")
-            if transformation and transformation != "None":
-                # Try to get post-transformation data
-                if (has_residual_tests and "post_transformation" in test_info and 
-                    "residuals_normality" in test_info["post_transformation"]):
-                    post_norm = test_info["post_transformation"]["residuals_normality"]
-                    stat = post_norm.get('statistic', 'N/A')
-                    p_val = post_norm.get('p_value', 'N/A')
-                    is_normal = post_norm.get('is_normal', False)
-                elif (has_new_normality_structure and "model_residuals_transformed" in results["normality_tests"]):
-                    post_norm = results["normality_tests"]["model_residuals_transformed"]
-                    stat = post_norm.get('statistic', 'N/A')
-                    p_val = post_norm.get('p_value', 'N/A')
-                    is_normal = post_norm.get('is_normal', False)
-                else:
-                    stat = p_val = 'N/A'
-                    is_normal = False
-                
-                # Write post-transformation row if we have data
-                if stat != 'N/A' or p_val != 'N/A':
-                    normal_text = "Yes" if is_normal else "No"
-                    interpretation = (
-                        "Transformed model residuals show no significant deviation from normality"
-                        if is_normal else
-                        "Transformed model residuals show significant deviation from normality"
-                    )
-                    values = [
-                        f"After {transformation} Transformation (Model Residuals)",
-                        f"{stat:.4f}" if isinstance(stat, (float, int)) else stat,
-                        f"{p_val:.4f}" if isinstance(p_val, (float, int)) else p_val,
-                        normal_text,
-                        interpretation
-                    ]
-                    for col, val in enumerate(values):
-                        cell_fmt = fmt["significant"] if not is_normal else fmt["cell"]
-                        ws.write(row, col, val, cell_fmt)
-                    row += 1
-                
-        else:
-            # FALLBACK: Display old-style group-based normality tests or model residuals
-            normality_results = results.get("normality_tests", {})
-            
-            # Check if we have model_residuals structure even without test_info
-            if "model_residuals" in normality_results:
-                # Display as model residuals
-                norm_headers = ["Data Type", "Shapiro-Wilk statistic", "p-Value", "Residuals normally distributed?", "Interpretation"]
-                for i, h in enumerate(norm_headers):
-                    ws.write(row, i, h, fmt["header"])
-                row += 1
-                
-                # Original data (model residuals)
-                model_res = normality_results["model_residuals"]
-                stat = model_res.get('statistic', 'N/A')
-                p_val = model_res.get('p_value', 'N/A')
-                is_normal = model_res.get('is_normal', False)
-                normal_text = "Yes" if is_normal else "No"
-                interpretation = (
-                    "Model residuals show no significant deviation from normality"
-                    if is_normal else
-                    "Model residuals show significant deviation from normality"
-                )
-                values = [
-                    "Original Data (Model Residuals)",
-                    f"{stat:.4f}" if isinstance(stat, (float, int)) else stat,
-                    f"{p_val:.4f}" if isinstance(p_val, (float, int)) else p_val,
-                    normal_text,
-                    interpretation
-                ]
-                for col, val in enumerate(values):
-                    cell_fmt = fmt["significant"] if not is_normal else fmt["cell"]
-                    ws.write(row, col, val, cell_fmt)
-                row += 1
-                
-                # Transformed data if available
-                if "model_residuals_transformed" in normality_results:
-                    model_res_trans = normality_results["model_residuals_transformed"]
-                    stat = model_res_trans.get('statistic', 'N/A')
-                    p_val = model_res_trans.get('p_value', 'N/A')
-                    is_normal = model_res_trans.get('is_normal', False)
-                    normal_text = "Yes" if is_normal else "No"
-                    transformation = results.get("transformation", "Unknown")
-                    interpretation = (
-                        "Transformed model residuals show no significant deviation from normality"
-                        if is_normal else
-                        "Transformed model residuals show significant deviation from normality"
-                    )
-                    values = [
-                        f"After {transformation} Transformation (Model Residuals)",
-                        f"{stat:.4f}" if isinstance(stat, (float, int)) else stat,
-                        f"{p_val:.4f}" if isinstance(p_val, (float, int)) else p_val,
-                        normal_text,
-                        interpretation
-                    ]
-                    for col, val in enumerate(values):
-                        cell_fmt = fmt["significant"] if not is_normal else fmt["cell"]
-                        ws.write(row, col, val, cell_fmt)
-                    row += 1
-            else:
-                # Original old-style group-based normality tests
-                norm_headers = ["Group", "Shapiro-Wilk statistic", "p-Value", "Normally distributed?", "Interpretation"]
-                for i, h in enumerate(norm_headers):
-                    ws.write(row, i, h, fmt["header"])
-                row += 1
-                
-                for group, test_result in normality_results.items():
-                    if group in ["all_data", "transformed_data", "model_residuals", "model_residuals_transformed"]:
-                        continue  # Skip these special entries
-                    stat = test_result.get('statistic', 'N/A')
-                    p_val = test_result.get('p_value', 'N/A')
-                    is_normal = (isinstance(p_val, (float, int)) and p_val > 0.05)
-                    normal_text = "Yes" if is_normal else "No"
-                    interpretation = (
-                        "No significant deviation from normality"
-                        if is_normal else
-                        "Significant deviation from normality"
-                    )
-                    values = [
-                        str(group),
-                        f"{stat:.4f}" if isinstance(stat, (float, int)) else stat,
-                        f"{p_val:.4f}" if isinstance(p_val, (float, int)) else p_val,
-                        normal_text,
-                        interpretation
-                    ]
-                    for col, val in enumerate(values):
-                        cell_fmt = fmt["significant"] if not is_normal else fmt["cell"]
-                        ws.write(row, col, val, cell_fmt)
-                    row += 1
-    
         row += 1
 
-        # Note: The old "all_data" normality test is replaced by model residual tests above
-        # This provides more accurate assumption testing for the statistical models
+        # ── Suggested Methods Section ─────────────────────────────────────────
+        ws.merge_range(f'A{row+1}:D{row+1}',
+                       "Suggested Methods Section Text", fmt["section_blue"])
+        ws.set_row(row, 18)
+        row += 1
 
-        # Homogeneity of variances (Brown-Forsythe-Test)
-        ws.write(row, 0, "Homogeneity of variances (Brown-Forsythe-Test):", fmt["section_header"])
-        row += 1
-        var_headers = ["Data Type", "Brown-Forsythe statistic", "p-Value", "Variances equal?", "Interpretation"]
-        for i, h in enumerate(var_headers):
-            ws.write(row, i, h, fmt["header"])
-        row += 1
-        
-        # Get variance test data - SIMPLIFIED APPROACH 
-        variance_test = results.get("variance_test", {})
-        transformation = results.get("transformation", "None")
-        
-        # Write original variance test data
-        if variance_test and "statistic" in variance_test:
-            stat = variance_test.get('statistic', 'N/A')
-            p_val = variance_test.get('p_value', 'N/A')
-            var_equal = variance_test.get('equal_variance', False)
-            var_text = "Yes" if var_equal else "No"
-            interpretation = (
-                "No significant differences in variances"
-                if var_equal else
-                "Significant differences in variances"
-            )
-            
-            values = [
-                "Original Data",
-                f"{stat:.4f}" if isinstance(stat, (float, int)) else str(stat),
-                f"{p_val:.4f}" if isinstance(p_val, (float, int)) else str(p_val),
-                var_text,
-                interpretation
-            ]
-            
-            for col, val in enumerate(values):
-                cell_fmt = fmt["significant"] if not var_equal else fmt["cell"]
-                ws.write(row, col, val, cell_fmt)
-            row += 1
-        else:
-            # Fallback if no variance data
-            ws.write(row, 0, "No variance test data available", fmt["cell"])
-            row += 1
-            
-        # Write transformed variance test data if transformation was applied
-        if transformation and transformation not in ["None", "No further"] and "transformed" in variance_test:
-            trans_var = variance_test["transformed"]
-            stat = trans_var.get('statistic', 'N/A')
-            p_val = trans_var.get('p_value', 'N/A')
-            var_equal = trans_var.get('equal_variance', False)
-            var_text = "Yes" if var_equal else "No"
-            interpretation = (
-                "No significant differences in variances after transformation"
-                if var_equal else
-                "Significant differences in variances even after transformation"
-            )
-            
-            values = [
-                f"After {transformation} Transformation",
-                f"{stat:.4f}" if isinstance(stat, (float, int)) else str(stat),
-                f"{p_val:.4f}" if isinstance(p_val, (float, int)) else str(p_val),
-                var_text,
-                interpretation
-            ]
-            
-            for col, val in enumerate(values):
-                cell_fmt = fmt["significant"] if not var_equal else fmt["cell"]
-                ws.write(row, col, val, cell_fmt)
-            row += 1
-        
-        row += 1  # Add space after variance test section
-        
-        # ENHANCED ASSUMPTION TESTING FOR RM/MIXED ANOVA
-        row = ResultsExporter._write_enhanced_assumption_tests(workbook, results, fmt, ws, row)
-    
-        # VISUAL EXAMINATION SECTION (for all cases)
-        ws.merge_range(f'A{row}:F{row}', "VISUAL EXAMINATION OF ASSUMPTIONS", fmt["section_header"])
-        row += 1
-        
-        visual_intro = (
-            "📈📊 VISUAL ASSUMPTION CHECKING - Understanding What Statistical Tests Need\n\n"
-            "Statistical tests like ANOVA and t-tests work best when your data meets certain mathematical requirements "
-            "(called 'assumptions'). The plots below help you check these requirements visually:\n\n"
-            
-            "🔍 Q-Q PLOT: Checks if your data follows a normal distribution pattern\n"
-            "📊 BOXPLOT: Checks if different groups have similar variability (variance)\n\n"
-            
-            "Each plot includes detailed explanations to help you understand what you're looking at and how to interpret the patterns."
+        methods_text = trace.to_methods_paragraph() if trace else (
+            "Statistical analysis was performed using BioMedStatX 2.0. "
+            "The significance threshold was set at \u03b1\u202f=\u202f0.05."
         )
-        
-        # Use robust single cell for visual intro
-        visual_wrap_fmt = workbook.add_format({
-            'text_wrap': True, 
-            'valign': 'top',
-            'border': 1,
-            'bg_color': '#F0F8FF'
-        })
-        ws.write(row, 0, visual_intro, visual_wrap_fmt)
-        visual_height = ResultsExporter.get_fixed_row_height("visual_intro")
-        ws.set_row(row, visual_height)
-        row += 2  # Reduced space after introduction
-        
-        # Generate and insert visual plots - ROBUST SIDE-BY-SIDE LAYOUT
-        try:
-            AssumptionVisualizer = get_assumption_visualizer()
-            plot_paths = AssumptionVisualizer.generate_assumption_plots(results)
-            
-            # Create side-by-side layout for both plots
-            if plot_paths['normality_before'] and plot_paths['homoscedasticity_before']:
-                wrap_fmt = workbook.add_format({
-                    'text_wrap': True, 
-                    'valign': 'top',
-                    'border': 1,
-                    'bg_color': '#F0F8FF'
-                })
-                
-                LEFT_TOTAL = 55 * 6   # A..F (updated for new column width A=55)
-                RIGHT_TOTAL = 28 * 7  # G..M (erweitert auf 7 Spalten für mehr Breite)
-                
-                # Single header for both plots (Merge ok für Überschrift)
-                ws.merge_range(f'A{row}:M{row}', "📈📊 VISUAL ASSUMPTION EXAMINATION - Q-Q Plot & Boxplots Side by Side", fmt["section_header_center"])
-                ws.set_row(row, 22)
-                row += 1
-                
-                # Text content
-                qq_text = (
-                    "📊 UNDERSTANDING Q-Q PLOTS (Left Side) - Normality Check:\n\n"
-                    "WHAT IS A Q-Q PLOT?\n"
-                    "A Q-Q plot compares your data's distribution to a perfect normal distribution. "
-                    "Each point represents one data value from your statistical model's residuals (prediction errors). "
-                    "The X-axis shows where that value would fall in a perfect normal distribution, "
-                    "and the Y-axis shows where it actually falls in your data.\n\n"
-                    "HOW TO READ THE Q-Q PLOT:\n"
-                    "• Red diagonal line = What a perfect normal distribution would look like\n"
-                    "• Blue dots = Your actual model residuals (prediction errors)\n"
-                    "• If dots follow the red line closely → Your data is normally distributed ✅\n"
-                    "• If dots deviate from the red line → Your data is not normally distributed ⚠️"
-                )
-                
-                box_text = (
-                    "📦 UNDERSTANDING BOXPLOTS (Right Side) - Variance Equality Check:\n\n"
-                    "WHAT IS A BOXPLOT?\n"
-                    "A boxplot shows your data's distribution and spread. "
-                    "Box = middle 50% of data, line = median, whiskers = normal range, dots = outliers.\n\n"
-                    "HOW TO USE FOR VARIANCE TESTING:\n"
-                    "Compare boxplots across groups - similar variability means equal variances.\n\n"
-                    "PATTERNS:\n"
-                    "✅ GOOD: All boxes roughly same height\n"
-                    "⚠️ WARNING: Very different box heights\n"
-                    "💡 REMEMBER: Compare spread, not central values"
-                )
-                
-                ws.write(row, 0, qq_text, wrap_fmt)
-                req_h_left = ResultsExporter.get_fixed_row_height("side_by_side_qq")
-                
-                ws.write(row, 7, box_text, wrap_fmt)
-                req_h_right = ResultsExporter.get_fixed_row_height("side_by_side_box")
-                
-                ws.set_row(row, max(req_h_left, req_h_right))
-                text_row = row
-                row += 1
-                
-                ws.set_row(row, 60)
-                image_row = row
-                
-                # Insert Q-Q plot
-                try:
-                    from PIL import Image
-                    if os.path.exists(plot_paths['normality_before']):
-                        ws.insert_image(image_row, 1, plot_paths['normality_before'], {
-                            'x_scale': 0.7, 'y_scale': 0.7,
-                            'object_position': 3, 'x_offset': 2, 'y_offset': 2
-                        })
-                        print(f"DEBUG: Successfully inserted Q-Q plot at row {image_row} with robust positioning")
-                    else:
-                        print(f"DEBUG: Q-Q plot file not found: {plot_paths['normality_before']}")
-                        ws.write(image_row, 0, "Q-Q Plot could not be generated", fmt["explanation"])
-                except Exception as e:
-                    print(f"DEBUG: Error inserting Q-Q plot: {e}")
-                    ws.write(image_row, 0, f"Q-Q Plot error: {str(e)}", fmt["explanation"])
-                
-                # Insert Boxplot
-                try:
-                    from PIL import Image
-                    if os.path.exists(plot_paths['homoscedasticity_before']):
-                        ws.insert_image(image_row, 8, plot_paths['homoscedasticity_before'], {
-                            'x_scale': 0.7, 'y_scale': 0.7,
-                            'object_position': 3, 'x_offset': 2, 'y_offset': 2
-                        })
-                        print(f"DEBUG: Successfully inserted Boxplot at row {image_row} with robust positioning")
-                    else:
-                        print(f"DEBUG: Boxplot file not found: {plot_paths['homoscedasticity_before']}")
-                        ws.write(image_row, 7, "Boxplot could not be generated", fmt["explanation"])
-                except Exception as e:
-                    print(f"DEBUG: Error inserting Boxplot: {e}")
-                    ws.write(image_row, 7, f"Boxplot error: {str(e)}", fmt["explanation"])
-                
-                row = image_row + 4
-                print(f"DEBUG: ROBUST LAYOUT: Advanced to row {row} with decoupled images")
-                
-            elif plot_paths['normality_before']:
-                # Fallback: Only Q-Q plot available - ROBUST LAYOUT
-                ws.merge_range(f'A{row}:F{row}', "📈 NORMALITY EXAMINATION - Q-Q Plot of Model Residuals", fmt["key"])
-                ws.set_row(row, 22)
-                row += 1
-                
-                # Use robust text cell instead of merge_range
-                wrap_fmt = workbook.add_format({
-                    'text_wrap': True, 
-                    'valign': 'top',
-                    'border': 1,
-                    'bg_color': '#F0F8FF'
-                })
-                
-                normality_explanation = (
-                    "📊 UNDERSTANDING Q-Q PLOTS (Quantile-Quantile Plots):\n\n"
-                    "WHAT IS A Q-Q PLOT?\n"
-                    "A Q-Q plot compares your data's distribution to a perfect normal distribution. Each point represents "
-                    "one data value. The X-axis shows where that value would fall in a perfect normal distribution, "
-                    "and the Y-axis shows where it actually falls in your data.\n\n"
-                    
-                    "HOW TO READ IT:\n"
-                    "• Red diagonal line = What a perfect normal distribution would look like\n"
-                    "• Blue dots = Your actual data points (model residuals)\n"
-                    "• If dots follow the red line closely → Your data is normally distributed\n"
-                    "• If dots deviate from the red line → Your data is not normally distributed\n\n"
-                    
-                    "PATTERN RECOGNITION:\n"
-                    "✅ NORMAL RESIDUALS: Points form a straight line along the red diagonal line\n"
-                    "⚠️ NON-NORMAL RESIDUALS: Points curve away from the red line (S-shape = skewed data, "
-                    "upward curve at ends = too many outliers, downward curve = too few outliers)\n\n"
-                    
-                    "WHY MODEL RESIDUALS?\n"
-                    "Statistical tests like ANOVA actually examine the prediction errors (residuals) from your statistical model, "
-                    "not the raw group data. This gives a more accurate assessment of whether your test assumptions are met."
-                )
-                
-                # Write text in single cell with fixed optimal height
-                ws.write(row, 0, normality_explanation, wrap_fmt)
-                req_height = ResultsExporter.get_fixed_row_height("qq_plot_explanation")
-                ws.set_row(row, req_height)
-                row += 1
-                
-                # Separate image row with robust positioning
-                ws.set_row(row, 60)
-                try:
-                    from PIL import Image
-                    if os.path.exists(plot_paths['normality_before']):
-                        ws.insert_image(row, 0, plot_paths['normality_before'], {
-                            'x_scale': 0.8, 'y_scale': 0.8,
-                            'object_position': 3, 'x_offset': 2, 'y_offset': 2
-                        })
-                        row += 6  # Compact spacing for single plot
-                    else:
-                        ws.write(row, 0, "Q-Q Plot could not be generated", fmt["explanation"])
-                        row += 2
-                except Exception as e:
-                    print(f"DEBUG: Error inserting normality plot: {e}")
-                    ws.write(row, 0, f"Error displaying normality plot: {os.path.basename(plot_paths['normality_before'])}", fmt["explanation"])
-                    row += 2
-            
-            elif plot_paths['homoscedasticity_before']:
-                # Fallback: Only Boxplot available - ROBUST LAYOUT
-                ws.merge_range(f'A{row}:F{row}', "📊 VARIANCE EQUALITY EXAMINATION - Boxplots", fmt["key"])
-                ws.set_row(row, 22)
-                row += 1
-                
-                # Use robust text cell instead of merge_range
-                wrap_fmt = workbook.add_format({
-                    'text_wrap': True, 
-                    'valign': 'top',
-                    'border': 1,
-                    'bg_color': '#F0F8FF'
-                })
-                
-                variance_explanation = (
-                    "📦 UNDERSTANDING BOXPLOTS (Box-and-Whisker Plots):\n\n"
-                    "WHAT IS A BOXPLOT?\n"
-                    "A boxplot is a visual summary of your data's distribution. It shows the middle 50% of your data (the box), "
-                    "the median (line inside the box), the range of typical values (whiskers), and any extreme values (dots).\n\n"
-                    
-                    "BOXPLOT COMPONENTS EXPLAINED:\n"
-                    "• Box height = Middle 50% of your data (called the interquartile range or IQR)\n"
-                    "• Horizontal line inside box = Median (the middle value when data is sorted)\n"
-                    "• Whiskers (vertical lines) = Typical range of your data (usually 1.5 × IQR from the box edges)\n"
-                    "• Dots beyond whiskers = Outliers (unusually high or low values)\n"
-                    "• Notches (if present) = Confidence intervals around the median\n\n"
-                    
-                    "HOW TO USE BOXPLOTS FOR VARIANCE TESTING:\n"
-                    "We compare boxplots across groups to see if they have similar variability (spread). "
-                    "For statistical tests to work properly, all groups should have roughly equal variances.\n\n"
-                    
-                    "PATTERN RECOGNITION:\n"
-                    "✅ EQUAL VARIANCES: All boxes are roughly the same height with similar whisker lengths\n"
-                    "⚠️ UNEQUAL VARIANCES: Some boxes much taller/shorter than others, very different whisker lengths\n"
-                    "💡 REMEMBER: We're comparing the spread/variability, not the central values (medians)"
-                )
-                
-                # Write text in single cell with fixed optimal height
-                ws.write(row, 0, variance_explanation, wrap_fmt)
-                req_height = ResultsExporter.get_fixed_row_height("boxplot_explanation")
-                ws.set_row(row, req_height)
-                row += 1
-                
-                # Separate image row with robust positioning
-                ws.set_row(row, 60)
-                try:
-                    from PIL import Image
-                    if os.path.exists(plot_paths['homoscedasticity_before']):
-                        ws.insert_image(row, 0, plot_paths['homoscedasticity_before'], {
-                            'x_scale': 0.8, 'y_scale': 0.8,
-                            'object_position': 3, 'x_offset': 2, 'y_offset': 2
-                        })
-                        row += 6  # Compact spacing for single plot
-                    else:
-                        ws.write(row, 0, "Boxplot could not be generated", fmt["explanation"])
-                        row += 2
-                except Exception as e:
-                    print(f"DEBUG: Error inserting homoscedasticity plot: {e}")
-                    ws.write(row, 0, f"Error displaying homoscedasticity plot: {os.path.basename(plot_paths['homoscedasticity_before'])}", fmt["explanation"])
-                    row += 2
-            
-            
-            # Comprehensive interpretation guidance - positioned right after plots - ROBUST LAYOUT
-            # Split into logical sections for better readability
-            
-            # Section 1: Why test assumptions
-            why_section = (
-                "📚 COMPREHENSIVE INTERPRETATION GUIDE FOR BEGINNERS\n\n"
-                "🎯 WHY DO WE TEST THESE ASSUMPTIONS?\n"
-                "Statistical tests like ANOVA and t-tests are built on mathematical assumptions. When these assumptions "
-                "are met, the tests give reliable and trustworthy results. When violated, the results may be misleading "
-                "or completely wrong. The plots above help you visually check whether your data meets these requirements "
-                "before trusting your statistical test results."
-            )
-            
-            # Use robust text cell with automatic height calculation
-            wrap_fmt = workbook.add_format({
-                'text_wrap': True, 
-                'valign': 'top',
-                'border': 1,
-                'bg_color': '#F0F8FF'
-            })
-            
-            ws.write(row, 0, why_section, wrap_fmt)
-            why_height = ResultsExporter.get_fixed_row_height("why_section")
-            ws.set_row(row, why_height)
-            row += 1
-            
-            # Section 2: Q-Q Plot interpretation
-            qq_section = (
-                "🔍 DETAILED Q-Q PLOT INTERPRETATION:\n"
-                "Think of a Q-Q plot as comparing your data to an 'ideal' normal distribution:\n"
-                "• Each blue dot represents one data point (specifically, a model residual/prediction error)\n"
-                "• The red line shows where points would fall if your data were perfectly normally distributed\n"
-                "• The closer the blue dots stick to the red line, the more normal your data distribution is\n\n"
-                
-                "What different Q-Q plot patterns mean:\n"
-                "✅ EXCELLENT: Straight line along red diagonal = Normal distribution, assumptions met\n"
-                "⚠️ CONCERN: S-shaped curve = Skewed data (more values bunched on one side)\n"
-                "⚠️ CONCERN: Upward curve at ends = Heavy tails (more extreme values than normal)\n"
-                "⚠️ CONCERN: Downward curve at ends = Light tails (fewer extreme values than normal)\n"
-                "⚠️ CONCERN: Points scattered far from line = Not normally distributed at all"
-            )
-            
-            ws.write(row, 0, qq_section, wrap_fmt)
-            qq_height = ResultsExporter.get_fixed_row_height("qq_section")
-            ws.set_row(row, qq_height)
-            row += 1
-            
-            # Section 3: Boxplot interpretation
-            boxplot_section = (
-                "📊 DETAILED BOXPLOT INTERPRETATION:\n"
-                "Boxplots summarize the spread and variability of your data for each group:\n"
-                "• The 'box' contains the middle 50% of your data points for that group\n"
-                "• A tall box = high variability in that group, short box = low variability\n"
-                "• For equal variances assumption, all groups should have similarly-sized boxes\n"
-                "• The line inside each box shows the median (middle value) for that group\n\n"
-                
-                "What different boxplot patterns mean:\n"
-                "✅ EXCELLENT: Similar box heights across all groups = Equal variances, assumptions met\n"
-                "⚠️ CONCERN: Very different box heights = Unequal variances between groups\n"
-                "⚠️ CONCERN: Some groups with many outliers, others with none = Inconsistent data quality\n"
-                "⚠️ CONCERN: Extremely different whisker lengths = Very unequal spreads"
-            )
-            
-            ws.write(row, 0, boxplot_section, wrap_fmt)
-            boxplot_height = ResultsExporter.get_fixed_row_height("boxplot_section")
-            ws.set_row(row, boxplot_height)
-            row += 1
-            
-            # Section 4: Practical decisions
-            practical_section = (
-                "🎯 MAKING PRACTICAL DECISIONS:\n"
-                "• Both plots look GOOD (✅ patterns) → Your statistical test assumptions are met, results are reliable\n"
-                "• Either plot shows CONCERNS (⚠️ patterns) → Consider data transformation or switch to non-parametric tests\n"
-                "• When in doubt → Consult with a statistician about complex or borderline patterns\n"
-                "• Remember: Visual inspection works together with the statistical test numbers above"
-            )
-            
-            ws.write(row, 0, practical_section, wrap_fmt)
-            practical_height = ResultsExporter.get_fixed_row_height("practical_section")
-            ws.set_row(row, practical_height)
-            row += 1
-            
-            # Section 5: Technical note
-            technical_section = (
-                "💡 TECHNICAL NOTE FOR ADVANCED USERS:\n"
-                "We examine model residuals (prediction errors) rather than raw group data because statistical tests "
-                "like ANOVA actually assess whether the model's prediction errors are normally distributed. This approach "
-                "provides a more accurate evaluation of whether your chosen statistical test is appropriate for your data."
-            )
-            
-            ws.write(row, 0, technical_section, wrap_fmt)
-            technical_height = ResultsExporter.get_fixed_row_height("technical_section")
-            ws.set_row(row, technical_height)
-            row += 2  # Extra space after complete guide
-            
-        except Exception as e:
-            print(f"DEBUG: Error generating assumption plots: {e}")
-            ws.write(row, 0, "Error generating visual examination plots", fmt["explanation"])
-            row += 2
-    
-        # Add a clear post-transformation section (after the transformation announcement)
-        transformation = results.get("transformation", "None")
-        if transformation and transformation != "None":
-            ws.write(row, 0, f"Transformation applied: {transformation}", fmt["section_header"])
-            trans_info = results.get("transformation_info", "")
-            if trans_info:
-                row += 1
-                ws.merge_range(f'A{row}:F{row}', f"Details: {trans_info}", fmt["explanation"])
-                ws.set_row(row, ResultsExporter.get_fixed_row_height("transformation_info"))
-            # Show lambda value if Box-Cox transformation
-            if transformation == "boxcox" and "boxcox_lambda" in results:
-                row += 1
-                lambda_val = results["boxcox_lambda"]
-                ws.merge_range(f'A{row}:F{row}', f"Box-Cox Lambda (MLE): {lambda_val:.4f}", fmt["cell"])
-            
-            # IMPORTANT ADDITION: Note about data usage
-            row += 1
-            test_type = results.get("test_type", "")
-            data_usage_note = (
-                f"Note: {'Transformed data WAS used for statistical tests' if test_type == 'parametric' else 'Original (untransformed) data was used for statistical tests'} "
-                f"based on test recommendation: {test_type}."
-            )
-            ws.merge_range(f'A{row}:F{row}', data_usage_note, fmt["explanation"])
-            
-            # Add post-transformation test results section
-            row += 2
-            ws.merge_range(f'A{row}:F{row}', "TESTS AFTER TRANSFORMATION", fmt["section_header"])
-            row += 1
-            
-            # Normality tests after transformation
-            if "normality_tests" in results and "transformed_data" in results["normality_tests"]:
-                ws.write(row, 0, "Normality after transformation:", fmt["key"])
-                row += 1
-                norm_headers = ["Test", "Statistic", "p-Value", "Normally distributed?", "Interpretation"]
-                for i, h in enumerate(norm_headers):
-                    ws.write(row, i, h, fmt["header"])
-                row += 1
-                
-                norm_result = results["normality_tests"]["transformed_data"]
-                stat = norm_result.get('statistic', 'N/A')
-                p_val = norm_result.get('p_value', 'N/A')
-                is_normal = (isinstance(p_val, (float, int)) and p_val > 0.05)
-                normal_text = "Yes" if is_normal else "No"
-                interpretation = (
-                    "No significant deviation from normality"
-                    if is_normal else
-                    "Significant deviation from normality"
-                )
-                
-                values = [
-                    "Shapiro-Wilk",
-                    f"{stat:.4f}" if isinstance(stat, (float, int)) else stat,
-                    f"{p_val:.4f}" if isinstance(p_val, (float, int)) else p_val,
-                    normal_text,
-                    interpretation
-                ]
-                
-                for col, val in enumerate(values):
-                    ws.write(row, col, val, fmt["cell"])
-                row += 2
-            
-            # Homogeneity of variances after transformation
-            if "variance_test" in results and "transformed" in results["variance_test"]:
-                ws.write(row, 0, "Variance homogeneity after transformation:", fmt["key"])
-                row += 1
-                var_headers = ["Test", "Statistic", "p-Value", "Variances equal?", "Interpretation"]
-                for i, h in enumerate(var_headers):
-                    ws.write(row, i, h, fmt["header"])
-                row += 1
-                
-                var_result = results["variance_test"]["transformed"]
-                stat = var_result.get('statistic', 'N/A')
-                p_val = var_result.get('p_value', 'N/A')
-                var_equal = (isinstance(p_val, (float, int)) and p_val > 0.05)
-                var_text = "Yes" if var_equal else "No"
-                interpretation = (
-                    "No significant differences in variances"
-                    if var_equal else
-                    "Significant differences in variances"
-                )
-                
-                values = [
-                    "Brown-Forsythe",
-                    f"{stat:.4f}" if isinstance(stat, (float, int)) else stat,
-                    f"{p_val:.4f}" if isinstance(p_val, (float, int)) else p_val,
-                    var_text,
-                    interpretation
-                ]
-                
-                for col, val in enumerate(values):
-                    ws.write(row, col, val, fmt["cell"])
-                row += 2
-            
-            # VISUAL EXAMINATION AFTER TRANSFORMATION - SIDE BY SIDE LAYOUT
-            try:
-                AssumptionVisualizer = get_assumption_visualizer()
-                plot_paths = AssumptionVisualizer.generate_assumption_plots(results)
-                
-                # Create side-by-side layout for after transformation plots
-                if plot_paths['normality_after'] and plot_paths['homoscedasticity_after']:
-                    ws.merge_range(f'A{row}:M{row}', f"🔄 AFTER {transformation.upper()} TRANSFORMATION - Q-Q Plot & Boxplots Comparison", fmt["section_header"])
-                    row += 1
-                    
-                    # Brief comparison instruction
-                    comparison_intro = (
-                        "Compare these transformed plots with the original plots above. "
-                        "✅ Success: Points closer to red line (left) + similar box heights (right) | "
-                        "⚠️ Limited effect: Still curved lines or different box sizes"
-                    )
-                    ws.merge_range(f'A{row}:M{row}', comparison_intro, fmt["explanation"])
-                    ws.set_row(row, ResultsExporter.get_fixed_row_height("comparison_intro"))
-                    row += 1
-                    
-                    try:
-                        from PIL import Image
-                        
-                        # Insert transformed Q-Q plot on the left (columns A:F)
-                        # Use consistent scaling (0.7)
-                        ws.insert_image(row, 0, plot_paths['normality_after'], 
-                                      {'x_scale': 0.7, 'y_scale': 0.7,
-                                       'object_position': 3, 'x_offset': 2, 'y_offset': 2})
-                        
-                        # Insert transformed Boxplot on the right (columns H:M)
-                        # Use consistent scaling (0.7)
-                        ws.insert_image(row, 7, plot_paths['homoscedasticity_after'], 
-                                      {'x_scale': 0.7, 'y_scale': 0.7,
-                                       'object_position': 3, 'x_offset': 2, 'y_offset': 2})
-                        
-                        # Calculate rows needed - use fixed scale factor of 0.7
-                        with Image.open(plot_paths['normality_after']) as img1, Image.open(plot_paths['homoscedasticity_after']) as img2:
-                            max_height = max(img1.size[1], img2.size[1])
-                            scale_factor = 0.7  # Consistent with all other plots
-                            image_rows = int((max_height * scale_factor) / 15) + 2
-                            row += max(image_rows, 10)  # Compact layout
-                            
-                    except Exception as e:
-                        print(f"DEBUG: Error inserting side-by-side transformed plots: {e}")
-                        ws.write(row, 0, "Error displaying transformed assumption plots", fmt["explanation"])
-                        row += 3
-                        
-                elif plot_paths['normality_after'] or plot_paths['homoscedasticity_after']:
-                    # Fallback for single plots
-                    ws.merge_range(f'A{row}:F{row}', f"� AFTER {transformation.upper()} TRANSFORMATION", fmt["section_header"])
-                    row += 1
-                    
-                    if plot_paths['normality_after']:
-                        ws.merge_range(f'A{row}:F{row}', f"📈 Q-Q Plot After {transformation} Transformation", fmt["key"])
-                        row += 1
-                        try:
-                            from PIL import Image
-                            # Use consistent scaling (0.7)
-                            ws.insert_image(row, 0, plot_paths['normality_after'], 
-                                          {'x_scale': 0.7, 'y_scale': 0.7,
-                                           'object_position': 3, 'x_offset': 2, 'y_offset': 2})
-                            # Use fixed row calculation based on consistent scale
-                            row += 25  # Fixed spacing
-                        except Exception as e:
-                            print(f"DEBUG: Error inserting transformed normality plot: {e}")
-                            ws.write(row, 0, "Error displaying transformed normality plot", fmt["explanation"])
-                            row += 3
-                    
-                    if plot_paths['homoscedasticity_after']:
-                        ws.merge_range(f'A{row}:F{row}', f"� Boxplots After {transformation} Transformation", fmt["key"])
-                        row += 1
-                        try:
-                            from PIL import Image
-                            # Use consistent scaling (0.7)
-                            ws.insert_image(row, 0, plot_paths['homoscedasticity_after'], 
-                                          {'x_scale': 0.7, 'y_scale': 0.7,
-                                           'object_position': 3, 'x_offset': 2, 'y_offset': 2})
-                            # Use fixed row calculation based on consistent scale
-                            row += 25  # Fixed spacing
-                        except Exception as e:
-                            print(f"DEBUG: Error inserting transformed homoscedasticity plot: {e}")
-                            ws.write(row, 0, "Error displaying transformed homoscedasticity plot", fmt["explanation"])
-                            row += 3
-                
-            except Exception as e:
-                print(f"DEBUG: Error generating after-transformation plots: {e}")
-                ws.write(row, 0, "Error generating after-transformation visual plots", fmt["explanation"])
-                row += 2
-        
-            # Summary text
-            row += 1
-            ws.merge_range(f'A{row}:F{row}', "SUMMARY OF ASSUMPTIONS CHECK", fmt["section_header"])
-            row += 1
-            
-            # Generate enhanced summary based on residual tests
-            summary = results.get("assumptions_summary", "")
-            if not summary:
-                # Check if we have residual-based tests to enhance summary
-                has_residual_tests = (
-                    "test_info" in results 
-                    and "pre_transformation" in results["test_info"]
-                    and "residuals_normality" in results["test_info"]["pre_transformation"]
-                )
-                
-                if has_residual_tests:
-                    test_info = results["test_info"]
-                    pre_norm = test_info["pre_transformation"]["residuals_normality"]["is_normal"]
-                    pre_var = test_info["pre_transformation"]["variance"]["equal_variance"]
-                    transformation = results.get("transformation", "None")
-                    
-                    if transformation and transformation != "None":
-                        post_norm = test_info.get("post_transformation", {}).get("residuals_normality", {}).get("is_normal", False)
-                        post_var = test_info.get("post_transformation", {}).get("variance", {}).get("equal_variance", False)
-                        summary = (
-                            f"MODERN RESIDUAL-BASED ASSUMPTION TESTING:\n\n"
-                            f"• Before transformation: Model residuals {'NORMAL' if pre_norm else 'NOT NORMAL'}, "
-                            f"variances {'EQUAL' if pre_var else 'UNEQUAL'}\n"
-                            f"• {transformation} transformation was applied\n"
-                            f"• After transformation: Model residuals {'NORMAL' if post_norm else 'NOT NORMAL'}, "
-                            f"variances {'EQUAL' if post_var else 'UNEQUAL'}\n\n"
-                            f"IMPORTANT: This analysis uses model residuals (not raw group data) to test normality assumptions. "
-                            f"This provides a more accurate assessment of whether the statistical model assumptions are met."
-                        )
-                    else:
-                        summary = (
-                            f"MODERN RESIDUAL-BASED ASSUMPTION TESTING:\n\n"
-                            f"• Model residuals are {'NORMALLY DISTRIBUTED' if pre_norm else 'NOT NORMALLY DISTRIBUTED'}\n"
-                            f"• Group variances are {'EQUAL (homogeneous)' if pre_var else 'UNEQUAL (heterogeneous)'}\n"
-                            f"• No transformation was needed/applied\n\n"
-                            f"IMPORTANT: This analysis uses model residuals (not raw group data) to test normality assumptions. "
-                            f"This provides a more accurate assessment of whether the statistical model assumptions are met."
-                        )
-                else:
-                    summary = (
-                        "The assumptions were checked as documented above. "
-                        "See test results for each group for details."
-                    )
-                    
-            ws.merge_range(f'A{row}:F{row}', summary, fmt["explanation"])
-            ws.set_row(row, ResultsExporter.get_fixed_row_height("results_summary"))
-            row += 2
-        
-            # Decision tree
-            ws.merge_range(f'A{row}:F{row}', "DECISION TREE FOR TEST SELECTION", fmt["section_header"])
-            row += 1
-            decision_tree = results.get("decision_tree_text", None)
-            if not decision_tree:
-                decision_tree = (
-                    "1. Are the data in all groups normally distributed?\n"
-                    "2. Are the variances between the groups equal?\n"
-                    "→ If yes: Parametric test (e.g., t-test, ANOVA)\n"
-                    "→ If no: Try transformation or non-parametric test (e.g., Mann-Whitney U, Kruskal-Wallis)"
-                )
-            ws.merge_range(f'A{row}:F{row+4}', decision_tree, fmt["explanation"])
-            ws.set_row(row, ResultsExporter.get_fixed_row_height("decision_tree_text"))
-            
-            
-    @staticmethod
+        ws.merge_range(f'A{row+1}:D{row+1}', methods_text, fmt["plain_language"])
+        ws.set_row(row, max(60, 15 * (methods_text.count(".") + 1)))
+        row += 1
+
     def _write_results_sheet(workbook, results, fmt, sheet_name="Statistical Results"):
         ws = workbook.add_worksheet(sheet_name)
         ws.set_column(0, 12, 22)
@@ -2228,7 +1400,7 @@ class ResultsExporter:
 
         # Write all values
         for col, val in enumerate(values):
-            fmtx = fmt["significant"] if (col == 2 and is_significant) or (col == 6 and is_significant) else fmt["cell"]
+            fmtx = fmt["sig_highlight"] if (col == 2 and is_significant) or (col == 6 and is_significant) else fmt["cell"]
             ws.write(row, col, val, fmtx)
         row += 2
 
@@ -2277,7 +1449,7 @@ class ResultsExporter:
                     f_et or "—",
                 ]
                 for col, val in enumerate(row_vals):
-                    ws.write(row, col, val, fmt["significant"] if f_sig and col in (4,) else fmt["cell"])
+                    ws.write(row, col, val, fmt["sig_highlight"] if f_sig and col in (4,) else fmt["cell"])
                 row += 1
 
             for inter in interactions_list:
@@ -2297,7 +1469,7 @@ class ResultsExporter:
                     i_et or "—",
                 ]
                 for col, val in enumerate(row_vals):
-                    ws.write(row, col, val, fmt["significant"] if i_sig and col in (4,) else fmt["cell"])
+                    ws.write(row, col, val, fmt["sig_highlight"] if i_sig and col in (4,) else fmt["cell"])
                 row += 1
             row += 1
 
@@ -2354,9 +1526,9 @@ class ResultsExporter:
             ws.write(row, 2, f"{gg_df1:.4f}" if isinstance(gg_df1, (float, int)) else "N/A", fmt["cell"])
             ws.write(row, 3, f"{gg_df2:.4f}" if isinstance(gg_df2, (float, int)) else "N/A", fmt["cell"])
             ws.write(row, 4, f"{gg_p:.4f}" if isinstance(gg_p, (float, int)) else "N/A",
-                    fmt["significant"] if gg_sig else fmt["cell"])
+                    fmt["sig_highlight"] if gg_sig else fmt["cell"])
             ws.write(row, 5, "Yes" if gg_sig else "No",
-                    fmt["significant"] if gg_sig else fmt["cell"])
+                    fmt["sig_highlight"] if gg_sig else fmt["cell"])
             row += 1
 
             # Huynh-Feldt correction
@@ -2371,9 +1543,9 @@ class ResultsExporter:
             ws.write(row, 2, f"{hf_df1:.4f}" if isinstance(hf_df1, (float, int)) else "N/A", fmt["cell"])
             ws.write(row, 3, f"{hf_df2:.4f}" if isinstance(hf_df2, (float, int)) else "N/A", fmt["cell"])
             ws.write(row, 4, f"{hf_p:.4f}" if isinstance(hf_p, (float, int)) else "N/A",
-                    fmt["significant"] if hf_sig else fmt["cell"])
+                    fmt["sig_highlight"] if hf_sig else fmt["cell"])
             ws.write(row, 5, "Yes" if hf_sig else "No",
-                    fmt["significant"] if hf_sig else fmt["cell"])
+                    fmt["sig_highlight"] if hf_sig else fmt["cell"])
             row += 2
 
         # Alternative tests
@@ -2418,7 +1590,7 @@ class ResultsExporter:
                     effint
                 ]
                 for col, val in enumerate(vals):
-                    fmtx = fmt["significant"] if (col == 2 and sig) or (col == 3 and sig) else fmt["cell"]
+                    fmtx = fmt["sig_highlight"] if (col == 2 and sig) or (col == 3 and sig) else fmt["cell"]
                     ws.write(row, col, val, fmtx)
                 row += 1
             row += 1
@@ -2434,6 +1606,19 @@ class ResultsExporter:
         ws.merge_range(f'A{row}:F{row}', interpretation, fmt["explanation"])
         ws.set_row(row, ResultsExporter.get_fixed_row_height("results_interpretation"))
         row += 2
+
+        # --- ANOVA Table (one-way, two-way, RM, Mixed ANOVA) ---
+        # Skipped for ANCOVA — that sheet renders its own ANOVA table.
+        _anova_tbl = results.get("anova_table")
+        _model_type = results.get("model_type", "")
+        if _anova_tbl is not None and _model_type != "ANCOVA":
+            import pandas as pd
+            _df = (pd.DataFrame(_anova_tbl) if isinstance(_anova_tbl, dict) else _anova_tbl)
+            if isinstance(_df, pd.DataFrame) and not _df.empty:
+                ws.merge_range(f'A{row}:F{row}', "ANOVA TABLE", fmt["section_header"])
+                row += 1
+                row = ResultsExporter._write_anova_table(ws, _df, fmt, start_row=row)
+                row += 2
 
         # Add a permutation explanation if applicable
         if is_perm:
@@ -2646,7 +1831,15 @@ class ResultsExporter:
         if posthoc_test_name:
             title_text += f' – {posthoc_test_name}'
         ws.merge_range('A1:H1', title_text, fmt["title"])  # Increased merge range
-    
+
+        # If post-hoc was explicitly skipped (non-significant main test), show reason and stop.
+        if results.get("posthoc_skipped") and not results.get("pairwise_comparisons"):
+            ws.merge_range('A3:H3',
+                           results.get("posthoc_skip_reason",
+                                       "Post-hoc tests were not performed for this analysis."),
+                           fmt["not_significant"])
+            return
+
         # Introduction
         pw_explanation = (
             "This sheet shows the results of the pairwise comparisons between the groups.\n"
@@ -2738,7 +1931,7 @@ class ResultsExporter:
                         eff_fmt = fmt["effect_weak"]
                     elif abs(effect_size_val) < 0.8:
                         magnitude = "medium"
-                        eff_fmt = fmt["effect_medium"]
+                        eff_fmt = fmt["effect_med_text"]
                     else:
                         magnitude = "large"
                         eff_fmt = fmt["effect_strong"]
@@ -2756,9 +1949,9 @@ class ResultsExporter:
             for col, val_to_write in enumerate(current_row_data):
                 current_fmt = fmt["cell"]
                 if headers[col] == "p-Value" and is_sign:
-                    current_fmt = fmt["significant"]
+                    current_fmt = fmt["sig_highlight"]
                 elif headers[col] == "Significant" and is_sign:
-                    current_fmt = fmt["significant"]
+                    current_fmt = fmt["sig_highlight"]
                 elif headers[col] == "Effect size" and isinstance(effect_size_val, (float, int)):
                     current_fmt = eff_fmt  # Use pre-determined format for effect size
                 ws.write(row + comp_idx, col, val_to_write, current_fmt)
@@ -2973,143 +2166,6 @@ class ResultsExporter:
                     ws.write(row, 1, "No data", fmt["cell"])
                 row += 1
             
-    @staticmethod
-    def _write_analysislog_sheet(workbook, log, fmt, sheet_name="Analysis Log"):
-        ws = workbook.add_worksheet(sheet_name)
-        ws.set_column(0, 0, 80)
-        ws.set_row(0, 28)
-        ws.write('A1', 'ANALYSIS LOG', fmt["title"])
-
-        # Introduction/Legend
-        log_explanation = (
-            "This sheet documents the course of the statistical analysis and the decisions made. "
-            "The log provides a chronological overview of the individual analysis steps, "
-            "methods used, transformations, test selection, and special notes.\n"
-            "Each paragraph describes a key step or decision in the analysis process."
-        )
-        ws.write(1, 0, log_explanation, fmt["explanation"])
-        ws.set_row(1, ResultsExporter.get_fixed_row_height("log_explanation"))
-
-        row = 3
-
-        # Apply structured formatting to all logs
-        if isinstance(log, str):
-            # Split the log into clear sections
-            sections = {
-                "header": [],
-                "setup": [],
-                "analysis": [],
-                "results": [],
-                "posthoc": []
-            }
-
-            current_section = "header"
-            lines = log.split('\n')
-
-            # Enhanced section detection for all log types
-            for line in lines:
-                line = line.strip()
-                if not line:
-                    continue
-
-                # Section detection - handle both advanced and basic test logs
-                if "--- ANALYSE ---" in line or "--- ANALYSIS ---" in line:
-                    current_section = "analysis"
-                    continue
-                elif "Testempfehlung:" in line or "Test recommendation:" in line:
-                    current_section = "analysis"
-                elif "Durchgeführter Test:" in line or "Test performed:" in line or "Two-Way ANOVA" in line or "t-test" in line or "ANOVA" in line:
-                    current_section = "results"
-                elif "paarweise Vergleiche" in line or "Post-hoc" in line or "Pairwise comparisons:" in line:
-                    current_section = "posthoc"
-                elif line.startswith("Datei:") or line.startswith("Arbeitsblatt:") or line.startswith("File:") or line.startswith("Worksheet:") or line.startswith("Group column:") or line.startswith("Value column"):
-                    current_section = "setup"
-
-                sections[current_section].append(line)
-
-            # Write each section with consistent formatting
-            # Header section
-            for line in sections["header"]:
-                ws.write(row, 0, line, fmt["cell"])
-                row += 1
-            row += 1  # Empty line after header
-
-            # Setup section - file info, columns, groups
-            if sections["setup"]:
-                ws.write(row, 0, "DATASET INFORMATION", fmt["section_header"])
-                row += 1
-                for line in sections["setup"]:
-                    ws.write(row, 0, line, fmt["cell"])
-                    row += 1
-                row += 1  # Empty line after setup
-
-            # Analysis section - tests performed
-            if sections["analysis"]:
-                ws.write(row, 0, "ANALYSIS PREPARATION AND ASSUMPTIONS", fmt["section_header"])
-                row += 1
-                for line in sections["analysis"]:
-                    ws.write(row, 0, line, fmt["cell"])
-                    row += 1
-                row += 1  # Empty line after analysis
-
-            # Results section - main results
-            if sections["results"]:
-                ws.write(row, 0, "MAIN RESULTS", fmt["section_header"])
-                row += 1
-                
-                # Format all results with bullet points for improved readability
-                for line in sections["results"]:
-                    if ":" in line and ("p =" in line or "p=" in line or "p <" in line or "p<" in line):
-                        # This looks like a result line - add bullet point and highlight if significant
-                        ws.write(row, 0, f"• {line}", fmt["significant"] if "significant" in line.lower() else fmt["cell"])
-                    else:
-                        ws.write(row, 0, line, fmt["cell"])
-                    row += 1
-                    
-                row += 1  # Empty line after results
-
-            # Post-hoc section
-            if sections["posthoc"]:
-                ws.write(row, 0, "POST-HOC ANALYSES", fmt["section_header"])
-                row += 1
-                
-                # Add heading for post-hoc tests
-                ws.write(row, 0, "Pairwise Comparisons (Post-hoc):", fmt["key"])
-                row += 1
-                
-                # Format post-hoc results with bullet points for all tests
-                for line in sections["posthoc"]:
-                    if " vs " in line and ("p =" in line or "p=" in line or "p <" in line or "p<" in line):
-                        # This is a comparison line - add bullet point and highlight if significant
-                        is_significant = "significant" in line.lower() and "not significant" not in line.lower()
-                        ws.write(row, 0, f"• {line}", fmt["significant"] if is_significant else fmt["cell"])
-                    else:
-                        ws.write(row, 0, line, fmt["cell"])
-                    row += 1
-                    
-                row += 1  # Empty line after post-hoc
-
-        elif isinstance(log, list):
-            for entry in log:
-                ws.write(row, 0, str(entry), fmt["cell"])
-                row += 1
-        else:
-            ws.write(row, 0, str(log), fmt["cell"])
-
-        # Add summary section for all tests when significant results are found
-        if isinstance(log, str) and "significant" in log.lower() and "p < 0.05" in log:
-            ws.write(row, 0, "SUMMARY OF RESULTS", fmt["section_header"])
-            row += 1
-
-            summary_text = (
-                "The statistical analysis revealed significant effects. "
-                "Please refer to the detailed results for the specific findings. "
-                "Post-hoc tests were performed for more precise group comparisons where applicable."
-            )
-            ws.write(row, 0, summary_text, fmt["explanation"])
-            ws.set_row(row, ResultsExporter.get_fixed_row_height("log_explanation"))
-                
-    @staticmethod
     def get_text_height(text, width):
         """
         Simplified wrapper that uses calc_robust_text_height for consistency.
@@ -3304,7 +2360,7 @@ class ResultsExporter:
             
             # Input validation
             if not isinstance(results, dict):
-                ws.write(row, 0, "⚠️ ERROR: Invalid results data format", fmt["significant"])
+                ws.write(row, 0, "⚠️ ERROR: Invalid results data format", fmt["sig_highlight"])
                 return row + 2
             
             if not all(param is not None for param in [workbook, fmt, ws]):
@@ -3347,7 +2403,7 @@ class ResultsExporter:
                 try:
                     row = ResultsExporter._write_enhanced_sphericity_section(workbook, results, fmt, ws, row)
                 except Exception as e:
-                    ws.write(row, 0, f"⚠️ ERROR in sphericity section: {str(e)}", fmt["significant"])
+                    ws.write(row, 0, f"⚠️ ERROR in sphericity section: {str(e)}", fmt["sig_highlight"])
                     row += 2
             
             # 2. Between-Factor Assumptions (Mixed ANOVA)
@@ -3355,7 +2411,7 @@ class ResultsExporter:
                 try:
                     row = ResultsExporter._write_between_factor_assumptions(workbook, results, fmt, ws, row)
                 except Exception as e:
-                    ws.write(row, 0, f"⚠️ ERROR in between-factor assumptions: {str(e)}", fmt["significant"])
+                    ws.write(row, 0, f"⚠️ ERROR in between-factor assumptions: {str(e)}", fmt["sig_highlight"])
                     row += 2
             
             # 3. Within-Factor Sphericity (Mixed ANOVA)
@@ -3363,7 +2419,7 @@ class ResultsExporter:
                 try:
                     row = ResultsExporter._write_within_factor_sphericity(workbook, results, fmt, ws, row)
                 except Exception as e:
-                    ws.write(row, 0, f"⚠️ ERROR in within-factor sphericity: {str(e)}", fmt["significant"])
+                    ws.write(row, 0, f"⚠️ ERROR in within-factor sphericity: {str(e)}", fmt["sig_highlight"])
                     row += 2
             
             # 4. Interaction Assumptions (Mixed ANOVA)
@@ -3371,7 +2427,7 @@ class ResultsExporter:
                 try:
                     row = ResultsExporter._write_interaction_assumptions(workbook, results, fmt, ws, row)
                 except Exception as e:
-                    ws.write(row, 0, f"⚠️ ERROR in interaction assumptions: {str(e)}", fmt["significant"])
+                    ws.write(row, 0, f"⚠️ ERROR in interaction assumptions: {str(e)}", fmt["sig_highlight"])
                     row += 2
             
             return row
@@ -3380,7 +2436,7 @@ class ResultsExporter:
             # Global error handling
             error_msg = f"⚠️ CRITICAL ERROR in enhanced assumption tests: {str(e)}"
             try:
-                ws.write(start_row, 0, error_msg, fmt["significant"])
+                ws.write(start_row, 0, error_msg, fmt["sig_highlight"])
                 ws.write(start_row + 1, 0, "Please check your data and try again.", fmt["cell"])
             except:
                 # If even writing the error fails, just return
@@ -3481,7 +2537,7 @@ class ResultsExporter:
                 data_quality_issues.append("Missing degrees of freedom")
             
             if data_quality_issues:
-                ws.write(row, 0, f"⚠️ DATA QUALITY WARNING: {', '.join(data_quality_issues)}", fmt["significant"])
+                ws.write(row, 0, f"⚠️ DATA QUALITY WARNING: {', '.join(data_quality_issues)}", fmt["sig_highlight"])
                 row += 1
             
             # Enhanced interpretation based on results
@@ -3506,7 +2562,7 @@ class ResultsExporter:
             # Apply color-coded formatting based on sphericity result
             for col, val in enumerate(values):
                 if sphericity_met is False and col >= 4:  # Highlight violations in red
-                    ws.write(row, col, val, fmt["significant"])
+                    ws.write(row, col, val, fmt["sig_highlight"])
                 elif sphericity_met is True and col >= 4:  # Highlight success in normal format
                     ws.write(row, col, val, fmt["cell"])
                 else:
@@ -3557,7 +2613,7 @@ class ResultsExporter:
             # Error handling for sphericity section
             error_msg = f"⚠️ ERROR in sphericity analysis: {str(e)}"
             try:
-                ws.write(start_row, 0, error_msg, fmt["significant"])
+                ws.write(start_row, 0, error_msg, fmt["sig_highlight"])
                 ws.write(start_row + 1, 0, "Sphericity test data may be incomplete or corrupted.", fmt["cell"])
             except:
                 pass
@@ -3615,16 +2671,16 @@ class ResultsExporter:
             
             # Input validation
             if not isinstance(results, dict):
-                ws.write(row, 0, "⚠️ ERROR: Invalid results format for corrections", fmt["significant"])
+                ws.write(row, 0, "⚠️ ERROR: Invalid results format for corrections", fmt["sig_highlight"])
                 return row + 2
                 
             if "sphericity_corrections" not in results:
-                ws.write(row, 0, "⚠️ WARNING: No sphericity corrections available", fmt["significant"])
+                ws.write(row, 0, "⚠️ WARNING: No sphericity corrections available", fmt["sig_highlight"])
                 return row + 2
                 
             corrections = results["sphericity_corrections"]
             if not isinstance(corrections, dict):
-                ws.write(row, 0, "⚠️ ERROR: Invalid corrections data format", fmt["significant"])
+                ws.write(row, 0, "⚠️ ERROR: Invalid corrections data format", fmt["sig_highlight"])
                 return row + 2
             
             ws.write(row, 0, "🔧 SPHERICITY CORRECTIONS - YOUR VALID P-VALUES", fmt["section_header"])
@@ -3724,7 +2780,7 @@ class ResultsExporter:
                 row += 2
                 
             except Exception as table_error:
-                ws.write(row, 0, f"⚠️ ERROR writing corrections table: {str(table_error)}", fmt["significant"])
+                ws.write(row, 0, f"⚠️ ERROR writing corrections table: {str(table_error)}", fmt["sig_highlight"])
                 row += 2
             
             # Final recommendation box
@@ -3779,7 +2835,7 @@ class ResultsExporter:
                 row += 2
                 
             except Exception as rec_error:
-                ws.write(row, 0, f"⚠️ ERROR writing recommendations: {str(rec_error)}", fmt["significant"])
+                ws.write(row, 0, f"⚠️ ERROR writing recommendations: {str(rec_error)}", fmt["sig_highlight"])
                 row += 2
             
             return row
@@ -3788,7 +2844,7 @@ class ResultsExporter:
             # Global error handling for corrections section
             error_msg = f"⚠️ CRITICAL ERROR in sphericity corrections: {str(e)}"
             try:
-                ws.write(start_row, 0, error_msg, fmt["significant"])
+                ws.write(start_row, 0, error_msg, fmt["sig_highlight"])
                 ws.write(start_row + 1, 0, "Correction data may be incomplete or corrupted.", fmt["cell"])
             except:
                 pass
@@ -3966,20 +3022,20 @@ class ResultsExporter:
                 workbook, results, fmt, ws, "_write_between_factor_assumptions"
             )
             if not is_valid:
-                ws.write(start_row, 0, error_msg, fmt["significant"])
+                ws.write(start_row, 0, error_msg, fmt["sig_highlight"])
                 return start_row + error_rows
             
             row = start_row
             
             # Check if between_assumptions data exists
             if "between_assumptions" not in results:
-                ws.write(row, 0, "⚠️ WARNING: No between-factor assumptions data available", fmt["significant"])
+                ws.write(row, 0, "⚠️ WARNING: No between-factor assumptions data available", fmt["sig_highlight"])
                 return row + 2
             
             between_assumptions = results["between_assumptions"]
             
             # Section header
-            ws.write(row, 0, "🔵 BETWEEN-FACTOR ASSUMPTIONS (MIXED ANOVA)", fmt["section_header"])
+            ws.write(row, 0, "BETWEEN-FACTOR ASSUMPTIONS (MIXED ANOVA)", fmt["section_header"])
             row += 1
             
             # Between-factor explanation
@@ -4030,7 +3086,7 @@ class ResultsExporter:
                         
                         for col, val in enumerate(values):
                             if assumption_met is False and col >= 2:
-                                ws.write(row, col, val, fmt["significant"])
+                                ws.write(row, col, val, fmt["sig_highlight"])
                             else:
                                 ws.write(row, col, val, fmt["cell"])
                         row += 1
@@ -4055,7 +3111,7 @@ class ResultsExporter:
             # Error handling for between-factor assumptions
             error_msg = f"⚠️ ERROR in between-factor assumptions: {str(e)}"
             try:
-                ws.write(start_row, 0, error_msg, fmt["significant"])
+                ws.write(start_row, 0, error_msg, fmt["sig_highlight"])
                 ws.write(start_row + 1, 0, "Between-factor assumption data may be incomplete.", fmt["cell"])
             except:
                 pass
@@ -4146,7 +3202,7 @@ class ResultsExporter:
         
         for col, val in enumerate(values):
             if sphericity_met is False and col >= 2:
-                ws.write(row, col, val, fmt["significant"])
+                ws.write(row, col, val, fmt["sig_highlight"])
             else:
                 ws.write(row, col, val, fmt["cell"])
         row += 2
@@ -4256,7 +3312,7 @@ class ResultsExporter:
             interpretation = sphericity_tests.get("interpretation", "No interpretation available")
             
             ws.write(row, 0, f"Sphericity Met: {'Yes' if sphericity_met else 'No' if sphericity_met is not None else 'Unknown'}", 
-                    fmt["significant"] if sphericity_met is False else fmt["cell"])
+                    fmt["sig_highlight"] if sphericity_met is False else fmt["cell"])
             row += 1
             ws.write(row, 0, f"Interpretation: {interpretation}", fmt["cell"])
             row += 2
@@ -4275,11 +3331,11 @@ class ResultsExporter:
                 
                 p_str = f"{p_value:.4f}" if isinstance(p_value, (float, int)) else str(p_value)
                 ws.write(row, 0, f"Levene's Test p-value: {p_str}", 
-                        fmt["significant"] if assumption_met is False else fmt["cell"])
+                        fmt["sig_highlight"] if assumption_met is False else fmt["cell"])
                 row += 1
                 
                 ws.write(row, 0, f"Cell Homogeneity: {'Met' if assumption_met else 'Violated' if assumption_met is not None else 'Unknown'}", 
-                        fmt["significant"] if assumption_met is False else fmt["cell"])
+                        fmt["sig_highlight"] if assumption_met is False else fmt["cell"])
                 row += 2
         
         # Overall recommendations
@@ -4320,7 +3376,7 @@ class ResultsExporter:
             row += 1
         else:
             for w in warnings:
-                ws.write(row, 0, f"⚠  {w}", fmt["significant"])
+                ws.write(row, 0, f"⚠  {w}", fmt["sig_highlight"])
                 row += 1
 
         row += 1
@@ -4334,7 +3390,7 @@ class ResultsExporter:
                 ws.write(row, 0, col, fmt["cell"])
                 ws.write(row, 1, val, fmt["cell"])
                 ws.write(row, 2, "HIGH" if val > 10 else ("elevated" if val > 5 else "ok"),
-                         fmt["significant"] if val > 10 else fmt["cell"])
+                         fmt["sig_highlight"] if val > 10 else fmt["cell"])
                 row += 1
             row += 1
 
@@ -4385,7 +3441,7 @@ class ResultsExporter:
             ws.write(row, 3, f_val if f_val is not None else "N/A", fmt["cell"])
             p_val = entry.get("p_value")
             if p_val is not None and isinstance(p_val, (float, int)):
-                cell_fmt = fmt["significant"] if p_val < 0.05 else fmt["cell"]
+                cell_fmt = fmt["sig_highlight"] if p_val < 0.05 else fmt["cell"]
                 ws.write(row, 4, p_val, cell_fmt)
             else:
                 ws.write(row, 4, "N/A", fmt["cell"])
@@ -4408,7 +3464,7 @@ class ResultsExporter:
                 ws.write(row, 3, cov.get("t_value"), fmt["cell"])
                 p_val = cov.get("p_value")
                 if p_val is not None:
-                    cell_fmt = fmt["significant"] if p_val < 0.05 else fmt["cell"]
+                    cell_fmt = fmt["sig_highlight"] if p_val < 0.05 else fmt["cell"]
                     ws.write(row, 4, p_val, cell_fmt)
                 else:
                     ws.write(row, 4, "N/A", fmt["cell"])
@@ -4451,14 +3507,14 @@ class ResultsExporter:
                 ws.write(row, 1, vals.get("F"), fmt["cell"])
                 p_val = vals.get("p_value")
                 if p_val is not None:
-                    cell_fmt = fmt["significant"] if p_val < 0.05 else fmt["cell"]
+                    cell_fmt = fmt["sig_highlight"] if p_val < 0.05 else fmt["cell"]
                     ws.write(row, 2, p_val, cell_fmt)
                 else:
                     ws.write(row, 2, "N/A", fmt["cell"])
                 ws.write(row, 3, vals.get("df"), fmt["cell"])
                 holds = vals.get("assumption_holds")
                 ws.write(row, 4, "Yes" if holds else ("No - WARNING" if holds is False else "N/A"),
-                         fmt["cell"] if holds else fmt["significant"])
+                         fmt["cell"] if holds else fmt["sig_highlight"])
                 row += 1
             row += 1
 
@@ -4478,6 +3534,62 @@ class ResultsExporter:
         ws.write(row, 1, results.get("n_observations"), fmt["cell"])
         row += 2
         ResultsExporter._write_data_health_section(ws, row, results, fmt)
+
+    @staticmethod
+    def _write_gee_glm_details_sheet(workbook, results, fmt):
+        """GEE / GLM model parameter sheet — created when model_type is 'GEE' or 'GLM'."""
+        ws = workbook.add_worksheet("GEE/GLM Details")
+        ws.set_column('A:A', 40)
+        ws.set_column('B:B', 35)
+        row = 0
+
+        ws.write(row, 0, "GEE / GLM Model Details", fmt["title"])
+        row += 2
+
+        _param_rows = [
+            ("Model class",          results.get("model_class")),
+            ("Model family",         results.get("model_family")),
+            ("Link function",        results.get("model_link")),
+            ("Covariance structure", results.get("cov_struct_used")),
+            ("Covariance estimator", results.get("covariance_estimator")),
+            ("Pearson phi",          results.get("pearson_phi")),
+            ("Zero fraction",        results.get("zero_fraction")),
+            ("Overdispersion ratio", results.get("overdispersion_ratio")),
+        ]
+        _fd = results.get("family_diagnostics") or {}
+        if isinstance(_fd, dict) and _fd.get("selection_reason"):
+            _param_rows.append(("Family selection reason", _fd["selection_reason"]))
+
+        ws.write(row, 0, "Model Parameters", fmt["section_header"])
+        row += 1
+        for _label, _val in _param_rows:
+            if _val is not None:
+                ws.write(row, 0, _label, fmt["cell"])
+                ws.write(row, 1,
+                         f"{_val:.6f}" if isinstance(_val, float) else str(_val),
+                         fmt["cell"])
+                row += 1
+        row += 1
+
+        # Post-hoc path and multiplicity corrections
+        pairwise = results.get("pairwise_comparisons") or []
+        corrections = sorted({
+            str(c.get("correction"))
+            for c in pairwise
+            if c.get("correction")
+        })
+        ws.write(row, 0, "Multiplicity corrections", fmt["cell"])
+        ws.write(row, 1, ", ".join(corrections) if corrections else "None", fmt["cell"])
+        row += 1
+
+        _warnings = results.get("warnings") or []
+        if _warnings:
+            row += 1
+            ws.write(row, 0, "Analysis Warnings", fmt["warning"])
+            row += 1
+            for _w in _warnings:
+                ws.write(row, 0, str(_w), fmt["warning"])
+                row += 1
 
     @staticmethod
     def _write_lmm_sheet(workbook, results, fmt):
@@ -4503,7 +3615,7 @@ class ResultsExporter:
             ws.write(row, 3, fe.get("z_value"), fmt["cell"])
             p_val = fe.get("p_value")
             if p_val is not None:
-                cell_fmt = fmt["significant"] if p_val < 0.05 else fmt["cell"]
+                cell_fmt = fmt["sig_highlight"] if p_val < 0.05 else fmt["cell"]
                 ws.write(row, 4, p_val, cell_fmt)
             else:
                 ws.write(row, 4, "N/A", fmt["cell"])
@@ -4548,6 +3660,33 @@ class ResultsExporter:
         ws.write(row, 1, "Yes" if results.get("converged") else "No", fmt["cell"])
         row += 2
 
+        # GEE/GLM Model Parameters (populated when model_class/family are present)
+        _lmm_param_rows = [
+            ("Model class",          results.get("model_class")),
+            ("Model family",         results.get("model_family")),
+            ("Link function",        results.get("model_link")),
+            ("Covariance structure", results.get("cov_struct_used")),
+            ("Covariance estimator", results.get("covariance_estimator")),
+            ("Pearson phi",          results.get("pearson_phi")),
+            ("Zero fraction",        results.get("zero_fraction")),
+            ("Overdispersion ratio", results.get("overdispersion_ratio")),
+        ]
+        _fd = results.get("family_diagnostics") or {}
+        if isinstance(_fd, dict) and _fd.get("selection_reason"):
+            _lmm_param_rows.append(("Family selection reason", _fd["selection_reason"]))
+        _has_params = any(v is not None for _, v in _lmm_param_rows)
+        if _has_params:
+            ws.write(row, 0, "Model Parameters", fmt["section_header"])
+            row += 1
+            for _label, _val in _lmm_param_rows:
+                if _val is not None:
+                    ws.write(row, 0, _label, fmt["cell"])
+                    ws.write(row, 1,
+                             f"{_val:.6f}" if isinstance(_val, float) else str(_val),
+                             fmt["cell"])
+                    row += 1
+            row += 1
+
         # Interpretation note
         ws.write(row, 0, "Note", fmt["section_header"])
         row += 1
@@ -4588,7 +3727,7 @@ class ResultsExporter:
                 ws.write(row, 6, entry.get("z_value"), fmt["cell"])
                 p_val = entry.get("p_value")
                 if p_val is not None:
-                    cell_fmt = fmt["significant"] if p_val < 0.05 else fmt["cell"]
+                    cell_fmt = fmt["sig_highlight"] if p_val < 0.05 else fmt["cell"]
                     ws.write(row, 7, p_val, cell_fmt)
                 else:
                     ws.write(row, 7, "N/A", fmt["cell"])
@@ -4608,7 +3747,7 @@ class ResultsExporter:
         hl_p = hl.get("p_value")
         ws.write(row, 0, "p-value", fmt["cell"])
         if hl_p is not None:
-            cell_fmt = fmt["significant"] if hl_p < 0.05 else fmt["cell"]
+            cell_fmt = fmt["sig_highlight"] if hl_p < 0.05 else fmt["cell"]
             ws.write(row, 1, hl_p, cell_fmt)
         else:
             ws.write(row, 1, "N/A", fmt["cell"])
@@ -4667,16 +3806,16 @@ class ResultsExporter:
         ws.set_column('B:D', 20)
         row = 0
 
-        ws.write(row, 0, "Korrelationsanalyse", fmt["title"])
+        ws.write(row, 0, "Correlation Analysis", fmt["title"])
         row += 2
 
         fields = [
-            ("Methode", results.get("method", "N/A")),
-            ("r (Korrelationskoeffizient)", results.get("r")),
-            ("p-Wert", results.get("p_value")),
-            ("95% CI Untergrenze", results.get("ci_lower")),
-            ("95% CI Obergrenze", results.get("ci_upper")),
-            ("n (Wertepaare)", results.get("n")),
+            ("Method", results.get("method", "N/A")),
+            ("r (Correlation Coefficient)", results.get("r")),
+            ("p-value", results.get("p_value")),
+            ("95% CI Lower", results.get("ci_lower")),
+            ("95% CI Upper", results.get("ci_upper")),
+            ("n (Pairs)", results.get("n")),
             ("Interpretation", results.get("interpretation", "N/A")),
             ("X-Variable", results.get("x_variable", "N/A")),
             ("Y-Variable (Outcome)", results.get("y_variable", "N/A")),
@@ -4684,14 +3823,40 @@ class ResultsExporter:
         for label, val in fields:
             ws.write(row, 0, label, fmt["cell"])
             p_val = results.get("p_value")
-            if label == "p-Wert" and p_val is not None:
-                cell_fmt = fmt["significant"] if p_val < 0.05 else fmt["cell"]
+            if label == "p-value" and p_val is not None:
+                cell_fmt = fmt["sig_highlight"] if p_val < 0.05 else fmt["cell"]
                 ws.write(row, 1, val if val is not None else "N/A", cell_fmt)
             else:
                 ws.write(row, 1, val if val is not None else "N/A", fmt["cell"])
             row += 1
 
         row += 1
+
+        # Normality check (only present when method='auto')
+        nc = results.get("normality_check")
+        if nc:
+            ws.write(row, 0, "Normality Check (Shapiro-Wilk, auto method selection)", fmt["section_header"])
+            row += 1
+            ws.write(row, 0, "Variable", fmt["header"])
+            ws.write(row, 1, "W Statistic", fmt["header"])
+            ws.write(row, 2, "p-value", fmt["header"])
+            ws.write(row, 3, "Normal (p > 0.05)?", fmt["header"])
+            row += 1
+            x_var = results.get("x_variable", "X")
+            y_var = results.get("y_variable", "Y")
+            for var_name in (x_var, y_var):
+                entry = nc.get(var_name, {})
+                ws.write(row, 0, var_name, fmt["cell"])
+                ws.write(row, 1, entry.get("statistic", "N/A"), fmt["cell"])
+                p = entry.get("p_value")
+                p_fmt = fmt["sig_highlight"] if p is not None and p < 0.05 else fmt["cell"]
+                ws.write(row, 2, p if p is not None else "N/A", p_fmt)
+                ws.write(row, 3, "Yes" if entry.get("normal") else "No", fmt["cell"])
+                row += 1
+            conclusion = "Pearson" if nc.get("both_normal") else "Spearman"
+            ws.write(row, 0, f"→ Both normal: {'Yes' if nc.get('both_normal') else 'No'} — {conclusion} selected", fmt["cell"])
+            row += 2
+
         ResultsExporter._write_data_health_section(ws, row, results, fmt)
 
     # ------------------------------------------------------------------
@@ -4700,25 +3865,25 @@ class ResultsExporter:
 
     @staticmethod
     def _write_linear_regression_sheet(workbook, results, fmt):
-        ws = workbook.add_worksheet("Lineare Regression")
+        ws = workbook.add_worksheet("Linear Regression")
         ws.set_column('A:A', 35)
         ws.set_column('B:H', 16)
         row = 0
 
-        ws.write(row, 0, "Lineare Regression (OLS)", fmt["title"])
+        ws.write(row, 0, "Linear Regression (OLS)", fmt["title"])
         row += 2
 
         # Model summary
-        ws.write(row, 0, "Modell-Übersicht", fmt["section_header"])
+        ws.write(row, 0, "Model Summary", fmt["section_header"])
         row += 1
         summary_fields = [
-            ("R² (Bestimmtheitsmaß)", results.get("r_squared")),
-            ("R² (adjustiert)", results.get("r_squared_adj")),
-            ("F-Statistik", results.get("f_statistic")),
-            ("F p-Wert", results.get("f_p_value")),
+            ("R² (Coefficient of Determination)", results.get("r_squared")),
+            ("R² (adjusted)", results.get("r_squared_adj")),
+            ("F-statistic", results.get("f_statistic")),
+            ("F p-value", results.get("f_p_value")),
             ("AIC", results.get("aic")),
             ("BIC", results.get("bic")),
-            ("N Beobachtungen", results.get("n_observations")),
+            ("N Observations", results.get("n_observations")),
         ]
         for label, val in summary_fields:
             ws.write(row, 0, label, fmt["cell"])
@@ -4727,9 +3892,9 @@ class ResultsExporter:
         row += 1
 
         # Coefficient table
-        ws.write(row, 0, "Koeffizienten-Tabelle", fmt["section_header"])
+        ws.write(row, 0, "Coefficient Table", fmt["section_header"])
         row += 1
-        headers = ["Parameter", "Beta", "Std.-Fehler", "t-Wert", "p-Wert", "CI Untere", "CI Obere"]
+        headers = ["Parameter", "Beta", "Std. Error", "t-value", "p-value", "CI Lower", "CI Upper"]
         for c, h in enumerate(headers):
             ws.write(row, c, h, fmt["header"])
         row += 1
@@ -4740,7 +3905,7 @@ class ResultsExporter:
             ws.write(row, 3, coef.get("t_value"), fmt["cell"])
             p_val = coef.get("p_value")
             if p_val is not None:
-                cell_fmt = fmt["significant"] if p_val < 0.05 else fmt["cell"]
+                cell_fmt = fmt["sig_highlight"] if p_val < 0.05 else fmt["cell"]
                 ws.write(row, 4, p_val, cell_fmt)
             else:
                 ws.write(row, 4, "N/A", fmt["cell"])
@@ -4750,14 +3915,14 @@ class ResultsExporter:
         row += 1
 
         # Diagnostics
-        ws.write(row, 0, "Annahmen-Diagnostik", fmt["section_header"])
+        ws.write(row, 0, "Assumption Diagnostics", fmt["section_header"])
         row += 1
-        diag_headers = ["Test", "Statistik", "p-Wert", "Annahme erfüllt?"]
+        diag_headers = ["Test", "Statistic", "p-value", "Assumption met?"]
         for c, h in enumerate(diag_headers):
             ws.write(row, c, h, fmt["header"])
         row += 1
         diag_order = [
-            ("normality", "Shapiro-Wilk (Residuen)"),
+            ("normality", "Shapiro-Wilk (Residuals)"),
             ("homoscedasticity", "Breusch-Pagan"),
             ("linearity", "Ramsey RESET"),
         ]
@@ -4768,12 +3933,12 @@ class ResultsExporter:
             ws.write(row, 1, stat_val if stat_val is not None else "N/A", fmt["cell"])
             p_d = d.get("p_value")
             if p_d is not None:
-                cell_fmt = fmt["significant"] if not d.get("assumption_holds", True) else fmt["cell"]
+                cell_fmt = fmt["sig_highlight"] if not d.get("assumption_holds", True) else fmt["cell"]
                 ws.write(row, 2, p_d, cell_fmt)
             else:
                 ws.write(row, 2, d.get("error", "N/A"), fmt["cell"])
             holds = d.get("assumption_holds")
-            ws.write(row, 3, ("Ja" if holds else "Nein — prüfen") if holds is not None else "N/A", fmt["cell"])
+            ws.write(row, 3, ("Yes" if holds else "No — check") if holds is not None else "N/A", fmt["cell"])
             row += 1
         row += 1
 
@@ -4801,41 +3966,41 @@ class ResultsExporter:
                     val = matrix_dict.get(ri, {}).get(cj)
                     if highlight_sig and p_corrected is not None:
                         p_val = p_corrected.get(ri, {}).get(cj)
-                        cell_fmt = fmt["significant"] if (p_val is not None and p_val < 0.05) else fmt["cell"]
+                        cell_fmt = fmt["sig_highlight"] if (p_val is not None and p_val < 0.05) else fmt["cell"]
                     else:
                         cell_fmt = fmt["cell"]
                     ws.write(start_row + i, j + 1, val if val is not None else "N/A", cell_fmt)
             return start_row + len(cols) + 2
 
-        ws = workbook.add_worksheet("Korrelationsmatrix")
+        ws = workbook.add_worksheet("Correlation Matrix")
         ws.set_column('A:A', 38)
         for j in range(len(cols) + 1):
             ws.set_column(j + 1, j + 1, 14)
         row = 0
 
-        ws.write(row, 0, "Explorative Korrelationsmatrix", fmt["title"])
+        ws.write(row, 0, "Exploratory Correlation Matrix", fmt["title"])
         row += 1
         ws.write(row, 0,
-                 f"Methode: {results.get('method', 'N/A')} | "
-                 f"Korrektur: {results.get('correction', 'keine')} | "
+                 f"Method: {results.get('method', 'N/A')} | "
+                 f"Correction: {results.get('correction', 'none')} | "
                  f"Missing: {'pairwise' if results.get('pairwise_deletion') else 'listwise'}",
                  fmt["cell"])
         row += 2
 
-        row = _write_matrix(ws, row, "r-Matrix (Korrelationskoeffizienten)",
+        row = _write_matrix(ws, row, "r-Matrix (Correlation Coefficients)",
                             results.get("r_matrix", {}), cols,
                             highlight_sig=True, p_corrected=results.get("p_corrected_matrix"))
-        row = _write_matrix(ws, row, "p-Werte (korrigiert)",
+        row = _write_matrix(ws, row, "p-values (corrected)",
                             results.get("p_corrected_matrix", {}), cols, highlight_sig=True,
                             p_corrected=results.get("p_corrected_matrix"))
-        row = _write_matrix(ws, row, "n pro Variablenpaar",
+        row = _write_matrix(ws, row, "n per variable pair",
                             results.get("n_matrix", {}), cols)
 
         strata = results.get("strata", {})
         for grp, mats in strata.items():
-            row = _write_matrix(ws, row, f"r-Matrix — Gruppe: {grp}",
+            row = _write_matrix(ws, row, f"r-Matrix — Group: {grp}",
                                 mats.get("r_matrix", {}), cols,
                                 highlight_sig=True, p_corrected=mats.get("p_corrected_matrix"))
-            row = _write_matrix(ws, row, f"p (korrigiert) — Gruppe: {grp}",
+            row = _write_matrix(ws, row, f"p (corrected) — Group: {grp}",
                                 mats.get("p_corrected_matrix", {}), cols, highlight_sig=True,
                                 p_corrected=mats.get("p_corrected_matrix"))

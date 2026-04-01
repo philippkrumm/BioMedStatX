@@ -625,8 +625,8 @@ class DataHealthScanner:
             if n_extreme > 0:
                 outlier_info[col] = n_extreme
                 self.warnings.append(
-                    f"Ausreißer in '{col}': {n_extreme} Wert(e) mit |mod. Z-Score| > 3.5 "
-                    "(MAD-basiert, kein Normalverteilungs-Zwang)."
+                    f"Outliers in '{col}': {n_extreme} value(s) with |mod. Z-score| > 3.5 "
+                    "(MAD-based, no normality requirement)."
                 )
         self.checks["covariate_outliers"] = outlier_info
 
@@ -637,18 +637,18 @@ class DataHealthScanner:
     def _check_mcar(self, cov_cols):
         data = self._df[cov_cols].copy()
         if data.dropna().shape[0] < max(5, len(cov_cols) + 1):
-            self.checks["mcar"] = {"note": "Zu wenige vollständige Fälle für Little's Test."}
+            self.checks["mcar"] = {"note": "Too few complete cases for Little's test."}
             return
         try:
             result = self._littles_mcar_test(data, cov_cols)
             self.checks["mcar"] = result
             if result["p_value"] < 0.05:
                 self.warnings.append(
-                    f"Little's MCAR Test: p={result['p_value']:.3f} — Datenlücken sind "
-                    "nicht zufällig (MAR/MNAR-Mechanismus). LMM-Ergebnisse könnten verzerrt sein."
+                    f"Little's MCAR Test: p={result['p_value']:.3f} — Missing data pattern is "
+                    "not random (MAR/MNAR mechanism). LMM results may be biased."
                 )
             else:
-                result["interpretation"] = "MCAR nicht verworfen — zufälliger Datenverlust plausibel."
+                result["interpretation"] = "MCAR not rejected — random data loss is plausible."
         except Exception as exc:
             self.checks["mcar"] = {"error": str(exc)}
 
@@ -698,7 +698,7 @@ class DataHealthScanner:
             cov_cols = [c for c in self._covariates if c in self._df.columns]
             cov_data = self._df[cov_cols].dropna()
             if len(cov_data) < len(cov_cols) + 2:
-                self.checks["vif"] = {"note": "Zu wenige Beobachtungen für VIF-Berechnung."}
+                self.checks["vif"] = {"note": "Too few observations for VIF calculation."}
                 return
 
             X = sm.add_constant(cov_data.values, has_constant='add')
@@ -713,8 +713,8 @@ class DataHealthScanner:
             self.checks["vif"] = vif_vals
             if high_vif:
                 self.warnings.append(
-                    f"Multikollinearität: {', '.join(high_vif)} — Kovariaten liefern "
-                    "redundante Information (VIF > 10). Koeffizienten-Interpretation eingeschränkt."
+                    f"Multicollinearity: {', '.join(high_vif)} — covariates provide "
+                    "redundant information (VIF > 10). Coefficient interpretation is limited."
                 )
         except Exception as exc:
             self.checks["vif"] = {"error": str(exc)}
@@ -752,9 +752,9 @@ class DataHealthScanner:
             self.checks["separation"] = separation_issues
             if separation_issues:
                 self.warnings.append(
-                    f"Quasi-perfekte Separation in: {', '.join(separation_issues)}. "
-                    "Odds Ratios könnten extrem groß/instabil sein. "
-                    "Firth-Regression als Alternative erwägen."
+                    f"Quasi-perfect separation in: {', '.join(separation_issues)}. "
+                    "Odds ratios may be extremely large/unstable. "
+                    "Consider Firth regression as an alternative."
                 )
         except Exception as exc:
             self.checks["separation"] = {"error": str(exc)}

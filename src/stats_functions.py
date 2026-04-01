@@ -1858,6 +1858,74 @@ class TukeyHSD(PostHocAnalyzer):
             result["error"] = f"Error in Tukey HSD test: {str(e)}"
             return result
         
+class GamesHowellTest(PostHocAnalyzer):
+    """Games-Howell post-hoc test — robust to unequal variances and unequal sample sizes.
+
+    Uses Welch-Satterthwaite degrees of freedom and Hedges' g as effect size.
+    No assumption of variance homogeneity; appropriate when Levene's test fails.
+    Implemented directly via scipy.stats — no additional dependencies required.
+    """
+
+    @staticmethod
+    def perform_test(valid_groups, samples, alpha=0.05):
+        result = PostHocAnalyzer.create_result_template("Games-Howell Test")
+        try:
+            from itertools import combinations as _combinations
+            stats_mod = get_scipy_stats()
+
+            for g1, g2 in _combinations(valid_groups, 2):
+                x1 = np.array(samples[g1], dtype=float)
+                x2 = np.array(samples[g2], dtype=float)
+                n1, n2 = len(x1), len(x2)
+                if n1 < 2 or n2 < 2:
+                    continue
+
+                m1, m2 = np.mean(x1), np.mean(x2)
+                v1, v2 = np.var(x1, ddof=1), np.var(x2, ddof=1)
+                mean_diff = float(m1 - m2)
+
+                se = np.sqrt(v1 / n1 + v2 / n2)
+                if se == 0:
+                    continue
+
+                # Welch-Satterthwaite degrees of freedom
+                df_w = (v1 / n1 + v2 / n2) ** 2 / (
+                    (v1 / n1) ** 2 / (n1 - 1) + (v2 / n2) ** 2 / (n2 - 1)
+                )
+                t_stat = mean_diff / se
+                p_val = float(2 * stats_mod.t.sf(abs(t_stat), df_w))
+
+                # Hedges' g (bias-corrected Cohen's d)
+                sp = np.sqrt(((n1 - 1) * v1 + (n2 - 1) * v2) / (n1 + n2 - 2))
+                correction = 1 - 3 / (4 * (n1 + n2 - 2) - 1)
+                hedges_g = float((mean_diff / sp) * correction) if sp > 0 else None
+
+                # CI for the mean difference
+                t_crit = float(stats_mod.t.ppf(1 - alpha / 2, df_w))
+                ci = (float(mean_diff - t_crit * se), float(mean_diff + t_crit * se))
+
+                PostHocAnalyzer.add_comparison(
+                    result,
+                    group1=str(g1),
+                    group2=str(g2),
+                    test="Games-Howell",
+                    p_value=p_val,
+                    statistic=mean_diff,
+                    corrected=True,
+                    correction_method="Games-Howell",
+                    effect_size=hedges_g,
+                    effect_size_type="hedges_g",
+                    confidence_interval=ci,
+                    alpha=alpha,
+                )
+
+            result["posthoc_test"] = "Games-Howell Test"
+            return result
+        except Exception as e:
+            result["error"] = f"Error in Games-Howell test: {str(e)}"
+            return result
+
+
 class DunnettTest(PostHocAnalyzer):
     """Implementation of the Dunnett test for comparing multiple groups to a control group."""
     @staticmethod
@@ -2104,6 +2172,8 @@ class PostHocFactory:
         if is_parametric:
             if test_type == "tukey":
                 return TukeyHSD()
+            elif test_type == "games_howell":
+                return GamesHowellTest()
             elif test_type == "dunnett":
                 return DunnettTest()
         else:
@@ -2287,9 +2357,10 @@ class UIDialogManager:
                 ("Custom paired t-tests (you select specific pairs to compare)", "paired_custom"),
             ]
         else:
-            # For One-Way ANOVA: offer all three options
+            # For One-Way ANOVA: offer all options
             options = [
-                ("Tukey-HSD Test (compares all pairs, best for main effects)", "tukey"),
+                ("Tukey-HSD Test (compares all pairs, equal variances assumed)", "tukey"),
+                ("Games-Howell Test (compares all pairs, robust to unequal variances)", "games_howell"),
                 ("Dunnett Test (compares all groups against ONE control group)", "dunnett"),
                 ("Custom paired t-tests (you select specific pairs to compare)", "paired_custom"),
             ]
@@ -2765,6 +2836,22 @@ class AnalysisManager:
                 failed_datasets[dataset_name] = error_msg
                 print(f"ERROR analyzing {dataset_name}: {error_msg}")
         
+        # Apply FDR correction (Benjamini-Hochberg) across all primary p-values
+        if len(all_results) >= 2:
+            try:
+                multipletests = get_statsmodels_multitest()
+                dataset_names_ordered = list(all_results.keys())
+                raw_ps = [all_results[n].get("p_value") for n in dataset_names_ordered]
+                valid_indices = [i for i, p in enumerate(raw_ps) if isinstance(p, (float, int))]
+                if len(valid_indices) >= 2:
+                    valid_ps = [raw_ps[i] for i in valid_indices]
+                    _, p_adj, _, _ = multipletests(valid_ps, method='fdr_bh')
+                    for rank, ds_idx in enumerate(valid_indices):
+                        all_results[dataset_names_ordered[ds_idx]]["p_value_fdr"] = float(p_adj[rank])
+                    print(f"FDR correction applied across {len(valid_indices)} datasets.")
+            except Exception as e:
+                print(f"Warning: FDR correction failed: {str(e)}")
+
         # Create combined Excel output
         if all_results:
             base_name = file_name if file_name else "multi_dataset_analysis"
@@ -2935,7 +3022,7 @@ class AnalysisManager:
                         analysis_df = analysis_df[analysis_df[filter_col] == filter_val]
                         if len(analysis_df) < 5:
                             raise ValueError(
-                                f"Zu wenige Beobachtungen nach Filter "
+                                f"Too few observations after filter "
                                 f"'{filter_col} = {filter_val}' (n={len(analysis_df)})."
                             )
 

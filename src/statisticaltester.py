@@ -7,6 +7,7 @@ from scipy import stats
 from lazy_imports import get_pingouin, get_scipy_stats, get_statsmodels_multitest
 from stats_functions import UIDialogManager, PostHocFactory, get_pingouin_module, get_output_path, PostHocAnalyzer, PostHocStatistics
 from resultsexporter import ResultsExporter
+from methodology_trace import MethodologyTrace
 from nonparametricanovas import (
     posthoc_marginaleffects,
     perform_friedman_test, perform_freedman_lane_test, perform_brunner_langer_ats,
@@ -106,7 +107,7 @@ class StatisticalTester:
     @staticmethod
     def check_normality_and_variance(
         groups, samples, dataset_name=None, progress_text=None, column_name=None, already_transformed=False,
-        formula="Value ~ C(Group)", model_type="oneway"
+        formula="Value ~ C(Group)", model_type="oneway", trace: "MethodologyTrace | None" = None
     ):
         """
         Checks normality and homogeneity of variance using model residuals (before and after transformation).
@@ -232,9 +233,17 @@ class StatisticalTester:
             logger.debug(f"DEBUG SHAPIRO ERROR: DataFrame info - Shape: {df_raw.shape}, Columns: {list(df_raw.columns)}")
             logger.debug(f"DEBUG SHAPIRO ERROR: DataFrame head:\n{df_raw.head()}")
             stat, pval = None, None
+        _pre_is_normal = (pval > 0.05 if pval is not None else False)
         test_info["pre_transformation"]["residuals_normality"] = {
-            "statistic": stat, "p_value": pval, "is_normal": (pval > 0.05 if pval is not None else False)
+            "statistic": stat, "p_value": pval, "is_normal": _pre_is_normal
         }
+        if trace:
+            _norm_verdict = "normality assumed" if _pre_is_normal else "normality violated"
+            _p_str = f"p={pval:.4f}" if isinstance(pval, (float, int)) else "p=N/A"
+            _w_str = f"W={stat:.4f}" if isinstance(stat, (float, int)) else "W=N/A"
+            trace.add(1, "Normality",
+                      f"Shapiro-Wilk on model residuals yielded {_p_str} \u2014 {_norm_verdict}.",
+                      detail=f"{_w_str}, {_p_str}")
 
         # Levene test on raw data (Brown-Forsythe test using median)
         try:
@@ -253,6 +262,12 @@ class StatisticalTester:
         test_info["pre_transformation"]["variance"] = {
             "statistic": stat, "p_value": pval, "equal_variance": has_equal_variance
         }
+        if trace:
+            _var_verdict = "equal variances" if has_equal_variance else "unequal variances"
+            _vp_str = f"p={pval:.4f}" if isinstance(pval, (float, int)) else "p=N/A"
+            trace.add(2, "Assumption",
+                      f"Brown-Forsythe test yielded {_vp_str} \u2014 {_var_verdict}.",
+                      detail=f"F={stat:.4f}, {_vp_str}" if isinstance(stat, (float, int)) else "")
 
         need_transform = not (
             test_info["pre_transformation"]["residuals_normality"]["is_normal"]
@@ -418,26 +433,48 @@ class StatisticalTester:
 
         if post_norm and post_var:
             test_recommendation = "parametric"
+            if trace:
+                trace.add(3, "Test Selection",
+                          "Both normality and variance homogeneity confirmed \u2014 parametric test selected.")
         elif post_norm and not post_var and model_type == "ttest" and len(valid_groups) == 2:
             test_recommendation = "parametric"  # Welch-Test
             test_info["note"] = "Residuals are normal but variances are unequal - Welch's t-test will be used."
+            if trace:
+                trace.add(3, "Test Selection",
+                          "Normality confirmed but variances unequal (2 groups) \u2014 Welch\u2019s t-test applied automatically.")
         elif post_norm and not post_var and model_type == "oneway" and len(valid_groups) > 2:
             test_recommendation = "parametric"  # Welch-ANOVA
             test_info["note"] = "Residuals are normal but variances are unequal - Welch's ANOVA will be used."
+            if trace:
+                trace.add(3, "Test Selection",
+                          "Normality confirmed but variances unequal (>2 groups) \u2014 Welch ANOVA applied automatically.")
         elif post_norm and not post_var and model_type in ["twoway", "mixed", "rm"]:
             test_recommendation = "parametric"  # Advanced ANOVAs can often handle unequal variances
             test_info["note"] = (
                 f"Residuals are normal but variances are unequal - {model_type.upper()} ANOVA will still be used "
                 f"(robust to variance heterogeneity)."
             )
+            if trace:
+                trace.add(3, "Test Selection",
+                          f"Normality confirmed; variance inequality noted \u2014 {model_type.upper()} ANOVA applied "
+                          f"(robust to variance heterogeneity).")
         elif post_norm and not post_var and len(valid_groups) == 2:
             test_recommendation = "parametric"  # Welch-Test
             test_info["note"] = "Normal distribution but unequal variances – Welch's t-test will be used."
+            if trace:
+                trace.add(3, "Test Selection",
+                          "Normal residuals, unequal variances \u2014 Welch\u2019s t-test applied automatically.")
         elif post_norm and not post_var and len(valid_groups) > 2:
             test_recommendation = "parametric"  # Welch-ANOVA
             test_info["note"] = "Normal distribution but unequal variances – Welch's ANOVA will be used."
+            if trace:
+                trace.add(3, "Test Selection",
+                          "Normal residuals, unequal variances \u2014 Welch ANOVA applied automatically.")
         else:
             test_recommendation = "non_parametric"
+            if trace:
+                trace.add(3, "Test Selection",
+                          "Normality assumption violated \u2014 non-parametric test selected.")
 
         logger.debug(f"DEBUG check_normality_and_variance: Final test_info structure:")
         print(f"  Pre-transformation normality: {test_info['pre_transformation'].get('residuals_normality', 'Missing')}")
@@ -450,8 +487,9 @@ class StatisticalTester:
     
     @staticmethod
     def perform_statistical_test(
-    groups, transformed_samples, original_samples, 
-    dependent=False, test_recommendation="parametric", alpha=0.05, test_info=None
+    groups, transformed_samples, original_samples,
+    dependent=False, test_recommendation="parametric", alpha=0.05, test_info=None,
+    trace: "MethodologyTrace | None" = None
     ):
         """
         Robustly performs the statistical test (t-test, ANOVA, Mann-Whitney, Kruskal-Wallis, posthoc, etc.).
@@ -918,34 +956,66 @@ class StatisticalTester:
                     except Exception:
                         results["power"] = None
                     results["confidence_interval"] = (None, None)
-            if test_recommendation == "parametric" and results.get("p_value") is not None and results["p_value"] < alpha:
+            if test_recommendation == "parametric" and results.get("p_value") is not None and results["p_value"] < alpha and len(valid_groups) >= 3:
                 # Use the unified post-hoc testing approach instead of separate dialogs
                 print("DEBUG: Significant parametric test, calling perform_refactored_posthoc_testing")
+                if trace:
+                    trace.add(4, "Post-hoc",
+                              f"Main test significant (p<{alpha}) with {len(valid_groups)} groups \u2014 "
+                              f"parametric post-hoc test initiated.")
                 posthoc_results = StatisticalTester.perform_refactored_posthoc_testing(
                     valid_groups, samples_to_use, test_recommendation="parametric", alpha=alpha,
                     posthoc_choice=None  # Let the function show the dialog
                 )
-                
+
                 if posthoc_results:
                     results["posthoc_test"] = posthoc_results.get("posthoc_test")
                     results["pairwise_comparisons"] = posthoc_results.get("pairwise_comparisons", [])
+                    if trace and posthoc_results.get("posthoc_test"):
+                        trace.add(4, "Post-hoc",
+                                  f"{posthoc_results['posthoc_test']} selected for pairwise comparisons.",
+                                  detail=f"{len(results['pairwise_comparisons'])} comparisons")
                 else:
                     results["posthoc_test"] = "No post-hoc tests performed"
                     results["pairwise_comparisons"] = []
-            elif test_recommendation == "non_parametric" and results.get("p_value") is not None and results["p_value"] < alpha:
+            elif test_recommendation == "non_parametric" and results.get("p_value") is not None and results["p_value"] < alpha and len(valid_groups) >= 3:
                 # Let the perform_refactored_posthoc_testing function handle the dialog selection
                 print("DEBUG: Significant non-parametric test, calling perform_refactored_posthoc_testing without preset posthoc_choice")
+                if trace:
+                    trace.add(4, "Post-hoc",
+                              f"Main non-parametric test significant (p<{alpha}) with {len(valid_groups)} groups \u2014 "
+                              f"non-parametric post-hoc test initiated.")
                 posthoc_results = StatisticalTester.perform_refactored_posthoc_testing(
                     valid_groups, samples_to_use, test_recommendation,
                     alpha=alpha, posthoc_choice=None  # Let the function show the dialog
                 )
-                
+
                 if posthoc_results:
                     results["posthoc_test"] = posthoc_results.get("posthoc_test")
                     results["pairwise_comparisons"] = posthoc_results.get("pairwise_comparisons", [])
+                    if trace and posthoc_results.get("posthoc_test"):
+                        trace.add(4, "Post-hoc",
+                                  f"{posthoc_results['posthoc_test']} selected for pairwise comparisons.",
+                                  detail=f"{len(results['pairwise_comparisons'])} comparisons")
                 else:
                     results["posthoc_test"] = "No post-hoc tests performed (error or unsupported test)"
                     results["pairwise_comparisons"] = []
+
+            # Explicit skip flag: fires when the main test was not significant and
+            # post-hoc was intentionally omitted (groups >= 3, p_value known).
+            if (
+                not results.get("pairwise_comparisons")
+                and isinstance(results.get("p_value"), (float, int))
+                and results["p_value"] >= results.get("alpha", alpha)
+                and len(valid_groups) >= 3
+            ):
+                _p_str = f"{results['p_value']:.4f}"
+                results["posthoc_skipped"] = True
+                results["posthoc_skip_reason"] = (
+                    f"Post-hoc not performed: main test was not significant "
+                    f"(p\u202f=\u202f{_p_str})"
+                )
+
         except Exception as e:
             results["test"] = "Error during test"
             results["p_value"] = None
@@ -1980,6 +2050,18 @@ class StatisticalTester:
                         warnings_list = res.setdefault("warnings", [])
                         if fallback_posthoc["error"] not in warnings_list:
                             warnings_list.append(fallback_posthoc["error"])
+
+                else:
+                    # Main test not significant — record skip reason explicitly so the
+                    # exporter can surface it rather than showing a silent empty sheet.
+                    if res.get("error") is None and isinstance(res.get("p_value"), (float, int)):
+                        _p_str = f"{res['p_value']:.4f}"
+                        res["posthoc_skipped"] = True
+                        res["posthoc_skip_reason"] = (
+                            f"Post-hoc not performed: main test was not significant "
+                            f"(p\u202f=\u202f{_p_str})"
+                        )
+                        res.setdefault("pairwise_comparisons", [])
 
                 analysis_log = []
                 analysis_log.append(f"Advanced Test Analysis: {test}")
@@ -3756,20 +3838,22 @@ class StatisticalTester:
         if posthoc_choice is None:
             if is_dependent:
                 posthoc_choice = "dependent"
-            elif test_recommendation == "parametric":
-                # Show dialog for parametric post-hoc test selection
+            elif test_recommendation in ("parametric", "welch"):
+                # Show dialog for parametric post-hoc test selection.
+                # When Welch ANOVA was used (unequal variances), pre-select Games-Howell.
+                default_method = "games_howell" if test_recommendation == "welch" else "tukey"
                 try:
                     posthoc_choice = UIDialogManager.select_posthoc_test_dialog(
-                        parent=None, progress_text=None, column_name=None
+                        parent=None, progress_text=None, column_name=None,
+                        default_method=default_method
                     )
                     logger.debug(f"DEBUG: Parametric post-hoc dialog returned: {posthoc_choice}")
-                    # If dialog was cancelled or returned None, default to Tukey
                     if posthoc_choice is None:
-                        posthoc_choice = "tukey"
-                        print("DEBUG: Parametric post-hoc dialog cancelled, defaulting to Tukey HSD")
+                        posthoc_choice = default_method
+                        print(f"DEBUG: Parametric post-hoc dialog cancelled, defaulting to {default_method}")
                 except Exception as e:
                     logger.debug(f"DEBUG: Error showing parametric post-hoc dialog: {e}")
-                    posthoc_choice = "tukey"  # Fallback to Tukey HSD
+                    posthoc_choice = default_method
             else:
                 # NEW: Dialog for non-parametric post-hoc tests
                 print("DEBUG: About to show non-parametric post-hoc dialog")
@@ -4551,7 +4635,7 @@ class StatisticalTester:
             # Bartlett's test interpretation
             if bartlett_met is not None:
                 if bartlett_met != levene_met:
-                    recommendations.append("ℹ️ Bartlett's test differs from Levene's - may indicate non-normality")
+                    recommendations.append("INFO:Bartlett's test differs from Levene's - may indicate non-normality")
                     recommendations.append("→ Check normality assumptions as well")
             
             # Variance ratio guidance
@@ -4567,7 +4651,7 @@ class StatisticalTester:
             
             # Overall recommendation
             if not recommendations:
-                recommendations.append("ℹ️ Unable to assess assumptions - proceed with caution")
+                recommendations.append("INFO:Unable to assess assumptions - proceed with caution")
                 
         except Exception as e:
             recommendations.append(f"⚠️ Error generating recommendations: {str(e)}")

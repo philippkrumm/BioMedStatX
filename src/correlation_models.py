@@ -107,8 +107,8 @@ class CorrelationModel:
 
         if self.n < 4:
             raise ValueError(
-                f"Korrelation benötigt mindestens 4 vollständige Wertepaare "
-                f"(nach Pairwise Deletion: n={self.n})."
+                f"Correlation requires at least 4 complete value pairs "
+                f"(after pairwise deletion: n={self.n})."
             )
 
         col_map = _sanitize_columns(work, [x_col, y_col])
@@ -119,10 +119,17 @@ class CorrelationModel:
         y_vals = work[self._y].values.astype(float)
 
         # --- Determine method ---
+        self._normality_check = None
         if method == 'auto':
-            _, px = scipy_stats.shapiro(x_vals[:5000])
-            _, py = scipy_stats.shapiro(y_vals[:5000])
+            sw_stat_x, px = scipy_stats.shapiro(x_vals[:5000])
+            sw_stat_y, py = scipy_stats.shapiro(y_vals[:5000])
             self._method_used = 'pearson' if (px > alpha and py > alpha) else 'spearman'
+            self._normality_check = {
+                "test": "Shapiro-Wilk (auto method selection)",
+                x_col: {"statistic": float(sw_stat_x), "p_value": float(px), "normal": bool(px > alpha)},
+                y_col: {"statistic": float(sw_stat_y), "p_value": float(py), "normal": bool(py > alpha)},
+                "both_normal": bool(px > alpha and py > alpha),
+            }
         else:
             self._method_used = method
 
@@ -141,17 +148,17 @@ class CorrelationModel:
     @staticmethod
     def _interpret(r):
         abs_r = abs(r)
-        direction = "positiv" if r >= 0 else "negativ"
+        direction = "positive" if r >= 0 else "negative"
         if abs_r < 0.2:
-            strength = "vernachlässigbar"
+            strength = "negligible"
         elif abs_r < 0.4:
-            strength = "schwach"
+            strength = "weak"
         elif abs_r < 0.6:
-            strength = "moderat"
+            strength = "moderate"
         elif abs_r < 0.8:
-            strength = "stark"
+            strength = "strong"
         else:
-            strength = "sehr stark"
+            strength = "very strong"
         return f"{direction.capitalize()}, {strength} (|r| = {abs_r:.3f})"
 
     def as_results_dict(self):
@@ -159,7 +166,7 @@ class CorrelationModel:
             return {"error": "Model not fitted"}
 
         return {
-            "test": f"Korrelation ({self._method_used.capitalize()})",
+            "test": f"Correlation ({self._method_used.capitalize()})",
             "model_type": "Correlation",
             "p_value": self.p,
             "statistic": self.r,
@@ -175,6 +182,7 @@ class CorrelationModel:
             "interpretation": self._interpret(self.r),
             "x_variable": self._x,
             "y_variable": self._y,
+            "normality_check": self._normality_check,
         }
 
 
@@ -221,8 +229,8 @@ class SimpleLinearRegressionModel:
         min_obs = max(5, len(all_cols) + 2)
         if n < min_obs:
             raise ValueError(
-                f"Zu wenige Beobachtungen nach Listenausschluss (n={n}, "
-                f"benötigt: ≥{min_obs} für {len(all_cols)} Variablen)."
+                f"Too few observations after listwise deletion (n={n}, "
+                f"required: ≥{min_obs} for {len(all_cols)} variables)."
             )
 
         col_map = _sanitize_columns(work, all_cols)
@@ -250,7 +258,7 @@ class SimpleLinearRegressionModel:
         try:
             sw_stat, sw_p = scipy_stats.shapiro(residuals[:5000])
             diag["normality"] = {
-                "test": "Shapiro-Wilk (Residuen)",
+                "test": "Shapiro-Wilk (Residuals)",
                 "statistic": float(sw_stat),
                 "p_value": float(sw_p),
                 "assumption_holds": bool(sw_p > self._alpha),
@@ -569,16 +577,16 @@ class RegressionHealthScanner:
         }
         if n_dropped > 0:
             self.warnings.append(
-                f"Fehlende Werte: {n_dropped} von {n_total} Zeilen wurden "
-                f"ausgeschlossen (Listenausschluss)."
+                f"Missing values: {n_dropped} of {n_total} rows excluded "
+                f"(listwise deletion)."
             )
 
         # Minimum sample size
         n_preds = len(all_pred)
         if n_complete < 10 * n_preds:
             self.warnings.append(
-                f"Stichprobengröße: n={n_complete} für {n_preds} Prädiktoren "
-                f"— Faustregel: ≥10 Beobachtungen pro Prädiktor empfohlen."
+                f"Sample size: n={n_complete} for {n_preds} predictors "
+                f"— Rule of thumb: ≥10 observations per predictor recommended."
             )
         self.checks["sample_size"] = {"n_complete": n_complete, "n_predictors": n_preds}
 
@@ -599,7 +607,7 @@ class RegressionHealthScanner:
             if n_extreme > 0:
                 outlier_info[col] = n_extreme
                 self.warnings.append(
-                    f"Ausreißer in '{col}': {n_extreme} Wert(e) mit |mod. Z-Score| > 3.5."
+                    f"Outliers in '{col}': {n_extreme} value(s) with |mod. Z-score| > 3.5."
                 )
         self.checks["predictor_outliers"] = outlier_info
 
@@ -621,8 +629,8 @@ class RegressionHealthScanner:
                     self.checks["vif"] = vif_vals
                     if high_vif:
                         self.warnings.append(
-                            f"Multikollinearität: {', '.join(high_vif)} — "
-                            "VIF > 10, Koeffizienteninterpretation eingeschränkt."
+                            f"Multicollinearity: {', '.join(high_vif)} — "
+                            "VIF > 10, coefficient interpretation is limited."
                         )
             except Exception as exc:
                 self.checks["vif"] = {"error": str(exc)}
