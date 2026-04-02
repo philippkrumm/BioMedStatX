@@ -530,14 +530,28 @@ class HTMLExporter:
         try:
             import plotly.graph_objects as go
 
+            def _hex_to_rgba(hex_color: str, alpha: float) -> str:
+                color = str(hex_color or "").strip().lstrip("#")
+                if len(color) != 6:
+                    return f"rgba(15,118,110,{alpha})"
+                try:
+                    r = int(color[0:2], 16)
+                    g = int(color[2:4], 16)
+                    b = int(color[4:6], 16)
+                except Exception:
+                    return f"rgba(15,118,110,{alpha})"
+                return f"rgba({r},{g},{b},{alpha})"
+
             figure = go.Figure()
+            palette = ["#0f766e", "#1f7a5a", "#b7791f", "#9f3a38", "#1d4ed8", "#7c3aed"]
             group_order = []
-            for group_name, values in raw_data.items():
+            for idx, (group_name, values) in enumerate(raw_data.items()):
                 numeric = HTMLExporter._coerce_numeric_sequence(values)
                 if not numeric:
                     continue
                 group_order.append(str(group_name))
                 label = f"{group_name} (n={len(numeric)})"
+                color = palette[idx % len(palette)]
                 figure.add_trace(
                     go.Box(
                         y=numeric,
@@ -545,9 +559,9 @@ class HTMLExporter:
                         boxpoints="all",
                         jitter=0.45,
                         pointpos=0,
-                        fillcolor="rgba(15,118,110,0.18)",
-                        line=dict(color="#16313a"),
-                        marker=dict(size=7, color="#0f766e", opacity=0.78),
+                        fillcolor=_hex_to_rgba(color, 0.18),
+                        line=dict(color=color),
+                        marker=dict(size=7, color=color, opacity=0.78),
                     )
                 )
             if not figure.data:

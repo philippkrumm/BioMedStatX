@@ -241,6 +241,9 @@
     legendXAnchor: "left",
     legendYAnchor: "top",
     showSignificance: true,
+    significanceLineWidth: 1.7,
+    significanceSpacingScale: 1.0,
+    significanceStarSize: 14,
     exportWidth: 8,
     exportHeight: 6,
     pngScale: 3,
@@ -267,12 +270,76 @@
       return;
     }
     var available = hasUsableSubjectTrajectories();
+    var raincloudMode = state.plotType === "Raincloud";
     wrapper.style.display = available ? "flex" : "none";
-    checkbox.disabled = !available;
-    if (!available) {
+    checkbox.disabled = !available || raincloudMode;
+    wrapper.classList.toggle("is-disabled", checkbox.disabled);
+    if (!available || raincloudMode) {
       checkbox.checked = false;
       state.showPairedLines = false;
     }
+  }
+
+  function setControlDisabled(controlId, disabled) {
+    var control = document.getElementById(controlId);
+    if (!control) return;
+    control.disabled = disabled;
+    var wrapper = control.closest(".pd-row, .pd-check");
+    if (wrapper) {
+      wrapper.classList.toggle("is-disabled", disabled);
+    }
+  }
+
+  function updateReferenceNote() {
+    var noteNode = document.getElementById("pd-ref-note");
+    if (!noteNode) return;
+    if (state.plotType === "Raincloud") {
+      noteNode.textContent = "Reference lines are disabled for Raincloud layout.";
+      return;
+    }
+    if (thresholdReferenceLines.length > 0) {
+      noteNode.textContent = String(thresholdReferenceLines.length) + " threshold line(s) from payload.";
+    } else {
+      noteNode.textContent = "No thresholds found in result payload.";
+    }
+  }
+
+  function updateControlAvailability() {
+    var isBar = state.plotType === "Bar";
+    var isRaincloud = state.plotType === "Raincloud";
+
+    ["pd-show-error-bars", "pd-central-measure", "pd-error-type", "pd-error-direction", "pd-auto-pattern"].forEach(function (id) {
+      setControlDisabled(id, !isBar);
+    });
+
+    if (!isBar) {
+      state.showErrorBars = false;
+      var showErrorBarsNode = document.getElementById("pd-show-error-bars");
+      if (showErrorBarsNode) showErrorBarsNode.checked = false;
+    }
+
+    var thresholdToggle = document.getElementById("pd-ref-thresholds");
+    var thresholdUnavailable = thresholdReferenceLines.length === 0;
+
+    ["pd-ref-zero", "pd-ref-unit", "pd-ref-style", "pd-ref-width"].forEach(function (id) {
+      setControlDisabled(id, isRaincloud);
+    });
+    setControlDisabled("pd-ref-thresholds", isRaincloud || thresholdUnavailable);
+
+    if (isRaincloud) {
+      state.showZeroReferenceLine = false;
+      state.showUnitReferenceLine = false;
+      state.showThresholdReferenceLines = false;
+      var refZeroNode = document.getElementById("pd-ref-zero");
+      var refUnitNode = document.getElementById("pd-ref-unit");
+      var refThresholdNode = document.getElementById("pd-ref-thresholds");
+      if (refZeroNode) refZeroNode.checked = false;
+      if (refUnitNode) refUnitNode.checked = false;
+      if (refThresholdNode) refThresholdNode.checked = false;
+    }
+
+    updatePairedLineControlState();
+    updateReferenceNote();
   }
 
   var errorOptionsByCentral = {
@@ -353,27 +420,17 @@
     document.getElementById("pd-legend-xanchor").value = state.legendXAnchor;
     document.getElementById("pd-legend-yanchor").value = state.legendYAnchor;
     document.getElementById("pd-show-significance").checked = state.showSignificance;
+    document.getElementById("pd-significance-line-width").value = state.significanceLineWidth;
+    document.getElementById("pd-significance-spacing").value = state.significanceSpacingScale;
+    document.getElementById("pd-significance-size").value = state.significanceStarSize;
     document.getElementById("pd-auto-pattern").checked = state.autoPatternsEnabled;
     document.getElementById("pd-export-width").value = state.exportWidth;
     document.getElementById("pd-export-height").value = state.exportHeight;
     document.getElementById("pd-png-scale").value = String(state.pngScale);
     updatePairedLineControlState();
     updateEncodingControlVisibility();
+    updateControlAvailability();
     updateFontPreviewStatus();
-
-    var thresholdToggle = document.getElementById("pd-ref-thresholds");
-    if (thresholdToggle) {
-      thresholdToggle.disabled = thresholdReferenceLines.length === 0;
-    }
-
-    var noteNode = document.getElementById("pd-ref-note");
-    if (noteNode) {
-      if (thresholdReferenceLines.length > 0) {
-        noteNode.textContent = String(thresholdReferenceLines.length) + " threshold line(s) from payload.";
-      } else {
-        noteNode.textContent = "No thresholds found in result payload.";
-      }
-    }
   }
 
   function readStateFromControls() {
@@ -441,6 +498,15 @@
     state.legendXAnchor = document.getElementById("pd-legend-xanchor").value || "left";
     state.legendYAnchor = document.getElementById("pd-legend-yanchor").value || "bottom";
     state.showSignificance = document.getElementById("pd-show-significance").checked;
+    state.significanceLineWidth = parseFloat(document.getElementById("pd-significance-line-width").value);
+    if (!Number.isFinite(state.significanceLineWidth)) state.significanceLineWidth = 1.7;
+    state.significanceLineWidth = Math.min(4, Math.max(0.8, state.significanceLineWidth));
+    state.significanceSpacingScale = parseFloat(document.getElementById("pd-significance-spacing").value);
+    if (!Number.isFinite(state.significanceSpacingScale)) state.significanceSpacingScale = 1.0;
+    state.significanceSpacingScale = Math.min(2.2, Math.max(0.7, state.significanceSpacingScale));
+    state.significanceStarSize = parseFloat(document.getElementById("pd-significance-size").value);
+    if (!Number.isFinite(state.significanceStarSize)) state.significanceStarSize = 14;
+    state.significanceStarSize = Math.min(36, Math.max(10, state.significanceStarSize));
     state.autoPatternsEnabled = document.getElementById("pd-auto-pattern").checked;
     state.exportWidth = parseFloat(document.getElementById("pd-export-width").value) || 8;
     state.exportHeight = parseFloat(document.getElementById("pd-export-height").value) || 6;
@@ -812,7 +878,7 @@
             type: "data",
             visible: true,
             thickness: Math.max(1, state.axisThickness),
-            width: 5
+            width: state.errorDirection === "both" ? 5 : 0
           };
           if (state.errorDirection === "plus") {
             errorConfig = Object.assign({}, baseError, {
@@ -969,21 +1035,21 @@
       groupOrder.forEach(function (group, groupIndex) {
         var values = groupValues(group);
         if (!values.length) return;
-        var summary = getBoxSummary(group);
         var baseX = idxMap[group];
-        var violinOffset = 0.0;
-        var boxOffset = 0.14;
-        var pointOffset = 0.28;
-        var pointJitter = 0.12;
+        var pointOffset = -0.18;
+        var pointJitter = 0.26;
         traces.push({
           type: "violin",
           name: group + " density",
           legendgroup: group,
-          x: values.map(function () { return baseX + violinOffset; }),
-          y: values,
-          side: "negative",
+          orientation: "h",
+          x: values,
+          y: values.map(function () { return baseX; }),
+          side: "positive",
           points: false,
           box: { visible: false },
+          meanline: { visible: false },
+          width: 0.88,
           alignmentgroup: "raincloud-" + group,
           offsetgroup: "raincloud-" + group,
           line: { color: state.colors[group] },
@@ -991,53 +1057,33 @@
           opacity: Math.min(0.75, state.alpha),
           showlegend: false
         });
-        if (summary) {
-          traces.push({
-            type: "box",
-            name: group,
-            legendgroup: group,
-            x: [baseX + boxOffset],
-            q1: [summary.q1],
-            median: [summary.median],
-            q3: [summary.q3],
-            lowerfence: [summary.lowerFence],
-            upperfence: [summary.upperFence],
-            boxpoints: false,
-            alignmentgroup: "raincloud-" + group,
-            offsetgroup: "raincloud-" + group,
-            marker: { color: state.colors[group] },
-            line: { color: state.colors[group] },
-            fillcolor: state.colors[group],
-            width: 0.13,
-            opacity: state.alpha,
-            showlegend: !state.showPoints && state.showLegend
-          });
-        } else {
-          traces.push({
-            type: "box",
-            name: group,
-            legendgroup: group,
-            x: values.map(function () { return baseX + boxOffset; }),
-            y: values,
-            boxpoints: false,
-            alignmentgroup: "raincloud-" + group,
-            offsetgroup: "raincloud-" + group,
-            marker: { color: state.colors[group] },
-            line: { color: state.colors[group] },
-            fillcolor: state.colors[group],
-            width: 0.13,
-            opacity: state.alpha,
-            showlegend: !state.showPoints && state.showLegend
-          });
-        }
+
+        traces.push({
+          type: "box",
+          orientation: "h",
+          name: group,
+          legendgroup: group,
+          x: values,
+          y: values.map(function () { return baseX; }),
+          boxpoints: false,
+          alignmentgroup: "raincloud-" + group,
+          offsetgroup: "raincloud-" + group,
+          marker: { color: state.colors[group] },
+          line: { color: "rgba(22,49,58,0.85)", width: 1.2 },
+          fillcolor: "rgba(255,255,255,0.28)",
+          width: 0.24,
+          opacity: 1,
+          showlegend: !state.showPoints && state.showLegend
+        });
+
         if (state.showPoints) {
           traces.push({
             type: "scatter",
             mode: "markers",
-            x: values.map(function (_, pointIndex) {
+            x: values,
+            y: values.map(function (_, pointIndex) {
               return stableJitter(baseX + pointOffset, pointIndex, groupIndex, pointJitter);
             }),
-            y: values,
             marker: {
               color: state.colors[group],
               symbol: getSymbolForGroup(group, groupIndex),
@@ -1053,7 +1099,7 @@
       });
     }
 
-    if (state.showPairedLines) {
+    if (state.showPairedLines && state.plotType !== "Raincloud") {
       traces = traces.concat(buildPairedLineTraces(idxMap));
     }
 
@@ -1104,8 +1150,8 @@
     var placed = [];
 
     function laneY(lane) {
-      var linearStep = Math.max((Math.abs(yMax - yMin) || Math.abs(yBase) || 1) * 0.1, 0.2);
-      var logStep = 0.08;
+      var linearStep = Math.max((Math.abs(yMax - yMin) || Math.abs(yBase) || 1) * 0.1, 0.2) * state.significanceSpacingScale;
+      var logStep = 0.08 * state.significanceSpacingScale;
       if (state.logY) {
         return Math.pow(10, Math.log10(yBase) + (lane + 1) * logStep);
       }
@@ -1120,9 +1166,12 @@
     }
 
     function hasLabelCollision(candidateX, candidateY, stars) {
+      var scale = Math.max(0.8, state.significanceStarSize / 14);
       var textLen = Math.max(1, String(stars || "*").length);
-      var labelHalfX = Math.max(0.16, 0.08 * textLen);
-      var yGap = state.logY ? candidateY * 0.045 : Math.max((Math.abs(yMax - yMin) || 1) * 0.03, 0.15);
+      var labelHalfX = Math.max(0.16 * scale, 0.08 * textLen * scale);
+      var yGap = state.logY
+        ? candidateY * (0.045 * scale)
+        : Math.max((Math.abs(yMax - yMin) || 1) * (0.03 * scale), 0.15 * scale);
       var x0 = candidateX - labelHalfX;
       var x1 = candidateX + labelHalfX;
       return placedLabels.some(function (label) {
@@ -1150,7 +1199,8 @@
       laneIntervals[laneIndex].push(interval);
 
       var finalY = laneY(laneIndex);
-      var labelHalfX = Math.max(0.16, 0.08 * Math.max(1, String(pair.stars || "*").length));
+      var scale = Math.max(0.8, state.significanceStarSize / 14);
+      var labelHalfX = Math.max(0.16 * scale, 0.08 * Math.max(1, String(pair.stars || "*").length) * scale);
       placedLabels.push({
         x0: labelCenterX - labelHalfX,
         x1: labelCenterX + labelHalfX,
@@ -1164,6 +1214,63 @@
   function buildBrackets(yMin, yMax, idxMap) {
     if (!state.showSignificance || !state.visiblePairIds.length) {
       return { shapes: [], annotations: [], yAxisMax: yMax };
+    }
+
+    if (state.plotType === "Raincloud") {
+      var horizontalPairs = pairwiseData.filter(function (pair) {
+        if (!pair || !pair.significant) return false;
+        if (state.visiblePairIds.indexOf(pair.pair_id) === -1) return false;
+        return idxMap[pair.group1] && idxMap[pair.group2];
+      }).map(function (pair) {
+        return {
+          stars: pair.stars || "*",
+          i1: idxMap[pair.group1],
+          i2: idxMap[pair.group2]
+        };
+      });
+
+      if (!horizontalPairs.length) {
+        return { shapes: [], annotations: [], yAxisMax: yMax, xAxisMax: null };
+      }
+
+      var xBase = yMax;
+      if (!Number.isFinite(xBase)) {
+        return { shapes: [], annotations: [], yAxisMax: yMax, xAxisMax: null };
+      }
+
+      var stepX = Math.max((Math.abs(yMax - yMin) || Math.abs(xBase) || 1) * 0.1, 0.12) * state.significanceSpacingScale;
+      var tickX = Math.max(stepX * 0.22, 0.06);
+      var bracketLineWidthHorizontal = Math.min(4, Math.max(0.8, state.significanceLineWidth));
+      var shapesHorizontal = [];
+      var annotationsHorizontal = [];
+      var xAxisMax = xBase;
+
+      horizontalPairs.forEach(function (pair, idx) {
+        var laneX = xBase + (idx + 1) * stepX;
+        var yLow = Math.min(pair.i1, pair.i2);
+        var yHigh = Math.max(pair.i1, pair.i2);
+        xAxisMax = Math.max(xAxisMax, laneX + tickX * 2.2);
+
+        shapesHorizontal.push(
+          { type: "line", x0: laneX, x1: laneX, y0: yLow, y1: yHigh, xref: "x", yref: "y", line: { color: "rgba(22,49,58,0.65)", width: bracketLineWidthHorizontal } },
+          { type: "line", x0: laneX - tickX, x1: laneX, y0: yLow, y1: yLow, xref: "x", yref: "y", line: { color: "rgba(22,49,58,0.65)", width: bracketLineWidthHorizontal } },
+          { type: "line", x0: laneX - tickX, x1: laneX, y0: yHigh, y1: yHigh, xref: "x", yref: "y", line: { color: "rgba(22,49,58,0.65)", width: bracketLineWidthHorizontal } }
+        );
+
+        annotationsHorizontal.push({
+          x: laneX + tickX * 0.35,
+          y: (yLow + yHigh) / 2,
+          text: "<b>" + pair.stars + "</b>",
+          showarrow: false,
+          xref: "x",
+          yref: "y",
+          xanchor: "left",
+          yanchor: "middle",
+          font: { size: state.significanceStarSize, color: "#16313a" }
+        });
+      });
+
+      return { shapes: shapesHorizontal, annotations: annotationsHorizontal, yAxisMax: yMax, xAxisMax: xAxisMax };
     }
 
     var visiblePairs = pairwiseData.filter(function (pair) {
@@ -1197,7 +1304,8 @@
     var shapes = [];
     var annotations = [];
     var maxBracketY = yBase;
-    var linearStep = Math.max((Math.abs(yMax - yMin) || Math.abs(yBase) || 1) * 0.1, 0.2);
+    var linearStep = Math.max((Math.abs(yMax - yMin) || Math.abs(yBase) || 1) * 0.1, 0.2) * state.significanceSpacingScale;
+    var bracketLineWidth = Math.min(4, Math.max(0.8, state.significanceLineWidth));
 
     laneAssignments.forEach(function (entry) {
       var pair = entry.pair;
@@ -1206,9 +1314,9 @@
       maxBracketY = Math.max(maxBracketY, y + tick);
 
       shapes.push(
-        { type: "line", x0: pair.i1, x1: pair.i2, y0: y, y1: y, xref: "x", yref: "y", line: { color: "rgba(22,49,58,0.65)", width: 1.7 } },
-        { type: "line", x0: pair.i1, x1: pair.i1, y0: y - tick, y1: y, xref: "x", yref: "y", line: { color: "rgba(22,49,58,0.65)", width: 1.7 } },
-        { type: "line", x0: pair.i2, x1: pair.i2, y0: y - tick, y1: y, xref: "x", yref: "y", line: { color: "rgba(22,49,58,0.65)", width: 1.7 } }
+        { type: "line", x0: pair.i1, x1: pair.i2, y0: y, y1: y, xref: "x", yref: "y", line: { color: "rgba(22,49,58,0.65)", width: bracketLineWidth } },
+        { type: "line", x0: pair.i1, x1: pair.i1, y0: y - tick, y1: y, xref: "x", yref: "y", line: { color: "rgba(22,49,58,0.65)", width: bracketLineWidth } },
+        { type: "line", x0: pair.i2, x1: pair.i2, y0: y - tick, y1: y, xref: "x", yref: "y", line: { color: "rgba(22,49,58,0.65)", width: bracketLineWidth } }
       );
 
       annotations.push({
@@ -1218,8 +1326,10 @@
         showarrow: false,
         xref: "x",
         yref: "y",
-        yshift: 8,
-        font: { size: Math.max(10, state.axisSize), color: "#16313a" }
+        xanchor: "center",
+        yanchor: "bottom",
+        yshift: Math.max(8, Math.round(state.significanceStarSize * 0.55)),
+        font: { size: state.significanceStarSize, color: "#16313a" }
       });
     });
 
@@ -1227,6 +1337,15 @@
   }
 
   function buildReferenceLinesLayer(yMin, yMax) {
+    if (state.plotType === "Raincloud") {
+      return {
+        shapes: [],
+        annotations: [],
+        rangeCandidates: [],
+        warning: "Reference lines are disabled for Raincloud layout."
+      };
+    }
+
     var lines = [];
     var warning = null;
 
@@ -1369,6 +1488,7 @@
   function buildPlot() {
     readStateFromControls();
     updateEncodingControlVisibility();
+    updateControlAvailability();
 
     var warningNode = document.getElementById("pd-warning");
     if (warningNode) warningNode.textContent = "";
@@ -1442,7 +1562,9 @@
       yAxis.tickformat = ".2f";
     }
 
-    if (state.yMin != null && state.yMax != null && state.yMax > state.yMin) {
+    var isHorizontalRaincloud = state.plotType === "Raincloud";
+
+    if (!isHorizontalRaincloud && state.yMin != null && state.yMax != null && state.yMax > state.yMin) {
       if (state.logY && state.yMin <= 0) {
         warningMessages.push("Y limits ignored: log scale requires y-min > 0.");
       } else {
@@ -1463,7 +1585,7 @@
     var combinedCandidates = [built.yMin, built.yMax, bracketLayer.yAxisMax].concat(referenceLayer.rangeCandidates || []);
     combinedCandidates = combinedCandidates.filter(function (value) { return Number.isFinite(value); });
 
-    if (state.logY && !(state.yMin != null && state.yMax != null && state.yMax > state.yMin && state.yMin > 0)) {
+    if (!isHorizontalRaincloud && state.logY && !(state.yMin != null && state.yMax != null && state.yMax > state.yMin && state.yMin > 0)) {
       var positiveCandidates = combinedCandidates.filter(function (value) { return value > 0; });
       if (positiveCandidates.length >= 2) {
         var positiveMin = Math.min.apply(null, positiveCandidates);
@@ -1481,7 +1603,7 @@
         yAxis.range = undefined;
         yAxis.autorange = true;
       }
-    } else if (!(state.yMin != null && state.yMax != null && state.yMax > state.yMin)) {
+    } else if (!isHorizontalRaincloud && !(state.yMin != null && state.yMax != null && state.yMax > state.yMin)) {
       var autoMin = Math.min.apply(null, combinedCandidates);
       var autoMax = Math.max.apply(null, combinedCandidates);
       var autoSpan = Math.max(Math.abs(autoMax - autoMin), 1e-9);
@@ -1534,6 +1656,77 @@
       plot_bgcolor: "#fffdf8",
       hovermode: "closest"
     };
+
+    if (isHorizontalRaincloud) {
+      var horizontalXAxis = {
+        title: { text: state.yLabel, font: { size: state.axisSize } },
+        type: state.logX ? "log" : "linear",
+        showgrid: state.gridStyle === "major" || state.gridStyle === "both",
+        zeroline: !state.logX,
+        showline: true,
+        linecolor: "rgba(22,49,58,0.75)",
+        linewidth: Math.max(0.5, state.axisThickness),
+        ticks: tickMode,
+        tickwidth: Math.max(0.5, state.axisThickness),
+        ticklen: Math.max(4, Math.round(4 + state.axisThickness * 2)),
+        mirror: axisMirror
+      };
+
+      var horizontalYAxis = {
+        title: { text: state.xLabel, font: { size: state.axisSize } },
+        tickvals: groupOrder.map(function (_, index) { return index + 1; }),
+        ticktext: groupOrder,
+        showgrid: false,
+        zeroline: false,
+        showline: true,
+        linecolor: "rgba(22,49,58,0.75)",
+        linewidth: Math.max(0.5, state.axisThickness),
+        ticks: tickMode,
+        tickwidth: Math.max(0.5, state.axisThickness),
+        ticklen: Math.max(4, Math.round(4 + state.axisThickness * 2)),
+        mirror: axisMirror,
+        range: [0.5, groupOrder.length + 0.5]
+      };
+
+      var xCandidatesHorizontal = [built.yMin, built.yMax];
+      if (Number.isFinite(bracketLayer.xAxisMax)) {
+        xCandidatesHorizontal.push(bracketLayer.xAxisMax);
+      }
+      xCandidatesHorizontal = xCandidatesHorizontal.filter(function (value) { return Number.isFinite(value); });
+
+      if (state.yMin != null && state.yMax != null && state.yMax > state.yMin) {
+        if (state.logX && state.yMin <= 0) {
+          warningMessages.push("Y limits ignored: log scale requires y-min > 0.");
+        } else {
+          horizontalXAxis.range = state.logX ? [Math.log10(state.yMin), Math.log10(state.yMax)] : [state.yMin, state.yMax];
+        }
+      } else if (xCandidatesHorizontal.length >= 2) {
+        var autoMinH = Math.min.apply(null, xCandidatesHorizontal);
+        var autoMaxH = Math.max.apply(null, xCandidatesHorizontal);
+        var autoSpanH = Math.max(Math.abs(autoMaxH - autoMinH), 1e-9);
+        horizontalXAxis.range = [autoMinH - autoSpanH * 0.05, autoMaxH + autoSpanH * 0.12];
+      }
+
+      if (state.gridStyle !== "none") {
+        horizontalXAxis.gridwidth = Math.max(0.5, state.axisThickness * 0.75);
+        horizontalXAxis.gridcolor = "rgba(22,49,58," + state.gridAlpha + ")";
+      }
+      if (state.minorTicks) {
+        horizontalXAxis.minor = {
+          ticks: tickMode,
+          tickwidth: Math.max(0.5, state.axisThickness * 0.75),
+          ticklen: Math.max(3, Math.round(3 + state.axisThickness)),
+          showgrid: state.gridStyle === "minor" || state.gridStyle === "both"
+        };
+        if (state.gridStyle === "minor" || state.gridStyle === "both") {
+          horizontalXAxis.minor.gridcolor = "rgba(22,49,58," + Math.max(0.05, state.gridAlpha * 0.7) + ")";
+          horizontalXAxis.minor.gridwidth = Math.max(0.5, state.axisThickness * 0.6);
+        }
+      }
+
+      layout.xaxis = horizontalXAxis;
+      layout.yaxis = horizontalYAxis;
+    }
 
     if (state.gridStyle !== "none") {
       layout.xaxis.gridwidth = Math.max(0.5, state.axisThickness * 0.75);

@@ -163,7 +163,7 @@ class ComparisonEngine:
         except Exception as exc:
             logger.debug("Pingouin ANOVA failed in ComparisonEngine: %s", exc)
             teststat, pval = stats.f_oneway(*[samples[g] for g in groups])
-            results["test"] = "One-way ANOVA (scipy fallback)"
+            results["test"] = "One-way ANOVA (SciPy)"
             results["p_value"] = float(pval)
             results["statistic"] = float(teststat)
 

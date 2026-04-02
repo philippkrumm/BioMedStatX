@@ -1,0 +1,440 @@
+import logging
+
+import numpy as np
+import pandas as pd
+from scipy import stats
+
+from statistical_testing.decision_logic import select_comparison_test, strategy_to_recommendation
+from statistical_testing.validators import (
+    GroupValidationError,
+    ValidationError,
+    validate_levene_inputs,
+    validate_residuals_for_shapiro,
+)
+from stats_functions import UIDialogManager
+
+logger = logging.getLogger(__name__)
+
+
+def _get_ui_dialog_manager():
+    """Resolve dialog manager through statisticaltester to honor test-time monkeypatches."""
+    try:
+        from statisticaltester import UIDialogManager as patched_dialog_manager
+        return patched_dialog_manager
+    except Exception:
+        return UIDialogManager
+
+
+class AssumptionCheckEngine:
+    @staticmethod
+    def check_normality_and_variance(
+        groups, samples, dataset_name=None, progress_text=None, column_name=None, already_transformed=False,
+        formula="Value ~ C(Group)", model_type="oneway", trace: "MethodologyTrace | None" = None
+    ):
+        """
+        Checks normality and homogeneity of variance using model residuals (before and after transformation).
+        
+        Parameters:
+        - model_type: str, one of "oneway", "twoway", "ttest", "rm" (repeated measures)
+        - formula: str, formula for statsmodels OLS (e.g., "Value ~ C(Group)" for one-way)
+        
+        Always fits the specified model and tests residuals for normality using Shapiro-Wilk test.
+        Levene test is performed on the raw values for variance homogeneity.
+        """
+        boxcox = stats.boxcox
+        boxcox_normmax = stats.boxcox_normmax
+        from statsmodels.formula.api import ols
+
+        logger.debug(f"DEBUG check_normality_and_variance: Starting assumption tests")
+        logger.debug(f"DEBUG check_normality_and_variance: model_type={model_type}, formula={formula}")
+        logger.debug(f"DEBUG check_normality_and_variance: Groups: {groups}")
+        ui_dialog_manager = _get_ui_dialog_manager()
+
+        test_info = {"pre_transformation": {}, "post_transformation": {}, "transformation": None}
+        valid_groups = [g for g in groups if g in samples and len(samples[g]) > 0]
+        transformed_samples = {g: samples[g].copy() for g in valid_groups}
+        test_recommendation = "parametric"
+
+        # Fit model and check residuals normality on raw data
+        def make_df(samps):
+            if model_type == "twoway":
+                # For Two-Way ANOVA, extract factors from group labels like "FactorA=val1, FactorB=val2"
+                data_rows = []
+                factor_names = []
+                for g in valid_groups:
+                    for v in samps[g]:
+                        # Parse group label to extract factor values
+                        if "=" in g and "," in g:
+                            parts = [part.strip() for part in g.split(",")]
+                            if len(parts) == 2:
+                                factor_a_part = parts[0].split("=")
+                                factor_b_part = parts[1].split("=")
+                                if len(factor_a_part) == 2 and len(factor_b_part) == 2:
+                                    factor_a_name, factor_a_val = factor_a_part
+                                    factor_b_name, factor_b_val = factor_b_part
+                                    # Store original factor names for later
+                                    if not factor_names:
+                                        factor_names = [factor_a_name.strip(), factor_b_name.strip()]
+                                    data_rows.append({
+                                        "Group": g,
+                                        "Value": v,
+                                        "FactorA": factor_a_val.strip(),  # Use simple column names without spaces
+                                        "FactorB": factor_b_val.strip()
+                                    })
+                                    continue
+                        # Fallback for malformed group labels
+                        data_rows.append({"Group": g, "Value": v})
+                
+                df = pd.DataFrame(data_rows)
+                # Store the original factor names for reference
+                df.attrs['original_factor_names'] = factor_names if factor_names else ['FactorA', 'FactorB']
+                return df
+            else:
+                # For other models, use simple Group/Value structure
+                return pd.DataFrame([
+                    {"Group": g, "Value": v} for g in valid_groups for v in samps[g]
+                ])
+        df_raw = make_df(samples)
+        
+        # Adjust formula for Two-Way ANOVA if needed
+        adjusted_formula = formula
+        if model_type == "twoway" and "FactorA" in df_raw.columns and "FactorB" in df_raw.columns:
+            adjusted_formula = "Value ~ C(FactorA) * C(FactorB)"
+            logger.debug(f"DEBUG SHAPIRO: Adjusted formula for Two-Way ANOVA: {adjusted_formula}")
+        
+        try:
+            # ROBUST FORMULA CREATION: Use actual DataFrame columns, not assumptions
+            logger.debug(f"DEBUG SHAPIRO: Available columns in df_raw: {list(df_raw.columns)}")
+            logger.debug(f"DEBUG SHAPIRO: Original formula: {formula}")
+            logger.debug(f"DEBUG SHAPIRO: Adjusted formula: {adjusted_formula}")
+            
+            # Create formula based on ACTUAL columns present in DataFrame
+            actual_columns = list(df_raw.columns)
+            
+            if "Value" not in actual_columns:
+                logger.debug(f"DEBUG SHAPIRO ERROR: 'Value' column missing in DataFrame!")
+                stat, pval = None, None
+            else:
+                # Find factor columns (everything except 'Value')
+                factor_columns = [col for col in actual_columns if col != "Value"]
+                logger.debug(f"DEBUG SHAPIRO: Found factor columns: {factor_columns}")
+                
+                if not factor_columns:
+                    # No factors, use intercept-only model
+                    working_formula = "Value ~ 1"
+                    logger.debug(f"DEBUG SHAPIRO: Using intercept-only model: {working_formula}")
+                elif len(factor_columns) == 1:
+                    # Single factor
+                    working_formula = f"Value ~ C({factor_columns[0]})"
+                    logger.debug(f"DEBUG SHAPIRO: Using single factor model: {working_formula}")
+                elif len(factor_columns) == 2 and model_type == "twoway":
+                    # Two factors for two-way ANOVA
+                    working_formula = f"Value ~ C({factor_columns[0]}) * C({factor_columns[1]})"
+                    logger.debug(f"DEBUG SHAPIRO: Using two-factor model: {working_formula}")
+                else:
+                    # Multiple factors, use first one only to avoid complexity
+                    working_formula = f"Value ~ C({factor_columns[0]})"
+                    logger.debug(f"DEBUG SHAPIRO: Using first factor only: {working_formula}")
+                
+                # Try to fit the model with actual column names
+                model_raw = ols(working_formula, data=df_raw).fit()
+                resid_raw = model_raw.resid
+                logger.debug(f"DEBUG SHAPIRO: Raw residuals length: {len(resid_raw)}, unique values: {len(set(resid_raw))}")
+                # HIGH-3: centralized validation for Shapiro-Wilk applicability
+                try:
+                    validate_residuals_for_shapiro(resid_raw, label="pre_transformation_residuals")
+                    stat, pval = stats.shapiro(resid_raw)
+                except ValidationError as exc:
+                    stat, pval = None, None
+                    test_info.setdefault("validation_notes", []).append(str(exc))
+                    logger.warning(str(exc))
+                logger.debug(f"DEBUG SHAPIRO: Pre-transformation Shapiro-Wilk: W={stat}, p={pval}")
+                
+        except Exception as e:
+            logger.debug(f"DEBUG SHAPIRO ERROR: Failed pre-transformation Shapiro-Wilk test: {str(e)}")
+            logger.debug(f"DEBUG SHAPIRO ERROR: DataFrame info - Shape: {df_raw.shape}, Columns: {list(df_raw.columns)}")
+            logger.debug(f"DEBUG SHAPIRO ERROR: DataFrame head:\n{df_raw.head()}")
+            stat, pval = None, None
+        _pre_is_normal = (pval > 0.05 if pval is not None else False)
+        test_info["pre_transformation"]["residuals_normality"] = {
+            "statistic": stat, "p_value": pval, "is_normal": _pre_is_normal
+        }
+        if trace:
+            _norm_verdict = "normality assumed" if _pre_is_normal else "normality violated"
+            _p_str = f"p={pval:.4f}" if isinstance(pval, (float, int)) else "p=N/A"
+            _w_str = f"W={stat:.4f}" if isinstance(stat, (float, int)) else "W=N/A"
+            trace.add(1, "Normality",
+                      f"Shapiro-Wilk on model residuals yielded {_p_str} \u2014 {_norm_verdict}.",
+                      detail=f"{_w_str}, {_p_str}")
+
+        # Levene test on raw data (Brown-Forsythe test using median)
+        try:
+            data_for_levene = [samples[g] for g in valid_groups]
+            logger.debug(f"DEBUG BROWN-FORSYTHE: Pre-transformation - Groups: {len(valid_groups)}, Data lengths: {[len(v) for v in data_for_levene]}")
+            try:
+                validated_levene_data = validate_levene_inputs(
+                    data_for_levene,
+                    min_groups=2,
+                    min_n_per_group=3,
+                    label="pre_transformation_levene",
+                )
+                stat, pval = stats.levene(*validated_levene_data, center='median')
+                has_equal_variance = pval > 0.05
+                logger.debug(f"DEBUG BROWN-FORSYTHE: Pre-transformation - Statistic: {stat}, p-value: {pval}, Equal variance: {has_equal_variance}")
+            except ValidationError as exc:
+                stat, pval, has_equal_variance = None, None, False
+                test_info.setdefault("validation_notes", []).append(str(exc))
+                logger.warning(str(exc))
+                logger.debug(f"DEBUG BROWN-FORSYTHE: Pre-transformation - Insufficient data for test")
+        except Exception as e:
+            logger.debug(f"DEBUG BROWN-FORSYTHE ERROR: Pre-transformation failed: {str(e)}")
+            stat, pval, has_equal_variance = None, None, False
+        test_info["pre_transformation"]["variance"] = {
+            "statistic": stat, "p_value": pval, "equal_variance": has_equal_variance,
+            "test_name": "Brown-Forsythe",
+        }
+        if trace:
+            _var_verdict = "equal variances" if has_equal_variance else "unequal variances"
+            _vp_str = f"p={pval:.4f}" if isinstance(pval, (float, int)) else "p=N/A"
+            trace.add(2, "Assumption",
+                      f"Brown-Forsythe test yielded {_vp_str} \u2014 {_var_verdict}.",
+                      detail=f"F={stat:.4f}, {_vp_str}" if isinstance(stat, (float, int)) else "")
+
+        need_transform = not (
+            test_info["pre_transformation"]["residuals_normality"]["is_normal"]
+            and test_info["pre_transformation"]["variance"]["equal_variance"]
+        )
+
+        # Transformation if needed
+        if need_transform:
+            if already_transformed:
+                test_info["transformation"] = "No further"
+                return transformed_samples, "non_parametric", test_info
+
+            transformation_type = None
+            try:
+                transformation_type = ui_dialog_manager.select_transformation_dialog(
+                    parent=None, progress_text=progress_text, column_name=column_name
+                )
+            except Exception:
+                transformation_type = "log10"
+            if not transformation_type:
+                transformation_type = "log10"
+            test_info["transformation"] = transformation_type
+
+            # Apply transformation
+            for group in valid_groups:
+                values = samples[group]
+                min_val = min(values)
+                shift = -min_val + 1 if min_val <= 0 else 0
+                # MEDIUM-3: record very large shifts via validation notes
+                if shift > 1e6:
+                    shift_warning = GroupValidationError(
+                        f"Group '{group}': log10 transformation requires large shift ({shift:.2e}); "
+                        "consider preprocessing."
+                    )
+                    test_info.setdefault("validation_notes", []).append(str(shift_warning))
+                    logger.warning(str(shift_warning))
+                if transformation_type == "log10":
+                    transformed_samples[group] = [np.log10(v + shift) for v in values]
+                    if shift > 0:
+                        test_info.setdefault("log10_shifts", {})[group] = shift
+                elif transformation_type == "boxcox":
+                    shifted = [v + shift for v in values]
+                    # Pre-validate before attempting Box-Cox
+                    if len(values) < 3:
+                        _bc_reason = f"n={len(values)} < 3 required"
+                    elif len(set(values)) == 1:
+                        _bc_reason = "all values identical (zero variance)"
+                    elif any(np.isnan(v) or np.isinf(v) for v in values):
+                        _bc_reason = "NaN or Inf in data"
+                    elif min(shifted) <= 0:
+                        _bc_reason = "values ≤ 0 after shift"
+                    else:
+                        _bc_reason = None
+                    if _bc_reason:
+                        test_info["transformation_note"] = (
+                            f"Box-Cox not applicable for group '{group}': {_bc_reason}. "
+                            f"Normality will be re-evaluated on original data."
+                        )
+                        logger.warning(test_info["transformation_note"])
+                        test_info.setdefault("validation_notes", []).append(test_info["transformation_note"])
+                        transformed_samples[group] = list(values)
+                    else:
+                        try:
+                            lambda_val = boxcox_normmax(shifted)
+                            transformed_samples[group] = list(boxcox(shifted, lambda_val))
+                            test_info["boxcox_lambda"] = lambda_val
+                        except Exception as e:
+                            test_info["transformation_note"] = (
+                                f"Box-Cox optimization failed for group '{group}' ({e}). "
+                                f"Normality will be re-evaluated on original data."
+                            )
+                            logger.warning(test_info["transformation_note"])
+                            test_info.setdefault("validation_notes", []).append(test_info["transformation_note"])
+                            transformed_samples[group] = list(values)
+                elif transformation_type == "arcsin_sqrt":
+                    max_val = max(values)
+                    # Scale to 0-1 if needed
+                    if min_val < 0 or max_val > 1:
+                        # CRITICAL-4: guard against zero variance (min == max)
+                        if max_val == min_val:
+                            variance_warning = GroupValidationError(
+                                f"Group '{group}': arcsin-sqrt transformation received zero variance data; using 0.5 fallback."
+                            )
+                            test_info.setdefault("validation_notes", []).append(str(variance_warning))
+                            logger.warning(str(variance_warning))
+                            scaled = [0.5] * len(values)
+                        else:
+                            scaled = [(v - min_val) / (max_val - min_val) for v in values]
+                    else:
+                        # Values already in [0,1] — still guard against zero variance
+                        if len(set(values)) == 1:
+                            variance_warning = GroupValidationError(
+                                f"Group '{group}': arcsin-sqrt transformation received zero variance data; using 0.5 fallback."
+                            )
+                            test_info.setdefault("validation_notes", []).append(str(variance_warning))
+                            logger.warning(str(variance_warning))
+                            scaled = [0.5] * len(values)
+                        else:
+                            scaled = values
+                    transformed_samples[group] = [np.arcsin(np.sqrt(v)) for v in scaled]
+
+        # Fit model and check residuals normality on transformed data
+        df_tr = make_df(transformed_samples)
+        
+        # Use the same robust formula approach for transformed data
+        try:
+            # ROBUST FORMULA FOR TRANSFORMED DATA: Use actual DataFrame columns
+            logger.debug(f"DEBUG SHAPIRO: Available columns in df_tr: {list(df_tr.columns)}")
+            
+            # Create formula based on ACTUAL columns present in transformed DataFrame
+            actual_columns_tr = list(df_tr.columns)
+            
+            if "Value" not in actual_columns_tr:
+                logger.debug(f"DEBUG SHAPIRO ERROR: 'Value' column missing in transformed DataFrame!")
+                stat2, pval2 = None, None
+            else:
+                # Find factor columns (everything except 'Value')
+                factor_columns_tr = [col for col in actual_columns_tr if col != "Value"]
+                logger.debug(f"DEBUG SHAPIRO: Found factor columns in transformed data: {factor_columns_tr}")
+                
+                if not factor_columns_tr:
+                    # No factors, use intercept-only model
+                    working_formula_tr = "Value ~ 1"
+                    logger.debug(f"DEBUG SHAPIRO: Using intercept-only model for transformed: {working_formula_tr}")
+                elif len(factor_columns_tr) == 1:
+                    # Single factor
+                    working_formula_tr = f"Value ~ C({factor_columns_tr[0]})"
+                    logger.debug(f"DEBUG SHAPIRO: Using single factor model for transformed: {working_formula_tr}")
+                elif len(factor_columns_tr) == 2 and model_type == "twoway":
+                    # Two factors for two-way ANOVA
+                    working_formula_tr = f"Value ~ C({factor_columns_tr[0]}) * C({factor_columns_tr[1]})"
+                    logger.debug(f"DEBUG SHAPIRO: Using two-factor model for transformed: {working_formula_tr}")
+                else:
+                    # Multiple factors, use first one only to avoid complexity
+                    working_formula_tr = f"Value ~ C({factor_columns_tr[0]})"
+                    logger.debug(f"DEBUG SHAPIRO: Using first factor only for transformed: {working_formula_tr}")
+                
+                # Try to fit the model with actual column names
+                model_tr = ols(working_formula_tr, data=df_tr).fit()
+                resid_tr = model_tr.resid
+                logger.debug(f"DEBUG SHAPIRO: Transformed residuals length: {len(resid_tr)}, unique values: {len(set(resid_tr))}")
+                try:
+                    validate_residuals_for_shapiro(resid_tr, label="post_transformation_residuals")
+                    stat2, pval2 = stats.shapiro(resid_tr)
+                except ValidationError as exc:
+                    stat2, pval2 = None, None
+                    test_info.setdefault("validation_notes", []).append(str(exc))
+                    logger.warning(str(exc))
+                logger.debug(f"DEBUG SHAPIRO: Post-transformation Shapiro-Wilk: W={stat2}, p={pval2}")
+                
+        except Exception as e:
+            logger.debug(f"DEBUG SHAPIRO ERROR: Failed post-transformation Shapiro-Wilk test: {str(e)}")
+            logger.debug(f"DEBUG SHAPIRO ERROR: Transformed DataFrame info - Shape: {df_tr.shape}, Columns: {list(df_tr.columns)}")
+            logger.debug(f"DEBUG SHAPIRO ERROR: Transformed DataFrame head:\n{df_tr.head()}")
+            stat2, pval2 = None, None
+        test_info["post_transformation"]["residuals_normality"] = {
+            "statistic": stat2, "p_value": pval2, "is_normal": (pval2 > 0.05 if pval2 is not None else False)
+        }
+
+        # Levene test on transformed data
+        try:
+            data_for_levene_tr = [transformed_samples[g] for g in valid_groups]
+            logger.debug(f"DEBUG BROWN-FORSYTHE: Post-transformation - Groups: {len(valid_groups)}, Data lengths: {[len(v) for v in data_for_levene_tr]}")
+            try:
+                validated_levene_data_tr = validate_levene_inputs(
+                    data_for_levene_tr,
+                    min_groups=2,
+                    min_n_per_group=3,
+                    label="post_transformation_levene",
+                )
+                stat_tr, pval_tr = stats.levene(*validated_levene_data_tr, center='median')
+                has_equal_variance_tr = pval_tr > 0.05
+                logger.debug(f"DEBUG BROWN-FORSYTHE: Post-transformation - Statistic: {stat_tr}, p-value: {pval_tr}, Equal variance: {has_equal_variance_tr}")
+            except ValidationError as exc:
+                stat_tr, pval_tr, has_equal_variance_tr = None, None, False
+                test_info.setdefault("validation_notes", []).append(str(exc))
+                logger.warning(str(exc))
+                logger.debug(f"DEBUG BROWN-FORSYTHE: Post-transformation - Insufficient data for test")
+        except Exception as e:
+            logger.debug(f"DEBUG BROWN-FORSYTHE ERROR: Post-transformation failed: {str(e)}")
+            stat_tr, pval_tr, has_equal_variance_tr = None, None, False
+        test_info["post_transformation"]["variance"] = {
+            "statistic": stat_tr, "p_value": pval_tr, "equal_variance": has_equal_variance_tr,
+            "test_name": "Brown-Forsythe",
+        }
+
+        # Recommend test based on assumptions
+        post_norm = test_info["post_transformation"]["residuals_normality"]["is_normal"]
+        post_var = test_info["post_transformation"]["variance"]["equal_variance"]
+
+        if model_type in ["twoway", "mixed", "rm"] and post_norm:
+            decision_strategy = f"{model_type}_anova"
+            test_recommendation = "parametric"
+            if not post_var:
+                test_info["note"] = (
+                    f"Residuals are normal but variances are unequal - {model_type.upper()} ANOVA will still be used "
+                    f"(robust to variance heterogeneity)."
+                )
+        else:
+            decision_strategy = select_comparison_test(
+                is_normal=post_norm,
+                is_homoscedastic=post_var,
+                is_paired=False,
+                group_count=len(valid_groups),
+            )
+            test_recommendation = strategy_to_recommendation(decision_strategy)
+            if decision_strategy == "welch_ttest":
+                test_info["note"] = "Residuals are normal but variances are unequal - Welch's t-test will be used."
+            elif decision_strategy == "welch_anova":
+                test_info["note"] = "Residuals are normal but variances are unequal - Welch's ANOVA will be used."
+
+        test_info["decision"] = {
+            "strategy": decision_strategy,
+            "recommendation": test_recommendation,
+            "assumptions": {
+                "residuals_normal": post_norm,
+                "equal_variance": post_var,
+            },
+            "group_count": len(valid_groups),
+            "model_type": model_type,
+        }
+
+        if trace:
+            if test_recommendation == "non_parametric":
+                trace.add(3, "Test Selection", "Normality assumption violated \u2014 non-parametric test selected.")
+            elif decision_strategy in {"welch_ttest", "welch_anova"}:
+                trace.add(3, "Test Selection", "Normality confirmed, variance inequality detected \u2014 Welch correction selected.")
+            else:
+                trace.add(3, "Test Selection", "Assumptions support parametric testing \u2014 standard parametric route selected.")
+
+        logger.debug(f"DEBUG check_normality_and_variance: Final test_info structure:")
+        logger.debug(f"  Pre-transformation normality: {test_info['pre_transformation'].get('residuals_normality', 'Missing')}")
+        logger.debug(f"  Pre-transformation variance: {test_info['pre_transformation'].get('variance', 'Missing')}")
+        logger.debug(f"  Post-transformation normality: {test_info['post_transformation'].get('residuals_normality', 'Missing')}")
+        logger.debug(f"  Post-transformation variance: {test_info['post_transformation'].get('variance', 'Missing')}")
+        logger.debug(f"  Decision strategy: {decision_strategy}; recommendation: {test_recommendation}")
+
+        return transformed_samples, test_recommendation, test_info
+    
