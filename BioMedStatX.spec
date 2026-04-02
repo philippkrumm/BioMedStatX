@@ -53,7 +53,7 @@ a = Analysis(
     ["src/statistical_analyzer.py"],
     pathex=["."],
     binaries=all_binaries,
-    datas=[("assets/", "assets")] + all_datas,
+    datas=[("assets/", "assets"), ("src/templates/", "templates")] + all_datas,
     hiddenimports=all_hiddenimports + [
         # PyQt5 extras not always auto-detected
         "PyQt5.sip",

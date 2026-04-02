@@ -1,0 +1,276 @@
+<section id="sec-plot-designer" class="section" data-reveal>
+  <div class="section-head">
+    <div>
+      <div class="section-kicker">Plot Designer</div>
+      <h2>Interactive figure builder</h2>
+      <p class="muted">Adjust style and export publication-ready SVG/PNG directly from the report.</p>
+    </div>
+  </div>
+
+  <style>
+    #plot-designer-shell { display: grid; grid-template-columns: minmax(280px, 340px) 1fr; gap: 16px; }
+    #plot-designer-panel, #plot-designer-canvas { border: 1px solid var(--line); border-radius: 16px; background: var(--surface-2); }
+    #plot-designer-panel { padding: 12px; max-height: 76vh; overflow: auto; }
+    #plot-designer-canvas { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+    .pd-group { border: 1px solid var(--line); border-radius: 12px; padding: 10px; margin-bottom: 10px; }
+    .pd-group h4 { margin: 0 0 8px 0; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+    .pd-row { display: grid; grid-template-columns: 1fr; gap: 6px; margin-bottom: 8px; }
+    .pd-row-inline { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .pd-row label { font-size: 0.82rem; color: var(--muted); }
+    .pd-row input, .pd-row select { border: 1px solid var(--line); border-radius: 10px; padding: 8px; background: #fff; color: var(--ink); }
+    .pd-check { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 0.88rem; }
+    .pd-button-row { display: flex; flex-wrap: wrap; gap: 6px; }
+    .pd-button-row button { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; background: var(--surface); color: var(--ink); cursor: pointer; font-size: 0.8rem; }
+    .pd-button-row button:hover { background: rgba(15,118,110,.08); }
+    #pd-color-controls, #pd-pattern-controls, #pd-symbol-controls, #pd-pair-controls { display: grid; gap: 8px; }
+    .pd-color-item, .pd-encoding-item, .pd-pair-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    #pd-plot { width: 100%; height: 620px; min-height: 420px; }
+    #pd-download-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    #pd-download-bar button { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: var(--surface); color: var(--ink); cursor: pointer; }
+    #pd-download-bar button:hover { background: rgba(15,118,110,.08); }
+    #pd-warning { color: var(--warning); font-size: 0.85rem; min-height: 1rem; }
+    .pd-note { color: var(--muted); font-size: 0.78rem; margin-top: 4px; min-height: 1rem; }
+    @media (max-width: 1080px) { #plot-designer-shell { grid-template-columns: 1fr; } #plot-designer-panel { max-height: none; } }
+    @media (prefers-color-scheme: dark) {
+      .pd-row input, .pd-row select { background: #1a2e33; color: var(--ink); }
+    }
+  </style>
+
+  <div id="plot-designer-shell">
+    <aside id="plot-designer-panel">
+      <div class="pd-group">
+        <h4>Plot Type</h4>
+        <div class="pd-row">
+          <label for="pd-plot-type">Type</label>
+          <select id="pd-plot-type">
+            <option value="Bar" selected>Bar</option>
+            <option value="Box">Box</option>
+            <option value="Violin">Violin</option>
+            <option value="Raincloud">Raincloud</option>
+          </select>
+        </div>
+        <label class="pd-check"><input id="pd-show-points" type="checkbox" checked> Show points</label>
+        <label class="pd-check" id="pd-paired-lines-wrap"><input id="pd-show-paired-lines" type="checkbox"> Show paired subject lines</label>
+        <label class="pd-check"><input id="pd-show-error-bars" type="checkbox" checked> Show error bars (Bar)</label>
+        <div class="pd-row">
+          <label for="pd-central-measure">Central measure</label>
+          <select id="pd-central-measure">
+            <option value="mean" selected>Mean</option>
+            <option value="median">Median</option>
+          </select>
+        </div>
+        <div class="pd-row">
+          <label for="pd-error-type">Error metric</label>
+          <select id="pd-error-type">
+            <option value="sd" selected>SD</option>
+            <option value="sem">SEM</option>
+            <option value="ci95">95% CI</option>
+            <option value="iqr">IQR</option>
+            <option value="range">Range (Min-Max)</option>
+          </select>
+        </div>
+        <div class="pd-row">
+          <label for="pd-error-direction">Error bar direction</label>
+          <select id="pd-error-direction">
+            <option value="both" selected>Both (top + bottom)</option>
+            <option value="plus">Top only</option>
+            <option value="minus">Bottom only</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="pd-group">
+        <h4>Labels & Typography</h4>
+        <div class="pd-row"><label for="pd-title">Title</label><input id="pd-title" type="text" value=""></div>
+        <div class="pd-row"><label for="pd-x-label">X label</label><input id="pd-x-label" type="text" value="Groups"></div>
+        <div class="pd-row"><label for="pd-y-label">Y label</label><input id="pd-y-label" type="text" value="Values"></div>
+        <div class="pd-row">
+          <label for="pd-font-family">Font family</label>
+          <select id="pd-font-family">
+            <option value="Arial">Arial</option>
+            <option value="Helvetica">Helvetica</option>
+            <option value="Calibri">Calibri</option>
+            <option value="Segoe UI">Segoe UI</option>
+            <option value="Avenir Next">Avenir Next</option>
+            <option value="Times New Roman">Times New Roman</option>
+            <option value="Cambria">Cambria</option>
+            <option value="Georgia">Georgia</option>
+            <option value="Garamond">Garamond</option>
+            <option value="Palatino Linotype">Palatino Linotype</option>
+          </select>
+          <div id="pd-font-warning" class="pd-note"></div>
+        </div>
+        <div class="pd-row-inline">
+          <div class="pd-row"><label for="pd-title-size">Title size</label><input id="pd-title-size" type="number" min="8" max="42" value="16"></div>
+          <div class="pd-row"><label for="pd-axis-size">Axis size</label><input id="pd-axis-size" type="number" min="8" max="32" value="12"></div>
+        </div>
+        <div class="pd-row">
+          <label for="pd-alpha">Summary opacity</label>
+          <input id="pd-alpha" type="range" min="0.2" max="1" step="0.05" value="0.85">
+        </div>
+      </div>
+
+      <div class="pd-group">
+        <h4>Axes & Legend</h4>
+        <label class="pd-check"><input id="pd-log-x" type="checkbox"> Log X</label>
+        <label class="pd-check"><input id="pd-log-y" type="checkbox"> Log Y</label>
+        <label class="pd-check"><input id="pd-minor-ticks" type="checkbox"> Show minor ticks</label>
+        <div class="pd-row-inline">
+          <div class="pd-row">
+            <label for="pd-grid-style">Grid</label>
+            <select id="pd-grid-style">
+              <option value="none" selected>None</option>
+              <option value="major">Major</option>
+              <option value="minor">Minor</option>
+              <option value="both">Major + minor</option>
+            </select>
+          </div>
+          <div class="pd-row"><label for="pd-grid-alpha">Grid alpha</label><input id="pd-grid-alpha" type="number" min="0.05" max="1" step="0.05" value="0.3"></div>
+        </div>
+        <div class="pd-row-inline">
+          <div class="pd-row"><label for="pd-axis-thickness">Axis thickness</label><input id="pd-axis-thickness" type="number" min="0.3" max="4" step="0.1" value="0.7"></div>
+          <div class="pd-row">
+            <label for="pd-tick-direction">Tick direction</label>
+            <select id="pd-tick-direction">
+              <option value="out" selected>Outside</option>
+              <option value="in">Inside</option>
+              <option value="inout">Inside + outside</option>
+            </select>
+          </div>
+        </div>
+        <div class="pd-row"><label for="pd-x-tick-angle">X label angle</label><input id="pd-x-tick-angle" type="number" min="-90" max="90" step="5" value="0"></div>
+        <div class="pd-row">
+          <label for="pd-y-axis-format">Y format</label>
+          <select id="pd-y-axis-format">
+            <option value="auto" selected>Auto</option>
+            <option value="scientific">Scientific</option>
+            <option value="percentage">Percentage</option>
+            <option value="decimal">Decimal (2)</option>
+          </select>
+        </div>
+        <div class="pd-row-inline">
+          <div class="pd-row"><label for="pd-y-min">Y min (optional)</label><input id="pd-y-min" type="number" step="any" placeholder="auto"></div>
+          <div class="pd-row"><label for="pd-y-max">Y max (optional)</label><input id="pd-y-max" type="number" step="any" placeholder="auto"></div>
+        </div>
+        <div class="pd-row">
+          <label>Reference lines</label>
+          <label class="pd-check"><input id="pd-ref-zero" type="checkbox"> Baseline y = 0</label>
+          <label class="pd-check"><input id="pd-ref-unit" type="checkbox"> Unit line y = 1 (fold-change)</label>
+          <label class="pd-check"><input id="pd-ref-thresholds" type="checkbox"> Threshold lines from payload</label>
+        </div>
+        <div class="pd-row-inline">
+          <div class="pd-row">
+            <label for="pd-ref-style">Reference line style</label>
+            <select id="pd-ref-style">
+              <option value="dash" selected>Dashed</option>
+              <option value="dot">Dotted</option>
+              <option value="dashdot">Dash-dot</option>
+              <option value="solid">Solid</option>
+            </select>
+          </div>
+          <div class="pd-row"><label for="pd-ref-width">Reference line width</label><input id="pd-ref-width" type="number" min="0.6" max="4" step="0.1" value="1.5"></div>
+        </div>
+        <div id="pd-ref-note" class="pd-note"></div>
+        <label class="pd-check"><input id="pd-show-legend" type="checkbox" checked> Show legend</label>
+        <div class="pd-row">
+          <label for="pd-legend-orientation">Legend orientation</label>
+          <select id="pd-legend-orientation">
+            <option value="h">Horizontal</option>
+            <option value="v" selected>Vertical</option>
+          </select>
+        </div>
+        <div class="pd-row-inline">
+          <div class="pd-row"><label for="pd-legend-x">Legend X</label><input id="pd-legend-x" type="number" step="0.05" min="-1" max="2" value="1.02"></div>
+          <div class="pd-row"><label for="pd-legend-y">Legend Y</label><input id="pd-legend-y" type="number" step="0.05" min="-1" max="2" value="1.0"></div>
+        </div>
+        <div class="pd-row-inline">
+          <div class="pd-row">
+            <label for="pd-legend-xanchor">Legend X anchor</label>
+            <select id="pd-legend-xanchor">
+              <option value="left" selected>Left</option>
+              <option value="center">Center</option>
+              <option value="right">Right</option>
+            </select>
+          </div>
+          <div class="pd-row">
+            <label for="pd-legend-yanchor">Legend Y anchor</label>
+            <select id="pd-legend-yanchor">
+              <option value="top" selected>Top</option>
+              <option value="middle">Middle</option>
+              <option value="bottom">Bottom</option>
+            </select>
+          </div>
+        </div>
+        <div class="pd-row">
+          <label>Legend presets</label>
+          <div class="pd-button-row">
+            <button type="button" id="pd-legend-preset-inside-top-right">Inside top-right</button>
+            <button type="button" id="pd-legend-preset-outside-right">Outside right</button>
+            <button type="button" id="pd-legend-preset-bottom-horizontal">Bottom horizontal</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="pd-group">
+        <h4>Colors</h4>
+        <div id="pd-color-controls"></div>
+      </div>
+
+      <div class="pd-group">
+        <h4>Monochrome Encodings</h4>
+        <label class="pd-check"><input id="pd-auto-pattern" type="checkbox"> Auto-pattern assignment</label>
+        <div class="pd-row">
+          <label>Bar patterns</label>
+          <div id="pd-pattern-controls"></div>
+        </div>
+        <div class="pd-row">
+          <label>Point symbols</label>
+          <div id="pd-symbol-controls"></div>
+        </div>
+      </div>
+
+      <div class="pd-group">
+        <h4>Significance</h4>
+        <label class="pd-check"><input id="pd-show-significance" type="checkbox" checked> Show brackets</label>
+        <div id="pd-pair-controls"></div>
+      </div>
+
+      <div class="pd-group">
+        <h4>Export</h4>
+        <div class="pd-row-inline">
+          <div class="pd-row"><label for="pd-export-width">Width (in)</label><input id="pd-export-width" type="number" min="3" max="24" step="0.5" value="8"></div>
+          <div class="pd-row"><label for="pd-export-height">Height (in)</label><input id="pd-export-height" type="number" min="3" max="24" step="0.5" value="6"></div>
+        </div>
+        <div class="pd-row">
+          <label for="pd-png-scale">PNG quality scale</label>
+          <select id="pd-png-scale">
+            <option value="1">1x (screen)</option>
+            <option value="2">2x</option>
+            <option value="3" selected>3x (~300 DPI)</option>
+            <option value="4">4x (~400 DPI)</option>
+          </select>
+        </div>
+      </div>
+    </aside>
+
+    <div id="plot-designer-canvas">
+      <div id="pd-plot"></div>
+      <div id="pd-warning"></div>
+      <div id="pd-download-bar">
+        <button type="button" id="pd-download-svg">Download SVG</button>
+        <button type="button" id="pd-download-png">Download PNG</button>
+      </div>
+    </div>
+  </div>
+
+  <script id="pd-data-plot" type="application/json">{{ context.plot_data_json | safe }}</script>
+  <script id="pd-data-subject-trajectories" type="application/json">{{ context.plot_subject_trajectories_json | safe }}</script>
+  <script id="pd-data-reference-lines" type="application/json">{{ context.plot_reference_lines_json | safe }}</script>
+  <script id="pd-data-stats-summary" type="application/json">{{ context.stats_summary_json | safe }}</script>
+  <script id="pd-data-stats" type="application/json">{{ context.plot_stats_json | safe }}</script>
+  <script id="pd-data-pairs" type="application/json">{{ context.pairwise_data_json | safe }}</script>
+  <script id="pd-data-order" type="application/json">{{ context.group_order_json | safe }}</script>
+  <script>
+{% include "plot_designer.js" %}
+  </script>
+</section>

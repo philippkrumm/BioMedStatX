@@ -19,6 +19,19 @@ _WIDGET_MIN_H = 25       # minimum widget height for consistent UI sizing
 _SCREEN_HIGH_RES = 2560  # 4K / Retina displays
 _SCREEN_MED_RES  = 1920  # Full HD displays
 
+SCIENTIFIC_FONT_FAMILIES = [
+    "Arial",
+    "Helvetica",
+    "Calibri",
+    "Segoe UI",
+    "Avenir Next",
+    "Times New Roman",
+    "Cambria",
+    "Georgia",
+    "Garamond",
+    "Palatino Linotype",
+]
+
 # Import des Preview Widgets
 try:
     from plot_preview import PlotPreviewWidget
@@ -195,27 +208,9 @@ class TypographyTab(QWidget):
         self.font_family_combo = QComboBox()
         self.font_family_combo.setMinimumHeight(_WIDGET_MIN_H)
 
-        # Use FontManager to get available system fonts
-        try:
-            # Import the FontManager from datavisualizer
-            import sys
-            import os
-            # Add src directory to path if not already there
-            src_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'src')
-            if src_path not in sys.path:
-                sys.path.insert(0, src_path)
-
-            from datavisualizer import FontManager
-            font_families = FontManager.get_available_fonts()
-            print(f"Loaded {len(font_families)} system fonts for UI")
-        except Exception as e:
-            print(f"Warning: Could not load system fonts: {e}")
-            # Fallback to common fonts
-            font_families = [
-                'Arial', 'Times New Roman', 'Calibri',
-                'Segoe UI', 'Georgia', 'Helvetica',
-                'Trebuchet MS', 'Impact', 'DejaVu Sans'
-            ]
+        # Keep plotting typography focused on a curated scientific shortlist.
+        font_families = SCIENTIFIC_FONT_FAMILIES.copy()
+        print(f"Loaded curated font shortlist ({len(font_families)} entries) for UI")
 
         self.font_family_combo.addItems(font_families)
         current_font = self.config.get('font_family', 'Arial')

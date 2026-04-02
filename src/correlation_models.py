@@ -89,6 +89,9 @@ class CorrelationModel:
         self._method_used = None
         self._x = None
         self._y = None
+        self._x_label = None
+        self._y_label = None
+        self._points = []
         self._alpha = 0.05
 
     def fit(self, df, x_col, y_col, method='auto', alpha=0.05):
@@ -114,9 +117,12 @@ class CorrelationModel:
         col_map = _sanitize_columns(work, [x_col, y_col])
         self._x = col_map[x_col]
         self._y = col_map[y_col]
+        self._x_label = str(x_col)
+        self._y_label = str(y_col)
 
         x_vals = work[self._x].values.astype(float)
         y_vals = work[self._y].values.astype(float)
+        self._points = [{"x": float(x), "y": float(y)} for x, y in zip(x_vals, y_vals)]
 
         # --- Determine method ---
         self._normality_check = None
@@ -182,6 +188,9 @@ class CorrelationModel:
             "interpretation": self._interpret(self.r),
             "x_variable": self._x,
             "y_variable": self._y,
+            "x_variable_display": self._x_label,
+            "y_variable_display": self._y_label,
+            "association_points": self._points,
             "normality_check": self._normality_check,
         }
 
@@ -207,6 +216,8 @@ class SimpleLinearRegressionModel:
         self._df = None
         self._x = None
         self._y = None
+        self._x_label = None
+        self._y_label = None
         self._covariates = None
         self._alpha = 0.05
 
@@ -236,6 +247,8 @@ class SimpleLinearRegressionModel:
         col_map = _sanitize_columns(work, all_cols)
         self._x = col_map[x_col]
         self._y = col_map[y_col]
+        self._x_label = str(x_col)
+        self._y_label = str(y_col)
         self._covariates = [col_map[c] for c in (covariates or [])]
         self._df = work
 
@@ -244,6 +257,52 @@ class SimpleLinearRegressionModel:
 
         self.result = smf.ols(formula, data=self._df).fit()
         return self
+
+    def _build_regression_plot_payload(self, n_points=180):
+        if self.result is None or self._df is None:
+            return None
+        try:
+            x_obs = pd.to_numeric(self._df[self._x], errors="coerce").to_numpy(dtype=float)
+            y_obs = pd.to_numeric(self._df[self._y], errors="coerce").to_numpy(dtype=float)
+            valid = np.isfinite(x_obs) & np.isfinite(y_obs)
+            x_obs = x_obs[valid]
+            y_obs = y_obs[valid]
+            if x_obs.size < 2 or y_obs.size < 2:
+                return None
+
+            x_min = float(np.min(x_obs))
+            x_max = float(np.max(x_obs))
+            if np.isclose(x_min, x_max):
+                x_fit = np.array([x_min], dtype=float)
+            else:
+                x_fit = np.linspace(x_min, x_max, int(max(25, n_points)))
+
+            prediction_frame = pd.DataFrame({self._x: x_fit})
+            for covariate in self._covariates:
+                cov_values = pd.to_numeric(self._df[covariate], errors="coerce").to_numpy(dtype=float)
+                cov_mean = np.nanmean(cov_values)
+                prediction_frame[covariate] = float(cov_mean) if np.isfinite(cov_mean) else 0.0
+
+            prediction = self.result.get_prediction(prediction_frame).summary_frame(alpha=self._alpha)
+            y_fit = prediction["mean"].to_numpy(dtype=float)
+            ci_lower = prediction["mean_ci_lower"].to_numpy(dtype=float)
+            ci_upper = prediction["mean_ci_upper"].to_numpy(dtype=float)
+
+            return {
+                "x_label": self._x_label,
+                "y_label": self._y_label,
+                "points": [{"x": float(x), "y": float(y)} for x, y in zip(x_obs, y_obs)],
+                "fit": {
+                    "x": [float(value) for value in x_fit.tolist()],
+                    "y": [float(value) for value in y_fit.tolist()],
+                    "ci_lower": [float(value) for value in ci_lower.tolist()],
+                    "ci_upper": [float(value) for value in ci_upper.tolist()],
+                    "alpha": float(self._alpha),
+                    "confidence_level": float(1.0 - self._alpha),
+                },
+            }
+        except Exception:
+            return None
 
     def diagnostics(self):
         """Run regression assumption checks. Returns dict (all non-blocking)."""
@@ -328,6 +387,7 @@ class SimpleLinearRegressionModel:
         return {
             "test": "Lineare Regression (OLS)",
             "model_type": "LinearRegression",
+            "alpha": self._alpha,
             "p_value": main_p,
             "statistic": main_t,
             "statistic_type": "t",
@@ -345,7 +405,10 @@ class SimpleLinearRegressionModel:
             "diagnostics": diag,
             "x_variable": self._x,
             "y_variable": self._y,
+            "x_variable_display": self._x_label,
+            "y_variable_display": self._y_label,
             "covariates_used": self._covariates,
+            "plot_regression": self._build_regression_plot_payload(),
         }
 
 

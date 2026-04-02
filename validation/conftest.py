@@ -15,6 +15,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
+# NumPy 2 removed np.unicode_; older scientific deps (xarray/pingouin stacks)
+# may still import it. Keep tests stable by restoring a compatible alias.
+if not hasattr(np, "unicode_"):
+    np.unicode_ = str
+
+# Ensure PyQt uses a headless backend during automated test runs.
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
 ROOT = Path(__file__).resolve().parents[1]
 SRC  = ROOT / "src"
 for _p in [str(ROOT), str(SRC)]:

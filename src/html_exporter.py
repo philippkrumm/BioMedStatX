@@ -3,12 +3,15 @@ import copy
 import json
 import math
 import os
+import random
+import re
+import sys
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
-from jinja2 import Environment
+from jinja2 import Environment, FileSystemLoader, TemplateNotFound
 from scipy import stats
 
 
@@ -18,6 +21,10 @@ class _ResultsEncoder(json.JSONEncoder):
 
 
 class HTMLExporter:
+    _INLINE_LATEX_RE = re.compile(r"(?<!\\)\$(.+?)(?<!\\)\$")
+    _BEGIN_ENV_RE = re.compile(r"\\\\begin\{[^}]+\}")
+    _CSS_URL_RE = re.compile(r"url\((?P<quote>['\"]?)(?P<path>[^\)\"']+)(?P=quote)\)", re.IGNORECASE)
+
     @staticmethod
     def export_results_to_html(results: dict, output_file: str, analysis_log=None) -> str | None:
         try:
@@ -107,11 +114,50 @@ class HTMLExporter:
              "stars": r["stars"], "significant": r["significant"]}
             for r in pairwise
         ]
+
+        raw_data = results_copy.get("raw_data") or results_copy.get("samples") or {}
+        plot_data = {}
+        stats_summary = {}
+        max_points = 5000
+        if isinstance(raw_data, dict):
+            for group_name, values in raw_data.items():
+                cleaned = HTMLExporter._coerce_numeric_sequence(values)
+                if not cleaned:
+                    continue
+                group_key = str(group_name)
+                plot_data[group_key] = HTMLExporter._downsample_for_display(cleaned, max_points=max_points)
+                stats_summary[group_key] = HTMLExporter._summarize_numeric_group(cleaned)
+
+        pairwise_payload = [
+            {
+                "pair_id": row.get("pair_id"),
+                "group1": row.get("group1"),
+                "group2": row.get("group2"),
+                "comparison": row.get("comparison"),
+                "p_value": row.get("p_value_raw"),
+                "stars": row.get("stars", ""),
+                "significant": bool(row.get("significant")),
+            }
+            for row in pairwise
+        ]
+
         group_order = group_chart_block["group_order"] if group_chart_block else []
+        if not group_order:
+            group_order = list(plot_data.keys())
+
+        plot_subject_trajectories = HTMLExporter._build_plot_subject_trajectories(
+            results_copy,
+            group_order=group_order,
+            plot_data=plot_data,
+        )
+        plot_reference_lines = HTMLExporter._build_plot_reference_lines(results_copy)
+
+        plot_designer_enabled = bool(plot_data)
         decision_tree_image = HTMLExporter._embed_decision_tree(results_copy)
         decision_tree_json = HTMLExporter._build_decision_tree_json(results_copy)
         decision_path = HTMLExporter._build_decision_path_model(results_copy)
         methods_text = HTMLExporter._build_methods_text(results_copy, analysis_log_text)
+        math_render_enabled = HTMLExporter._requires_math_rendering(results_copy, hero)
         return {
             "mode": "single",
             "report_title": hero["title"],
@@ -126,6 +172,13 @@ class HTMLExporter:
             "descriptive": descriptive,
             "pairwise_rows": pairwise,
             "bracket_data_json": json.dumps(bracket_data, ensure_ascii=False),
+            "pairwise_data_json": json.dumps(pairwise_payload, cls=_ResultsEncoder, ensure_ascii=False),
+            "plot_data_json": json.dumps(plot_data, cls=_ResultsEncoder, ensure_ascii=False),
+            "plot_subject_trajectories_json": json.dumps(plot_subject_trajectories, cls=_ResultsEncoder, ensure_ascii=False),
+            "plot_reference_lines_json": json.dumps(plot_reference_lines, cls=_ResultsEncoder, ensure_ascii=False),
+            "stats_summary_json": json.dumps(stats_summary, cls=_ResultsEncoder, ensure_ascii=False),
+            "plot_stats_json": json.dumps(stats_summary, cls=_ResultsEncoder, ensure_ascii=False),
+            "plot_designer_enabled": plot_designer_enabled,
             "group_order_json": json.dumps(group_order, ensure_ascii=False),
             "group_chart_div_id": "biomedstatx-group-chart" if group_chart_block else "",
             "raw_data_table": raw_table,
@@ -134,6 +187,7 @@ class HTMLExporter:
             "info_texts": HTMLExporter._info_texts(),
             "generated_warning": results_copy.get("error"),
             "normalized_results_json": json.dumps(normalized, cls=_ResultsEncoder, ensure_ascii=False),
+            "math_render_enabled": math_render_enabled,
         }
 
     @staticmethod
@@ -156,12 +210,19 @@ class HTMLExporter:
             })
             if hero["is_significant"]:
                 significant_count += 1
+
+        math_render_enabled = any(
+            HTMLExporter._requires_math_rendering((results or {}), HTMLExporter._build_hero_context(results or {}, dataset_name=str(dataset_name)))
+            for dataset_name, results in (all_results or {}).items()
+        )
+
         return {
             "mode": "multi",
             "report_title": "BioMedStatX Multi-Dataset Scientific Report",
             "subtitle": f"{len(cards)} datasets summarized, {significant_count} significant main results.",
             "dataset_cards": cards,
             "generated_warning": None,
+            "math_render_enabled": math_render_enabled,
         }
 
     @staticmethod
@@ -455,9 +516,9 @@ class HTMLExporter:
         correlation_chart = HTMLExporter._build_correlation_chart(results)
         if correlation_chart:
             charts.append({
-                "title": "Association Overview",
-                "subtitle": "Scatter-based visualization of paired variables.",
-                "html": correlation_chart,
+                "title": str(correlation_chart.get("title") or "Association Overview"),
+                "subtitle": str(correlation_chart.get("subtitle") or "Scatter-based visualization of paired variables."),
+                "html": correlation_chart.get("html"),
             })
         return charts
 
@@ -509,45 +570,241 @@ class HTMLExporter:
             return None
 
     @staticmethod
-    def _build_correlation_chart(results: dict) -> str | None:
-        if str(results.get("model_type")) != "Correlation":
-            return None
-        raw_data = results.get("raw_data") or {}
-        if not isinstance(raw_data, dict) or len(raw_data) < 2:
+    def _build_correlation_chart(results: dict) -> dict | None:
+        model_type = str(results.get("model_type") or "")
+        if model_type not in {"Correlation", "LinearRegression"}:
             return None
         try:
             import plotly.graph_objects as go
-            import plotly.io as pio
 
-            names = list(raw_data.keys())[:2]
-            x_values = HTMLExporter._coerce_numeric_sequence(raw_data.get(names[0], []))
-            y_values = HTMLExporter._coerce_numeric_sequence(raw_data.get(names[1], []))
-            if not x_values or not y_values:
+            payload = HTMLExporter._extract_association_payload(results)
+            if payload is None:
                 return None
-            paired_length = min(len(x_values), len(y_values))
-            figure = go.Figure(
-                data=[
-                    go.Scatter(
-                        x=x_values[:paired_length],
-                        y=y_values[:paired_length],
-                        mode="markers",
-                        marker=dict(size=9, color="#0f766e", opacity=0.8, line=dict(width=1, color="#16313a")),
+
+            x_values = payload.get("x_values") or []
+            y_values = payload.get("y_values") or []
+            if len(x_values) < 2 or len(y_values) < 2:
+                return None
+
+            figure = go.Figure()
+
+            fit_x = payload.get("fit_x") or []
+            fit_y = payload.get("fit_y") or []
+            fit_ci_lower = payload.get("fit_ci_lower") or []
+            fit_ci_upper = payload.get("fit_ci_upper") or []
+
+            if fit_x and fit_y and len(fit_x) == len(fit_y):
+                has_band = (
+                    fit_ci_lower
+                    and fit_ci_upper
+                    and len(fit_ci_lower) == len(fit_x)
+                    and len(fit_ci_upper) == len(fit_x)
+                )
+                if has_band:
+                    figure.add_trace(
+                        go.Scatter(
+                            x=fit_x,
+                            y=fit_ci_lower,
+                            mode="lines",
+                            line=dict(width=0),
+                            hoverinfo="skip",
+                            showlegend=False,
+                            name="95% CI lower",
+                        )
                     )
-                ]
+                    figure.add_trace(
+                        go.Scatter(
+                            x=fit_x,
+                            y=fit_ci_upper,
+                            mode="lines",
+                            line=dict(width=0),
+                            fill="tonexty",
+                            fillcolor="rgba(15,118,110,0.14)",
+                            hoverinfo="skip",
+                            showlegend=True,
+                            name="95% CI",
+                        )
+                    )
+
+                figure.add_trace(
+                    go.Scatter(
+                        x=fit_x,
+                        y=fit_y,
+                        mode="lines",
+                        line=dict(width=2.2, color="#0f766e"),
+                        name="Trend",
+                        showlegend=True,
+                    )
+                )
+
+            figure.add_trace(
+                go.Scatter(
+                    x=x_values,
+                    y=y_values,
+                    mode="markers",
+                    name="Observed",
+                    marker=dict(size=8, color="#0f766e", opacity=0.82, line=dict(width=1, color="#16313a")),
+                )
             )
+
             figure.update_layout(
                 template="plotly_white",
                 paper_bgcolor="rgba(0,0,0,0)",
                 plot_bgcolor="#fffdf8",
                 margin=dict(l=40, r=20, t=24, b=40),
                 font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
-                xaxis_title=str(names[0]),
-                yaxis_title=str(names[1]),
-                showlegend=False,
+                xaxis_title=str(payload.get("x_label") or "X"),
+                yaxis_title=str(payload.get("y_label") or "Y"),
+                showlegend=True,
+                legend=dict(orientation="h", x=0.01, y=1.08),
             )
-            return HTMLExporter._figure_to_html(figure)
+            html = HTMLExporter._figure_to_html(figure)
+            if not html:
+                return None
+            return {
+                "title": "Regression Overview" if model_type == "LinearRegression" else "Association Overview",
+                "subtitle": "Observed values with trend estimate and 95% confidence band.",
+                "html": html,
+            }
         except Exception as exc:
-            print(f"WARNING HTML EXPORT: correlation chart generation failed: {exc}")
+            print(f"WARNING HTML EXPORT: association chart generation failed: {exc}")
+            return None
+
+    @staticmethod
+    def _extract_association_payload(results: dict) -> dict | None:
+        def _pair_points(points):
+            x_out = []
+            y_out = []
+            if not isinstance(points, list):
+                return x_out, y_out
+            for point in points:
+                if not isinstance(point, dict):
+                    continue
+                try:
+                    x_val = float(point.get("x"))
+                    y_val = float(point.get("y"))
+                    if not (np.isfinite(x_val) and np.isfinite(y_val)):
+                        continue
+                except Exception:
+                    continue
+                x_out.append(x_val)
+                y_out.append(y_val)
+            return x_out, y_out
+
+        x_label = str(results.get("x_variable_display") or results.get("x_variable") or "X")
+        y_label = str(results.get("y_variable_display") or results.get("y_variable") or "Y")
+
+        x_values = []
+        y_values = []
+        fit_x = []
+        fit_y = []
+        fit_ci_lower = []
+        fit_ci_upper = []
+
+        regression_payload = results.get("plot_regression")
+        if isinstance(regression_payload, dict):
+            x_values, y_values = _pair_points(regression_payload.get("points"))
+            x_label = str(regression_payload.get("x_label") or x_label)
+            y_label = str(regression_payload.get("y_label") or y_label)
+            fit = regression_payload.get("fit") if isinstance(regression_payload.get("fit"), dict) else {}
+            fit_x = HTMLExporter._coerce_numeric_sequence(fit.get("x") or [])
+            fit_y = HTMLExporter._coerce_numeric_sequence(fit.get("y") or [])
+            fit_ci_lower = HTMLExporter._coerce_numeric_sequence(fit.get("ci_lower") or [])
+            fit_ci_upper = HTMLExporter._coerce_numeric_sequence(fit.get("ci_upper") or [])
+
+        if not x_values or not y_values:
+            association_points = results.get("association_points")
+            x_values, y_values = _pair_points(association_points)
+
+        if not x_values or not y_values:
+            raw_data = results.get("raw_data") or {}
+            if isinstance(raw_data, dict) and len(raw_data) >= 2:
+                names = list(raw_data.keys())[:2]
+                x_candidate = HTMLExporter._coerce_numeric_sequence(raw_data.get(names[0], []))
+                y_candidate = HTMLExporter._coerce_numeric_sequence(raw_data.get(names[1], []))
+                paired_length = min(len(x_candidate), len(y_candidate))
+                x_values = x_candidate[:paired_length]
+                y_values = y_candidate[:paired_length]
+                x_label = str(names[0])
+                y_label = str(names[1])
+
+        if not x_values or not y_values:
+            return None
+
+        if not (fit_x and fit_y and len(fit_x) == len(fit_y)):
+            fit_data = HTMLExporter._simple_linear_fit_with_ci(x_values, y_values, alpha=float(results.get("alpha", 0.05)))
+            if fit_data is not None:
+                fit_x = fit_data["x"]
+                fit_y = fit_data["y"]
+                fit_ci_lower = fit_data["ci_lower"]
+                fit_ci_upper = fit_data["ci_upper"]
+
+        return {
+            "x_label": x_label,
+            "y_label": y_label,
+            "x_values": x_values,
+            "y_values": y_values,
+            "fit_x": fit_x,
+            "fit_y": fit_y,
+            "fit_ci_lower": fit_ci_lower,
+            "fit_ci_upper": fit_ci_upper,
+        }
+
+    @staticmethod
+    def _simple_linear_fit_with_ci(x_values: list[float], y_values: list[float], alpha: float = 0.05) -> dict | None:
+        try:
+            x = np.asarray(x_values, dtype=float)
+            y = np.asarray(y_values, dtype=float)
+            valid = np.isfinite(x) & np.isfinite(y)
+            x = x[valid]
+            y = y[valid]
+            if x.size < 3 or y.size < 3:
+                return None
+
+            x_min = float(np.min(x))
+            x_max = float(np.max(x))
+            if np.isclose(x_min, x_max):
+                return None
+
+            slope, intercept, _, _, _ = stats.linregress(x, y)
+            x_grid = np.linspace(x_min, x_max, 180)
+            y_fit = intercept + slope * x_grid
+
+            n = x.size
+            dof = n - 2
+            if dof <= 0:
+                return {
+                    "x": [float(v) for v in x_grid.tolist()],
+                    "y": [float(v) for v in y_fit.tolist()],
+                    "ci_lower": [],
+                    "ci_upper": [],
+                }
+
+            residuals = y - (intercept + slope * x)
+            s_err = np.sqrt(np.sum(residuals ** 2) / dof)
+            x_mean = float(np.mean(x))
+            ss_x = float(np.sum((x - x_mean) ** 2))
+            if ss_x <= 0:
+                return {
+                    "x": [float(v) for v in x_grid.tolist()],
+                    "y": [float(v) for v in y_fit.tolist()],
+                    "ci_lower": [],
+                    "ci_upper": [],
+                }
+
+            t_critical = stats.t.ppf(1 - alpha / 2, dof)
+            se_fit = s_err * np.sqrt((1 / n) + ((x_grid - x_mean) ** 2 / ss_x))
+            ci_delta = t_critical * se_fit
+            ci_lower = y_fit - ci_delta
+            ci_upper = y_fit + ci_delta
+
+            return {
+                "x": [float(v) for v in x_grid.tolist()],
+                "y": [float(v) for v in y_fit.tolist()],
+                "ci_lower": [float(v) for v in ci_lower.tolist()],
+                "ci_upper": [float(v) for v in ci_upper.tolist()],
+            }
+        except Exception:
             return None
 
     @staticmethod
@@ -819,14 +1076,221 @@ class HTMLExporter:
         assumptions = context.get("assumptions", {}) or {}
         plotly_enabled = any([
             bool(context.get("chart_blocks")),
+            bool(context.get("plot_designer_enabled")),
             bool(assumptions.get("qq_plot_html")),
             bool(assumptions.get("distribution_plot_html")),
             bool(assumptions.get("residual_plot_html")),
         ])
         plotly_bundle = HTMLExporter._plotly_bundle() if plotly_enabled else ""
-        env = Environment(autoescape=True, trim_blocks=True, lstrip_blocks=True)
-        template = env.from_string(HTMLExporter._template())
-        return template.render(context=context, mode=mode, plotly_bundle=plotly_bundle)
+        math_render_enabled = bool(context.get("math_render_enabled"))
+        if math_render_enabled:
+            math_bundle, math_status = HTMLExporter._math_bundle(preferred="katex")
+        else:
+            math_bundle, math_status = "", "disabled-no-latex"
+        env = Environment(
+            loader=FileSystemLoader(str(HTMLExporter._templates_dir())),
+            autoescape=True,
+            trim_blocks=True,
+            lstrip_blocks=True,
+        )
+        template_name = HTMLExporter._template_name(mode)
+        try:
+            template = env.get_template(template_name)
+            return template.render(
+                context=context,
+                mode=mode,
+                plotly_bundle=plotly_bundle,
+                mathjax_bundle=math_bundle,
+                mathjax_status=math_status,
+            )
+        except TemplateNotFound:
+            template = env.from_string(HTMLExporter._template())
+            return template.render(
+                context=context,
+                mode=mode,
+                plotly_bundle=plotly_bundle,
+                mathjax_bundle=math_bundle,
+                mathjax_status=math_status,
+            )
+
+    @staticmethod
+    def _has_latex_syntax(value: str) -> bool:
+        if not isinstance(value, str):
+            return False
+        if HTMLExporter._BEGIN_ENV_RE.search(value):
+            return True
+        return bool(HTMLExporter._INLINE_LATEX_RE.search(value))
+
+    @staticmethod
+    def _requires_math_rendering(results: dict, hero: dict | None = None) -> bool:
+        strings_to_scan = []
+
+        if isinstance(results, dict):
+            for key in [
+                "title", "subtitle", "dataset_name", "column_name", "dependent_variable",
+                "unit", "units", "x_label", "xlabel", "y_label", "ylabel",
+            ]:
+                value = results.get(key)
+                if isinstance(value, str):
+                    strings_to_scan.append(value)
+
+        if isinstance(hero, dict):
+            for key in ["title", "subtitle", "test_name"]:
+                value = hero.get(key)
+                if isinstance(value, str):
+                    strings_to_scan.append(value)
+
+        return any(HTMLExporter._has_latex_syntax(text) for text in strings_to_scan)
+
+    @staticmethod
+    def _math_bundle(preferred: str = "katex") -> tuple[str, str]:
+        order = [preferred, "mathjax"] if preferred != "mathjax" else ["mathjax"]
+        for engine in order:
+            if engine == "katex":
+                bundle, status = HTMLExporter._katex_bundle()
+            else:
+                bundle, status = HTMLExporter._mathjax_bundle()
+            if status.startswith("loaded"):
+                return bundle, status
+
+        missing_bundle = (
+            "<script>"
+            "window.BioMedStatXMath={enabled:false,status:'missing-local-runtime'};"
+            "window.BioMedStatXTypesetMath=function(){return Promise.resolve();};"
+            "</script>"
+        )
+        return missing_bundle, "missing-local-runtime"
+
+    @staticmethod
+    def _katex_runtime_candidates() -> list[Path]:
+        templates_dir = HTMLExporter._templates_dir()
+        source_root = Path(__file__).resolve().parent
+        candidates = [
+            templates_dir / "vendor" / "katex",
+            source_root / "templates" / "vendor" / "katex",
+        ]
+        frozen_root = getattr(sys, "_MEIPASS", None)
+        if frozen_root:
+            candidates.append(Path(frozen_root) / "templates" / "vendor" / "katex")
+        unique_candidates = []
+        seen = set()
+        for candidate in candidates:
+            key = str(candidate)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_candidates.append(candidate)
+        return unique_candidates
+
+    @staticmethod
+    def _katex_bundle() -> tuple[str, str]:
+        for candidate_root in HTMLExporter._katex_runtime_candidates():
+            try:
+                css_path = candidate_root / "katex.min.css"
+                js_path = candidate_root / "katex.min.js"
+                autorender_path = candidate_root / "auto-render.min.js"
+                if not (css_path.exists() and js_path.exists() and autorender_path.exists()):
+                    continue
+
+                css_text = css_path.read_text(encoding="utf-8")
+                css_text = HTMLExporter._inline_local_css_assets(css_text, candidate_root)
+                js_text = js_path.read_text(encoding="utf-8")
+                autorender_text = autorender_path.read_text(encoding="utf-8")
+
+                bootstrap = (
+                    "<style>" + css_text + "</style>"
+                    "<script>"
+                    "window.BioMedStatXMath={enabled:false,status:'loaded',engine:'katex'};"
+                    "window.BioMedStatXTypesetMath=function(root){"
+                    "if(typeof renderMathInElement==='function'){"
+                    "renderMathInElement(root||document.body,{"
+                    "delimiters:["
+                    "{left:'$$',right:'$$',display:true},"
+                    "{left:'$',right:'$',display:false},"
+                    "{left:'\\\\(',right:'\\\\)',display:false},"
+                    "{left:'\\\\[',right:'\\\\]',display:true}"
+                    "]"
+                    "});"
+                    "}"
+                    "return Promise.resolve();"
+                    "};"
+                    "</script>"
+                )
+                runtime = f"<script>{js_text}</script><script>{autorender_text}</script>"
+                finalize = (
+                    "<script>"
+                    "window.BioMedStatXMath={enabled:true,status:'loaded',engine:'katex'};"
+                    "document.addEventListener('DOMContentLoaded',function(){"
+                    "window.BioMedStatXTypesetMath(document.body);"
+                    "});"
+                    "</script>"
+                )
+                return bootstrap + runtime + finalize, "loaded-katex"
+            except Exception as exc:
+                print(f"WARNING HTML EXPORT: failed to load KaTeX runtime '{candidate_root}': {exc}")
+        return "", "missing-katex-runtime"
+
+    @staticmethod
+    def _inline_local_css_assets(css_text: str, assets_root: Path) -> str:
+        if not isinstance(css_text, str) or not isinstance(assets_root, Path):
+            return css_text
+
+        def replace_url(match: re.Match) -> str:
+            raw_path = (match.group("path") or "").strip()
+            if not raw_path:
+                return match.group(0)
+            if raw_path.startswith(("data:", "http:", "https:", "//", "#")):
+                return match.group(0)
+
+            cleaned_path = raw_path.split("?", 1)[0].split("#", 1)[0]
+            candidate = (assets_root / cleaned_path).resolve()
+            if not candidate.exists() or not candidate.is_file():
+                return match.group(0)
+
+            mime_type = HTMLExporter._guess_embedded_asset_mime(candidate.suffix.lower())
+            if mime_type is None:
+                return match.group(0)
+
+            try:
+                encoded = base64.b64encode(candidate.read_bytes()).decode("ascii")
+            except Exception:
+                return match.group(0)
+
+            return f"url('data:{mime_type};base64,{encoded}')"
+
+        return HTMLExporter._CSS_URL_RE.sub(replace_url, css_text)
+
+    @staticmethod
+    def _guess_embedded_asset_mime(extension: str) -> str | None:
+        mapping = {
+            ".woff2": "font/woff2",
+            ".woff": "font/woff",
+            ".ttf": "font/ttf",
+            ".otf": "font/otf",
+            ".eot": "application/vnd.ms-fontobject",
+            ".svg": "image/svg+xml",
+        }
+        return mapping.get(extension)
+
+    @staticmethod
+    def _templates_dir() -> Path:
+        module_templates = Path(__file__).resolve().parent / "templates"
+        if module_templates.exists():
+            return module_templates
+        frozen_root = getattr(sys, "_MEIPASS", None)
+        if frozen_root:
+            frozen_templates = Path(frozen_root) / "templates"
+            if frozen_templates.exists():
+                return frozen_templates
+        return module_templates
+
+    @staticmethod
+    def _template_name(mode: str) -> str:
+        return "report_multi.html.j2" if mode == "multi" else "report_single.html.j2"
+
+    @staticmethod
+    def _read_template(template_name: str) -> str:
+        return (HTMLExporter._templates_dir() / template_name).read_text(encoding="utf-8")
 
     @staticmethod
     def _plotly_bundle() -> str:
@@ -837,6 +1301,70 @@ class HTMLExporter:
         except Exception as exc:
             print(f"WARNING HTML EXPORT: plotly bundle unavailable: {exc}")
             return ""
+
+    @staticmethod
+    def _mathjax_runtime_candidates() -> list[Path]:
+        templates_dir = HTMLExporter._templates_dir()
+        source_root = Path(__file__).resolve().parent
+        candidates = [
+            templates_dir / "vendor" / "mathjax" / "tex-svg.js",
+            templates_dir / "vendor" / "mathjax" / "tex-mml-chtml.js",
+            source_root / "templates" / "vendor" / "mathjax" / "tex-svg.js",
+            source_root / "templates" / "vendor" / "mathjax" / "tex-mml-chtml.js",
+        ]
+        frozen_root = getattr(sys, "_MEIPASS", None)
+        if frozen_root:
+            frozen_path = Path(frozen_root)
+            candidates.extend([
+                frozen_path / "templates" / "vendor" / "mathjax" / "tex-svg.js",
+                frozen_path / "templates" / "vendor" / "mathjax" / "tex-mml-chtml.js",
+            ])
+        unique_candidates = []
+        seen = set()
+        for candidate in candidates:
+            key = str(candidate)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_candidates.append(candidate)
+        return unique_candidates
+
+    @staticmethod
+    def _mathjax_bundle() -> tuple[str, str]:
+        for candidate in HTMLExporter._mathjax_runtime_candidates():
+            try:
+                if not candidate.exists():
+                    continue
+                runtime = candidate.read_text(encoding="utf-8")
+                bootstrap = (
+                    "<script>"
+                    "window.MathJax={"
+                    "tex:{inlineMath:[['$','$'],['\\\\(','\\\\)']],displayMath:[['$$','$$'],['\\\\[','\\\\]']]},"
+                    "svg:{fontCache:'none'},"
+                    "options:{skipHtmlTags:['script','noscript','style','textarea','pre','code']}"
+                    "};"
+                    "window.BioMedStatXMath={enabled:false,status:'loaded'};"
+                    "window.BioMedStatXTypesetMath=function(root){"
+                    "if(window.MathJax&&window.MathJax.typesetPromise){"
+                    "return window.MathJax.typesetPromise(root?[root]:undefined);"
+                    "}"
+                    "return Promise.resolve();"
+                    "};"
+                    "</script>"
+                )
+                runtime_script = f"<script>{runtime}</script>"
+                finalize = (
+                    "<script>"
+                    "window.BioMedStatXMath={enabled:true,status:'loaded',engine:'mathjax'};"
+                    "document.addEventListener('DOMContentLoaded',function(){"
+                    "window.BioMedStatXTypesetMath(document.body);"
+                    "});"
+                    "</script>"
+                )
+                return bootstrap + runtime_script + finalize, "loaded-mathjax"
+            except Exception as exc:
+                print(f"WARNING HTML EXPORT: failed to load MathJax runtime '{candidate}': {exc}")
+        return "", "missing-mathjax-runtime"
 
     @staticmethod
     def _figure_to_html(figure, div_id: str | None = None) -> str | None:
@@ -923,6 +1451,10 @@ class HTMLExporter:
 
     @staticmethod
     def _template() -> str:
+        try:
+            return HTMLExporter._read_template("report_single.html.j2")
+        except Exception:
+            pass
         return r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{ context.report_title }}</title>
 <style>
@@ -1164,6 +1696,173 @@ const treeModal=document.getElementById('tree-modal');const openTreeButton=docum
             except Exception:
                 continue
         return sequence
+
+    @staticmethod
+    def _downsample_for_display(values: list[float], max_points: int = 5000) -> list[float]:
+        if len(values) <= max_points:
+            return values
+        rng = random.Random(42)
+        selected_indices = sorted(rng.sample(range(len(values)), max_points))
+        return [values[index] for index in selected_indices]
+
+    @staticmethod
+    def _summarize_numeric_group(values: list[float]) -> dict:
+        n = len(values)
+        if n == 0:
+            return {}
+        mean = float(np.mean(values))
+        sd = float(np.std(values, ddof=1)) if n > 1 else 0.0
+        sem = float(sd / math.sqrt(n)) if n > 0 else 0.0
+        ci_half_width = float(stats.t.ppf(0.975, n - 1) * sem) if n > 1 else 0.0
+        q1, median, q3 = np.percentile(values, [25, 50, 75])
+        q1 = float(q1)
+        median = float(median)
+        q3 = float(q3)
+        iqr = float(q3 - q1)
+
+        min_value = float(min(values))
+        max_value = float(max(values))
+        if iqr > 0:
+            lower_limit = q1 - 1.5 * iqr
+            upper_limit = q3 + 1.5 * iqr
+            sorted_values = sorted(values)
+            lower_candidates = [v for v in sorted_values if v >= lower_limit]
+            upper_candidates = [v for v in sorted_values if v <= upper_limit]
+            lower_fence = float(lower_candidates[0]) if lower_candidates else min_value
+            upper_fence = float(upper_candidates[-1]) if upper_candidates else max_value
+        else:
+            lower_fence = min_value
+            upper_fence = max_value
+
+        return {
+            "n": n,
+            "mean": mean,
+            "sd": sd,
+            "sem": sem,
+            "ci95_lower": float(mean - ci_half_width),
+            "ci95_upper": float(mean + ci_half_width),
+            "min": min_value,
+            "max": max_value,
+            "q1": q1,
+            "median": median,
+            "q3": q3,
+            "iqr": iqr,
+            "lower_fence": lower_fence,
+            "upper_fence": upper_fence,
+        }
+
+    @staticmethod
+    def _build_plot_subject_trajectories(results: dict, group_order: list[str], plot_data: dict) -> list[dict]:
+        raw_trajectories = results.get("plot_subject_trajectories") or []
+        if not isinstance(raw_trajectories, list):
+            return []
+
+        allowed_groups = set(group_order or list((plot_data or {}).keys()))
+        group_rank = {group: idx for idx, group in enumerate(group_order or [])}
+
+        normalized = []
+        for idx, trajectory in enumerate(raw_trajectories):
+            if not isinstance(trajectory, dict):
+                continue
+            subject_id = str(trajectory.get("subject_id") or trajectory.get("subject") or f"S{idx + 1}")
+            points_raw = trajectory.get("points") or []
+            if not isinstance(points_raw, list):
+                continue
+
+            points = []
+            for point in points_raw:
+                if not isinstance(point, dict):
+                    continue
+                group_name = str(point.get("group") or point.get("condition") or "")
+                if not group_name:
+                    continue
+                if allowed_groups and group_name not in allowed_groups:
+                    continue
+                try:
+                    numeric_value = float(point.get("value"))
+                    if math.isnan(numeric_value) or math.isinf(numeric_value):
+                        continue
+                except Exception:
+                    continue
+                points.append({"group": group_name, "value": numeric_value})
+
+            if len(points) < 2:
+                continue
+
+            points.sort(key=lambda item: (group_rank.get(item["group"], 10_000), item["group"]))
+            normalized.append({"subject_id": subject_id, "points": points})
+
+        if len(normalized) > 2000:
+            normalized = normalized[:2000]
+        return normalized
+
+    @staticmethod
+    def _build_plot_reference_lines(results: dict) -> list[dict]:
+        raw_lines = []
+        for key in ("thresholds", "plot_thresholds", "reference_lines"):
+            candidate = results.get(key)
+            if isinstance(candidate, list):
+                raw_lines.extend(candidate)
+
+        normalized = []
+        for index, line in enumerate(raw_lines):
+            value = None
+            label = None
+            dash = "dash"
+            color = "rgba(159,58,56,0.82)"
+            width = 1.5
+
+            if isinstance(line, (int, float)) and np.isfinite(float(line)):
+                value = float(line)
+                label = f"Threshold {index + 1}"
+            elif isinstance(line, dict):
+                for key in ("value", "y", "threshold"):
+                    candidate = line.get(key)
+                    try:
+                        numeric = float(candidate)
+                    except Exception:
+                        continue
+                    if np.isfinite(numeric):
+                        value = numeric
+                        break
+
+                if value is None:
+                    continue
+
+                raw_label = line.get("label") or line.get("name")
+                label = str(raw_label).strip() if raw_label is not None else ""
+                if not label:
+                    label = f"Threshold {index + 1}"
+
+                raw_dash = str(line.get("dash") or "dash").strip().lower()
+                if raw_dash in {"solid", "dash", "dot", "dashdot"}:
+                    dash = raw_dash
+
+                raw_color = line.get("color")
+                if isinstance(raw_color, str) and raw_color.strip():
+                    color = raw_color.strip()
+
+                raw_width = line.get("width")
+                try:
+                    width_candidate = float(raw_width)
+                    if np.isfinite(width_candidate):
+                        width = max(0.6, min(4.0, width_candidate))
+                except Exception:
+                    pass
+            else:
+                continue
+
+            normalized.append({
+                "value": float(value),
+                "label": label,
+                "dash": dash,
+                "color": color,
+                "width": width,
+            })
+
+        if len(normalized) > 30:
+            normalized = normalized[:30]
+        return normalized
 
     @staticmethod
     def _format_metric(value: Any, digits: int = 4) -> str:

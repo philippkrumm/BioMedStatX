@@ -60,7 +60,6 @@ def get_boxcox_functions():
 #  is run purely via CLI
 # --------------------------------------------------------------
 from PyQt5.QtWidgets import QApplication
-import sys as _sys
 import time
 from contextlib import contextmanager
 
@@ -75,10 +74,6 @@ def working_directory(path):
         os.chdir(previous_dir)
 
 print(f"DEBUG: RUNNING FILE VERSION FROM {time.time()} - {os.path.abspath(__file__)}")
-
-_QT_APP = QApplication.instance()
-if _QT_APP is None:
-    _QT_APP = QApplication(_sys.argv)
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
@@ -253,9 +248,25 @@ class AssumptionVisualizer:
                 ax.set_title("Variance Homogeneity Examination", fontsize=16, fontweight='bold')
                 return None
             
-            # Create boxplot with better styling
-            bp = ax.boxplot(group_data, labels=group_names, patch_artist=True, 
-                           notch=True, showmeans=True, meanline=True)
+            # Matplotlib >=3.9 renamed `labels` to `tick_labels`.
+            try:
+                bp = ax.boxplot(
+                    group_data,
+                    tick_labels=group_names,
+                    patch_artist=True,
+                    notch=True,
+                    showmeans=True,
+                    meanline=True,
+                )
+            except TypeError:
+                bp = ax.boxplot(
+                    group_data,
+                    labels=group_names,
+                    patch_artist=True,
+                    notch=True,
+                    showmeans=True,
+                    meanline=True,
+                )
             
             # Color the boxes with distinct colors
             colors = plt.cm.Set2(np.linspace(0, 1, len(group_data)))
@@ -2333,6 +2344,18 @@ except ImportError:
             
 class UIDialogManager:
     @staticmethod
+    def _ensure_qt_application():
+        """Create QApplication lazily only when a dialog is actually needed."""
+        app = QApplication.instance()
+        if app is not None:
+            return app
+
+        if os.environ.get("PYTEST_CURRENT_TEST"):
+            os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+        return QApplication([])
+
+    @staticmethod
     def _configure_dialog(dialog, object_name=None):
         if object_name:
             dialog.setObjectName(object_name)
@@ -2340,6 +2363,7 @@ class UIDialogManager:
 
     @staticmethod
     def select_posthoc_test_dialog(parent=None, progress_text=None, column_name=None, default_method=None, equal_variance=None):
+        UIDialogManager._ensure_qt_application()
         dialog = QDialog(parent)
         UIDialogManager._configure_dialog(dialog, object_name="posthocSelectionDialog")
         layout = QVBoxLayout(dialog)
@@ -2418,6 +2442,7 @@ class UIDialogManager:
         """
         from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QRadioButton, QDialogButtonBox
 
+        UIDialogManager._ensure_qt_application()
         dialog = QDialog(parent)
         UIDialogManager._configure_dialog(dialog, object_name="nonparamPosthocDialog")
         layout = QVBoxLayout(dialog)
@@ -2461,6 +2486,8 @@ class UIDialogManager:
         Returns a list of (group1, group2) tuples.
         """
         from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QCheckBox, QDialogButtonBox, QWidget, QHBoxLayout, QScrollArea
+
+        UIDialogManager._ensure_qt_application()
 
         class PairSelectionDialog(QDialog):
             def __init__(self, groups, parent=None):
@@ -2524,6 +2551,8 @@ class UIDialogManager:
         """Opens a dialog window to select the control group"""
         from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QRadioButton, QDialogButtonBox
 
+        UIDialogManager._ensure_qt_application()
+
         class ControlGroupDialog(QDialog):
             def __init__(self, available_groups, parent=None):
                 super().__init__(parent)
@@ -2568,6 +2597,7 @@ class UIDialogManager:
     def select_transformation_dialog(parent=None, progress_text=None, column_name=None, force_show=False):
         # NO CACHING - Each analysis starts fresh and shows the dialog every time
         # This ensures consistent behavior between normal tests and advanced tests
+        UIDialogManager._ensure_qt_application()
         
         dialog = QDialog(parent)
         UIDialogManager._configure_dialog(dialog, object_name="transformationSelectionDialog")
@@ -3941,11 +3971,6 @@ def get_output_path(file_base, ext):
     abs_path = os.path.abspath(out_path)
     print(f"DEBUG: get_output_path returns absolute path: {abs_path}")
     return abs_path
-
-try:
-    _QT_APP.exit()
-except Exception:
-    pass
 
 import os
 import numpy as np

@@ -105,6 +105,32 @@ class StatisticalTester:
         return standardized
 
     @staticmethod
+    def _pingouin_p_column(columns):
+        """Return the available Pingouin uncorrected p-value column name."""
+        if columns is None:
+            return None
+        if "p_unc" in columns:
+            return "p_unc"
+        if "p-unc" in columns:
+            return "p-unc"
+        return None
+
+    @staticmethod
+    def _pingouin_p_value(row, default=np.nan):
+        """Safely extract uncorrected p-value from a Pingouin result row."""
+        if row is None:
+            return default
+        columns = row.index if hasattr(row, "index") else row.keys() if hasattr(row, "keys") else None
+        p_col = StatisticalTester._pingouin_p_column(columns)
+        if p_col is None:
+            return default
+        raw_value = row.get(p_col, default) if hasattr(row, "get") else row[p_col]
+        try:
+            return float(raw_value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
     def check_normality_and_variance(
         groups, samples, dataset_name=None, progress_text=None, column_name=None, already_transformed=False,
         formula="Value ~ C(Group)", model_type="oneway", trace: "MethodologyTrace | None" = None
@@ -574,6 +600,15 @@ class StatisticalTester:
     def _stat_test_two_groups(results, valid_groups, samples_to_use, original_samples, dependent, test_recommendation, alpha, test_info=None):
         g1, g2 = valid_groups
         data1, data2 = samples_to_use[g1], samples_to_use[g2]
+        if dependent and len(data1) != len(data2):
+            results["test"] = "Error during test"
+            results["error"] = (
+                f"Dependent samples require equal lengths for valid pairing. "
+                f"Got n({g1})={len(data1)} and n({g2})={len(data2)}."
+            )
+            results["posthoc_test"] = "Not performed (invalid paired input)"
+            results["pairwise_comparisons"] = []
+            return StatisticalTester._standardize_results(results)
         try:
             if dependent:
                 if test_recommendation == "parametric":
@@ -598,6 +633,84 @@ class StatisticalTester:
             results["posthoc_test"] = "Not performed (error in main test)"
             results["pairwise_comparisons"] = []
             return StatisticalTester._standardize_results(results)
+
+    @staticmethod
+    def _build_paired_subject_trajectories(group1_name, group2_name, data1, data2):
+        trajectories = []
+        if len(data1) != len(data2):
+            return trajectories
+        n = len(data1)
+        for index in range(n):
+            try:
+                value1 = float(data1[index])
+                value2 = float(data2[index])
+                if np.isnan(value1) or np.isinf(value1) or np.isnan(value2) or np.isinf(value2):
+                    continue
+            except Exception:
+                continue
+
+            trajectories.append({
+                "subject_id": f"S{index + 1}",
+                "points": [
+                    {"group": str(group1_name), "value": value1},
+                    {"group": str(group2_name), "value": value2},
+                ],
+            })
+        return trajectories
+
+    @staticmethod
+    def _build_subject_trajectories_from_long_df(df, dv, subject_col, label_columns, group_order=None):
+        if df is None or subject_col is None or subject_col not in df.columns or dv not in df.columns:
+            return []
+
+        label_columns = [column for column in (label_columns or []) if column in df.columns]
+        if not label_columns:
+            return []
+
+        group_rank = {str(group): idx for idx, group in enumerate(group_order or [])}
+        subjects = {}
+
+        for _, row in df.iterrows():
+            subject_value = row.get(subject_col)
+            if pd.isna(subject_value):
+                continue
+            try:
+                numeric_value = float(row.get(dv))
+                if np.isnan(numeric_value) or np.isinf(numeric_value):
+                    continue
+            except Exception:
+                continue
+
+            label_parts = [f"{column}={row.get(column)}" for column in label_columns]
+            group_label = ", ".join(label_parts)
+            if not group_label:
+                continue
+
+            subject_key = str(subject_value)
+            if subject_key not in subjects:
+                subjects[subject_key] = {}
+            if group_label not in subjects[subject_key]:
+                subjects[subject_key][group_label] = []
+            subjects[subject_key][group_label].append(numeric_value)
+
+        trajectories = []
+        for subject_id, point_groups in subjects.items():
+            points = []
+            for group_label, values in point_groups.items():
+                if not values:
+                    continue
+                points.append({
+                    "group": group_label,
+                    "value": float(np.mean(values)),
+                })
+            if len(points) < 2:
+                continue
+            points.sort(key=lambda point: (group_rank.get(point["group"], 10_000), point["group"]))
+            trajectories.append({"subject_id": subject_id, "points": points})
+
+        if len(trajectories) > 2000:
+            trajectories = trajectories[:2000]
+        return trajectories
 
     @staticmethod
     def _paired_ttest(results, g1, g2, data1, data2, alpha):
@@ -636,6 +749,7 @@ class StatisticalTester:
             "confidence_interval": results.get("confidence_interval"),
             "power": results.get("power")
         }]
+        results["plot_subject_trajectories"] = StatisticalTester._build_paired_subject_trajectories(g1, g2, data1, data2)
         return StatisticalTester._standardize_results(results)
 
     @staticmethod
@@ -670,6 +784,7 @@ class StatisticalTester:
             "confidence_interval": results.get("confidence_interval"),
             "power": results.get("power")
         }]
+        results["plot_subject_trajectories"] = StatisticalTester._build_paired_subject_trajectories(g1, g2, data1, data2)
         return StatisticalTester._standardize_results(results)
     
     @staticmethod
@@ -1105,7 +1220,8 @@ class StatisticalTester:
             
             # Extract results
             F_value = float(welch_results['F'].iloc[0])
-            p_value = float(welch_results['p-unc'].iloc[0])
+            p_col = StatisticalTester._pingouin_p_column(welch_results.columns)
+            p_value = float(welch_results[p_col].iloc[0]) if p_col else np.nan
             df1 = float(welch_results['ddof1'].iloc[0])
             df2 = float(welch_results['ddof2'].iloc[0])
             
@@ -1893,6 +2009,23 @@ class StatisticalTester:
                 if transformation_type and transformation_type not in ["none", "None", "Keine"]:
                     res["raw_data_transformed"] = transformed_samples
 
+                if test == "repeated_measures_anova" and subject and within:
+                    res["plot_subject_trajectories"] = StatisticalTester._build_subject_trajectories_from_long_df(
+                        df_original,
+                        dv,
+                        subject,
+                        [within[0]],
+                        group_order=list(original_samples.keys()),
+                    )
+                elif test == "mixed_anova" and subject and between and within:
+                    res["plot_subject_trajectories"] = StatisticalTester._build_subject_trajectories_from_long_df(
+                        df_original,
+                        dv,
+                        subject,
+                        [between[0], within[0]],
+                        group_order=list(original_samples.keys()),
+                    )
+
                 # Excel export
                 if not skip_excel:
                     logger.debug(f"DEBUG: Current working directory before export: {os.getcwd()}")
@@ -1952,6 +2085,23 @@ class StatisticalTester:
                 if transformation_type and transformation_type not in ["none", "None", "Keine"]:
                     res["transformation"] = transformation_type
                     res["raw_data_transformed"] = transformed_samples
+
+                if test == "repeated_measures_anova" and subject and within:
+                    res["plot_subject_trajectories"] = StatisticalTester._build_subject_trajectories_from_long_df(
+                        df_original,
+                        dv,
+                        subject,
+                        [within[0]],
+                        group_order=list(original_samples.keys()),
+                    )
+                elif test == "mixed_anova" and subject and between and within:
+                    res["plot_subject_trajectories"] = StatisticalTester._build_subject_trajectories_from_long_df(
+                        df_original,
+                        dv,
+                        subject,
+                        [between[0], within[0]],
+                        group_order=list(original_samples.keys()),
+                    )
 
                 if test_info:
                     if "test_info" not in res:
@@ -2426,6 +2576,9 @@ class StatisticalTester:
                 print("DEBUG: First few rows of df:\n", df.head())
                 print("DEBUG: Using Pingouin for Mixed ANOVA")
                 aov = pg.mixed_anova(data=df, dv=dv, within=rm_factor, between=between_factor, subject=subject)
+                p_col = "p_unc" if "p_unc" in aov.columns else "p-unc" if "p-unc" in aov.columns else None
+                if p_col is None:
+                    raise KeyError("No pingouin p-value column found in Mixed ANOVA table")
                 results["anova_table"] = aov.copy()
                 for factor in [rm_factor, between_factor]:
                     mask = aov["Source"] == factor
@@ -2435,7 +2588,7 @@ class StatisticalTester:
                             "factor": factor,
                             "type": "within" if factor == rm_factor else "between",
                             "F": float(row["F"]),
-                            "p_value": float(row["p_unc"]),
+                            "p_value": float(row[p_col]),
                             "df1": int(row["DF1"]),
                             "df2": int(row["DF2"]),
                             "effect_size": float(row["np2"]),
@@ -2451,7 +2604,7 @@ class StatisticalTester:
                     interaction = {
                         "factors": [rm_factor, between_factor],
                         "F": float(row["F"]),
-                        "p_value": float(row["p_unc"]),
+                        "p_value": float(row[p_col]),
                         "df1": int(row["DF1"]),
                         "df2": int(row["DF2"]),
                         "effect_size": float(row["np2"]),
@@ -2485,7 +2638,7 @@ class StatisticalTester:
                 try:
                     # 1. Check if interaction is significant
                     int_row = aov.loc[aov["Source"] == interaction_name]
-                    if not int_row.empty and float(int_row["p_unc"].iloc[0]) < alpha:
+                    if not int_row.empty and float(int_row[p_col].iloc[0]) < alpha:
                         # Interaction is significant: t-tests for all combinations
                         ph = pg.pairwise_tests(
                             data=df,
@@ -2512,7 +2665,7 @@ class StatisticalTester:
                         # 2. Interaction not significant, check main effects
                         # Between-factor post-hoc with Tukey (if significant)
                         between_row = aov.loc[aov["Source"] == between_factor]
-                        if not between_row.empty and float(between_row["p_unc"].iloc[0]) < alpha:
+                        if not between_row.empty and float(between_row[p_col].iloc[0]) < alpha:
                             # Tukey HSD for between-factor
                             from statsmodels.stats.multicomp import pairwise_tukeyhsd
                             between_groups = df[between_factor].unique()
@@ -2561,7 +2714,7 @@ class StatisticalTester:
 
                         # Within-factor post-hoc with paired t-tests (if significant)
                         within_row = aov.loc[aov["Source"] == rm_factor]
-                        if not within_row.empty and float(within_row["p_unc"].iloc[0]) < alpha:
+                        if not within_row.empty and float(within_row[p_col].iloc[0]) < alpha:
                             # Paired t-tests for within-factor with Bonferroni
                             from itertools import combinations
                             within_groups = df[rm_factor].unique()
@@ -2780,6 +2933,9 @@ class StatisticalTester:
                     factor = within[0]
                     # Add correction=True to apply corrections for sphericity violation
                     aov = pg.rm_anova(data=df, dv=dv, within=factor, subject=subject, detailed=True, correction=True)
+                    p_col = "p_unc" if "p_unc" in aov.columns else "p-unc" if "p-unc" in aov.columns else None
+                    if p_col is None:
+                        raise KeyError("No pingouin p-value column found in RM ANOVA table")
                     print("DEBUG: ANOVA result:", aov)
                     print("DEBUG: Results structure:", results)
                     results["anova_table"] = aov.copy()
@@ -2789,14 +2945,14 @@ class StatisticalTester:
                         "factor": factor,
                         "type": "within",
                         "F": float(row["F"]),
-                        "p_value": float(row["p_unc"]),
+                        "p_value": float(row[p_col]),
                         "df1": int(row["DF"]),
                         "df2": int(error_row["DF"]),
                         "effect_size": float(row["ng2"]) if "ng2" in row else None,
                         "effect_size_type": "partial_eta_squared"
                     })
                     results.update({
-                        "p_value": float(row["p_unc"]),
+                        "p_value": float(row[p_col]),
                         "statistic": float(row["F"]),
                         "effect_size": float(row["ng2"]) if "ng2" in row else None,
                         "effect_size_type": "partial_eta_squared",
@@ -2841,12 +2997,15 @@ class StatisticalTester:
                             logger.debug(f"DEBUG: Post-hoc test error: {str(ph_err)}")
                 else:
                     aov = pg.rm_anova(data=df, dv=dv, within=within, subject=subject, detailed=True)
+                    p_col = "p_unc" if "p_unc" in aov.columns else "p-unc" if "p-unc" in aov.columns else None
+                    if p_col is None:
+                        raise KeyError("No pingouin p-value column found in RM ANOVA table")
                     for _, row in aov.iterrows():
                         if "*" in row["Source"]:
                             results["interactions"].append({
                                 "factors": row["Source"].split("*"),
                                 "F": float(row["F"]),
-                                "p_value": float(row["p_unc"]),
+                                "p_value": float(row[p_col]),
                                 "df1": int(row["DF1"]),
                                 "df2": int(row["DF2"]),
                                 "effect_size": float(row["np2"]),
@@ -2857,7 +3016,7 @@ class StatisticalTester:
                                 "factor": row["Source"],
                                 "type": "within",
                                 "F": float(row["F"]),
-                                "p_value": float(row["p_unc"]),
+                                "p_value": float(row[p_col]),
                                 "df1": int(row["DF1"]),
                                 "df2": int(row["DF2"]),
                                 "effect_size": float(row["np2"]),
@@ -2867,7 +3026,7 @@ class StatisticalTester:
                     # Best result for main output
                     best_row = aov.iloc[aov["F"].argmax()]
                     results.update({
-                        "p_value": float(best_row["p_unc"]),
+                        "p_value": float(best_row[p_col]),
                         "statistic": float(best_row["F"]),
                         "effect_size": float(best_row["np2"]),
                         "effect_size_type": "partial_eta_squared",
@@ -3065,7 +3224,7 @@ class StatisticalTester:
                         "factor": factor,
                         "type": "between",
                         "F": float(row["F"]),
-                        "p_value": float(row["p_unc"]),
+                        "p_value": StatisticalTester._pingouin_p_value(row),
                         "df1": int(row["DF"]),
                         "df2": residual_df,
                         "effect_size": float(row["np2"]),
@@ -3086,14 +3245,14 @@ class StatisticalTester:
                     interaction_result = {
                         "factors": [factor_a, factor_b],
                         "F": float(row["F"]),
-                        "p_value": float(row["p_unc"]),
+                        "p_value": StatisticalTester._pingouin_p_value(row),
                         "df1": int(row["DF"]),
                         "df2": residual_df,
                         "effect_size": float(row["np2"]),
                         "effect_size_type": "partial_eta_squared"
                     }
                     results["interactions"].append(interaction_result)
-                    results["p_value"] = float(row["p_unc"])
+                    results["p_value"] = StatisticalTester._pingouin_p_value(row)
                     results["statistic"] = float(row["F"])
                     results["df1"] = int(row["DF"])
                     results["df2"] = residual_df
@@ -3125,7 +3284,7 @@ class StatisticalTester:
                                     if len(parts) == 2:
                                         g1_label = parts[0].strip()
                                         g2_label = parts[1].strip()
-                                pval_col = 'p_corr' if 'p_corr' in ph_row else 'p-unc'
+                                pval_col = 'p_corr' if 'p_corr' in ph_row else ('p_unc' if 'p_unc' in ph_row else 'p-unc')
                                 confidence_interval = (None, None)
                                 if 'CI95%' in ph_row and isinstance(ph_row['CI95%'], (list, np.ndarray)) and len(ph_row['CI95%']) == 2:
                                     confidence_interval = tuple(ph_row['CI95%'])
@@ -4086,7 +4245,7 @@ class StatisticalTester:
                     "note": "Sphericity assumption is always met with 2 levels",
                     "interpretation": "No correction needed - only 2 conditions compared"
                 }
-                results["corrected_p_value"] = float(row["p_unc"])
+                results["corrected_p_value"] = StatisticalTester._pingouin_p_value(row)
                 results["correction_used"] = "None (sphericity assumption met)"
                 return results
             
@@ -4137,7 +4296,7 @@ class StatisticalTester:
                 "note": f"Sphericity test failed: {str(e)}",
                 "interpretation": "Could not determine sphericity - proceeding with caution"
             }
-            results["corrected_p_value"] = float(row["p_unc"])
+            results["corrected_p_value"] = StatisticalTester._pingouin_p_value(row)
             results["correction_used"] = "None (sphericity test failed)"
             
         return results
@@ -4250,9 +4409,9 @@ class StatisticalTester:
                     "needed": False,
                     "reason": "Sphericity assumption is met"
                 }
-                corrections["corrected_p_value"] = float(row["p_unc"])
+                corrections["corrected_p_value"] = StatisticalTester._pingouin_p_value(row)
                 corrections["correction_used"] = "None (sphericity assumption met)"
-                corrections["final_p_value"] = float(row["p_unc"])
+                corrections["final_p_value"] = StatisticalTester._pingouin_p_value(row)
                 return corrections
             
             # Sphericity violated - apply corrections
@@ -4273,7 +4432,7 @@ class StatisticalTester:
                 }
             else:
                 gg_epsilon = None
-                gg_p_value = float(row["p_unc"])
+                gg_p_value = StatisticalTester._pingouin_p_value(row)
             
             # Huynh-Feldt Correction  
             if 'HF-eps' in row and 'p-HF' in row:
@@ -4290,7 +4449,7 @@ class StatisticalTester:
                 }
             else:
                 hf_epsilon = None
-                hf_p_value = float(row["p_unc"])
+                hf_p_value = StatisticalTester._pingouin_p_value(row)
             
             # Intelligent correction selection
             if gg_epsilon is not None and hf_epsilon is not None:
@@ -4316,9 +4475,9 @@ class StatisticalTester:
                 corrections["final_p_value"] = hf_p_value
             else:
                 # Fallback to uncorrected
-                corrections["corrected_p_value"] = float(row["p_unc"])
+                corrections["corrected_p_value"] = StatisticalTester._pingouin_p_value(row)
                 corrections["correction_used"] = "None (corrections not available)"
-                corrections["final_p_value"] = float(row["p_unc"])
+                corrections["final_p_value"] = StatisticalTester._pingouin_p_value(row)
                 corrections["recommendation"] = "Consider multivariate approach or non-parametric alternatives"
                 
         except Exception as e:
@@ -4326,9 +4485,9 @@ class StatisticalTester:
                 "needed": True,
                 "error": f"Failed to apply corrections: {str(e)}"
             }
-            corrections["corrected_p_value"] = float(row["p_unc"])
+            corrections["corrected_p_value"] = StatisticalTester._pingouin_p_value(row)
             corrections["correction_used"] = "None (correction failed)"
-            corrections["final_p_value"] = float(row["p_unc"])
+            corrections["final_p_value"] = StatisticalTester._pingouin_p_value(row)
             
         return corrections
 
@@ -4976,7 +5135,7 @@ class StatisticalTester:
                 }
             else:
                 gg_epsilon = None
-                gg_p_value = float(effect_row["p_unc"])
+                gg_p_value = StatisticalTester._pingouin_p_value(effect_row)
             
             # Huynh-Feldt Correction  
             if 'HF-eps' in effect_row and 'p-HF' in effect_row:
@@ -4993,7 +5152,7 @@ class StatisticalTester:
                 }
             else:
                 hf_epsilon = None
-                hf_p_value = float(effect_row["p_unc"])
+                hf_p_value = StatisticalTester._pingouin_p_value(effect_row)
             
             # Intelligent correction selection
             if gg_epsilon is not None and hf_epsilon is not None:
@@ -5017,13 +5176,13 @@ class StatisticalTester:
                 corrections["correction_used"] = f"Huynh-Feldt (ε = {hf_epsilon:.3f})"
             else:
                 corrections["recommended_correction"] = "none"
-                corrections["final_p_value"] = float(effect_row["p_unc"])
+                corrections["final_p_value"] = StatisticalTester._pingouin_p_value(effect_row)
                 corrections["correction_used"] = "None (corrections not available)"
                 corrections["rationale"] = "Correction information not available - consider multivariate approach"
                 
         except Exception as e:
             corrections["error"] = f"Failed to apply corrections to {effect_name}: {str(e)}"
-            corrections["final_p_value"] = float(effect_row["p_unc"])
+            corrections["final_p_value"] = StatisticalTester._pingouin_p_value(effect_row)
             corrections["correction_used"] = "None (correction failed)"
             
         return corrections

@@ -5789,10 +5789,11 @@ def _ap_extract_variance_metric(self, results):
     variance_source = variance_test.get("transformed", variance_test) if transformation_applied else variance_test
     if variance_source and isinstance(variance_source, dict):
         equal_variance = variance_source.get("equal_variance")
-        if equal_variance is True:
-            return "Homogeneous"
-        if equal_variance is False:
-            return "Heterogeneous"
+        if equal_variance is not None:
+            try:
+                return "Homogeneous" if bool(equal_variance) else "Heterogeneous"
+            except Exception:
+                pass
     return "Not available"
 
 
