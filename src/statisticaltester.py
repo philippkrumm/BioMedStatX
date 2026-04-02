@@ -1,16 +1,36 @@
 import numpy as np
 import pandas as pd
-import os
 import logging
 from datetime import datetime
 from scipy import stats
 from lazy_imports import get_pingouin, get_scipy_stats, get_statsmodels_multitest
-from stats_functions import UIDialogManager, PostHocFactory, get_pingouin_module, get_output_path, PostHocAnalyzer, PostHocStatistics
-from export_dispatcher import ExportDispatcher
+from stats_functions import UIDialogManager, PostHocFactory, get_pingouin_module, PostHocAnalyzer, PostHocStatistics
 from methodology_trace import MethodologyTrace
+from statistical_testing.decision_logic import (
+    extract_assumption_state,
+    select_comparison_test,
+    strategy_to_recommendation,
+)
+from statistical_testing.engines.comparison import ComparisonEngine
+from statistical_testing.engines.posthoc import PostHocEngine
+from statistical_testing.advanced_pipeline import perform_advanced_test_pipeline
+from statistical_testing.models import StatisticalResult
+from statistical_testing.validators import (
+    GroupValidationError,
+    ModelDesignError,
+    PairedDataError,
+    ValidationError,
+    validate_balanced_design,
+    validate_group_count,
+    validate_levene_inputs,
+    ensure_equal_group_sizes,
+    validate_minimum_n,
+    validate_paired_data,
+    validate_residuals_for_shapiro,
+    validate_test_design,
+)
 from nonparametricanovas import (
     posthoc_marginaleffects,
-    perform_friedman_test, perform_freedman_lane_test, perform_brunner_langer_ats,
 )
 
 # LOW-1: module-level logger (use logging.getLogger in each method for context)
@@ -103,6 +123,20 @@ class StatisticalTester:
                         comp[key] = default
 
         return standardized
+
+    @staticmethod
+    def to_statistical_result(results):
+        """Convert a legacy result dict into the canonical StatisticalResult DTO."""
+        standardized = StatisticalTester._standardize_results(results or {})
+        return StatisticalResult.from_legacy_dict(standardized)
+
+    @staticmethod
+    def from_statistical_result(result):
+        """Convert StatisticalResult DTO back to legacy dict format for compatibility."""
+        if not isinstance(result, StatisticalResult):
+            raise TypeError("result must be an instance of StatisticalResult")
+        legacy = result.to_legacy_dict()
+        return StatisticalTester._standardize_results(legacy)
 
     @staticmethod
     def _pingouin_p_column(columns):
@@ -243,15 +277,14 @@ class StatisticalTester:
                 model_raw = ols(working_formula, data=df_raw).fit()
                 resid_raw = model_raw.resid
                 logger.debug(f"DEBUG SHAPIRO: Raw residuals length: {len(resid_raw)}, unique values: {len(set(resid_raw))}")
-                # HIGH-3: explicit warnings for silent Shapiro-Wilk failures
-                if len(resid_raw) < 3:
-                    stat, pval = None, None
-                    print(f"WARNING: Only {len(resid_raw)} residuals — Shapiro-Wilk requires n >= 3.")
-                elif len(set(resid_raw)) <= 1:
-                    stat, pval = None, None
-                    print("WARNING: All residuals identical (zero variance) — Shapiro-Wilk not applicable.")
-                else:
+                # HIGH-3: centralized validation for Shapiro-Wilk applicability
+                try:
+                    validate_residuals_for_shapiro(resid_raw, label="pre_transformation_residuals")
                     stat, pval = stats.shapiro(resid_raw)
+                except ValidationError as exc:
+                    stat, pval = None, None
+                    test_info.setdefault("validation_notes", []).append(str(exc))
+                    logger.warning(str(exc))
                 logger.debug(f"DEBUG SHAPIRO: Pre-transformation Shapiro-Wilk: W={stat}, p={pval}")
                 
         except Exception as e:
@@ -275,12 +308,20 @@ class StatisticalTester:
         try:
             data_for_levene = [samples[g] for g in valid_groups]
             logger.debug(f"DEBUG BROWN-FORSYTHE: Pre-transformation - Groups: {len(valid_groups)}, Data lengths: {[len(v) for v in data_for_levene]}")
-            if len(valid_groups) >= 2 and all(len(v) >= 3 for v in data_for_levene):
-                stat, pval = stats.levene(*data_for_levene, center='median')
+            try:
+                validated_levene_data = validate_levene_inputs(
+                    data_for_levene,
+                    min_groups=2,
+                    min_n_per_group=3,
+                    label="pre_transformation_levene",
+                )
+                stat, pval = stats.levene(*validated_levene_data, center='median')
                 has_equal_variance = pval > 0.05
                 logger.debug(f"DEBUG BROWN-FORSYTHE: Pre-transformation - Statistic: {stat}, p-value: {pval}, Equal variance: {has_equal_variance}")
-            else:
+            except ValidationError as exc:
                 stat, pval, has_equal_variance = None, None, False
+                test_info.setdefault("validation_notes", []).append(str(exc))
+                logger.warning(str(exc))
                 logger.debug(f"DEBUG BROWN-FORSYTHE: Pre-transformation - Insufficient data for test")
         except Exception as e:
             logger.debug(f"DEBUG BROWN-FORSYTHE ERROR: Pre-transformation failed: {str(e)}")
@@ -323,10 +364,14 @@ class StatisticalTester:
                 values = samples[group]
                 min_val = min(values)
                 shift = -min_val + 1 if min_val <= 0 else 0
-                # MEDIUM-3: warn on very large shifts that may cause precision loss
+                # MEDIUM-3: record very large shifts via validation notes
                 if shift > 1e6:
-                    print(f"WARNING: Log10 transform for group '{group}' requires large shift "
-                          f"({shift:.2e}). Consider preprocessing the data.")
+                    shift_warning = GroupValidationError(
+                        f"Group '{group}': log10 transformation requires large shift ({shift:.2e}); "
+                        "consider preprocessing."
+                    )
+                    test_info.setdefault("validation_notes", []).append(str(shift_warning))
+                    logger.warning(str(shift_warning))
                 if transformation_type == "log10":
                     transformed_samples[group] = [np.log10(v + shift) for v in values]
                     if shift > 0:
@@ -349,7 +394,8 @@ class StatisticalTester:
                             f"Box-Cox not applicable for group '{group}': {_bc_reason}. "
                             f"Normality will be re-evaluated on original data."
                         )
-                        print(f"INFO: Box-Cox not applicable for group '{group}': {_bc_reason}.")
+                        logger.warning(test_info["transformation_note"])
+                        test_info.setdefault("validation_notes", []).append(test_info["transformation_note"])
                         transformed_samples[group] = list(values)
                     else:
                         try:
@@ -361,7 +407,8 @@ class StatisticalTester:
                                 f"Box-Cox optimization failed for group '{group}' ({e}). "
                                 f"Normality will be re-evaluated on original data."
                             )
-                            print(f"INFO: Box-Cox optimization failed for group '{group}': {e}.")
+                            logger.warning(test_info["transformation_note"])
+                            test_info.setdefault("validation_notes", []).append(test_info["transformation_note"])
                             transformed_samples[group] = list(values)
                 elif transformation_type == "arcsin_sqrt":
                     max_val = max(values)
@@ -369,16 +416,22 @@ class StatisticalTester:
                     if min_val < 0 or max_val > 1:
                         # CRITICAL-4: guard against zero variance (min == max)
                         if max_val == min_val:
-                            print(f"WARNING: Group '{group}' has zero variance — "
-                                  f"arcsin-sqrt transformation not applicable. Using 0.5.")
+                            variance_warning = GroupValidationError(
+                                f"Group '{group}': arcsin-sqrt transformation received zero variance data; using 0.5 fallback."
+                            )
+                            test_info.setdefault("validation_notes", []).append(str(variance_warning))
+                            logger.warning(str(variance_warning))
                             scaled = [0.5] * len(values)
                         else:
                             scaled = [(v - min_val) / (max_val - min_val) for v in values]
                     else:
                         # Values already in [0,1] — still guard against zero variance
                         if len(set(values)) == 1:
-                            print(f"WARNING: Group '{group}' has zero variance — "
-                                  f"arcsin-sqrt transformation not applicable. Using 0.5.")
+                            variance_warning = GroupValidationError(
+                                f"Group '{group}': arcsin-sqrt transformation received zero variance data; using 0.5 fallback."
+                            )
+                            test_info.setdefault("validation_notes", []).append(str(variance_warning))
+                            logger.warning(str(variance_warning))
                             scaled = [0.5] * len(values)
                         else:
                             scaled = values
@@ -424,7 +477,13 @@ class StatisticalTester:
                 model_tr = ols(working_formula_tr, data=df_tr).fit()
                 resid_tr = model_tr.resid
                 logger.debug(f"DEBUG SHAPIRO: Transformed residuals length: {len(resid_tr)}, unique values: {len(set(resid_tr))}")
-                stat2, pval2 = stats.shapiro(resid_tr) if len(resid_tr) >= 3 and len(set(resid_tr)) > 1 else (None, None)
+                try:
+                    validate_residuals_for_shapiro(resid_tr, label="post_transformation_residuals")
+                    stat2, pval2 = stats.shapiro(resid_tr)
+                except ValidationError as exc:
+                    stat2, pval2 = None, None
+                    test_info.setdefault("validation_notes", []).append(str(exc))
+                    logger.warning(str(exc))
                 logger.debug(f"DEBUG SHAPIRO: Post-transformation Shapiro-Wilk: W={stat2}, p={pval2}")
                 
         except Exception as e:
@@ -440,12 +499,20 @@ class StatisticalTester:
         try:
             data_for_levene_tr = [transformed_samples[g] for g in valid_groups]
             logger.debug(f"DEBUG BROWN-FORSYTHE: Post-transformation - Groups: {len(valid_groups)}, Data lengths: {[len(v) for v in data_for_levene_tr]}")
-            if len(valid_groups) >= 2 and all(len(v) >= 3 for v in data_for_levene_tr):
-                stat_tr, pval_tr = stats.levene(*data_for_levene_tr, center='median')
+            try:
+                validated_levene_data_tr = validate_levene_inputs(
+                    data_for_levene_tr,
+                    min_groups=2,
+                    min_n_per_group=3,
+                    label="post_transformation_levene",
+                )
+                stat_tr, pval_tr = stats.levene(*validated_levene_data_tr, center='median')
                 has_equal_variance_tr = pval_tr > 0.05
                 logger.debug(f"DEBUG BROWN-FORSYTHE: Post-transformation - Statistic: {stat_tr}, p-value: {pval_tr}, Equal variance: {has_equal_variance_tr}")
-            else:
+            except ValidationError as exc:
                 stat_tr, pval_tr, has_equal_variance_tr = None, None, False
+                test_info.setdefault("validation_notes", []).append(str(exc))
+                logger.warning(str(exc))
                 logger.debug(f"DEBUG BROWN-FORSYTHE: Post-transformation - Insufficient data for test")
         except Exception as e:
             logger.debug(f"DEBUG BROWN-FORSYTHE ERROR: Post-transformation failed: {str(e)}")
@@ -459,57 +526,52 @@ class StatisticalTester:
         post_norm = test_info["post_transformation"]["residuals_normality"]["is_normal"]
         post_var = test_info["post_transformation"]["variance"]["equal_variance"]
 
-        if post_norm and post_var:
+        if model_type in ["twoway", "mixed", "rm"] and post_norm:
+            decision_strategy = f"{model_type}_anova"
             test_recommendation = "parametric"
-            if trace:
-                trace.add(3, "Test Selection",
-                          "Both normality and variance homogeneity confirmed \u2014 parametric test selected.")
-        elif post_norm and not post_var and model_type == "ttest" and len(valid_groups) == 2:
-            test_recommendation = "parametric"  # Welch-Test
-            test_info["note"] = "Residuals are normal but variances are unequal - Welch's t-test will be used."
-            if trace:
-                trace.add(3, "Test Selection",
-                          "Normality confirmed but variances unequal (2 groups) \u2014 Welch\u2019s t-test applied automatically.")
-        elif post_norm and not post_var and model_type == "oneway" and len(valid_groups) > 2:
-            test_recommendation = "parametric"  # Welch-ANOVA
-            test_info["note"] = "Residuals are normal but variances are unequal - Welch's ANOVA will be used."
-            if trace:
-                trace.add(3, "Test Selection",
-                          "Normality confirmed but variances unequal (>2 groups) \u2014 Welch ANOVA applied automatically.")
-        elif post_norm and not post_var and model_type in ["twoway", "mixed", "rm"]:
-            test_recommendation = "parametric"  # Advanced ANOVAs can often handle unequal variances
-            test_info["note"] = (
-                f"Residuals are normal but variances are unequal - {model_type.upper()} ANOVA will still be used "
-                f"(robust to variance heterogeneity)."
-            )
-            if trace:
-                trace.add(3, "Test Selection",
-                          f"Normality confirmed; variance inequality noted \u2014 {model_type.upper()} ANOVA applied "
-                          f"(robust to variance heterogeneity).")
-        elif post_norm and not post_var and len(valid_groups) == 2:
-            test_recommendation = "parametric"  # Welch-Test
-            test_info["note"] = "Normal distribution but unequal variances – Welch's t-test will be used."
-            if trace:
-                trace.add(3, "Test Selection",
-                          "Normal residuals, unequal variances \u2014 Welch\u2019s t-test applied automatically.")
-        elif post_norm and not post_var and len(valid_groups) > 2:
-            test_recommendation = "parametric"  # Welch-ANOVA
-            test_info["note"] = "Normal distribution but unequal variances – Welch's ANOVA will be used."
-            if trace:
-                trace.add(3, "Test Selection",
-                          "Normal residuals, unequal variances \u2014 Welch ANOVA applied automatically.")
+            if not post_var:
+                test_info["note"] = (
+                    f"Residuals are normal but variances are unequal - {model_type.upper()} ANOVA will still be used "
+                    f"(robust to variance heterogeneity)."
+                )
         else:
-            test_recommendation = "non_parametric"
-            if trace:
-                trace.add(3, "Test Selection",
-                          "Normality assumption violated \u2014 non-parametric test selected.")
+            decision_strategy = select_comparison_test(
+                is_normal=post_norm,
+                is_homoscedastic=post_var,
+                is_paired=False,
+                group_count=len(valid_groups),
+            )
+            test_recommendation = strategy_to_recommendation(decision_strategy)
+            if decision_strategy == "welch_ttest":
+                test_info["note"] = "Residuals are normal but variances are unequal - Welch's t-test will be used."
+            elif decision_strategy == "welch_anova":
+                test_info["note"] = "Residuals are normal but variances are unequal - Welch's ANOVA will be used."
+
+        test_info["decision"] = {
+            "strategy": decision_strategy,
+            "recommendation": test_recommendation,
+            "assumptions": {
+                "residuals_normal": post_norm,
+                "equal_variance": post_var,
+            },
+            "group_count": len(valid_groups),
+            "model_type": model_type,
+        }
+
+        if trace:
+            if test_recommendation == "non_parametric":
+                trace.add(3, "Test Selection", "Normality assumption violated \u2014 non-parametric test selected.")
+            elif decision_strategy in {"welch_ttest", "welch_anova"}:
+                trace.add(3, "Test Selection", "Normality confirmed, variance inequality detected \u2014 Welch correction selected.")
+            else:
+                trace.add(3, "Test Selection", "Assumptions support parametric testing \u2014 standard parametric route selected.")
 
         logger.debug(f"DEBUG check_normality_and_variance: Final test_info structure:")
-        print(f"  Pre-transformation normality: {test_info['pre_transformation'].get('residuals_normality', 'Missing')}")
-        print(f"  Pre-transformation variance: {test_info['pre_transformation'].get('variance', 'Missing')}")
-        print(f"  Post-transformation normality: {test_info['post_transformation'].get('residuals_normality', 'Missing')}")
-        print(f"  Post-transformation variance: {test_info['post_transformation'].get('variance', 'Missing')}")
-        print(f"  Test recommendation: {test_recommendation}")
+        logger.debug(f"  Pre-transformation normality: {test_info['pre_transformation'].get('residuals_normality', 'Missing')}")
+        logger.debug(f"  Pre-transformation variance: {test_info['pre_transformation'].get('variance', 'Missing')}")
+        logger.debug(f"  Post-transformation normality: {test_info['post_transformation'].get('residuals_normality', 'Missing')}")
+        logger.debug(f"  Post-transformation variance: {test_info['post_transformation'].get('variance', 'Missing')}")
+        logger.debug(f"  Decision strategy: {decision_strategy}; recommendation: {test_recommendation}")
 
         return transformed_samples, test_recommendation, test_info
     
@@ -566,7 +628,7 @@ class StatisticalTester:
         if original_samples != transformed_samples:
             results["descriptive_transformed"] = {g: StatisticalTester._compute_descriptive_stats(transformed_samples[g]) for g in valid_groups}
 
-        samples_to_use = transformed_samples if test_recommendation == "parametric" else original_samples
+        samples_to_use = transformed_samples if test_recommendation in {"parametric", "welch"} else original_samples
 
         if len(valid_groups) == 2:
             return StatisticalTester._stat_test_two_groups(
@@ -600,33 +662,59 @@ class StatisticalTester:
     def _stat_test_two_groups(results, valid_groups, samples_to_use, original_samples, dependent, test_recommendation, alpha, test_info=None):
         g1, g2 = valid_groups
         data1, data2 = samples_to_use[g1], samples_to_use[g2]
-        if dependent and len(data1) != len(data2):
+        try:
+            if dependent:
+                validate_paired_data(data1, data2, group_a_label=str(g1), group_b_label=str(g2), min_n=2)
+            else:
+                validate_minimum_n(data1, min_n=2, label=str(g1), allow_missing=False)
+                validate_minimum_n(data2, min_n=2, label=str(g2), allow_missing=False)
+        except ValidationError as validation_error:
             results["test"] = "Error during test"
-            results["error"] = (
-                f"Dependent samples require equal lengths for valid pairing. "
-                f"Got n({g1})={len(data1)} and n({g2})={len(data2)}."
-            )
+            results["error"] = str(validation_error)
             results["posthoc_test"] = "Not performed (invalid paired input)"
             results["pairwise_comparisons"] = []
             return StatisticalTester._standardize_results(results)
+
         try:
-            if dependent:
-                if test_recommendation == "parametric":
-                    return StatisticalTester._paired_ttest(results, g1, g2, data1, data2, alpha)
-                else:
-                    return StatisticalTester._wilcoxon_test(results, g1, g2, data1, data2, alpha)
+            assumptions = extract_assumption_state(test_info)
+            if test_info is None:
+                fallback_is_normal = test_recommendation in {"parametric", "welch"}
+                fallback_equal_variance = test_recommendation == "parametric"
             else:
-                if test_recommendation == "parametric":
-                    # Check variance homogeneity for Welch test
-                    equal_var = True
-                    if test_info is not None:
-                        if test_info.get("transformation"):
-                            equal_var = test_info.get("variance_test", {}).get("transformed", {}).get("equal_variance", True)
-                        else:
-                            equal_var = test_info.get("variance_test", {}).get("equal_variance", True)
-                    return StatisticalTester._independent_ttest(results, g1, g2, data1, data2, alpha, equal_var=equal_var)
-                else:
-                    return StatisticalTester._mannwhitney_test(results, g1, g2, data1, data2, alpha)
+                fallback_is_normal = assumptions.residuals_normal
+                fallback_equal_variance = assumptions.equal_variance
+
+            strategy = select_comparison_test(
+                is_normal=fallback_is_normal,
+                is_homoscedastic=fallback_equal_variance,
+                is_paired=dependent,
+                group_count=2,
+            )
+
+            supported_engine_strategies = {
+                "paired_ttest",
+                "wilcoxon",
+                "student_ttest",
+                "welch_ttest",
+                "mann_whitney_u",
+            }
+            if strategy in supported_engine_strategies:
+                engine_result = ComparisonEngine().execute(
+                    {
+                        "strategy": strategy,
+                        "groups": [g1, g2],
+                        "samples": {g1: data1, g2: data2},
+                        "alpha": alpha,
+                        "results": results,
+                    }
+                )
+                return StatisticalTester.from_statistical_result(engine_result)
+
+            results["test"] = "Error during test"
+            results["error"] = f"Unsupported two-group strategy '{strategy}'"
+            results["posthoc_test"] = "Not performed (unsupported strategy)"
+            results["pairwise_comparisons"] = []
+            return StatisticalTester._standardize_results(results)
         except Exception as e:
             results["test"] = "Error during test"
             results["error"] = str(e)
@@ -714,9 +802,16 @@ class StatisticalTester:
 
     @staticmethod
     def _paired_ttest(results, g1, g2, data1, data2, alpha):
-        statistic, p_value = stats.ttest_rel(data1, data2)
+        data1_arr, data2_arr = validate_paired_data(
+            data1,
+            data2,
+            group_a_label=str(g1),
+            group_b_label=str(g2),
+            min_n=2,
+        )
+        statistic, p_value = stats.ttest_rel(data1_arr, data2_arr)
         test_name = "Paired t-test"
-        diff = np.array(data1) - np.array(data2)
+        diff = data1_arr - data2_arr
         std_diff = np.std(diff, ddof=1)
         if std_diff == 0:
             cohen_d = None
@@ -749,16 +844,28 @@ class StatisticalTester:
             "confidence_interval": results.get("confidence_interval"),
             "power": results.get("power")
         }]
-        results["plot_subject_trajectories"] = StatisticalTester._build_paired_subject_trajectories(g1, g2, data1, data2)
+        results["plot_subject_trajectories"] = StatisticalTester._build_paired_subject_trajectories(
+            g1,
+            g2,
+            data1_arr.tolist(),
+            data2_arr.tolist(),
+        )
         return StatisticalTester._standardize_results(results)
 
     @staticmethod
     def _wilcoxon_test(results, g1, g2, data1, data2, alpha):
-        statistic, p_value = stats.wilcoxon(data1, data2)
+        data1_arr, data2_arr = validate_paired_data(
+            data1,
+            data2,
+            group_a_label=str(g1),
+            group_b_label=str(g2),
+            min_n=2,
+        )
+        statistic, p_value = stats.wilcoxon(data1_arr, data2_arr)
         test_name = "Wilcoxon test"
         # scipy wilcoxon() returns min(T+, T-), not T+.
         # Correct rank-biserial: r = |1 - 2*min / N| where N = n_eff*(n_eff+1)/2
-        diffs = np.asarray(data1) - np.asarray(data2)
+        diffs = data1_arr - data2_arr
         n_eff = int(np.sum(diffs != 0))
         _N = n_eff * (n_eff + 1) / 2
         r = float(abs(1.0 - 2.0 * statistic / _N)) if _N > 0 else 0.0
@@ -784,23 +891,24 @@ class StatisticalTester:
             "confidence_interval": results.get("confidence_interval"),
             "power": results.get("power")
         }]
-        results["plot_subject_trajectories"] = StatisticalTester._build_paired_subject_trajectories(g1, g2, data1, data2)
+        results["plot_subject_trajectories"] = StatisticalTester._build_paired_subject_trajectories(
+            g1,
+            g2,
+            data1_arr.tolist(),
+            data2_arr.tolist(),
+        )
         return StatisticalTester._standardize_results(results)
     
     @staticmethod
     def _independent_ttest(results, g1, g2, data1, data2, alpha, equal_var=True):
-        n1, n2 = len(data1), len(data2)
-        # HIGH-5: Require at least 2 observations per group for Welch-Satterthwaite
-        if n1 < 2 or n2 < 2:
-            results["error"] = (
-                f"t-test requires n >= 2 per group. Got n1={n1}, n2={n2}."
-            )
-            return StatisticalTester._standardize_results(results)
-        statistic, p_value = stats.ttest_ind(data1, data2, equal_var=equal_var)
+        data1_arr = validate_minimum_n(data1, min_n=2, label=str(g1), allow_missing=False)
+        data2_arr = validate_minimum_n(data2, min_n=2, label=str(g2), allow_missing=False)
+        n1, n2 = len(data1_arr), len(data2_arr)
+        statistic, p_value = stats.ttest_ind(data1_arr, data2_arr, equal_var=equal_var)
         test_name = "t-test (independent)"
         if not equal_var:
             test_name = "Welch's t-test (unequal variances)"
-        s1, s2 = np.var(data1, ddof=1), np.var(data2, ddof=1)
+        s1, s2 = np.var(data1_arr, ddof=1), np.var(data2_arr, ddof=1)
 
         # Different calculations for equal vs unequal variances
         if equal_var:
@@ -811,7 +919,7 @@ class StatisticalTester:
                 cohen_d = None
                 results["effect_size_type"] = "cohen_d (undefined — zero pooled variance)"
             else:
-                cohen_d = (np.mean(data1) - np.mean(data2)) / s_pooled
+                cohen_d = (np.mean(data1_arr) - np.mean(data2_arr)) / s_pooled
                 results["effect_size_type"] = "cohen_d"
             stderr_diff = s_pooled * np.sqrt(1/n1 + 1/n2)
             df = n1 + n2 - 2
@@ -822,7 +930,7 @@ class StatisticalTester:
                 cohen_d = None
                 results["effect_size_type"] = "hedges_g (undefined — zero pooled variance)"
             else:
-                cohen_d = (np.mean(data1) - np.mean(data2)) / s_pooled_hedges
+                cohen_d = (np.mean(data1_arr) - np.mean(data2_arr)) / s_pooled_hedges
                 results["effect_size_type"] = "hedges_g"
             stderr_diff = np.sqrt(s1/n1 + s2/n2)
             # Welch-Satterthwaite degrees of freedom (safe: n>=2 guaranteed above)
@@ -831,7 +939,7 @@ class StatisticalTester:
             df = df_num / df_den if df_den > 0 else min(n1, n2) - 1
 
         results["effect_size"] = cohen_d
-        mean_diff = np.mean(data1) - np.mean(data2)
+        mean_diff = np.mean(data1_arr) - np.mean(data2_arr)
         t = stats.t
         ci = t.interval(0.95, df, loc=mean_diff, scale=stderr_diff)
         results["confidence_interval"] = ci
@@ -861,9 +969,11 @@ class StatisticalTester:
 
     @staticmethod
     def _mannwhitney_test(results, g1, g2, data1, data2, alpha):
-        statistic, p_value = stats.mannwhitneyu(data1, data2, alternative='two-sided')
+        data1_arr = validate_minimum_n(data1, min_n=2, label=str(g1), allow_missing=False)
+        data2_arr = validate_minimum_n(data2, min_n=2, label=str(g2), allow_missing=False)
+        statistic, p_value = stats.mannwhitneyu(data1_arr, data2_arr, alternative='two-sided')
         test_name = "Mann-Whitney-U"
-        n1, n2 = len(data1), len(data2)
+        n1, n2 = len(data1_arr), len(data2_arr)
         u = statistic
         mean_u = n1 * n2 / 2
         std_u = np.sqrt(n1 * n2 * (n1 + n2 + 1) / 12)
@@ -895,236 +1005,132 @@ class StatisticalTester:
 
     @staticmethod
     def _stat_test_multi_groups(results, valid_groups, samples_to_use, dependent, test_recommendation, alpha, test_info=None, df=None, dv=None, subject=None, within=None, trace: "MethodologyTrace | None" = None):
-        # Welch ANOVA: If explicitly requested OR if parametric but variances are unequal
-        welch_condition = (
-            test_recommendation == "welch"  # Direct request for Welch ANOVA
-            or (
-                test_recommendation == "parametric" 
-                and test_info is not None
-                and (
-                    # Check if transformed data has unequal variance (new structure)
-                    (test_info.get("transformation") and not test_info.get("post_transformation", {}).get("variance", {}).get("equal_variance", True))
-                    # Or if original data has unequal variance (when no transformation) (new structure)
-                    or (not test_info.get("transformation") and not test_info.get("pre_transformation", {}).get("variance", {}).get("equal_variance", True))
-                )
-                # Ensure we're still normally distributed (new structure)
-                and (
-                    (test_info.get("transformation") and test_info.get("post_transformation", {}).get("residuals_normality", {}).get("is_normal", False))
-                    or (not test_info.get("transformation") and test_info.get("pre_transformation", {}).get("residuals_normality", {}).get("is_normal", False))
-                )
-            )
-        )
-        
-        logger.debug(f"DEBUG WELCH CHECK: test_recommendation = {test_recommendation}")
-        if test_info and test_info.get("transformation"):
-            logger.debug(f"DEBUG WELCH CHECK: transformed data normality = {test_info.get('post_transformation', {}).get('residuals_normality', {}).get('is_normal', False)}")
-            logger.debug(f"DEBUG WELCH CHECK: transformed variance equal = {test_info.get('post_transformation', {}).get('variance', {}).get('equal_variance', True)}")
-        elif test_info:
-            logger.debug(f"DEBUG WELCH CHECK: original data normality = {test_info.get('pre_transformation', {}).get('residuals_normality', {}).get('is_normal', False)}")
-            logger.debug(f"DEBUG WELCH CHECK: original variance equal = {test_info.get('pre_transformation', {}).get('variance', {}).get('equal_variance', True)}")
+        try:
+            validate_group_count(valid_groups, min_groups=3, label="multi_group_tests")
+            if isinstance(samples_to_use, dict):
+                for group in valid_groups:
+                    validate_minimum_n(samples_to_use.get(group, []), min_n=2, label=str(group), allow_missing=False)
+        except ValidationError as validation_error:
+            results["test"] = "Error during test"
+            results["error"] = str(validation_error)
+            results["posthoc_test"] = "Not performed (invalid multi-group input)"
+            results["pairwise_comparisons"] = []
+            return StatisticalTester._standardize_results(results)
+
+        assumptions = extract_assumption_state(test_info)
+        if test_info is None:
+            if dependent and len(valid_groups) > 2:
+                strategy = "repeated_measures_required"
+            elif test_recommendation == "welch":
+                strategy = "welch_anova"
+            elif test_recommendation == "parametric":
+                strategy = "one_way_anova"
+            else:
+                strategy = "kruskal_wallis"
         else:
-            logger.debug(f"DEBUG WELCH CHECK: test_info is None")
-        logger.debug(f"DEBUG WELCH CHECK: welch_condition = {welch_condition}")
-        
-        if welch_condition:
-            # Use Welch ANOVA on transformed data
-            print("DEBUG WELCH CHECK: Using Welch ANOVA!")
+            strategy = select_comparison_test(
+                is_normal=assumptions.residuals_normal,
+                is_homoscedastic=assumptions.equal_variance,
+                is_paired=dependent,
+                group_count=len(valid_groups),
+            )
+        recommendation_family = strategy_to_recommendation(strategy)
+        if test_info is not None:
+            test_info.setdefault("decision", {}).update(
+                {
+                    "strategy": strategy,
+                    "recommendation": recommendation_family,
+                    "assumptions": {
+                        "residuals_normal": assumptions.residuals_normal,
+                        "equal_variance": assumptions.equal_variance,
+                    },
+                    "group_count": len(valid_groups),
+                }
+            )
+
+        logger.debug(f"DEBUG DECISION: multigroup strategy={strategy}, recommendation={recommendation_family}")
+
+        if strategy == "welch_anova":
+            logger.debug("DEBUG DECISION: using Welch ANOVA path")
             welch_result = StatisticalTester._welch_anova_test(results, valid_groups, samples_to_use, alpha)
             if welch_result is not None:
                 return welch_result
             else:
-                print("DEBUG WELCH CHECK: Welch ANOVA returned None, falling back to regular ANOVA")
+                logger.debug("DEBUG DECISION: Welch ANOVA returned None, falling back to regular ANOVA")
                 # Fall through to regular ANOVA
         
         try:
-            if dependent and len(valid_groups) > 2:
+            if strategy == "repeated_measures_required":
                 results["test"] = "Repeated Measures ANOVA not supported in simple pipeline"
                 results["error"] = "Please use perform_advanced_test for RM-ANOVA."
                 return StatisticalTester._standardize_results(results)
             else:
-                if test_recommendation == "parametric":
-                    try:
-                        print("DEBUG: Attempting to use Pingouin for ANOVA...")
-                        pg = get_pingouin_module()
-                        
-                        # Create a completely fresh DataFrame with proper numeric types
-                        data_for_anova = []
-                        
-                        # Use standard column names that won't confuse Pingouin
-                        for i, group in enumerate(valid_groups):
-                            values = samples_to_use[group]
-                            for val in values:
-                                data_for_anova.append({
-                                    'dependent_var': float(val),
-                                    'group_var': i  # Integer group identifier
-                                })
-                        
-                        # Convert to DataFrame with explicit dtypes
-                        df_pg = pd.DataFrame(data_for_anova)
-                        df_pg['dependent_var'] = df_pg['dependent_var'].astype(float)
-                        df_pg['group_var'] = df_pg['group_var'].astype('category')
-                        
-                        logger.debug(f"DEBUG: New df_pg shape = {df_pg.shape}")
-                        logger.debug(f"DEBUG: New groups = {df_pg['group_var'].unique()}")
-                        logger.debug(f"DEBUG: New dependent_var min={df_pg['dependent_var'].min()}, max={df_pg['dependent_var'].max()}")
-                        
-                        # Run ANOVA with robust column names
-                        aov = pg.anova(data=df_pg, dv='dependent_var', between='group_var', detailed=True)
-                        results["anova_table"] = aov.copy()
-                        
-                        # Extract results more carefully
-                        logger.debug(f"DEBUG: ANOVA table columns: {list(aov.columns)}")
-                        logger.debug(f"DEBUG: ANOVA table index/rows: {list(aov.index)}")
-                        
-                        # CRITICAL-3: guard against empty ANOVA table
-                        if len(aov) < 1:
-                            raise ValueError("Pingouin ANOVA returned empty table")
-                        # Get the between-groups row (should be the first row)
-                        row_between = aov.iloc[0]
-                        
-                        # Get residuals row (should be the second row)
-                        if len(aov) > 1:
-                            row_residual = aov.iloc[1]
-                            df2 = row_residual['DF']  # This should be numeric already
-                            results["df2"] = int(df2) if pd.notnull(df2) else None
-                        else:
-                            # Fallback: calculate residual df from total observations - groups
-                            total_observations = sum(len(samples_to_use[g]) for g in valid_groups)
-                            results["df2"] = total_observations - len(valid_groups)
-                        
-                        # Extract the main ANOVA results
-                        results["test"] = "One-way ANOVA (Pingouin)"
-                        results["statistic"] = float(row_between["F"])
-                        p_col = "p_unc" if "p_unc" in row_between.index else "p-unc"
-                        results["p_value"] = float(row_between[p_col])
-                        np2_col = "np2" if "np2" in row_between.index else "n2"
-                        results["effect_size"] = float(row_between[np2_col])
-                        results["effect_size_type"] = "partial_eta_squared"
-                        results["confidence_interval"] = (None, None)
-                        results["power"] = None
-                        
-                        # Map group identifiers back to names for easier reading
-                        group_map = {i: group for i, group in enumerate(valid_groups)}
-                        
-                        print("DEBUG: Successfully used Pingouin for ANOVA!")
-                        
-                    except Exception as e:
-                        logger.debug(f"DEBUG: Pingouin failed with error: {str(e)}")
-                        # Detailed traceback for better debugging
-                        import traceback
-                        logger.debug(f"DEBUG: Full traceback: {traceback.format_exc()}")
-                        # Fallback to scipy if Pingouin fails
-                        teststat, pval = stats.f_oneway(*[samples_to_use[g] for g in valid_groups])
-                        results["test"] = "One-way ANOVA (scipy fallback)"
-                        results["p_value"] = pval
-                        results["statistic"] = teststat
-                        all_data = np.concatenate([samples_to_use[g] for g in valid_groups])
-                        grand_mean = np.mean(all_data)
-                        ss_between = sum(len(samples_to_use[g]) * (np.mean(samples_to_use[g]) - grand_mean) ** 2 for g in valid_groups)
-                        ss_total = sum((x - grand_mean) ** 2 for x in all_data)
-                        eta_sq = ss_between / ss_total if ss_total > 0 else None
-                        # HIGH-4: warn about biased eta-squared for unbalanced designs
-                        group_sizes = [len(samples_to_use[g]) for g in valid_groups]
-                        if len(set(group_sizes)) > 1:
-                            print(f"WARNING: Unbalanced design {dict(zip(valid_groups, group_sizes))}. "
-                                  f"Eta-squared may be biased.")
-                            results["design_note"] = "Unbalanced design — eta-squared may be biased"
-                        results["effect_size"] = eta_sq
-                        results["effect_size_type"] = "eta_squared"
-                        results["anova_table"] = None
-                        try:
-                            from statsmodels.stats.power import FTestAnovaPower
-                            k = len(valid_groups)
-                            n = sum(len(samples_to_use[g]) for g in valid_groups)
-                            eta_sq = results.get("effect_size", 0)
-                            f2 = eta_sq / (1 - eta_sq) if eta_sq < 1 else 0
-                            power_analysis = FTestAnovaPower()
-                            results["power"] = float(power_analysis.power(
-                                effect_size=f2, k_groups=k, nobs=n, alpha=alpha
-                            ))
-                        except Exception:
-                            results["power"] = None
-                        results["confidence_interval"] = (None, None)
-                else:
-                    teststat, pval = stats.kruskal(*[samples_to_use[g] for g in valid_groups])
-                    results["test"] = "Kruskal-Wallis test"
-                    results["p_value"] = pval
-                    results["statistic"] = teststat
-                    n = sum(len(samples_to_use[g]) for g in valid_groups)
-                    h = teststat
-                    k = len(valid_groups)
-                    epsilon_sq = (h - k + 1) / (n - k) if n > k else None
-                    # MEDIUM-2: clamp to [0, 1] for numerical safety
-                    if epsilon_sq is not None:
-                        epsilon_sq = max(0.0, min(1.0, epsilon_sq))
-                    results["effect_size"] = epsilon_sq
-                    results["effect_size_type"] = "epsilon_squared"
-                    results["anova_table"] = None
-                    try:
-                        from statsmodels.stats.power import FTestAnovaPower
-                        k = len(valid_groups)
-                        n = sum(len(samples_to_use[g]) for g in valid_groups)
-                        epsilon_sq = results.get("effect_size", 0)
-                        f2_approx = (epsilon_sq / (1 - epsilon_sq)) * 0.955 if epsilon_sq < 1 else 0
-                        power_analysis = FTestAnovaPower()
-                        results["power"] = float(power_analysis.power(
-                            effect_size=f2_approx, k_groups=k, nobs=n, alpha=alpha
-                        ))
-                    except Exception:
-                        results["power"] = None
-                    results["confidence_interval"] = (None, None)
-            if test_recommendation == "parametric" and results.get("p_value") is not None and results["p_value"] < alpha and len(valid_groups) >= 3:
-                # Use the unified post-hoc testing approach instead of separate dialogs
-                print("DEBUG: Significant parametric test, calling perform_refactored_posthoc_testing")
-                if trace:
-                    trace.add(4, "Post-hoc",
-                              f"Main test significant (p<{alpha}) with {len(valid_groups)} groups \u2014 "
-                              f"parametric post-hoc test initiated.")
-                posthoc_results = StatisticalTester.perform_refactored_posthoc_testing(
-                    valid_groups,
-                    samples_to_use,
-                    test_recommendation="parametric",
-                    alpha=alpha,
-                    posthoc_choice=None,  # Let the function show the dialog
-                    test_info=test_info,
+                engine_result = ComparisonEngine().execute(
+                    {
+                        "strategy": strategy,
+                        "groups": valid_groups,
+                        "samples": samples_to_use,
+                        "alpha": alpha,
+                        "results": results,
+                    }
                 )
+                primary_result = StatisticalTester.from_statistical_result(engine_result)
+                results.update(primary_result)
 
-                if posthoc_results:
-                    results["posthoc_test"] = posthoc_results.get("posthoc_test")
-                    results["pairwise_comparisons"] = posthoc_results.get("pairwise_comparisons", [])
-                    if trace and posthoc_results.get("posthoc_test"):
-                        trace.add(4, "Post-hoc",
-                                  f"{posthoc_results['posthoc_test']} selected for pairwise comparisons.",
-                                  detail=f"{len(results['pairwise_comparisons'])} comparisons")
-                else:
-                    results["posthoc_test"] = "No post-hoc tests performed"
-                    results["pairwise_comparisons"] = []
-            elif test_recommendation == "non_parametric" and results.get("p_value") is not None and results["p_value"] < alpha and len(valid_groups) >= 3:
-                # Let the perform_refactored_posthoc_testing function handle the dialog selection
-                print("DEBUG: Significant non-parametric test, calling perform_refactored_posthoc_testing without preset posthoc_choice")
-                if trace:
-                    trace.add(4, "Post-hoc",
-                              f"Main non-parametric test significant (p<{alpha}) with {len(valid_groups)} groups \u2014 "
-                              f"non-parametric post-hoc test initiated.")
-                posthoc_results = StatisticalTester.perform_refactored_posthoc_testing(
-                    valid_groups,
-                    samples_to_use,
-                    test_recommendation,
-                    alpha=alpha,
-                    posthoc_choice=None,  # Let the function show the dialog
-                    test_info=test_info,
+                if results.get("test") == "comparison_engine_failed" and results.get("error"):
+                    return StatisticalTester._standardize_results(results)
+            should_run_posthoc = (
+                recommendation_family in {"parametric", "welch", "non_parametric"}
+                and results.get("p_value") is not None
+                and results["p_value"] < alpha
+                and len(valid_groups) >= 3
+                and not results.get("pairwise_comparisons")
+            )
+            if should_run_posthoc:
+                posthoc_recommendation = "parametric" if recommendation_family in {"parametric", "welch"} else "non_parametric"
+                logger.debug(
+                    "DEBUG: Significant %s test, delegating post-hoc to PostHocEngine",
+                    posthoc_recommendation,
                 )
+                if trace:
+                    trace.add(
+                        4,
+                        "Post-hoc",
+                        f"Main {posthoc_recommendation} test significant (p<{alpha}) with {len(valid_groups)} groups \u2014 "
+                        f"{posthoc_recommendation} post-hoc engine invoked.",
+                    )
 
-                if posthoc_results:
-                    results["posthoc_test"] = posthoc_results.get("posthoc_test")
-                    results["pairwise_comparisons"] = posthoc_results.get("pairwise_comparisons", [])
-                    if trace and posthoc_results.get("posthoc_test"):
-                        trace.add(4, "Post-hoc",
-                                  f"{posthoc_results['posthoc_test']} selected for pairwise comparisons.",
-                                  detail=f"{len(results['pairwise_comparisons'])} comparisons")
+                posthoc_result = PostHocEngine().execute(
+                    {
+                        "groups": valid_groups,
+                        "samples": samples_to_use,
+                        "test_recommendation": posthoc_recommendation,
+                        "alpha": alpha,
+                        "posthoc_choice": None,
+                        "test_info": test_info,
+                    }
+                )
+                posthoc_payload = StatisticalTester.from_statistical_result(posthoc_result)
+
+                if posthoc_payload.get("pairwise_comparisons"):
+                    results["posthoc_test"] = posthoc_payload.get("posthoc_test") or posthoc_payload.get("test")
+                    results["pairwise_comparisons"] = posthoc_payload.get("pairwise_comparisons", [])
+                    if trace and results.get("posthoc_test"):
+                        trace.add(
+                            4,
+                            "Post-hoc",
+                            f"{results['posthoc_test']} selected for pairwise comparisons.",
+                            detail=f"{len(results['pairwise_comparisons'])} comparisons",
+                        )
                 else:
-                    results["posthoc_test"] = "No post-hoc tests performed (error or unsupported test)"
+                    error_detail = posthoc_payload.get("error")
+                    if posthoc_recommendation == "parametric":
+                        results["posthoc_test"] = "No post-hoc tests performed"
+                    else:
+                        results["posthoc_test"] = "No post-hoc tests performed (error or unsupported test)"
                     results["pairwise_comparisons"] = []
+                    if error_detail:
+                        results["posthoc_error"] = error_detail
 
             # Explicit skip flag: fires when the main test was not significant and
             # post-hoc was intentionally omitted (groups >= 3, p_value known).
@@ -1181,6 +1187,7 @@ class StatisticalTester:
         """
         try:
             pg = get_pingouin_module()
+            validate_group_count(valid_groups, min_groups=2, label="welch_anova_groups")
             
             # Prepare data for pingouin
             data_for_pingouin = []
@@ -1259,7 +1266,7 @@ class StatisticalTester:
             # Post-hoc: Dunnett's T3 if significant
             if p_value < alpha:
                 try:
-                    print("DEBUG: Performing Dunnett's T3 post-hoc tests")
+                    logger.debug("DEBUG: Performing Dunnett's T3 post-hoc tests")
                     pairwise = StatisticalTester._perform_dunnett_t3_posthoc(
                         valid_groups, samples_to_use, alpha=alpha
                     )
@@ -1344,8 +1351,10 @@ class StatisticalTester:
                 # HIGH-2: guard against degenerate df (n=1 in a group)
                 if df_den == 0 or np.isnan(df_den) or np.isinf(df_den):
                     df = min(n1, n2) - 1
-                    print(f"WARNING: Dunnett T3 df calculation degenerate for "
-                          f"{group1} vs {group2}. Using conservative df={df}.")
+                    df_warning = GroupValidationError(
+                        f"Dunnett T3 df calculation degenerate for {group1} vs {group2}; using conservative df={df}."
+                    )
+                    logger.warning(str(df_warning))
                 else:
                     df = df_num / df_den
                 
@@ -1392,7 +1401,10 @@ class StatisticalTester:
                     })
                     
                 except Exception as err:
-                    print(f"WARNING: Error calculating critical value: {str(err)}")
+                    critical_value_warning = ValidationError(
+                        f"Dunnett T3 critical-value calculation failed ({err}); using t-approximation fallback."
+                    )
+                    logger.warning(str(critical_value_warning))
                     # Fallback: use t-distribution (conservative)
                     p_value = 2 * (1 - stats.t.cdf(abs(t_stat), df))
                     significant = p_value < (alpha / len(pairs))  # Bonferroni correction
@@ -1413,9 +1425,7 @@ class StatisticalTester:
             return pairwise_results
         
         except Exception as e:
-            print(f"ERROR in Dunnett's T3 post-hoc: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"ERROR in Dunnett's T3 post-hoc: {str(e)}")
             return []
 
     @staticmethod
@@ -1463,41 +1473,34 @@ class StatisticalTester:
             Validation results with status and error messages if applicable
         """
         validation = {"valid": True, "messages": []}
-        
-        # Check if all specified groups exist
+
         for group in groups:
             if group not in samples:
                 validation["valid"] = False
                 validation["messages"].append(f"Group '{group}' not found in the data.")
-        
+
         if not validation["valid"]:
             return validation
-        
-        # Check sample sizes
-        sample_sizes = [len(samples[g]) for g in groups]
-        if len(set(sample_sizes)) > 1:
+
+        try:
+            ensure_equal_group_sizes(samples, groups, min_n=1)
+        except PairedDataError as exc:
             validation["valid"] = False
-            validation["messages"].append(
-                f"Unequal sample sizes: {', '.join([f'{g}: {len(samples[g])}' for g in groups])}"
-            )
+            validation["messages"].append(str(exc))
             validation["messages"].append(
                 "For dependent tests, all groups must have the same number of measurements."
             )
-        
-        # Check for empty groups
-        for group in groups:
-            if len(samples[group]) == 0:
-                validation["valid"] = False
-                validation["messages"].append(f"Group '{group}' contains no data.")
-        
-        # Check minimum number of measurements
-        min_samples = min(sample_sizes) if sample_sizes else 0
-        if min_samples < 3:
+        except ValidationError as exc:
             validation["valid"] = False
-            validation["messages"].append(
-                f"Too few measurements ({min_samples}). At least 3 measurements per group are recommended."
-            )
-        
+            validation["messages"].append(str(exc))
+
+        for group in groups:
+            try:
+                validate_minimum_n(samples[group], min_n=3, label=str(group), allow_missing=False)
+            except ValidationError as exc:
+                validation["valid"] = False
+                validation["messages"].append(str(exc))
+
         return validation
     
     @staticmethod
@@ -1509,12 +1512,11 @@ class StatisticalTester:
         recommendation = 'parametric'
         
         try:
+            validate_test_design(test_name=test, between=between, within=within, subject=subject)
             samples = {}
             groups = []
 
             if test == 'mixed_anova':
-                if not between or not within:
-                    return {"error": "Mixed ANOVA requires between and within factor"}
                 b_factor, w_factor = between[0], within[0]
                 for b_val in df[b_factor].unique():
                     for w_val in df[w_factor].unique():
@@ -1528,8 +1530,6 @@ class StatisticalTester:
                 formula = f"Value ~ C({sanitized_b_factor}) * C({sanitized_w_factor})"
 
             elif test == 'repeated_measures_anova':
-                if not within:
-                    return {"error": "RM-ANOVA requires within factor"}
                 w_factor = within[0]
                 for lvl in df[w_factor].unique():
                     samples[lvl] = df[df[w_factor] == lvl][dv].tolist()
@@ -1539,8 +1539,6 @@ class StatisticalTester:
                 formula = f"Value ~ C({sanitized_w_factor})"
 
             elif test == 'two_way_anova':
-                if not between or len(between) != 2:
-                    return {"error": "Two-Way ANOVA requires two between factors"}
                 fA, fB = between
                 for a_val in df[fA].unique():
                     for b_val in df[fB].unique():
@@ -1554,7 +1552,7 @@ class StatisticalTester:
                 formula = f"Value ~ C({sanitized_fA}) * C({sanitized_fB})"
 
             else:
-                return {"error": f"Unknown test type: {test}"}
+                raise ModelDesignError(f"Unknown test type: {test}")
 
             # Assumption checking with appropriate formula
             model_type_map = {
@@ -1583,6 +1581,8 @@ class StatisticalTester:
                 "groups": groups
             }
 
+        except ValidationError as e:
+            return {"error": str(e)}
         except Exception as e:
             return {"error": str(e)} 
         
@@ -1593,715 +1593,24 @@ class StatisticalTester:
         transform_fn=None, force_parametric=False, skip_excel=False, file_name=None, manual_transform=None,
         analysis_log=None  # Add this parameter
     ):
-        # Initialize analysis_log if None
-        if analysis_log is None:
-            analysis_log = []
-        """
-        Performs advanced statistical tests (Mixed ANOVA, RM-ANOVA, Two-Way ANOVA).
-        Checks assumptions, applies transformation if necessary, performs main and post-hoc tests.
-        Returns a complete result dict.
-        """
-        from datetime import datetime
-
-        try:
-            # 1. Extract group data
-            samples = {}
-            groups = []
-            df_original = df.copy()
-
-            if test == 'mixed_anova':
-                # Mixed ANOVA extraction code...
-                if not between or not within:
-                    return {"error": "Mixed ANOVA requires between and within factor", "test": test}
-                b_factor, w_factor = between[0], within[0]
-                for b_val in df[b_factor].unique():
-                    for w_val in df[w_factor].unique():
-                        group_label = f"{b_factor}={b_val}, {w_factor}={w_val}"
-                        subset = df[(df[b_factor] == b_val) & (df[w_factor] == w_val)]
-                        samples[group_label] = subset[dv].tolist()
-                groups = list(samples.keys())
-
-            elif test == 'repeated_measures_anova':
-                if not within or not subject:
-                    return {"error": "RM-ANOVA requires within factor and subject", "test": test}
-                w_factor = within[0]
-                for lvl in df[w_factor].unique():
-                    samples[lvl] = df[df[w_factor] == lvl][dv].tolist()
-                groups = list(samples.keys())
-                group_sizes = [len(samples[g]) for g in groups]
-                if len(set(group_sizes)) > 1:
-                    return {
-                        "error": "For dependent samples, all groups must have the same number of measurements.",
-                        "test": "Repeated Measures ANOVA (failed)"
-                    }
-
-            elif test == 'two_way_anova':
-                # Two-way ANOVA extraction code...
-                if not between or len(between) != 2:
-                    return {"error": "Two-Way ANOVA requires two between factors", "test": test}
-                fA, fB = between
-                for a_val in df[fA].unique():
-                    for b_val in df[fB].unique():
-                        group_label = f"{fA}={a_val}, {fB}={b_val}"
-                        subset = df[(df[fA] == a_val) & (df[fB] == b_val)]
-                        samples[group_label] = subset[dv].tolist()
-                groups = list(samples.keys())
-
-            else:
-                return {"error": f"Invalid test type: {test}", "test": test}
-
-            # CRITICAL FIX: Store the original samples BEFORE any transformation
-            original_samples = {k: v.copy() for k, v in samples.items()}
-
-            # 2. Check assumptions - BUT ONLY IF NOT ALREADY DONE
-            if transformed_samples is None or recommendation is None:
-                # We already have the results from prepare_advanced_test, no need to call again
-                logger.debug("DEBUG: Using existing test results from prepare_advanced_test")
-            
-
-            print("DEBUG: transformed_samples =", transformed_samples)
-            print("DEBUG: samples =", samples)
-            # Patch: If transformed_samples is None, fallback to a copy of samples
-            if transformed_samples is None:
-                print("WARNING: transformed_samples is None, falling back to a copy of samples.")
-                transformed_samples = {k: v.copy() for k, v in samples.items()}
-            valid_groups = [g for g in groups if g in transformed_samples and len(transformed_samples[g]) > 0]
-            # MEDIUM-4: validate minimum n=2 per group before any test
-            insufficient = [g for g in valid_groups if len(transformed_samples.get(g, [])) < 2]
-            if insufficient:
-                err_msg = (f"Groups {insufficient} have fewer than 2 observations. "
-                           f"Minimum n=2 required for any statistical test.")
-                print(f"WARNING: {err_msg}")
-                result = {"test_info": test_info, "recommendation": recommendation,
-                          "error": err_msg, "test": None, "p_value": None}
-                return StatisticalTester._standardize_results(result)
-            print("DEBUG: valid_groups =", valid_groups)
-            print("DEBUG: recommendation =", recommendation)
-
-            df_transformed = df.copy()
-
-            # 3. Apply transformation if needed (never twice)
-            transformation_type = None
-            if test_info and test_info.get("transformation"):
-                transformation_type = test_info["transformation"]
-
-            # IMPORTANT: Only apply transformation if we have a valid transformation type
-            # and it's not "none" or "None"
-            if transformation_type and transformation_type not in ["none", "None", "Keine"]:
-                if transformation_type == "log10":
-                    min_val = df[dv].min()
-                    shift = -min_val + 1 if min_val <= 0 else 0
-                    df_transformed[dv] = np.log10(df[dv] + shift)
-                    logger.debug(f"DEBUG: Applied log10 transformation with shift {shift}")
-                elif transformation_type == "boxcox":
-                    min_val = df[dv].min()
-                    shift = -min_val + 1 if min_val <= 0 else 0
-                    if shift > 0:
-                        df_transformed[dv] = df[dv] + shift
-                    lambda_val = test_info.get("boxcox_lambda")
-                    if lambda_val is None:
-                        boxcox_normmax = stats.boxcox_normmax
-                        try:
-                            lambda_val = boxcox_normmax(df_transformed[dv])
-                        except Exception as e:
-                            logger.debug(f"DEBUG: boxcox_normmax failed: {e}. Using lambda=0 (log transform)")
-                            lambda_val = 0
-                    boxcox = stats.boxcox
-                    df_transformed[dv] = boxcox(df_transformed[dv], lambda_val)
-                elif transformation_type == "arcsin_sqrt":
-                    min_val = df[dv].min()
-                    max_val = df[dv].max()
-                    if min_val < 0 or max_val > 1:
-                        df_transformed[dv] = (df[dv] - min_val) / (max_val - min_val)
-                    df_transformed[dv] = np.arcsin(np.sqrt(df_transformed[dv]))
-
-                transformed_values = df_transformed[dv].values
-                has_nan = np.isnan(transformed_values).any()
-                has_inf = np.isinf(transformed_values).any()
-                # MEDIUM-1: abort if transformation produced invalid values
-                if has_nan or has_inf:
-                    bad = " ".join(filter(None, ["NaN" if has_nan else "", "Inf" if has_inf else ""]))
-                    msg = (f"ERROR: Transformation '{transformation_type}' produced invalid values "
-                           f"({bad}). Analysis aborted.")
-                    print(msg)
-                    result = {"test_info": test_info, "recommendation": recommendation,
-                              "error": msg, "test": transformation_type, "p_value": None}
-                    return StatisticalTester._standardize_results(result)
-                logger.debug(f"DEBUG: Transformed data — min={np.min(transformed_values):.4g}, "
-                      f"max={np.max(transformed_values):.4g}, valid")
-
-                # Extract transformed samples again
-                samples_for_transform = {}
-                if test == 'mixed_anova':
-                    # Extract for mixed ANOVA...
-                    b_factor, w_factor = between[0], within[0]
-                    for b_val in df_transformed[b_factor].unique():
-                        for w_val in df_transformed[w_factor].unique():
-                            group_label = f"{b_factor}={b_val}, {w_factor}={w_val}"
-                            subset = df_transformed[(df_transformed[b_factor] == b_val) & (df_transformed[w_factor] == w_val)]
-                            samples_for_transform[group_label] = subset[dv].tolist()
-                elif test == 'repeated_measures_anova':
-                    # Extract for RM ANOVA...
-                    w_factor = within[0]
-                    for lvl in df_transformed[w_factor].unique():
-                        samples_for_transform[lvl] = df_transformed[df_transformed[w_factor] == lvl][dv].tolist()
-                elif test == 'two_way_anova':
-                    # Extract for two-way ANOVA...
-                    fA, fB = between
-                    for a_val in df_transformed[fA].unique():
-                        for b_val in df_transformed[fB].unique():
-                            group_label = f"{fA}={a_val}, {fB}={b_val}"
-                            subset = df_transformed[(df_transformed[fA] == a_val) & (df_transformed[fB] == b_val)]
-                            samples_for_transform[group_label] = subset[dv].tolist()
-                transformed_samples = samples_for_transform
-            else:
-                # No transformation applied, use original data
-                print("DEBUG: No transformation applied, using original data")
-
-            # 4. Perform test
-            result = {"test_info": test_info, "recommendation": recommendation}
-            # To:
-            if force_parametric:
-                logger.debug(f"DEBUG: User explicitly forced parametric test, overriding recommendation '{recommendation}'")
-                recommendation = 'parametric'
-            else:
-                # Honor recommendation from normality tests
-                logger.debug(f"DEBUG: Using recommendation from normality tests: '{recommendation}'")
-                # Double-check normality for extra safety (new structure)
-                if test_info:
-                    # Check post-transformation if available, otherwise pre-transformation
-                    if "post_transformation" in test_info and "residuals_normality" in test_info["post_transformation"]:
-                        is_normal = test_info["post_transformation"]["residuals_normality"].get("is_normal", False)
-                        if not is_normal:
-                            logger.debug(f"DEBUG: Model residuals are NOT normal after transformation, forcing non_parametric")
-                            recommendation = "non_parametric"
-                    elif "pre_transformation" in test_info and "residuals_normality" in test_info["pre_transformation"]:
-                        is_normal = test_info["pre_transformation"]["residuals_normality"].get("is_normal", False)
-                        if not is_normal:
-                            logger.debug(f"DEBUG: Model residuals are NOT normal, forcing non_parametric")
-                            recommendation = "non_parametric"
-
-            if recommendation == 'parametric':
-                if test == 'mixed_anova':
-                    res = StatisticalTester._run_mixed_anova_logged(df_transformed, dv, subject, between, within, alpha)
-                elif test == 'repeated_measures_anova':
-                    res = StatisticalTester._run_repeated_measures_anova_logged(
-                        df_transformed, dv, subject, within, alpha,
-                        test_info=test_info  # Pass test_info here
-                    )
-                else:
-                    res = StatisticalTester._run_two_way_anova_logged(df_transformed, dv, between, alpha, test_info=test_info)
-                res.update(result)
-                # Set test info at top level
-                if test_info:
-                    if "test_info" not in res:
-                        res["test_info"] = test_info
-                    else:
-                        # Merge test_info into existing test_info
-                        for key, value in test_info.items():
-                            if key not in res["test_info"]:
-                                res["test_info"][key] = value
-
-                # Ensure normality and variance tests are directly accessible 
-                if "test_info" in res:
-                    ti = res["test_info"]
-                    if "normality_tests" in ti and "normality_tests" not in res:
-                        res["normality_tests"] = ti["normality_tests"]
-                    if "variance_test" in ti and "variance_test" not in res:
-                        res["variance_test"] = ti["variance_test"]
-                    if "transformation" in ti and "transformation" not in res:
-                        res["transformation"] = ti["transformation"]
-                    if "boxcox_lambda" in ti and "boxcox_lambda" not in res:
-                        res["boxcox_lambda"] = ti["boxcox_lambda"]
-                    
-                    # CRITICAL FIX: Convert new structure to old structure for Excel compatibility
-                    if "pre_transformation" in ti and "post_transformation" in ti and "normality_tests" not in res:
-                        # Create normality_tests structure from pre/post transformation data
-                        normality_tests = {"all_data": {}, "transformed_data": {}}
-                        
-                        # Pre-transformation (original) data
-                        if "residuals_normality" in ti["pre_transformation"]:
-                            pre_norm = ti["pre_transformation"]["residuals_normality"]
-                            normality_tests["all_data"] = {
-                                "statistic": pre_norm.get("statistic") if pre_norm.get("statistic") is not None else "N/A",
-                                "p_value": pre_norm.get("p_value") if pre_norm.get("p_value") is not None else "N/A",
-                                "is_normal": pre_norm.get("is_normal", False)
-                            }
-                        
-                        # Post-transformation data
-                        if "residuals_normality" in ti["post_transformation"]:
-                            post_norm = ti["post_transformation"]["residuals_normality"]
-                            normality_tests["transformed_data"] = {
-                                "statistic": post_norm.get("statistic") if post_norm.get("statistic") is not None else "N/A",
-                                "p_value": post_norm.get("p_value") if post_norm.get("p_value") is not None else "N/A",
-                                "is_normal": post_norm.get("is_normal", False)
-                            }
-                        
-                        res["normality_tests"] = normality_tests
-                    
-                    # CRITICAL FIX: Convert variance test structure for Excel compatibility
-                    if "pre_transformation" in ti and "post_transformation" in ti and "variance_test" not in res:
-                        variance_test = {}
-                        
-                        # Pre-transformation variance test
-                        if "variance" in ti["pre_transformation"]:
-                            pre_var = ti["pre_transformation"]["variance"]
-                            variance_test.update({
-                                "statistic": pre_var.get("statistic") if pre_var.get("statistic") is not None else "N/A",
-                                "p_value": pre_var.get("p_value") if pre_var.get("p_value") is not None else "N/A",
-                                "equal_variance": pre_var.get("equal_variance", False)
-                            })
-                        
-                        # Post-transformation variance test
-                        if "variance" in ti["post_transformation"]:
-                            post_var = ti["post_transformation"]["variance"]
-                            variance_test["transformed"] = {
-                                "statistic": post_var.get("statistic") if post_var.get("statistic") is not None else "N/A",
-                                "p_value": post_var.get("p_value") if post_var.get("p_value") is not None else "N/A",
-                                "equal_variance": post_var.get("equal_variance", False)
-                            }
-                        
-                        res["variance_test"] = variance_test
-                    
-                    # Also ensure transformation is accessible from test_info at top level
-                    if "transformation" in ti and "transformation" not in res:
-                        res["transformation"] = ti["transformation"]
-
-                # --- POST-HOC for all advanced tests ---
-                if res.get("p_value") is not None and res["p_value"] < alpha:
-                    # 1. Generate all possible group comparisons
-                    from itertools import combinations
-                    if test == "two_way_anova":
-                        # For Two-Way ANOVA, create interaction group labels
-                        group_names = []
-                        factors = between
-                        for factor_a_val in sorted(df_transformed[factors[0]].unique()):
-                            for factor_b_val in sorted(df_transformed[factors[1]].unique()):
-                                group_label = f"{factors[0]}={factor_a_val}, {factors[1]}={factor_b_val}"
-                                group_names.append(group_label)
-                    elif test == "mixed_anova":
-                        # For Mixed ANOVA, create interaction group labels
-                        group_names = []
-                        b_factor, w_factor = between[0], within[0]
-                        for b_val in sorted(df_transformed[b_factor].unique()):
-                            for w_val in sorted(df_transformed[w_factor].unique()):
-                                group_label = f"{b_factor}={b_val}, {w_factor}={w_val}"
-                                group_names.append(group_label)
-                    elif test == "repeated_measures_anova":
-                        w_factor = within[0]
-                        group_names = list(df_transformed[w_factor].unique())
-                    else:
-                        group_names = []
-
-                    all_comparisons = list(combinations(group_names, 2))
-
-                    # 2. Show post-hoc method selection dialog FIRST
-                    posthoc_method = "paired_custom"  # Default to paired t-tests with Holm-Sidak
-                    control_group = None
-                    try:
-                        # For Two-Way ANOVA, default to paired t-tests (better for interaction effects)
-                        default_method = "paired_custom" if test == "two_way_anova" else "tukey"
-                        posthoc_method = UIDialogManager.select_posthoc_test_dialog(
-                            parent=None, progress_text=f"({test})", column_name=dv, default_method=default_method
-                        )
-                        if posthoc_method is None:
-                            posthoc_method = "paired_custom"  # Default fallback
-                        logger.debug(f"DEBUG: Selected post-hoc method for {test}: {posthoc_method}")
-                        
-                        # If Dunnett was selected, ask for control group
-                        if posthoc_method == "dunnett":
-                            control_group = UIDialogManager.select_control_group_dialog(
-                                parent=None, groups=group_names
-                            )
-                            logger.debug(f"DEBUG: Selected control group: {control_group}")
-                    except Exception as e:
-                        print(f"WARNING: Could not show post-hoc method dialog: {e}")
-                        posthoc_method = "paired_custom"
-
-                    # 2.5. Show the comparison selection dialog (only for pairwise t-tests)
-                    selected_comparisons = None
-                    if posthoc_method == "dunnett" and control_group:
-                        # For Dunnett, automatically generate comparisons against control group
-                        # IMPORTANT: No additional dialog should be shown for Dunnett!
-                        selected_comparisons = [(control_group, group) for group in group_names if group != control_group]
-                        logger.debug(f"DEBUG: Auto-generated Dunnett comparisons against control '{control_group}': {selected_comparisons}")
-                        logger.debug(f"DEBUG: Dunnett test will compare {len(selected_comparisons)} groups against the control group")
-                    elif posthoc_method == "tukey":
-                        # For Tukey HSD, automatically use all pairwise comparisons
-                        selected_comparisons = all_comparisons
-                        logger.debug(f"DEBUG: Auto-generated Tukey comparisons (all pairwise): {len(selected_comparisons)} comparisons")
-                    elif posthoc_method == "paired_custom":
-                        # Only show dialog for pairwise t-tests with custom selection
-                        try:
-                            from comparison_selection_dialog import ComparisonSelectionDialog
-                            import sys
-                            from PyQt5.QtWidgets import QApplication
-                            app = QApplication.instance()
-                            if app is None:
-                                app = QApplication(sys.argv)
-                            dialog = ComparisonSelectionDialog(all_comparisons, checked_by_default=False)  # Pass flag to deselect all
-                            if dialog.exec_() == dialog.Accepted:
-                                selected_comparisons = dialog.get_selected_comparisons()
-                            else:
-                                selected_comparisons = []
-                            logger.debug(f"DEBUG: User selected {len(selected_comparisons)} comparisons: {selected_comparisons}")
-                        except Exception as e:
-                            print(f"WARNING: Could not show comparison selection dialog: {e}")
-                            selected_comparisons = all_comparisons  # fallback: select all
-                    else:
-                        # Default fallback: use all comparisons
-                        selected_comparisons = all_comparisons
-
-                    # Normalize selected comparisons to sorted, stripped tuples for robust matching
-                    def normalize_pair(pair):
-                        return tuple(sorted([s.strip() for s in pair]))
-                    normalized_selected_comparisons = set(normalize_pair(pair) for pair in selected_comparisons)
-                    logger.debug(f"DEBUG: Normalized selected comparisons: {normalized_selected_comparisons}")
-
-                    # 3. Pass normalized selected comparisons and method to posthoc
-                    posthoc_kwargs = {
-                        "selected_comparisons": normalized_selected_comparisons,
-                        "method": posthoc_method
-                    }
-                    if control_group:
-                        posthoc_kwargs["control_group"] = control_group
-                    if test == "two_way_anova":
-                        # Add method selection to kwargs
-                        # posthoc_method is not defined; remove or define it before use
-                        # posthoc_kwargs["method"] = posthoc_method
-                        posthoc = PostHocFactory.perform_posthoc_for_anova(
-                            "two_way", df=df_transformed, dv=dv, between=between, alpha=alpha, **posthoc_kwargs
-                        )
-                    elif test == "mixed_anova":
-                        posthoc = PostHocFactory.perform_posthoc_for_anova(
-                            "mixed", df=df_transformed, dv=dv, subject=subject, between=between, within=within, alpha=alpha, **posthoc_kwargs
-                        )
-                    elif test == "repeated_measures_anova":
-                        posthoc = PostHocFactory.perform_posthoc_for_anova(
-                            "rm", df=df_transformed, dv=dv, subject=subject, within=within, alpha=alpha, **posthoc_kwargs
-                        )
-                    else:
-                        posthoc = None
-                    if posthoc and "pairwise_comparisons" in posthoc:
-                        res["pairwise_comparisons"] = posthoc["pairwise_comparisons"]
-                        # Override posthoc_test if:
-                        # 1. It wasn't set by the main ANOVA function
-                        # 2. It has a generic default name
-                        # 3. It was set by Pingouin but PostHocFactory used a different method
-                        current_posthoc = res.get("posthoc_test", "")
-                        new_posthoc = posthoc.get("posthoc_test", "")
-                        logger.debug(f"DEBUG OVERRIDE: Current posthoc_test: '{current_posthoc}'")
-                        logger.debug(f"DEBUG OVERRIDE: New posthoc_test from PostHocFactory: '{new_posthoc}'")
-                        should_override = (
-                            not current_posthoc or 
-                            current_posthoc == "Two-Way ANOVA Post-hoc Tests" or
-                            ("Pingouin" in str(current_posthoc) and new_posthoc and "Tukey" in str(new_posthoc))
-                        )
-                        logger.debug(f"DEBUG OVERRIDE: Should override? {should_override}")
-                        if should_override:
-                            res["posthoc_test"] = new_posthoc
-                            logger.debug(f"DEBUG OVERRIDE: Updated posthoc_test to: '{res.get('posthoc_test')}'")
-                        else:
-                            logger.debug(f"DEBUG OVERRIDE: Keeping original posthoc_test: '{current_posthoc}'")
-
-                # CRITICAL FIX: Always store the original and transformed samples as separate entities
-                res["raw_data"] = original_samples
-                if transformation_type and transformation_type not in ["none", "None", "Keine"]:
-                    res["raw_data_transformed"] = transformed_samples
-
-                if test == "repeated_measures_anova" and subject and within:
-                    res["plot_subject_trajectories"] = StatisticalTester._build_subject_trajectories_from_long_df(
-                        df_original,
-                        dv,
-                        subject,
-                        [within[0]],
-                        group_order=list(original_samples.keys()),
-                    )
-                elif test == "mixed_anova" and subject and between and within:
-                    res["plot_subject_trajectories"] = StatisticalTester._build_subject_trajectories_from_long_df(
-                        df_original,
-                        dv,
-                        subject,
-                        [between[0], within[0]],
-                        group_order=list(original_samples.keys()),
-                    )
-
-                # Excel export
-                if not skip_excel:
-                    logger.debug(f"DEBUG: Current working directory before export: {os.getcwd()}")
-                    excel_file = file_name if file_name else get_output_path(f"{test}_{datetime.now().strftime('%Y%m%d_%H%M%S')}", "xlsx")
-                    print("DEBUG: Results dict before Excel export:", res)  # <--- Add this line
-                    export_result = ExportDispatcher.export_analysis_results(res, excel_file, res.get("analysis_log", None))
-                    if export_result.get("warning"):
-                        logger.warning(export_result["warning"])
-                    res["excel_file"] = export_result.get("excel_path", excel_file)
-                if res.get("test") and not res.get("final_test_label"):
-                    res["final_test_label"] = res["test"]
-                if res.get("final_test_label") and not res.get("tested_against"):
-                    res["tested_against"] = res["final_test_label"]
-                return res
-
-            elif recommendation == 'non_parametric':
-                logger.debug(f"DEBUG: Nonparametric fallback required for {test}")
-
-                if test == 'repeated_measures_anova':
-                    res = perform_friedman_test(
-                        data=df_original.copy(),
-                        dv=dv,
-                        within_factor=within[0],
-                        subject_col=subject,
-                        alpha=alpha,
-                    )
-                elif test == 'two_way_anova':
-                    res = perform_freedman_lane_test(
-                        data=df_original.copy(),
-                        dv=dv,
-                        factor_a=between[0],
-                        factor_b=between[1],
-                        alpha=alpha,
-                    )
-                elif test == 'mixed_anova':
-                    res = perform_brunner_langer_ats(
-                        data=df_original.copy(),
-                        dv=dv,
-                        between_factor=between[0],
-                        within_factor=within[0],
-                        subject_col=subject,
-                        alpha=alpha,
-                    )
-                else:
-                    res = {
-                        "test": f"{test} (non-parametric fallback not available)",
-                        "error": f"No non-parametric fallback implemented for test type: {test}",
-                        "p_value": None,
-                        "statistic": None,
-                        "model_class": "Unknown",
-                    }
-
-                res["test_info"] = test_info
-                res["parametric_assumptions_violated"] = True
-                res["raw_data"] = original_samples
-
-                if transformation_type and transformation_type not in ["none", "None", "Keine"]:
-                    res["transformation"] = transformation_type
-                    res["raw_data_transformed"] = transformed_samples
-
-                if test == "repeated_measures_anova" and subject and within:
-                    res["plot_subject_trajectories"] = StatisticalTester._build_subject_trajectories_from_long_df(
-                        df_original,
-                        dv,
-                        subject,
-                        [within[0]],
-                        group_order=list(original_samples.keys()),
-                    )
-                elif test == "mixed_anova" and subject and between and within:
-                    res["plot_subject_trajectories"] = StatisticalTester._build_subject_trajectories_from_long_df(
-                        df_original,
-                        dv,
-                        subject,
-                        [between[0], within[0]],
-                        group_order=list(original_samples.keys()),
-                    )
-
-                if test_info:
-                    if "test_info" not in res:
-                        res["test_info"] = test_info
-
-                    if "normality_tests" in test_info and "normality_tests" not in res:
-                        res["normality_tests"] = test_info["normality_tests"]
-                    if "variance_test" in test_info and "variance_test" not in res:
-                        res["variance_test"] = test_info["variance_test"]
-                    if "transformation" in test_info and "transformation" not in res:
-                        res["transformation"] = test_info["transformation"]
-                    if "boxcox_lambda" in test_info and "boxcox_lambda" not in res:
-                        res["boxcox_lambda"] = test_info["boxcox_lambda"]
-
-                    if "pre_transformation" in test_info and "post_transformation" in test_info and "normality_tests" not in res:
-                        normality_tests = {"all_data": {}, "transformed_data": {}}
-                        if "residuals_normality" in test_info["pre_transformation"]:
-                            pre_norm = test_info["pre_transformation"]["residuals_normality"]
-                            normality_tests["all_data"] = {
-                                "statistic": pre_norm.get("statistic") if pre_norm.get("statistic") is not None else "N/A",
-                                "p_value": pre_norm.get("p_value") if pre_norm.get("p_value") is not None else "N/A",
-                                "is_normal": pre_norm.get("is_normal", False)
-                            }
-                        if "residuals_normality" in test_info["post_transformation"]:
-                            post_norm = test_info["post_transformation"]["residuals_normality"]
-                            normality_tests["transformed_data"] = {
-                                "statistic": post_norm.get("statistic") if post_norm.get("statistic") is not None else "N/A",
-                                "p_value": post_norm.get("p_value") if post_norm.get("p_value") is not None else "N/A",
-                                "is_normal": post_norm.get("is_normal", False)
-                            }
-                        res["normality_tests"] = normality_tests
-
-                    if "pre_transformation" in test_info and "post_transformation" in test_info and "variance_test" not in res:
-                        variance_test = {}
-                        if "variance" in test_info["pre_transformation"]:
-                            pre_var = test_info["pre_transformation"]["variance"]
-                            variance_test.update({
-                                "statistic": pre_var.get("statistic") if pre_var.get("statistic") is not None else "N/A",
-                                "p_value": pre_var.get("p_value") if pre_var.get("p_value") is not None else "N/A",
-                                "equal_variance": pre_var.get("equal_variance", False)
-                            })
-                        if "variance" in test_info["post_transformation"]:
-                            post_var = test_info["post_transformation"]["variance"]
-                            variance_test["transformed"] = {
-                                "statistic": post_var.get("statistic") if post_var.get("statistic") is not None else "N/A",
-                                "p_value": post_var.get("p_value") if post_var.get("p_value") is not None else "N/A",
-                                "equal_variance": post_var.get("equal_variance", False)
-                            }
-                        res["variance_test"] = variance_test
-
-                if res.get("error") is None and res.get("p_value") is not None and res["p_value"] < alpha:
-                    fallback_posthoc = None
-                    marginaleffects_error = None
-                    if test == "repeated_measures_anova" and within:
-                        fallback_posthoc = StatisticalTester._run_rm_marginaleffects_posthoc(
-                            res,
-                            within[0],
-                            alpha=alpha
-                        )
-                    elif test == "mixed_anova" and between and within:
-                        fallback_posthoc = StatisticalTester._run_mixed_marginaleffects_posthoc(
-                            res,
-                            between,
-                            within,
-                            alpha=alpha
-                        )
-
-                    if fallback_posthoc and fallback_posthoc.get("error"):
-                        marginaleffects_error = fallback_posthoc["error"]
-                        warnings_list = res.setdefault("warnings", [])
-                        if marginaleffects_error not in warnings_list:
-                            warnings_list.append(marginaleffects_error)
-
-                    _nonparam_classes = {"Friedman", "Freedman-Lane Permutation", "Brunner-Langer ATS"}
-                    if res.get("model_class") not in _nonparam_classes and (
-                        not fallback_posthoc or (
-                            not fallback_posthoc.get("pairwise_comparisons") and fallback_posthoc.get("error")
-                        )
-                    ):
-                        fallback_posthoc = StatisticalTester._run_modern_fallback_posthoc(
-                            df_original.copy(),
-                            test,
-                            dv,
-                            subject=subject,
-                            between=between,
-                            within=within,
-                            alpha=alpha
-                        )
-                        if marginaleffects_error:
-                            fallback_note = (
-                                " Post-hoc comparisons used a robust non-parametric fallback "
-                                "because the marginaleffects step failed. See warnings for details."
-                            )
-                            analysis_note = res.get("analysis_note", "")
-                            if fallback_note.strip() not in analysis_note:
-                                res["analysis_note"] = f"{analysis_note}{fallback_note}".strip()
-
-                    if fallback_posthoc and fallback_posthoc.get("pairwise_comparisons"):
-                        res["pairwise_comparisons"] = fallback_posthoc["pairwise_comparisons"]
-                        res["posthoc_test"] = fallback_posthoc.get("posthoc_test")
-                    if fallback_posthoc and fallback_posthoc.get("error"):
-                        warnings_list = res.setdefault("warnings", [])
-                        if fallback_posthoc["error"] not in warnings_list:
-                            warnings_list.append(fallback_posthoc["error"])
-
-                else:
-                    # Main test not significant — record skip reason explicitly so the
-                    # exporter can surface it rather than showing a silent empty sheet.
-                    if res.get("error") is None and isinstance(res.get("p_value"), (float, int)):
-                        _p_str = f"{res['p_value']:.4f}"
-                        res["posthoc_skipped"] = True
-                        res["posthoc_skip_reason"] = (
-                            f"Post-hoc not performed: main test was not significant "
-                            f"(p\u202f=\u202f{_p_str})"
-                        )
-                        res.setdefault("pairwise_comparisons", [])
-
-                analysis_log = []
-                analysis_log.append(f"Advanced Test Analysis: {test}")
-                analysis_log.append(f"Dataset: {dv}")
-                analysis_log.append("Fallback path: statsmodels modern model")
-                if test_info:
-                    analysis_log.append("Assumption Check Results:")
-                    if "pre_transformation" in test_info:
-                        pre_norm = test_info["pre_transformation"].get("residuals_normality", {})
-                        if pre_norm.get("p_value") is not None:
-                            analysis_log.append(
-                                f"- Original data normality: p = {pre_norm['p_value']:.4f} "
-                                f"({'Normal' if pre_norm.get('is_normal', False) else 'Not normal'})"
-                            )
-                    if "post_transformation" in test_info:
-                        post_norm = test_info["post_transformation"].get("residuals_normality", {})
-                        if post_norm.get("p_value") is not None:
-                            analysis_log.append(
-                                f"- After transformation normality: p = {post_norm['p_value']:.4f} "
-                                f"({'Normal' if post_norm.get('is_normal', False) else 'Not normal'})"
-                            )
-                if transformation_type and transformation_type not in ["none", "None", "Keine"]:
-                    analysis_log.append(f"Applied transformation before fallback: {transformation_type}")
-                if res.get("analysis_note"):
-                    analysis_log.append(res["analysis_note"])
-                if res.get("model_class") or res.get("model_family"):
-                    analysis_log.append(
-                        f"Model used: {res.get('model_class', 'Unknown')} with family {res.get('model_family', 'Unknown')}"
-                    )
-                if res.get("error"):
-                    analysis_log.append(f"Error: {res['error']}")
-                    if res.get("analysis_note"):
-                        res["analysis_note"] = f"{res['analysis_note']} Error: {res['error']}"
-                elif res.get("p_value") is not None:
-                    analysis_log.append(f"Fallback result p-value: {res['p_value']:.4f}")
-                else:
-                    analysis_log.append("Fallback result: No p-value available")
-                if res.get("posthoc_test"):
-                    analysis_log.append(f"Post-hoc tests: {res['posthoc_test']}")
-                    analysis_log.append(
-                        f"Pairwise comparisons generated: {len(res.get('pairwise_comparisons', []))}"
-                    )
-
-                res.pop("fitted_model", None)
-                res["analysis_log"] = "\n".join(analysis_log)
-                res = StatisticalTester._standardize_results(res)
-
-                if not skip_excel:
-                    logger.debug(f"DEBUG: Current working directory before export: {os.getcwd()}")
-                    excel_file = file_name if file_name else get_output_path(
-                        f"{test}_modern_model_fallback_{datetime.now().strftime('%Y%m%d_%H%M%S')}", "xlsx"
-                    )
-                    export_result = ExportDispatcher.export_analysis_results(res, excel_file, res.get("analysis_log", None))
-                    if export_result.get("warning"):
-                        logger.warning(export_result["warning"])
-                    res["excel_file"] = export_result.get("excel_path", excel_file)
-                    logger.debug(f"DEBUG: Excel file created with modern-model fallback: {excel_file}")
-
-                if res.get("test") and not res.get("final_test_label"):
-                    res["final_test_label"] = res["test"]
-                if res.get("final_test_label") and not res.get("tested_against"):
-                    res["tested_against"] = res["final_test_label"]
-
-                return res
-
-            else:  # unknown recommendation — should never happen
-                print(f"WARNING: Unknown recommendation '{recommendation}' for {test} — returning error.")
-                return {
-                    "error": f"Unknown test recommendation: {recommendation}",
-                    "test": test,
-                    "p_value": None,
-                    "statistic": None,
-                }
-            
-        except Exception as e:
-            import traceback
-            print(f"ERROR in perform_advanced_test: {str(e)}")
-            traceback.print_exc()
-            return {
-                "error": f"Error performing the test: {str(e)}",
-                "test": f"{test} (failed)",
-                "p_value": None,
-                "statistic": None
-            }
+        return perform_advanced_test_pipeline(
+            df=df,
+            test=test,
+            dv=dv,
+            subject=subject,
+            between=between,
+            within=within,
+            alpha=alpha,
+            transformed_samples=transformed_samples,
+            recommendation=recommendation,
+            test_info=test_info,
+            transform_fn=transform_fn,
+            force_parametric=force_parametric,
+            skip_excel=skip_excel,
+            file_name=file_name,
+            manual_transform=manual_transform,
+            analysis_log=analysis_log,
+        )
 
     @staticmethod
     def _run_any_parametric_test(
