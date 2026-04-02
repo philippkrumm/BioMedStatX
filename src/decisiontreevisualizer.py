@@ -86,9 +86,15 @@ class DecisionTreeVisualizer:
             test_info = results.get("test_info", {})
             normality_tests = test_info.get("normality_tests", results.get("normality_tests", {}))
             variance_test = test_info.get("variance_test", results.get("variance_test", {}))
+            # Fallback: read from nested pre_transformation / post_transformation structure
+            if not normality_tests and test_info:
+                _has_tr = test_info.get("transformation") not in (None, "None", "No further")
+                _phase = "post_transformation" if _has_tr else "pre_transformation"
+                normality_tests = {"all_data": test_info.get(_phase, {}).get("residuals_normality", {})}
+                variance_test = test_info.get(_phase, {}).get("variance", {})
             sphericity_test = results.get("sphericity_test", {})
             posthoc_test = results.get("posthoc_test", None)
-            
+
             # BETTER DETECTION OF TEST TYPE FOR T-TESTS
             # This needs to be at the beginning of the visualize method
             dependence_type = "independent"  # Default
@@ -1041,6 +1047,12 @@ class DecisionTreeVisualizer:
             test_info = results.get("test_info", {})
             normality_tests = test_info.get("normality_tests", results.get("normality_tests", {}))
             variance_test = test_info.get("variance_test", results.get("variance_test", {}))
+            # Fallback: read from nested pre_transformation / post_transformation structure
+            if not normality_tests and test_info:
+                _has_tr = test_info.get("transformation") not in (None, "None", "No further")
+                _phase = "post_transformation" if _has_tr else "pre_transformation"
+                normality_tests = {"all_data": test_info.get(_phase, {}).get("residuals_normality", {})}
+                variance_test = test_info.get(_phase, {}).get("variance", {})
             sphericity_test = results.get("sphericity_test", {})
             posthoc_test = str(results.get("posthoc_test") or "")
 

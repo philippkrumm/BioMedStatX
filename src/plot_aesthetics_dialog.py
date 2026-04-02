@@ -529,7 +529,7 @@ class ColorsTab(QWidget):
                 else:
                     # Use colorful defaults for user plots (same as DEFAULT_COLORS in statistical_analyzer.py)
                     # Use system default colors for user plots
-                    default_colors = ['#FF69B4', '#32CD32', '#FFD700', '#00BFFF', '#DA70D6', '#D8BFD8']  # Pink, Green, Gold, etc.
+                    default_colors = ['#0f766e', '#1f7a5a', '#b7791f', '#9f3a38', '#1d4ed8', '#7c3aed']  # Teal, DarkGreen, Amber, DuskyRed, Indigo, Violet
                     color = default_colors[i % len(default_colors)]
             
             color_btn = ColorButton(color)
@@ -1824,7 +1824,7 @@ class PlotAestheticsDialog(QDialog):
                 ]
             else:
                 # Use colorful defaults for user plots
-                default_colors = ['#FF69B4', '#32CD32', '#FFD700', '#00BFFF', '#DA70D6', '#D8BFD8']
+                default_colors = ['#0f766e', '#1f7a5a', '#b7791f', '#9f3a38', '#1d4ed8', '#7c3aed']
                 
             config['colors'] = {}
             for i, group in enumerate(self.groups):

@@ -202,7 +202,7 @@ class PlotPreviewWidget(FigureCanvasQTAgg):
         if not config.get('colors') and self.groups:
             # Only set default colors if absolutely no colors are provided
             # This should rarely happen since configs should always include colors
-            DEFAULT_COLORS = ['#FF69B4', '#32CD32', '#FFD700', '#00BFFF', '#DA70D6', '#D8BFD8']
+            DEFAULT_COLORS = ['#0f766e', '#1f7a5a', '#b7791f', '#9f3a38', '#1d4ed8', '#7c3aed']
             colors_dict = {}
             for i, group in enumerate(self.groups):
                 colors_dict[group] = DEFAULT_COLORS[i % len(DEFAULT_COLORS)]

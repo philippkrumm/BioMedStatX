@@ -2332,7 +2332,7 @@ except ImportError:
             
 class UIDialogManager:
     @staticmethod
-    def select_posthoc_test_dialog(parent=None, progress_text=None, column_name=None, default_method=None):
+    def select_posthoc_test_dialog(parent=None, progress_text=None, column_name=None, default_method=None, equal_variance=None):
         dialog = QDialog(parent)
         layout = QVBoxLayout(dialog)
 
@@ -2369,10 +2369,11 @@ class UIDialogManager:
             # For One-Way ANOVA: offer all options
             options = [
                 ("Tukey-HSD Test (compares all pairs, equal variances assumed)", "tukey"),
-                ("Games-Howell Test (compares all pairs, robust to unequal variances)", "games_howell"),
                 ("Dunnett Test (compares all groups against ONE control group)", "dunnett"),
                 ("Custom paired t-tests (you select specific pairs to compare)", "paired_custom"),
             ]
+            if equal_variance is False:
+                options.insert(1, ("Games-Howell Test (compares all pairs, robust to unequal variances)", "games_howell"))
         radio_buttons = []
         for label, value in options:
             rb = QRadioButton(label)
@@ -2727,6 +2728,16 @@ class AnalysisManager:
         display_group_col = factor_columns[0]
         groups_to_use = analysis_context.get("group_labels") or groups
         working_df = df.copy()
+        filter_spec = analysis_context.get("filter")
+        if filter_spec:
+            filter_col, filter_val = filter_spec
+            if filter_col in working_df.columns:
+                working_df = working_df[working_df[filter_col] == filter_val]
+
+        selected_group_column = analysis_context.get("selected_group_column")
+        selected_groups = analysis_context.get("selected_groups") or []
+        if selected_group_column and selected_groups and selected_group_column in working_df.columns:
+            working_df = working_df[working_df[selected_group_column].isin(selected_groups)]
 
         if len(factor_columns) == 2:
             factor_a, factor_b = factor_columns
@@ -3073,6 +3084,14 @@ class AnalysisManager:
                 # Jump straight to export
                 results['groups'] = groups
                 results['raw_data'] = {g: filtered_samples[g][:] for g in groups}
+                results['selected_groups'] = analysis_context.get('selected_groups') or groups
+                results['group_column'] = analysis_context.get('selected_group_column') or analysis_context.get('factor_columns', [None])[0]
+                results['factor_columns'] = analysis_context.get('factor_columns', [])
+                results['covariates'] = covariates
+                results['dependent_variable'] = value_cols[0]
+                if analysis_context.get('filter'):
+                    filter_col, filter_val = analysis_context['filter']
+                    results['filter_applied'] = f"{filter_col} = {filter_val}"
 
                 analysis_log += f"\nClinical model: {test_results.get('test', clinical_test)}\n"
                 p_value = test_results.get('p_value')
@@ -3338,8 +3357,12 @@ class AnalysisManager:
                     if 'kruskal' in test_name or 'friedman' in test_name or test_recommendation == 'non_parametric':
                         print("DEBUG: Significant non-parametric test (section 2), calling perform_refactored_posthoc_testing without preset posthoc_choice")
                         posthoc_results = StatisticalTester.perform_refactored_posthoc_testing(
-                            valid_groups, transformed_samples, test_recommendation,
-                            alpha=0.05, posthoc_choice=None  # Let the function show the dialog
+                            valid_groups,
+                            transformed_samples,
+                            test_recommendation,
+                            alpha=0.05,
+                            posthoc_choice=None,  # Let the function show the dialog
+                            test_info=test_info,
                         )
                     else:
                         # Show dialog for parametric tests
@@ -3454,8 +3477,13 @@ class AnalysisManager:
                         "test_type": "Shapiro-Wilk (Model Residuals)"
                     }
                 
+                transformation_applied = bool(
+                    test_info.get("transformation")
+                    and str(test_info.get("transformation")).lower() not in ("none", "no further")
+                )
+
                 # Post-transformation residual normality
-                if "post_transformation" in test_info and "residuals_normality" in test_info["post_transformation"]:
+                if transformation_applied and "post_transformation" in test_info and "residuals_normality" in test_info["post_transformation"]:
                     post_norm = test_info["post_transformation"]["residuals_normality"]
                     normality_tests_compat["model_residuals_transformed"] = {
                         "statistic": post_norm.get("statistic"),
@@ -3474,7 +3502,7 @@ class AnalysisManager:
                     })
                     print(f"DEBUG VARIANCE_TEST_COMPAT: {variance_test_compat}")
                 
-                if "post_transformation" in test_info and "variance" in test_info["post_transformation"]:
+                if transformation_applied and "post_transformation" in test_info and "variance" in test_info["post_transformation"]:
                     post_var = test_info["post_transformation"]["variance"]
                     variance_test_compat["transformed"] = {
                         "statistic": post_var.get("statistic"),
@@ -3608,6 +3636,15 @@ class AnalysisManager:
             results['raw_data'] = {g: filtered_samples[g][:] for g in groups}
             if results.get('transformation', 'None') != 'None':
                 results['raw_data_transformed'] = {g: transformed_samples[g][:] for g in groups}
+            analysis_context = kwargs.get('analysis_context', {})
+            results['selected_groups'] = analysis_context.get('selected_groups') or groups
+            results['group_column'] = analysis_context.get('selected_group_column') or analysis_context.get('factor_columns', [None])[0] or group_col
+            results['factor_columns'] = analysis_context.get('factor_columns', [])
+            results['covariates'] = analysis_context.get('covariates', [])
+            results['dependent_variable'] = value_cols[0]
+            if analysis_context.get('filter'):
+                filter_col, filter_val = analysis_context['filter']
+                results['filter_applied'] = f"{filter_col} = {filter_val}"
             
             # DO NOT OVERWRITE! The variance_test and normality_tests are already set above
             # Keep the old format for backward compatibility if variance_test doesn't exist
@@ -3831,14 +3868,21 @@ class AnalysisManager:
                         log.append("Significance: Not determinable")
                 if "factors" in results:
                     for factor in results["factors"]:
+                        if not isinstance(factor, dict):
+                            continue
                         log.append(
                             f"Main effect {factor['factor']}: F({factor['df1']}, {factor['df2']}) = {factor['F']:.3f}, "
                             f"p = {factor['p_value']:.4f}, Effect size: {factor.get('effect_size', 'N/A')}"
                         )
                 if "interactions" in results:
                     for inter in results["interactions"]:
+                        if not isinstance(inter, dict):
+                            continue
+                        inter_factors = inter.get('factors') if isinstance(inter.get('factors'), list) else []
+                        inter_a = inter_factors[0] if len(inter_factors) > 0 else "Factor 1"
+                        inter_b = inter_factors[1] if len(inter_factors) > 1 else "Factor 2"
                         log.append(
-                            f"Interaction {inter['factors'][0]} x {inter['factors'][1]}: F({inter['df1']}, {inter['df2']}) = {inter['F']:.3f}, "
+                            f"Interaction {inter_a} x {inter_b}: F({inter['df1']}, {inter['df2']}) = {inter['F']:.3f}, "
                             f"p = {inter['p_value']:.4f}, Effect size: {inter.get('effect_size', 'N/A')}"
                         )
                 if 'pairwise_comparisons' in results and results['pairwise_comparisons']:

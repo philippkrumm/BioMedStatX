@@ -93,8 +93,6 @@ class ResultsExporter:
 
         # ── Sheet order (academic report layout) ────────────────────────────
         # 1. Cover
-        ResultsExporter._write_cover_sheet(workbook, results, fmt)
-        # 2. Summary
         ResultsExporter._write_summary_sheet(workbook, results, fmt)
         # 3. Statistical Results
         ResultsExporter._write_results_sheet(workbook, results, fmt)
@@ -124,7 +122,13 @@ class ResultsExporter:
         # 13. Decision Tree
         ResultsExporter._write_decision_tree_sheet(workbook, results, fmt)
         # 14. Methodology Log (replaces old Methodology + Analysis Log sheets)
-        ResultsExporter._write_methodology_log_sheet(workbook, results, fmt, trace=None)
+        ResultsExporter._write_methodology_log_sheet(
+            workbook,
+            results,
+            fmt,
+            trace=results.get("methodology_trace"),
+            analysis_log=analysis_log or results.get("analysis_log"),
+        )
         # 15. Raw Data
         ResultsExporter._write_rawdata_sheet(workbook, results, fmt)
             
@@ -287,6 +291,9 @@ class ResultsExporter:
         row += 2
 
         transformation = results.get("transformation", "None")
+        transformation_applied = bool(
+            transformation and str(transformation).lower() not in ("none", "no further")
+        )
         ws.write(row, 0, "Transformation", fmt["header"])
         ws.write(row, 1, str(transformation), fmt["cell"])
         row += 2
@@ -315,9 +322,19 @@ class ResultsExporter:
                 return fmt.get("sig_highlight", fmt["cell"])
             return fmt["cell"]
 
+        test_info = results.get("test_info", {}) or {}
         normality_tests = results.get("normality_tests", {}) or {}
+        if not normality_tests and test_info:
+            phase = "post_transformation" if transformation_applied else "pre_transformation"
+            residuals_normality = test_info.get(phase, {}).get("residuals_normality", {})
+            if residuals_normality:
+                normality_tests = {
+                    "model_residuals_transformed" if transformation_applied else "model_residuals": residuals_normality
+                }
         for label, payload in normality_tests.items():
             if not isinstance(payload, dict):
+                continue
+            if label == "model_residuals_transformed" and not transformation_applied:
                 continue
             p_value = payload.get("p_value")
             status = payload.get("is_normal")
@@ -328,20 +345,25 @@ class ResultsExporter:
             row += 1
 
         variance_test = results.get("variance_test", {}) or {}
+        if not variance_test and test_info:
+            phase = "post_transformation" if transformation_applied else "pre_transformation"
+            variance_test = test_info.get(phase, {}).get("variance", {}) or {}
         if isinstance(variance_test, dict) and variance_test:
             p_value = variance_test.get("p_value")
             status = variance_test.get("equal_variance")
-            ws.write(row, 0, "Variance homogeneity", fmt["cell"])
+            test_name = variance_test.get("test_name", "Brown-Forsythe")
+            ws.write(row, 0, f"Variance homogeneity ({test_name})", fmt["cell"])
             ws.write(row, 1, _fmt_num(variance_test.get("statistic")), fmt["cell"])
             ws.write(row, 2, _fmt_num(p_value), fmt.get("sig_highlight", fmt["cell"]) if isinstance(p_value, (float, int)) and p_value < 0.05 else fmt["cell"])
             ws.write(row, 3, _status_text(status), _status_fmt(status))
             row += 1
 
             transformed = variance_test.get("transformed")
-            if isinstance(transformed, dict):
+            if transformation_applied and isinstance(transformed, dict):
                 p_value = transformed.get("p_value")
                 status = transformed.get("equal_variance")
-                ws.write(row, 0, "Variance homogeneity (transformed)", fmt["cell"])
+                transformed_test_name = transformed.get("test_name", test_name)
+                ws.write(row, 0, f"Variance homogeneity ({transformed_test_name}, transformed)", fmt["cell"])
                 ws.write(row, 1, _fmt_num(transformed.get("statistic")), fmt["cell"])
                 ws.write(row, 2, _fmt_num(p_value), fmt.get("sig_highlight", fmt["cell"]) if isinstance(p_value, (float, int)) and p_value < 0.05 else fmt["cell"])
                 ws.write(row, 3, _status_text(status), _status_fmt(status))
@@ -375,6 +397,41 @@ class ResultsExporter:
             for note in notes:
                 ws.merge_range(row, 0, row, 3, note, fmt.get("explanation", fmt["cell"]))
                 row += 1
+
+        plot_paths = results.get("assumption_plot_paths")
+        if not isinstance(plot_paths, dict) or not any(plot_paths.values()):
+            try:
+                plot_paths = get_assumption_visualizer().generate_assumption_plots(results)
+                if isinstance(plot_paths, dict):
+                    results["assumption_plot_paths"] = plot_paths
+            except Exception as exc:
+                print(f"DEBUG: Failed to generate assumption plots for Excel export: {exc}")
+                plot_paths = {}
+
+        if isinstance(plot_paths, dict):
+            if transformation_applied:
+                image_specs = [
+                    ("Q-Q plot", plot_paths.get("normality_after")),
+                    ("Variance boxplots", plot_paths.get("homoscedasticity_after")),
+                ]
+            else:
+                image_specs = [
+                    ("Q-Q plot", plot_paths.get("normality_before")),
+                    ("Variance boxplots", plot_paths.get("homoscedasticity_before")),
+                ]
+            image_specs = [(label, path) for label, path in image_specs if path and os.path.exists(path)]
+            if image_specs:
+                row += 1
+                ws.merge_range(row, 0, row, 3, "VISUAL DIAGNOSTICS", fmt["section_header"])
+                row += 1
+                for label, image_path in image_specs:
+                    ws.write(row, 0, label, fmt["key"])
+                    ws.insert_image(row, 1, image_path, {
+                        "x_scale": 0.45,
+                        "y_scale": 0.45,
+                        "object_position": 1,
+                    })
+                    row += 18
 
     @staticmethod
     def export_multi_dataset_results(all_results, excel_path):
@@ -625,7 +682,14 @@ class ResultsExporter:
                     ResultsExporter._write_pairwise_sheet(workbook, results, fmt, f"{dataset_name}_Pairwise")
                 ResultsExporter._write_assumptions_sheet(workbook, results, fmt, f"{dataset_name}_Assumptions")
                 ResultsExporter._write_decision_tree_sheet(workbook, results, fmt, f"{dataset_name}_DecisionTree", pre_generated_tree)
-                ResultsExporter._write_methodology_log_sheet(workbook, results, fmt, trace=None, sheet_name=f"{dataset_name}_MethodLog")
+                ResultsExporter._write_methodology_log_sheet(
+                    workbook,
+                    results,
+                    fmt,
+                    trace=results.get("methodology_trace"),
+                    analysis_log=results.get("analysis_log"),
+                    sheet_name=f"{dataset_name}_MethodLog",
+                )
                 ResultsExporter._write_rawdata_sheet(workbook, results, fmt, f"{dataset_name}_RawData")
                     
             except Exception as e:
@@ -1002,6 +1066,8 @@ class ResultsExporter:
 
     @staticmethod
     def _write_summary_sheet(workbook, results, fmt, sheet_name="Summary"):
+        from datetime import datetime
+
         ws = workbook.add_worksheet(sheet_name)
         # Set correct column widths: A=55, B-F=20
         ws.set_column(0, 0, 55)  # Column A
@@ -1015,8 +1081,88 @@ class ResultsExporter:
         title = f"SUMMARY OF ANALYSIS - {test_info}"
         ws.merge_range('A1:F1', title, fmt["title"])
 
+        model_type = results.get("model_type", results.get("test", "Unknown"))
+        dep_var = results.get("dependent_variable", results.get("value_column", "—"))
+        factors = results.get("group_column", "")
+        factor_columns = results.get("factor_columns")
+        if isinstance(factor_columns, list) and factor_columns:
+            factors = ", ".join(map(str, factor_columns))
+        elif isinstance(results.get("factors"), list) and results["factors"]:
+            if all(isinstance(item, dict) for item in results["factors"]):
+                factor_names = [str(item.get("factor", "")) for item in results["factors"] if item.get("factor")]
+                if factor_names:
+                    factors = ", ".join(factor_names)
+            else:
+                factors = ", ".join(map(str, results["factors"]))
+        elif results.get("factors"):
+            factors = str(results["factors"])
+        covariates = results.get("covariates", [])
+        if isinstance(covariates, list):
+            cov_text = ", ".join(str(c) for c in covariates) if covariates else "None"
+        else:
+            cov_text = str(covariates) if covariates else "None"
+        filter_text = str(results.get("filter_applied", "None")) or "None"
+        selected_groups = results.get("selected_groups") or results.get("groups") or []
+        selected_group_text = ", ".join(map(str, selected_groups)) if selected_groups else "None"
+        n_val = results.get("n_total", results.get("n", "—"))
+
+        ws.merge_range('A3:F3', "ANALYSIS OVERVIEW", fmt["section_header"])
+        overview_rows = [
+            ("Analysis Type:", model_type),
+            ("Dependent Variable:", dep_var),
+            ("Factor(s):", factors or "—"),
+            ("Selected Groups:", selected_group_text),
+            ("Covariates:", cov_text),
+            ("Filter applied:", filter_text),
+            ("Sample size (N):", str(n_val) if n_val is not None else "—"),
+        ]
+        row = 4
+        for key, value in overview_rows:
+            ws.write(row, 0, key, fmt["key"])
+            ws.write(row, 1, str(value), fmt["cell"])
+            row += 1
+
+        ws.merge_range(f'A{row}:F{row}', "REPORT CONTENTS", fmt["section_header"])
+        row += 1
+        sheet_rows = [
+            ("Summary", "Overview, key statement, key statistics, report navigation"),
+            ("Statistical Results", "Full test output, ANOVA table, omnibus results"),
+            ("Descriptive Statistics", "Group means, SDs, medians, quartiles"),
+        ]
+        _groups = results.get("groups", [])
+        _pairwise = results.get("pairwise_comparisons", [])
+        if len(_groups) >= 3 and _pairwise:
+            sheet_rows.append(("Pairwise Comparisons", "Post-hoc test results with corrected p-values"))
+        sheet_rows.append(("Assumptions", "Normality, variance homogeneity, sphericity, diagnostic plots"))
+        _mt = results.get("model_type", "")
+        if _mt == "ANCOVA":
+            sheet_rows.append(("ANCOVA Details", "Adjusted means and slope homogeneity checks"))
+        elif _mt == "LMM":
+            sheet_rows.append(("LMM Details", "Fixed/random effects, ICC, model fit indices"))
+        elif _mt == "Correlation":
+            sheet_rows.append(("Correlation", "Coefficient, confidence interval, interpretation"))
+        elif _mt == "CorrelationMatrix":
+            sheet_rows.append(("Correlation Matrix", "Full pairwise correlation matrix"))
+        elif _mt == "LinearRegression":
+            sheet_rows.append(("Linear Regression", "Model summary, coefficients, diagnostics"))
+        elif _mt == "LogisticRegression":
+            sheet_rows.append(("Logistic Regression", "Odds ratios, calibration, ROC/AUC"))
+        sheet_rows.extend([
+            ("Decision Tree", "Visual flowchart of the applied decision path"),
+            ("Methodology Log", "Audit trail and methods-text helper"),
+            ("Raw Data", "Original data used in this analysis"),
+        ])
+        for sheet_name_label, desc in sheet_rows:
+            ws.write(row, 0, sheet_name_label, fmt["bold"])
+            ws.write(row, 1, desc, fmt["cell"])
+            row += 1
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        ws.merge_range(f'A{row}:F{row}', f"Generated by BioMedStatX 2.0 — {now}", fmt["italic_grey"])
+        row += 2
+
         # Key statement
-        ws.merge_range('A3:F3', "KEY STATEMENT", fmt["section_header"])
+        ws.merge_range(f'A{row}:F{row}', "KEY STATEMENT", fmt["section_header"])
         
         # Check if non-parametric alternative is needed
         if results.get("recommendation") == "non_parametric" and results.get("parametric_assumptions_violated", False):
@@ -1059,11 +1205,12 @@ class ResultsExporter:
                 f"The performed test ({test_info}) shows NO significant differences "
                 f"between the groups under investigation (p{p_val_text})."
             )
-        ws.merge_range('A4:F4', conclusion, fmt["cell"])
-        ws.set_row(3, ResultsExporter.get_fixed_row_height("summary_conclusion"))
+        row += 1
+        ws.merge_range(f'A{row}:F{row}', conclusion, fmt["cell"])
+        ws.set_row(row, ResultsExporter.get_fixed_row_height("summary_conclusion"))
 
         # Key information
-        row = 6
+        row += 2
         ws.merge_range(f'A{row}:F{row}', "KEY INFORMATION", fmt["section_header"])
         row += 1
 
@@ -1301,7 +1448,7 @@ class ResultsExporter:
             row += 1
 
     @staticmethod
-    def _write_methodology_log_sheet(workbook, results, fmt, trace=None, sheet_name="Methodology Log"):
+    def _write_methodology_log_sheet(workbook, results, fmt, trace=None, analysis_log=None, sheet_name="Methodology Log"):
         """Write the Methodology Log sheet — decision audit trail + suggested Methods paragraph.
 
         Parameters
@@ -1333,6 +1480,22 @@ class ResultsExporter:
         ws.set_row(row, 30)
         row += 1
 
+        selected_groups = results.get("selected_groups") or results.get("groups") or []
+        selected_groups_text = ", ".join(map(str, selected_groups)) if selected_groups else "All available groups"
+        grouping_column = results.get("group_column") or results.get("group_col") or "Not specified"
+        filter_applied = str(results.get("filter_applied") or "None")
+        scope_text = (
+            f"Grouping column: {grouping_column}\n"
+            f"Selected groups: {selected_groups_text}\n"
+            f"Filter applied: {filter_applied}"
+        )
+        ws.merge_range(f'A{row+1}:D{row+1}', "Analysis Scope", fmt["section_blue"])
+        ws.set_row(row, 18)
+        row += 1
+        ws.merge_range(f'A{row+1}:D{row+1}', scope_text, fmt["plain_language"])
+        ws.set_row(row, 58)
+        row += 1
+
         # ── Column headers ────────────────────────────────────────────────────
         col_headers = ["Step", "Category", "Decision", "Detail"]
         for i, h in enumerate(col_headers):
@@ -1349,7 +1512,7 @@ class ResultsExporter:
             "data check":    "subheader_light",
         }
 
-        steps = trace.to_list() if trace else []
+        steps = trace.to_list() if trace and hasattr(trace, "to_list") else []
         if steps:
             for i, step in enumerate(steps):
                 row_bg = fmt["alternating"] if i % 2 == 0 else fmt["cell"]
@@ -1361,6 +1524,14 @@ class ResultsExporter:
                 ws.write(row, 2, step["decision"], row_bg)
                 ws.write(row, 3, step.get("detail", ""), fmt["italic_grey"])
                 row += 1
+        elif analysis_log:
+            log_text = str(analysis_log).strip()
+            ws.merge_range(f'A{row+1}:D{row+1}', "Analysis Log", fmt["section_blue"])
+            ws.set_row(row, 18)
+            row += 1
+            ws.merge_range(f'A{row+1}:D{row+1}', log_text, fmt["plain_language"])
+            ws.set_row(row, max(120, 15 * (log_text.count("\n") + 2)))
+            row += 1
         else:
             ws.merge_range(f'A{row+1}:D{row+1}',
                            "No methodology trace available for this analysis.",
@@ -1375,10 +1546,15 @@ class ResultsExporter:
         ws.set_row(row, 18)
         row += 1
 
-        methods_text = trace.to_methods_paragraph() if trace else (
-            "Statistical analysis was performed using BioMedStatX 2.0. "
-            "The significance threshold was set at \u03b1\u202f=\u202f0.05."
-        )
+        if trace and hasattr(trace, "to_methods_paragraph"):
+            methods_text = trace.to_methods_paragraph()
+        elif analysis_log:
+            methods_text = str(analysis_log).strip()
+        else:
+            methods_text = (
+                "Statistical analysis was performed using BioMedStatX 2.0. "
+                "The significance threshold was set at \u03b1\u202f=\u202f0.05."
+            )
         ws.merge_range(f'A{row+1}:D{row+1}', methods_text, fmt["plain_language"])
         ws.set_row(row, max(60, 15 * (methods_text.count(".") + 1)))
         row += 1
@@ -1451,12 +1627,9 @@ class ResultsExporter:
         
         # Format p-value differently for permutation tests
         if is_perm:
-            p_val_str = f"{p_val:.4f}" if isinstance(p_val, (float, int)) else (p_val or "N/A")
+            p_val_str = float(p_val) if isinstance(p_val, (float, int)) else (p_val or "N/A")
         else:
-            p_val_str = (
-                "p < 0.001" if isinstance(p_val, (float, int)) and p_val < 0.001 else
-                f"p = {p_val:.4f}" if isinstance(p_val, (float, int)) else (p_val or "N/A")
-            )
+            p_val_str = float(p_val) if isinstance(p_val, (float, int)) else (p_val or "N/A")
             
         effect_type = results.get("effect_size_type", "")
         if effect_size is not None:
@@ -1516,8 +1689,8 @@ class ResultsExporter:
         row += 2
 
         # --- Factor / interaction breakdown (Friedman, Freedman-Lane, Brunner-Langer ATS) ---
-        factors_list = results.get("factors", [])
-        interactions_list = results.get("interactions", [])
+        factors_list = [item for item in results.get("factors", []) if isinstance(item, dict)]
+        interactions_list = [item for item in results.get("interactions", []) if isinstance(item, dict)]
         if factors_list or interactions_list:
             ws.merge_range(f'A{row+1}:G{row+1}', "EFFECTS BREAKDOWN (all factors & interactions)", fmt["section_header"])
             row += 2
@@ -1723,7 +1896,6 @@ class ResultsExporter:
         _anova_tbl = results.get("anova_table")
         _model_type = results.get("model_type", "")
         if _anova_tbl is not None and _model_type != "ANCOVA":
-            import pandas as pd
             _df = (pd.DataFrame(_anova_tbl) if isinstance(_anova_tbl, dict) else _anova_tbl)
             if isinstance(_df, pd.DataFrame) and not _df.empty:
                 ws.merge_range(f'A{row}:F{row}', "ANOVA TABLE", fmt["section_header"])
@@ -3154,7 +3326,7 @@ class ResultsExporter:
                 "For Mixed ANOVA, the between-subjects factor must meet homogeneity of variance assumptions.\n\n"
                 "TESTS PERFORMED:\n"
                 "• Levene's Test: Standard test for equal variances\n"
-                "• Levene's Test: Standard test for equal variances\n"
+                "• Levene's Test (Brown-Forsythe): Robust variant using medians\n"
                 "• Brown-Forsythe Test: Robust alternative using medians\n"
                 "• Bartlett's Test: Sensitive to normality violations\n"
                 "• Welch's ANOVA: Robust alternative when variances are unequal"
@@ -3440,7 +3612,7 @@ class ResultsExporter:
                 p_value = levene.get("p_value", "N/A")
                 
                 p_str = f"{p_value:.4f}" if isinstance(p_value, (float, int)) else str(p_value)
-                ws.write(row, 0, f"Levene's Test p-value: {p_str}", 
+                ws.write(row, 0, f"Levene's Test (Brown-Forsythe) p-value: {p_str}",
                         fmt["sig_highlight"] if assumption_met is False else fmt["cell"])
                 row += 1
                 

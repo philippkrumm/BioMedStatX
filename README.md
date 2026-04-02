@@ -98,7 +98,8 @@ A detailed, step-by-step **User Guide with screenshots and numbered button refer
 3. **Define groups and variables**  
    - Select the sheet (for Excel files).  
    - Choose grouping variables and measurement columns.  
-   - Specify which groups you want to compare.
+   - Optionally restrict groups via **Select Groups For Analysis**.
+   - Optionally restrict rows via **Filter** bucket.
 
 4. **Configure analysis options (optional)**  
    - Choose plots and statistics to generate.  
@@ -109,7 +110,10 @@ A detailed, step-by-step **User Guide with screenshots and numbered button refer
      - detect outliers,
      - check assumptions,
      - select the appropriate supported test,
-     - run post-hoc tests when needed.
+       - run post-hoc tests when needed.
+    - You decide when prompted:
+       - whether to apply offered transformations,
+       - which post-hoc procedure to run when multiple valid options exist.
 
 6. **Inspect the output**  
    - Review plots and statistical results.  
@@ -123,6 +127,12 @@ For a complete, screenshot-based walkthrough, including which button to click at
 
 - **User Guide (GUI, step-by-step with screenshots):**
    -> [docs/HowTo.md](./docs/HowTo.md)
+
+   Includes:
+   - first-time orientation (what the app decides vs what the user decides),
+   - minimum data structure requirements,
+   - end-to-end analysis order,
+   - mapping-to-test logic and export interpretation.
 
 - **Advanced ANOVA methodology and interpretation:**
    -> [docs/ADVANCED_ANOVA_GUIDE.md](./docs/ADVANCED_ANOVA_GUIDE.md)
@@ -143,6 +153,7 @@ Additional documentation can be added to the [`docs/`](./docs) folder.
 - Linear Mixed Models (LMM) and Logistic Regression are available for longitudinal and binary outcome designs via the Auto-pilot.
 - Correlation (Pearson/Spearman) and linear regression (OLS) are supported via the Auto-pilot when a continuous variable is assigned to the Factor 1 bucket.
 - Exploratory correlation matrices are available via the dedicated button in the Auto-pilot panel.
+- Exploratory correlation matrices are available via **Analysis -> Exploratory Correlation Matrix**.
 - Subgroup analyses can be performed using the Filter bucket to restrict any analysis to a subset of rows.
 - For Windows and macOS end users, the recommended path is to use the packaged application from the GitHub Releases page. The repository launcher scripts are mainly intended for source-based usage.
 

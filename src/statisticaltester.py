@@ -260,7 +260,8 @@ class StatisticalTester:
             logger.debug(f"DEBUG BROWN-FORSYTHE ERROR: Pre-transformation failed: {str(e)}")
             stat, pval, has_equal_variance = None, None, False
         test_info["pre_transformation"]["variance"] = {
-            "statistic": stat, "p_value": pval, "equal_variance": has_equal_variance
+            "statistic": stat, "p_value": pval, "equal_variance": has_equal_variance,
+            "test_name": "Brown-Forsythe",
         }
         if trace:
             _var_verdict = "equal variances" if has_equal_variance else "unequal variances"
@@ -424,7 +425,8 @@ class StatisticalTester:
             logger.debug(f"DEBUG BROWN-FORSYTHE ERROR: Post-transformation failed: {str(e)}")
             stat_tr, pval_tr, has_equal_variance_tr = None, None, False
         test_info["post_transformation"]["variance"] = {
-            "statistic": stat_tr, "p_value": pval_tr, "equal_variance": has_equal_variance_tr
+            "statistic": stat_tr, "p_value": pval_tr, "equal_variance": has_equal_variance_tr,
+            "test_name": "Brown-Forsythe",
         }
 
         # Recommend test based on assumptions
@@ -964,8 +966,12 @@ class StatisticalTester:
                               f"Main test significant (p<{alpha}) with {len(valid_groups)} groups \u2014 "
                               f"parametric post-hoc test initiated.")
                 posthoc_results = StatisticalTester.perform_refactored_posthoc_testing(
-                    valid_groups, samples_to_use, test_recommendation="parametric", alpha=alpha,
-                    posthoc_choice=None  # Let the function show the dialog
+                    valid_groups,
+                    samples_to_use,
+                    test_recommendation="parametric",
+                    alpha=alpha,
+                    posthoc_choice=None,  # Let the function show the dialog
+                    test_info=test_info,
                 )
 
                 if posthoc_results:
@@ -986,8 +992,12 @@ class StatisticalTester:
                               f"Main non-parametric test significant (p<{alpha}) with {len(valid_groups)} groups \u2014 "
                               f"non-parametric post-hoc test initiated.")
                 posthoc_results = StatisticalTester.perform_refactored_posthoc_testing(
-                    valid_groups, samples_to_use, test_recommendation,
-                    alpha=alpha, posthoc_choice=None  # Let the function show the dialog
+                    valid_groups,
+                    samples_to_use,
+                    test_recommendation,
+                    alpha=alpha,
+                    posthoc_choice=None,  # Let the function show the dialog
+                    test_info=test_info,
                 )
 
                 if posthoc_results:
@@ -3795,7 +3805,16 @@ class StatisticalTester:
             is_dependent=True
         )
     @staticmethod
-    def perform_refactored_posthoc_testing(valid_groups, samples, test_recommendation, alpha=0.05, posthoc_choice=None, control_group=None, is_dependent=False):
+    def perform_refactored_posthoc_testing(
+        valid_groups,
+        samples,
+        test_recommendation,
+        alpha=0.05,
+        posthoc_choice=None,
+        control_group=None,
+        is_dependent=False,
+        test_info=None,
+    ):
         """
         Central function for performing post-hoc tests with the new framework.
         Can be used as a replacement for the existing perform_posthoc_testing.
@@ -3843,9 +3862,19 @@ class StatisticalTester:
                 # When Welch ANOVA was used (unequal variances), pre-select Games-Howell.
                 default_method = "games_howell" if test_recommendation == "welch" else "tukey"
                 try:
+                    variance_info = test_info.get("variance_test", {}) if isinstance(test_info, dict) else {}
+                    equal_variance = None
+                    if default_method == "games_howell":
+                        equal_variance = False
+                    elif isinstance(variance_info, dict):
+                        transformed_variance = variance_info.get("transformed")
+                        if isinstance(transformed_variance, dict) and transformed_variance.get("equal_variance") is not None:
+                            equal_variance = transformed_variance.get("equal_variance")
+                        elif variance_info.get("equal_variance") is not None:
+                            equal_variance = variance_info.get("equal_variance")
                     posthoc_choice = UIDialogManager.select_posthoc_test_dialog(
                         parent=None, progress_text=None, column_name=None,
-                        default_method=default_method
+                        default_method=default_method, equal_variance=equal_variance
                     )
                     logger.debug(f"DEBUG: Parametric post-hoc dialog returned: {posthoc_choice}")
                     if posthoc_choice is None:

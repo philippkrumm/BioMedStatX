@@ -18,7 +18,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QFileDialog, QWidget, QV
                            QTabWidget, QGroupBox, QCheckBox, QSpinBox, QColorDialog, 
                            QMessageBox, QScrollArea, QListWidgetItem, QDialog, QDialogButtonBox,
                            QGridLayout, QLineEdit, QRadioButton, QAction, QFormLayout, QAbstractItemView, QDoubleSpinBox, QButtonGroup,
-                           QFrame, QTableWidget, QTableWidgetItem, QSplitter, QToolButton, QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QSizePolicy, QTextEdit)
+                           QFrame, QTableWidget, QTableWidgetItem, QSplitter, QToolButton, QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QSizePolicy, QTextEdit, QTextBrowser)
 from PyQt5.QtGui import QColor, QIcon, QPixmap, QDrag, QDesktopServices
 from PyQt5.QtCore import Qt, QMimeData, QPoint, pyqtSignal, QObject, QPropertyAnimation, QEasingCurve, QSequentialAnimationGroup, QTimer, QUrl
 
@@ -51,6 +51,13 @@ except ImportError as e:
     print(f"WARNING: Could not import new plot modules: {e}")
     PlotAestheticsDialog = None
     PLOT_MODULES_AVAILABLE = False
+
+try:
+    from help_content import HELP_RECIPES
+except ImportError as e:
+    HELP_RECIPES = []
+    print(f"Warning: help content not available: {e}")
+
 import traceback
 print(f"DEBUG: RUNNING FILE VERSION FROM {time.time()} - {os.path.abspath(__file__)}")
 
@@ -77,7 +84,7 @@ def _apply_elevation(widget, radius=18, x_offset=0, y_offset=4, opacity=0.18):
     widget.setGraphicsEffect(shadow)
 
 
-DEFAULT_COLORS = ['#FF69B4', '#32CD32', '#FFD700', '#00BFFF', '#DA70D6', '#D8BFD8']  # Pink, Green, Gold, DeepSkyBlue, Orchid, Thistle
+DEFAULT_COLORS = ['#0f766e', '#1f7a5a', '#b7791f', '#9f3a38', '#1d4ed8', '#7c3aed']  # Teal, DarkGreen, Amber, DuskyRed, Indigo, Violet
 DEFAULT_HATCHES = ['/', '\\', '|', '-', '+', 'x', 'o', '.', '*', '']
 
 def dict_to_long_format(samples, groups):
@@ -143,22 +150,23 @@ def boxcox_transform(df, dv):
     return df2
 
 class GroupSelectionDialog(QDialog):
-    """Dialog for selecting groups for a plot"""
-    def __init__(self, available_groups, parent=None):
+    """Dialog for selecting groups for a plot or analysis."""
+    def __init__(self, available_groups, parent=None, window_title="Select Groups",
+                 description="Select the groups to be displayed in the plot:"):
         if not available_groups:
             QMessageBox.critical(parent, "Error", "No groups available! Dialog will not open.")
             raise ValueError("No groups passed to GroupSelectionDialog.")
         super().__init__(parent)
         # Remove the question mark from the window
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
-        self.setWindowTitle("Select Groups")
+        self.setWindowTitle(window_title)
         self.resize(300, 400)
         
         layout = QVBoxLayout(self)
         layout.setObjectName("lyoGroupSelection")
         
         # Explanation
-        label = QLabel("Select the groups to be displayed in the plot:")
+        label = QLabel(description)
         label.setObjectName("lblGroupSelectionHelp")
         layout.addWidget(label)
         
@@ -212,6 +220,173 @@ class GroupSelectionDialog(QDialog):
         if not selected:
             QMessageBox.warning(self, "Warning", "Please select at least one group!")
         return selected
+
+
+class HelpHubDialog(QDialog):
+    """Static in-app help hub with searchable analysis recipes."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("helpHubDialog")
+        self.setWindowTitle("BioMedStatX Help Hub")
+        self.setModal(False)
+        self.resize(1120, 760)
+
+        self._recipes = list(HELP_RECIPES)
+        self._recipe_by_id = {recipe["id"]: recipe for recipe in self._recipes}
+        self._current_recipe = None
+
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(12, 12, 12, 12)
+        root_layout.setSpacing(10)
+
+        header = QLabel("Recipe-based Help: If you want X, map Y like this")
+        header.setObjectName("helpHubHeader")
+        root_layout.addWidget(header)
+
+        body_splitter = QSplitter(Qt.Horizontal)
+        body_splitter.setChildrenCollapsible(False)
+        root_layout.addWidget(body_splitter, 1)
+
+        nav_panel = QFrame()
+        nav_panel.setObjectName("helpNavPanel")
+        nav_layout = QVBoxLayout(nav_panel)
+        nav_layout.setContentsMargins(10, 10, 10, 10)
+        nav_layout.setSpacing(8)
+
+        self.search_input = QLineEdit()
+        self.search_input.setObjectName("helpNavSearch")
+        self.search_input.setPlaceholderText("Search recipes...")
+        self.search_input.textChanged.connect(self._filter_recipe_list)
+        nav_layout.addWidget(self.search_input)
+
+        self.recipe_list = QListWidget()
+        self.recipe_list.setObjectName("helpNavList")
+        self.recipe_list.currentItemChanged.connect(self._update_recipe_view)
+        nav_layout.addWidget(self.recipe_list, 1)
+
+        body_splitter.addWidget(nav_panel)
+
+        content_panel = QFrame()
+        content_panel.setObjectName("helpContentPanel")
+        content_layout = QVBoxLayout(content_panel)
+        content_layout.setContentsMargins(10, 10, 10, 10)
+        content_layout.setSpacing(8)
+
+        self.recipe_title = QLabel("")
+        self.recipe_title.setObjectName("helpRecipeTitle")
+        content_layout.addWidget(self.recipe_title)
+
+        self.recipe_browser = QTextBrowser()
+        self.recipe_browser.setObjectName("helpRecipeBrowser")
+        self.recipe_browser.setOpenExternalLinks(True)
+        content_layout.addWidget(self.recipe_browser, 1)
+
+        actions_layout = QHBoxLayout()
+        actions_layout.addStretch()
+
+        self.copy_button = QPushButton("Copy Example Data")
+        self.copy_button.setObjectName("btnCopyExampleData")
+        self.copy_button.clicked.connect(self._copy_current_example_data)
+        actions_layout.addWidget(self.copy_button)
+
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(self.close)
+        actions_layout.addWidget(close_button)
+
+        content_layout.addLayout(actions_layout)
+
+        self.copy_feedback = QLabel("")
+        self.copy_feedback.setObjectName("helpCopyFeedback")
+        content_layout.addWidget(self.copy_feedback)
+
+        body_splitter.addWidget(content_panel)
+        body_splitter.setStretchFactor(0, 0)
+        body_splitter.setStretchFactor(1, 1)
+        body_splitter.setSizes([320, 780])
+
+        self._populate_recipe_list()
+
+    def navigate_to(self, recipe_id):
+        """Select and display a specific recipe by its ID."""
+        self.search_input.clear()  # Clear search so all items are visible
+        for index in range(self.recipe_list.count()):
+            item = self.recipe_list.item(index)
+            if item.data(Qt.UserRole) == recipe_id:
+                self.recipe_list.setCurrentItem(item)
+                break
+
+    def _populate_recipe_list(self):
+        self.recipe_list.clear()
+        for recipe in self._recipes:
+            item = QListWidgetItem(recipe["title"])
+            item.setData(Qt.UserRole, recipe["id"])
+            item.setToolTip(recipe.get("summary", ""))
+            self.recipe_list.addItem(item)
+
+        if self.recipe_list.count():
+            self.recipe_list.setCurrentRow(0)
+
+    def _filter_recipe_list(self, text):
+        query = str(text or "").strip().lower()
+        first_visible = None
+
+        for index in range(self.recipe_list.count()):
+            item = self.recipe_list.item(index)
+            recipe_id = item.data(Qt.UserRole)
+            recipe = self._recipe_by_id.get(recipe_id, {})
+            haystack = " ".join([
+                recipe.get("title", ""),
+                recipe.get("summary", ""),
+                " ".join(recipe.get("keywords", [])),
+            ]).lower()
+            visible = not query or query in haystack
+            item.setHidden(not visible)
+            if visible and first_visible is None:
+                first_visible = item
+
+        current = self.recipe_list.currentItem()
+        if current is None or current.isHidden():
+            if first_visible is not None:
+                self.recipe_list.setCurrentItem(first_visible)
+            else:
+                self._current_recipe = None
+                self.recipe_title.setText("No matching recipe")
+                self.recipe_browser.setHtml("<p>No recipe matches your search query.</p>")
+                self.copy_button.setEnabled(False)
+
+    def _update_recipe_view(self, current, _previous):
+        if current is None:
+            return
+
+        recipe_id = current.data(Qt.UserRole)
+        recipe = self._recipe_by_id.get(recipe_id)
+        if not recipe:
+            self._current_recipe = None
+            self.recipe_title.setText("Recipe not found")
+            self.recipe_browser.setHtml("<p>Recipe content is unavailable.</p>")
+            self.copy_button.setEnabled(False)
+            return
+
+        self._current_recipe = recipe
+        self.recipe_title.setText(recipe.get("title", ""))
+        self.recipe_browser.setHtml(recipe.get("html", "<p>No content available.</p>"))
+
+        has_example = bool(recipe.get("example_tsv"))
+        self.copy_button.setEnabled(has_example)
+        self.copy_feedback.setText("")
+
+    def _copy_current_example_data(self):
+        if not self._current_recipe:
+            return
+
+        sample_data = self._current_recipe.get("example_tsv", "")
+        if not sample_data:
+            return
+
+        QApplication.clipboard().setText(sample_data)
+        self.copy_feedback.setText("Example data copied to clipboard (tab-separated, Excel-ready).")
+        QTimer.singleShot(2500, lambda: self.copy_feedback.setText(""))
 
 
 class ColumnSelectionDialog(QDialog):
@@ -1075,6 +1250,10 @@ class StatisticalAnalyzerApp(QMainWindow):
         getting_started_action = QAction('Getting Started', self)
         getting_started_action.triggered.connect(self.show_getting_started_help)
         help_menu.addAction(getting_started_action)
+
+        help_hub_action = QAction('Help Hub (Recipes)', self)
+        help_hub_action.triggered.connect(self.show_help_hub)
+        help_menu.addAction(help_hub_action)
         
         help_menu.addSeparator()
 
@@ -1122,6 +1301,13 @@ class StatisticalAnalyzerApp(QMainWindow):
         outlier_action.triggered.connect(self.run_outlier_detection)
         analysis_menu.addAction(outlier_action)
 
+        exploratory_matrix_action = QAction('Exploratory Correlation Matrix', self)
+        exploratory_matrix_action.setToolTip(
+            'Optional screening tool: explore pairwise correlations before confirmatory hypothesis tests.'
+        )
+        exploratory_matrix_action.triggered.connect(self.open_exploratory_matrix_dialog)
+        analysis_menu.addAction(exploratory_matrix_action)
+
         
     def show_about(self):
         QMessageBox.information(
@@ -1136,6 +1322,29 @@ class StatisticalAnalyzerApp(QMainWindow):
             Department of Anatomy and Cell Biology</p>
             """
         )
+
+    def show_help_hub(self, recipe_id=None):
+        """Open the static Help Hub in a non-modal window."""
+        # Action triggered signals pass a boolean 'checked', so we catch that
+        if isinstance(recipe_id, bool):
+            recipe_id = None
+            
+        if hasattr(self, '_help_hub_dialog') and self._help_hub_dialog is not None:
+            if self._help_hub_dialog.isVisible():
+                if recipe_id:
+                    self._help_hub_dialog.navigate_to(recipe_id)
+                self._help_hub_dialog.raise_()
+                self._help_hub_dialog.activateWindow()
+                return
+
+        self._help_hub_dialog = HelpHubDialog(self)
+        self._help_hub_dialog.setAttribute(Qt.WA_DeleteOnClose, True)
+        self._help_hub_dialog.destroyed.connect(lambda: setattr(self, '_help_hub_dialog', None))
+        self._help_hub_dialog.show()
+        if recipe_id:
+            self._help_hub_dialog.navigate_to(recipe_id)
+        self._help_hub_dialog.raise_()
+        self._help_hub_dialog.activateWindow()
 
     def show_graph_visualization_help(self):
         from PyQt5.QtWidgets import QDialog, QVBoxLayout, QTextBrowser, QPushButton
@@ -1444,13 +1653,9 @@ class StatisticalAnalyzerApp(QMainWindow):
         multi_analyze_button = QPushButton("Start multi-dataset analysis")
         multi_analyze_button.setObjectName("btnMultiDatasetAnalyze")
         multi_analyze_button.clicked.connect(self.run_multi_dataset_analysis)
-        outlier_button = QPushButton("Detect outliers")
-        outlier_button.setObjectName("btnDetectOutliers")
-        outlier_button.clicked.connect(self.run_outlier_detection)
         actions_layout.addWidget(analyze_button)
         actions_layout.addWidget(analyze_selected_button)
         actions_layout.addWidget(multi_analyze_button)
-        actions_layout.addWidget(outlier_button)
         
         main_layout.addLayout(actions_layout)
         
@@ -2181,9 +2386,9 @@ class StatisticalAnalyzerApp(QMainWindow):
                 positions = [i * group_spacing for i in range(n_groups)]
                 
                 # Farben wie im Beispiel, aber dynamisch
-                boxplots_colors = ["yellowgreen", "olivedrab", "gold", "deepskyblue", "orchid", "thistle"]
-                violin_colors = ["thistle", "orchid", "gold", "deepskyblue", "yellowgreen", "olivedrab"]
-                scatter_colors = ["tomato", "darksalmon", "deepskyblue", "orchid", "yellowgreen", "olivedrab"]
+                boxplots_colors = ["#0f766e", "#1f7a5a", "#b7791f", "#9f3a38", "#1d4ed8", "#7c3aed"]
+                violin_colors = ["#7c3aed", "#1d4ed8", "#b7791f", "#9f3a38", "#0f766e", "#1f7a5a"]
+                scatter_colors = ["#9f3a38", "#b7791f", "#1d4ed8", "#7c3aed", "#0f766e", "#1f7a5a"]
                 
                 # Boxplot mit systematischen Positionen
                 bp = ax.boxplot(data_x, patch_artist=True, vert=False, positions=positions)
@@ -3158,13 +3363,13 @@ class StatisticalAnalyzerApp(QMainWindow):
                     names = ", ".join(all_results.keys())
                     multi_summary = {
                         "subtitle": f"Multi-dataset analysis complete — {n} dataset(s) analyzed.",
-                        "metric_normality": "—",
-                        "metric_variance": "—",
-                        "metric_main_test": f"{n} dataset(s) analyzed:\n{names}\n\nSee Excel file for full results.",
-                        "metric_effect_size": "—",
-                        "detected_test": "Multi-dataset mode — each dataset analyzed separately.",
-                        "rationale": "Results combined in shared Excel file.",
-                        "posthoc": "—",
+                        "metric_normality": "Per dataset (see sheets)",
+                        "metric_variance": "Per dataset (see sheets)",
+                        "inference_main_test": f"{n} dataset(s) analyzed:\n{names}\n\nSee Excel file for full results.",
+                        "inference_effect_size": "Per dataset (reported in dedicated result sheets)",
+                        "context_design": "Multi-dataset mode — each dependent variable is analyzed with its own inferred model.",
+                        "context_sample_overview": f"Datasets analyzed: {n}",
+                        "context_analysis_scope": "Results consolidated into one shared Excel workbook.",
                     }
                     self.result_cockpit.set_summary(multi_summary, enable_plot=False, enable_output=True)
                     self.current_output_dir = output_dir
@@ -3631,13 +3836,14 @@ class MappingBucketWidget(QFrame):
     changed = pyqtSignal()
 
     def __init__(self, title, placeholder, accepted_kinds=None, allow_multiple=False,
-                 info_text="", parent=None):
+                 info_text="", help_recipe_id=None, parent=None):
         super().__init__(parent)
         self.setObjectName("mappingBucket")
         self.setAcceptDrops(True)
         self.accepted_kinds = set(accepted_kinds or [])
         self.allow_multiple = allow_multiple
         self._assignments = []
+        self.help_recipe_id = help_recipe_id
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 14, 14, 14)
@@ -3651,14 +3857,14 @@ class MappingBucketWidget(QFrame):
             title_row.setSpacing(4)
             title_row.addWidget(self.title_label)
             title_row.addStretch()
-            _info_btn = QPushButton("ⓘ")
+            _info_btn = QPushButton("i")
             _info_btn.setObjectName("bucketInfoButton")
             _info_btn.setFlat(True)
             _info_btn.setFocusPolicy(Qt.NoFocus)
             _captured_text = info_text
             _captured_title = title
             _info_btn.clicked.connect(
-                lambda: QMessageBox.information(self, _captured_title, _captured_text))
+                lambda: self._show_info_dialog(_captured_title, _captured_text))
             title_row.addWidget(_info_btn)
             layout.addLayout(title_row)
         else:
@@ -3684,6 +3890,43 @@ class MappingBucketWidget(QFrame):
 
     def _can_accept_kind(self, column_kind):
         return not self.accepted_kinds or column_kind in self.accepted_kinds
+
+    def _show_info_dialog(self, title, text):
+        recipe_id = self.help_recipe_id
+        main_window = self.window()
+        if main_window is not None and hasattr(main_window, "_resolve_help_recipe_for_bucket"):
+            try:
+                resolved_recipe = main_window._resolve_help_recipe_for_bucket(self, recipe_id)
+                if resolved_recipe:
+                    recipe_id = resolved_recipe
+            except Exception:
+                pass
+
+        if not recipe_id:
+            QMessageBox.information(self, title, text)
+            return
+
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Information)
+        msg.setWindowTitle(title)
+        msg.setText(text)
+
+        recipe_title = None
+        if recipe_id:
+            for recipe in HELP_RECIPES:
+                if recipe.get("id") == recipe_id:
+                    recipe_title = recipe.get("title")
+                    break
+        if recipe_title:
+            msg.setInformativeText(f"Suggested recipe: {recipe_title}")
+
+        open_help_button = msg.addButton("Open in Help Hub", QMessageBox.ActionRole)
+        msg.addButton(QMessageBox.Ok)
+        msg.exec_()
+
+        if msg.clickedButton() == open_help_button:
+            if main_window is not None and hasattr(main_window, "show_help_hub"):
+                main_window.show_help_hub(recipe_id)
 
     def dragEnterEvent(self, event):
         payload = event.mimeData().text().split("\t")
@@ -3754,6 +3997,9 @@ class MappingBucketWidget(QFrame):
 
     def get_assigned_columns(self):
         return [column_name for column_name, _, _ in self._assignments]
+
+    def get_assigned_kinds(self):
+        return [column_kind for _, column_kind, _ in self._assignments]
 
     def _refresh_placeholder(self):
         self.placeholder_label.setVisible(len(self._assignments) == 0)
@@ -4165,7 +4411,7 @@ class GlowFrame(QFrame):
 class ConfettiOverlay(QWidget):
     """Full-window confetti burst overlay. Self-destructs after ~2 s."""
 
-    _COLORS = ["#FF69B4", "#32CD32", "#FFD700", "#00BFFF", "#DA70D6", "#FF8C00", "#7FFF00"]
+    _COLORS = ["#0f766e", "#1f7a5a", "#b7791f", "#9f3a38", "#1d4ed8", "#7c3aed", "#2dd4bf"]
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -4232,10 +4478,12 @@ class ConfettiOverlay(QWidget):
         painter.end()
 
 
-class ResultCardWidget(GlowFrame):
+class ResultCardWidget(QFrame):
     def __init__(self, title, info_text="", parent=None):
         super().__init__(parent)
         self.setObjectName("resultCard")
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        self.setMinimumHeight(120)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(8)
@@ -4248,7 +4496,7 @@ class ResultCardWidget(GlowFrame):
             title_row.setSpacing(4)
             title_row.addWidget(self.title_label)
             title_row.addStretch()
-            _info_btn = QPushButton("ⓘ")
+            _info_btn = QPushButton("i")
             _info_btn.setObjectName("bucketInfoButton")
             _info_btn.setFlat(True)
             _info_btn.setFocusPolicy(Qt.NoFocus)
@@ -4264,6 +4512,8 @@ class ResultCardWidget(GlowFrame):
         self.value_label = QLabel("Waiting for analysis")
         self.value_label.setObjectName("resultCardValue")
         self.value_label.setWordWrap(True)
+        self.value_label.setMinimumHeight(44)
+        self.value_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         layout.addWidget(self.value_label)
 
     def set_value(self, text):
@@ -4292,15 +4542,13 @@ class ResultCockpitWidget(QFrame):
         self.subtitle.setWordWrap(True)
         layout.addWidget(self.subtitle)
 
-        metrics_title = QLabel("Key Metrics")
+        metrics_title = QLabel("Validity Checks")
         metrics_title.setObjectName("sectionLabel")
         layout.addWidget(metrics_title)
 
         self.metric_cards = {
             "metric_normality": ResultCardWidget("Normality"),
             "metric_variance": ResultCardWidget("Variance Homogeneity"),
-            "metric_main_test": ResultCardWidget("Main Test + p-value"),
-            "metric_effect_size": ResultCardWidget("Effect Size"),
         }
         self.metric_grid_widget = QWidget()
         self.metric_grid = QGridLayout(self.metric_grid_widget)
@@ -4312,34 +4560,64 @@ class ResultCockpitWidget(QFrame):
         cards_in_order = [
             self.metric_cards["metric_normality"],
             self.metric_cards["metric_variance"],
-            self.metric_cards["metric_main_test"],
-            self.metric_cards["metric_effect_size"],
         ]
         for index, card in enumerate(cards_in_order):
             self.metric_grid.addWidget(card, index // 2, index % 2)
         layout.addWidget(self.metric_grid_widget)
+
+        inference_title = QLabel("Inference")
+        inference_title.setObjectName("sectionLabel")
+        layout.addWidget(inference_title)
+
+        self.inference_cards = {
+            "inference_main_test": ResultCardWidget("Main Test + p-value"),
+            "inference_effect_size": ResultCardWidget("Effect Size"),
+        }
+        self.inference_grid_widget = QWidget()
+        self.inference_grid = QGridLayout(self.inference_grid_widget)
+        self.inference_grid.setContentsMargins(0, 0, 0, 0)
+        self.inference_grid.setHorizontalSpacing(12)
+        self.inference_grid.setVerticalSpacing(12)
+        self.inference_grid.setColumnStretch(0, 1)
+        self.inference_grid.setColumnStretch(1, 1)
+        inference_cards_in_order = [
+            self.inference_cards["inference_main_test"],
+            self.inference_cards["inference_effect_size"],
+        ]
+        for index, card in enumerate(inference_cards_in_order):
+            self.inference_grid.addWidget(card, index // 2, index % 2)
+        layout.addWidget(self.inference_grid_widget)
 
         context_title = QLabel("Context")
         context_title.setObjectName("sectionLabel")
         layout.addWidget(context_title)
 
         self.context_cards = {
-            "detected_test": ResultCardWidget(
-                "Detected Test",
+            "context_design": ResultCardWidget(
+                "Design",
                 info_text=(
-                    "BioMedStatX automatically selects the statistical test based on "
-                    "bucket assignments, data types, and normality assumptions (Shapiro-Wilk).\n\n"
-                    "Categorical factor → t-Test / ANOVA / nonparametric alternatives.\n"
-                    "Continuous factor → Correlation (Spearman/Pearson) or Regression (OLS).\n"
-                    "With Subject ID → paired/repeated-measures designs (LMM / Repeated ANOVA).\n\n"
-                    "If normally distributed: parametric tests. Otherwise: nonparametric alternatives."
+                    "Study design metadata shown here summarize the inferred model setup: "
+                    "selected design family, mapped factors, and repeated-measures context."
                 ),
             ),
-            "rationale": ResultCardWidget("Why This Path"),
-            "posthoc": ResultCardWidget("Post-hoc Status"),
+            "context_sample_overview": ResultCardWidget("Sample Overview"),
+            "context_analysis_scope": ResultCardWidget("Analysis Scope"),
         }
-        for card in self.context_cards.values():
-            layout.addWidget(card)
+        self.context_grid_widget = QWidget()
+        self.context_grid = QGridLayout(self.context_grid_widget)
+        self.context_grid.setContentsMargins(0, 0, 0, 0)
+        self.context_grid.setHorizontalSpacing(12)
+        self.context_grid.setVerticalSpacing(12)
+        self.context_grid.setColumnStretch(0, 1)
+        self.context_grid.setColumnStretch(1, 1)
+        context_cards_in_order = [
+            self.context_cards["context_design"],
+            self.context_cards["context_sample_overview"],
+            self.context_cards["context_analysis_scope"],
+        ]
+        for index, card in enumerate(context_cards_in_order):
+            self.context_grid.addWidget(card, index // 2, index % 2)
+        layout.addWidget(self.context_grid_widget)
 
         buttons_row = QHBoxLayout()
         self.configure_plot_button = QPushButton("Configure Plot...")
@@ -4361,16 +4639,20 @@ class ResultCockpitWidget(QFrame):
         metric_defaults = {
             "metric_normality": "Will be calculated after analysis.",
             "metric_variance": "Will be calculated after analysis.",
-            "metric_main_test": "Will be calculated after analysis.",
-            "metric_effect_size": "Will be calculated after analysis.",
+        }
+        inference_defaults = {
+            "inference_main_test": "Will be calculated after analysis.",
+            "inference_effect_size": "Will be calculated after analysis.",
         }
         context_defaults = {
-            "detected_test": "The app will infer the design from your mapping.",
-            "rationale": "The decision rationale will be explained here.",
-            "posthoc": "Transformation and post-hoc remain user-guided when needed.",
+            "context_design": "The inferred design metadata will appear here.",
+            "context_sample_overview": "Sample and group counts will appear here.",
+            "context_analysis_scope": "Filters, covariates, and post-hoc scope will appear here.",
         }
         for key, text in metric_defaults.items():
             self.metric_cards[key].set_value(text)
+        for key, text in inference_defaults.items():
+            self.inference_cards[key].set_value(text)
         for key, text in context_defaults.items():
             self.context_cards[key].set_value(text)
         self.configure_plot_button.setEnabled(False)
@@ -4380,8 +4662,21 @@ class ResultCockpitWidget(QFrame):
         self.subtitle.setText(summary.get("subtitle", "Analysis complete."))
         for key, card in self.metric_cards.items():
             card.set_value(summary.get(key, "N/A"))
-        for key, card in self.context_cards.items():
-            card.set_value(summary.get(key, "N/A"))
+        self.inference_cards["inference_main_test"].set_value(
+            summary.get("inference_main_test", summary.get("metric_main_test", "N/A"))
+        )
+        self.inference_cards["inference_effect_size"].set_value(
+            summary.get("inference_effect_size", summary.get("metric_effect_size", "N/A"))
+        )
+        self.context_cards["context_design"].set_value(
+            summary.get("context_design", summary.get("detected_test", "N/A"))
+        )
+        self.context_cards["context_sample_overview"].set_value(
+            summary.get("context_sample_overview", summary.get("rationale", "N/A"))
+        )
+        self.context_cards["context_analysis_scope"].set_value(
+            summary.get("context_analysis_scope", summary.get("posthoc", "N/A"))
+        )
 
         self.configure_plot_button.setEnabled(enable_plot)
         self.open_output_button.setEnabled(enable_output)
@@ -4396,6 +4691,8 @@ class ResultCockpitWidget(QFrame):
         cards = []
         if hasattr(self, "metric_cards") and isinstance(self.metric_cards, dict):
             cards.extend(self.metric_cards.values())
+        if hasattr(self, "inference_cards") and isinstance(self.inference_cards, dict):
+            cards.extend(self.inference_cards.values())
         if hasattr(self, "context_cards") and isinstance(self.context_cards, dict):
             cards.extend(self.context_cards.values())
         for card in cards:
@@ -4556,6 +4853,7 @@ def _ap_init_ui(self):
         "Factor 1",
         "Drop the primary grouping factor here.",
         accepted_kinds={"numeric", "categorical", "datetime"},
+        help_recipe_id="one_way_anova",
         info_text=(
             "The primary predictor — determines the statistical test to be used.\n\n"
             "Categorical (e.g. treatment group, sex) → t-Test or ANOVA.\n"
@@ -4567,6 +4865,7 @@ def _ap_init_ui(self):
         "Factor 2",
         "Optional: drop a second factor here for Two-Way or Mixed ANOVA.",
         accepted_kinds={"numeric", "categorical", "datetime"},
+        help_recipe_id="two_way_anova",
         info_text=(
             "Second factor for Two-Way ANOVA or Mixed ANOVA.\n\n"
             "Only needed when interaction effects are of interest "
@@ -4579,6 +4878,7 @@ def _ap_init_ui(self):
         "Subject ID",
         "Optional: drop a subject identifier here for paired / repeated-measures designs.",
         accepted_kinds={"numeric", "categorical", "datetime"},
+        help_recipe_id="repeated_measures_anova",
         info_text=(
             "Patient or subject identifier for paired/repeated-measures designs.\n\n"
             "Required for:\n"
@@ -4594,6 +4894,7 @@ def _ap_init_ui(self):
         "Drop continuous confounders here (e.g., Age, BMI, Baseline).",
         accepted_kinds={"numeric"},
         allow_multiple=True,
+        help_recipe_id="ancova",
         info_text=(
             "Continuous confounders to be statistically controlled for "
             "(e.g. Age, BMI, Baseline value, Comorbidity score).\n\n"
@@ -4609,6 +4910,17 @@ def _ap_init_ui(self):
         bucket.changed.connect(self.on_mapping_changed)
         center_layout.addWidget(bucket)
 
+    self.analysis_group_button = QPushButton("Select Groups For Analysis")
+    self.analysis_group_button.setObjectName("secondaryButton")
+    self.analysis_group_button.clicked.connect(self.open_analysis_group_selector)
+    self.analysis_group_button.setEnabled(False)
+    center_layout.addWidget(self.analysis_group_button)
+
+    self.analysis_group_label = QLabel("No group subset selected. Default: all groups in Factor 1.")
+    self.analysis_group_label.setObjectName("panelDescription")
+    self.analysis_group_label.setWordWrap(True)
+    center_layout.addWidget(self.analysis_group_label)
+
     self.mapping_feedback_label = QLabel("Load a file to activate the mapping workflow.")
     self.mapping_feedback_label.setObjectName("panelDescription")
     self.mapping_feedback_label.setWordWrap(True)
@@ -4619,12 +4931,6 @@ def _ap_init_ui(self):
     self.start_analysis_button.clicked.connect(self.determine_and_run_test)
     self.start_analysis_button.setEnabled(False)
     center_layout.addWidget(self.start_analysis_button)
-
-    self.exploratory_matrix_button = QPushButton("Explorative Korrelationsmatrix")
-    self.exploratory_matrix_button.setObjectName("secondaryButton")
-    self.exploratory_matrix_button.clicked.connect(self.open_exploratory_matrix_dialog)
-    self.exploratory_matrix_button.setEnabled(False)
-    center_layout.addWidget(self.exploratory_matrix_button)
 
     center_layout.addStretch()
 
@@ -4659,6 +4965,7 @@ def _ap_init_ui(self):
     self.current_output_dir = None
     self.current_multi_results = {}
     self.current_rendered_dataset = None
+    self.analysis_selected_groups = []
 
 
 def _ap_refresh_preview_table(self):
@@ -4775,15 +5082,173 @@ def _ap_update_mode_constraints(self):
         self.on_mapping_changed()
 
 
+def _ap_get_available_analysis_groups(self):
+    if self.df is None:
+        return []
+    factor_columns = self.factor1_bucket.get_assigned_columns()
+    if not factor_columns:
+        return []
+    factor_col = factor_columns[0]
+    if factor_col not in self.df.columns:
+        return []
+
+    working_df = self.df.copy()
+    active_filter = getattr(self, 'filter_bucket', None)
+    filter_spec = active_filter.get_filter() if active_filter else None
+    if filter_spec:
+        filter_col, filter_val = filter_spec
+        if filter_col in working_df.columns:
+            working_df = working_df[working_df[filter_col] == filter_val]
+    return _sorted_unique(working_df[factor_col].dropna().tolist())
+
+
+def _ap_update_analysis_group_selection_ui(self):
+    available_groups = self._ap_get_available_analysis_groups()
+    selected_set = set(self.analysis_selected_groups or [])
+    self.analysis_selected_groups = [group for group in available_groups if group in selected_set]
+
+    has_factor1 = bool(self.factor1_bucket.get_assigned_columns())
+    self.analysis_group_button.setEnabled(has_factor1 and len(available_groups) >= 2)
+
+    if not has_factor1:
+        self.analysis_group_label.setText("Assign Factor 1 to enable explicit group selection for analysis.")
+        return
+    if not available_groups:
+        self.analysis_group_label.setText("No groups are currently available in Factor 1.")
+        return
+    if self.analysis_selected_groups:
+        selected_text = ", ".join(map(str, self.analysis_selected_groups))
+        self.analysis_group_label.setText(
+            f"Selected groups for analysis ({len(self.analysis_selected_groups)}/{len(available_groups)}): {selected_text}"
+        )
+    else:
+        self.analysis_group_label.setText(
+            f"No group subset selected. Default: all {len(available_groups)} groups in Factor 1."
+        )
+
+
+def _ap_open_analysis_group_selector(self):
+    available_groups = self._ap_get_available_analysis_groups()
+    if len(available_groups) < 2:
+        QMessageBox.information(
+            self,
+            "Group Selection",
+            "At least two groups in Factor 1 are required to define an analysis subset."
+        )
+        return
+
+    dialog = GroupSelectionDialog(
+        available_groups,
+        self,
+        window_title="Select Groups For Analysis",
+        description="Select the Factor 1 groups to include in the analysis run:"
+    )
+    preselected = set(self.analysis_selected_groups or available_groups)
+    for group, checkbox in dialog.group_checks.items():
+        checkbox.setChecked(group in preselected)
+
+    if dialog.exec_() != QDialog.Accepted:
+        return
+
+    selected_groups = dialog.get_selected_groups()
+    if len(selected_groups) < 2:
+        QMessageBox.warning(
+            self,
+            "Group Selection",
+            "Please select at least two groups for the analysis."
+        )
+        return
+
+    self.analysis_selected_groups = selected_groups
+    self._ap_update_analysis_group_selection_ui()
+    self.on_mapping_changed()
+
+
 def _ap_set_workflow_state(self, stage, message, running=False):
     self.pipeline_tracker.set_stage(stage, running=running)
     self.analysis_status_badge.setText(message)
+
+
+def _ap_is_binary_outcome_for_help(self):
+    dv_columns = self.dv_bucket.get_assigned_columns()
+    if len(dv_columns) != 1 or self.df is None:
+        return False
+
+    dv_col = dv_columns[0]
+    if dv_col not in self.df.columns:
+        return False
+
+    series = self.df[dv_col].dropna()
+    if series.empty:
+        return False
+
+    unique_values = series.unique()
+    if len(unique_values) != 2:
+        return False
+
+    is_01 = set(unique_values) <= {0, 1, 0.0, 1.0}
+    is_str = all(isinstance(value, str) for value in unique_values)
+    return bool(is_01 or is_str)
+
+
+def _ap_is_continuous_factor1_for_help(self):
+    factor_columns = self.factor1_bucket.get_assigned_columns()
+    if not factor_columns or self.df is None:
+        return False
+
+    factor_col = factor_columns[0]
+    if factor_col not in self.df.columns:
+        return False
+
+    try:
+        from correlation_models import _is_continuous as _corr_is_continuous
+        return bool(_corr_is_continuous(self.df, factor_col))
+    except Exception:
+        factor_kinds = self.factor1_bucket.get_assigned_kinds()
+        if factor_kinds and factor_kinds[0] != "numeric":
+            return False
+        return bool(self.df[factor_col].dropna().nunique() > 10)
+
+
+def _ap_resolve_help_recipe_for_bucket(self, bucket_widget, fallback_recipe_id=None):
+    has_factor2 = bool(self.factor2_bucket.get_assigned_columns())
+    has_subject = bool(self.subject_bucket.get_assigned_columns())
+    has_covariates = bool(self.covariates_bucket.get_assigned_columns())
+    has_binary_outcome = self._is_binary_outcome_for_help()
+    factor1_continuous = self._is_continuous_factor1_for_help()
+
+    if bucket_widget is self.factor2_bucket:
+        return "mixed_anova" if has_subject else "two_way_anova"
+
+    if bucket_widget is self.subject_bucket:
+        return "mixed_anova" if has_factor2 else "repeated_measures_anova"
+
+    if bucket_widget is self.covariates_bucket:
+        if has_binary_outcome:
+            return "logistic_regression"
+        return "linear_regression" if factor1_continuous else "ancova"
+
+    if bucket_widget is self.factor1_bucket:
+        if has_binary_outcome:
+            return "logistic_regression"
+        if has_factor2 and has_subject:
+            return "mixed_anova"
+        if has_factor2:
+            return "two_way_anova"
+        if has_subject:
+            return "repeated_measures_anova"
+        if has_covariates:
+            return "linear_regression" if factor1_continuous else "ancova"
+        return "correlation" if factor1_continuous else "one_way_anova"
+
+    return fallback_recipe_id
 
 
 def _ap_on_mapping_changed(self):
     if self.df is None:
         self.start_analysis_button.setEnabled(False)
         self.mapping_feedback_label.setText("Load a file to activate the mapping workflow.")
+        self._ap_update_analysis_group_selection_ui()
         return
 
     dv_columns = self.dv_bucket.get_assigned_columns()
@@ -4793,6 +5258,7 @@ def _ap_on_mapping_changed(self):
     ] if column]
     subject_columns = self.subject_bucket.get_assigned_columns()
     covariate_columns = self.covariates_bucket.get_assigned_columns()
+    self._ap_update_analysis_group_selection_ui()
 
     if not dv_columns:
         self.mapping_feedback_label.setText("Assign at least one measurement column.")
@@ -4893,6 +5359,7 @@ def _ap_load_file(self):
         self.auto_file_label.setText(os.path.basename(self.file_path))
         self.selected_columns = []
         self.combine_columns = False
+        self.analysis_selected_groups = []
         self._maybe_pivot()
         self.numeric_columns = [column for column in self.df.columns if pd.api.types.is_numeric_dtype(self.df[column])]
         self._refresh_preview_table()
@@ -4905,7 +5372,6 @@ def _ap_load_file(self):
         self.current_analysis_result = None
         self.current_multi_results = {}
         self.current_output_dir = None
-        self.exploratory_matrix_button.setEnabled(True)
         self.on_mapping_changed()
     except Exception as exc:
         self.df = None
@@ -4919,6 +5385,7 @@ def _ap_load_sheet(self, index):
         return
     try:
         self.df = pd.read_excel(self.file_path, sheet_name=self.auto_sheet_combo.itemText(index))
+        self.analysis_selected_groups = []
         self._maybe_pivot()
         self.numeric_columns = [column for column in self.df.columns if pd.api.types.is_numeric_dtype(self.df[column])]
         self._refresh_preview_table()
@@ -4962,12 +5429,30 @@ def _ap_build_analysis_context(self):
         "display_group_col": factor_columns[0],
         "inferred_test": None,
         "filter": filter_spec,
+        "selected_groups": list(self.analysis_selected_groups or []),
+        "selected_group_column": factor_columns[0],
     }
+
+    analysis_df = self.df.copy()
+    if filter_spec:
+        filter_col, filter_val = filter_spec
+        if filter_col in analysis_df.columns:
+            analysis_df = analysis_df[analysis_df[filter_col] == filter_val]
+
+    factor1_levels = _sorted_unique(analysis_df[factor_columns[0]].dropna().tolist())
+    selected_factor1_groups = [group for group in context["selected_groups"] if group in factor1_levels]
+    if selected_factor1_groups:
+        if len(selected_factor1_groups) < 2:
+            raise ValueError("At least two selected groups are required for the analysis.")
+        context["selected_groups"] = selected_factor1_groups
+        analysis_df = analysis_df[analysis_df[factor_columns[0]].isin(selected_factor1_groups)]
+    else:
+        context["selected_groups"] = []
 
     # --- Binary DV detection: Logistic Regression ---
     if len(dv_columns) == 1:
         dv_col = dv_columns[0]
-        _series = self.df[dv_col].dropna()
+        _series = analysis_df[dv_col].dropna()
         _unique = _series.unique()
         # Conservative check: exactly 2 values that are 0/1 (or two strings),
         # AND column name does not hint at a grouping variable.
@@ -4987,12 +5472,12 @@ def _ap_build_analysis_context(self):
 
     if len(factor_columns) == 1:
         factor = factor_columns[0]
-        levels = _sorted_unique(self.df[factor].tolist())
+        levels = _sorted_unique(analysis_df[factor].tolist())
         if len(levels) < 2:
             raise ValueError(f"Factor '{factor}' needs at least two levels.")
         context["group_labels"] = levels
         if subject_column:
-            subject_span = self.df.groupby(subject_column)[factor].nunique(dropna=True)
+            subject_span = analysis_df.groupby(subject_column)[factor].nunique(dropna=True)
             if not subject_span.empty and subject_span.max() <= 1:
                 raise ValueError("The selected Subject ID does not create a repeated-measures structure for Factor 1.")
             context["within_factors"] = [factor]
@@ -5003,7 +5488,7 @@ def _ap_build_analysis_context(self):
         factor_a, factor_b = factor_columns
         combinations = []
         seen_pairs = set()
-        for _, row in self.df[[factor_a, factor_b]].dropna().iterrows():
+        for _, row in analysis_df[[factor_a, factor_b]].dropna().iterrows():
             pair = (row[factor_a], row[factor_b])
             if pair in seen_pairs:
                 continue
@@ -5015,7 +5500,7 @@ def _ap_build_analysis_context(self):
         if subject_column:
             role_by_factor = {}
             for factor in factor_columns:
-                per_subject = self.df.groupby(subject_column)[factor].nunique(dropna=True)
+                per_subject = analysis_df.groupby(subject_column)[factor].nunique(dropna=True)
                 role_by_factor[factor] = "between" if not per_subject.empty and per_subject.max() <= 1 else "within"
             between_factors = [factor for factor, role in role_by_factor.items() if role == "between"]
             within_factors = [factor for factor, role in role_by_factor.items() if role == "within"]
@@ -5075,7 +5560,7 @@ def _ap_build_analysis_context(self):
     if len(factor_columns) == 1 and not subject_column:
         try:
             from correlation_models import _is_continuous as _corr_is_continuous
-            if _corr_is_continuous(self.df, factor_columns[0]):
+            if _corr_is_continuous(analysis_df, factor_columns[0]):
                 if covariate_columns:
                     context["inferred_test"] = "linear_regression"
                 else:
@@ -5156,7 +5641,11 @@ def _ap_format_assumptions(self, results):
     variance = "Variance check not available"
 
     normality_tests = results.get("normality_tests", {})
-    if "model_residuals_transformed" in normality_tests:
+    transformation_applied = bool(
+        results.get("transformation")
+        and str(results.get("transformation")).lower() not in ("none", "no further")
+    )
+    if transformation_applied and "model_residuals_transformed" in normality_tests:
         is_normal = normality_tests["model_residuals_transformed"].get("is_normal")
         normality = "Normality OK after transformation" if is_normal else "Normality still violated after transformation"
     elif "model_residuals" in normality_tests:
@@ -5170,7 +5659,7 @@ def _ap_format_assumptions(self, results):
         normality = "Normality OK" if is_normal else "Normality violated"
 
     variance_test = results.get("variance_test", {})
-    variance_source = variance_test.get("transformed", variance_test)
+    variance_source = variance_test.get("transformed", variance_test) if transformation_applied else variance_test
     if variance_source and isinstance(variance_source, dict) and variance_source.get("equal_variance") is not None:
         variance = "Variance homogeneous" if variance_source.get("equal_variance") else "Variance heterogeneous"
 
@@ -5202,7 +5691,11 @@ def _ap_extract_normality_metric(self, results):
             return "Slope homogeneity OK"
 
     normality_tests = results.get("normality_tests", {})
-    if "model_residuals_transformed" in normality_tests:
+    transformation_applied = bool(
+        results.get("transformation")
+        and str(results.get("transformation")).lower() not in ("none", "no further")
+    )
+    if transformation_applied and "model_residuals_transformed" in normality_tests:
         is_normal = normality_tests["model_residuals_transformed"].get("is_normal")
         return "OK (after transformation)" if is_normal else "Violated (after transformation)"
     if "model_residuals" in normality_tests:
@@ -5236,8 +5729,12 @@ def _ap_extract_variance_metric(self, results):
         if r2 is not None:
             return f"Adj. R² = {r2:.3f}"
 
+    transformation_applied = bool(
+        results.get("transformation")
+        and str(results.get("transformation")).lower() not in ("none", "no further")
+    )
     variance_test = results.get("variance_test", {})
-    variance_source = variance_test.get("transformed", variance_test)
+    variance_source = variance_test.get("transformed", variance_test) if transformation_applied else variance_test
     if variance_source and isinstance(variance_source, dict):
         equal_variance = variance_source.get("equal_variance")
         if equal_variance is True:
@@ -5350,16 +5847,76 @@ def _ap_format_posthoc_status(self, context, results):
     return "No post-hoc performed."
 
 
+def _ap_format_context_design(self, context, results):
+    model_label = self._detected_test_label(context)
+    factor_columns = context.get("factor_columns") or []
+    factor_text = ", ".join(map(str, factor_columns)) if factor_columns else "Not specified"
+    subject_column = context.get("subject_column") or "None"
+    return (
+        f"Model: {model_label}\n"
+        f"Factors: {factor_text}\n"
+        f"Subject ID: {subject_column}"
+    )
+
+
+def _ap_format_context_sample_overview(self, context, results):
+    selected_groups = results.get("selected_groups") or context.get("selected_groups") or results.get("groups") or []
+    selected_groups = [str(group) for group in selected_groups]
+    group_column = results.get("group_column") or context.get("display_group_col") or "Not specified"
+
+    n_total = results.get("n_total")
+    if n_total is None:
+        n_total = results.get("n")
+    if n_total is None:
+        raw_data = results.get("raw_data") or {}
+        if isinstance(raw_data, dict):
+            n_total = sum(len(values) for values in raw_data.values() if hasattr(values, "__len__"))
+
+    if selected_groups:
+        if len(selected_groups) > 6:
+            group_text = ", ".join(selected_groups[:6]) + f" (+{len(selected_groups) - 6} more)"
+        else:
+            group_text = ", ".join(selected_groups)
+    else:
+        group_text = "All available groups"
+
+    n_display = str(n_total) if n_total is not None else "N/A"
+    return (
+        f"Sample size (N): {n_display}\n"
+        f"Grouping column: {group_column}\n"
+        f"Groups: {group_text}"
+    )
+
+
+def _ap_format_context_analysis_scope(self, context, results):
+    covariates = results.get("covariates") or context.get("covariates") or []
+    covariate_text = ", ".join(map(str, covariates)) if covariates else "None"
+
+    filter_text = results.get("filter_applied")
+    if not filter_text and context.get("filter"):
+        filter_col, filter_val = context["filter"]
+        filter_text = f"{filter_col} = {filter_val}"
+    if not filter_text:
+        filter_text = "None"
+
+    posthoc_text = self._format_posthoc_status(context, results)
+    return (
+        f"Filter: {filter_text}\n"
+        f"Covariates: {covariate_text}\n"
+        f"Post-hoc: {posthoc_text}"
+    )
+
+
 def _ap_render_result_summary(self, context, results, output_dir, subtitle):
     summary = {
         "subtitle": subtitle,
         "metric_normality": self._extract_normality_metric(results),
         "metric_variance": self._extract_variance_metric(results),
-        "metric_main_test": self._format_main_test_metric(results),
-        "metric_effect_size": self._format_effect_size_metric(results),
-        "detected_test": self._detected_test_label(context),
-        "rationale": self._format_rationale(context, results),
-        "posthoc": self._format_posthoc_status(context, results),
+        "inference_main_test": self._format_main_test_metric(results),
+        "inference_effect_size": self._format_effect_size_metric(results),
+        "context_design": self._format_context_design(context, results),
+        "context_sample_overview": self._format_context_sample_overview(context, results),
+        "context_analysis_scope": self._format_context_analysis_scope(context, results),
     }
     self.result_cockpit.set_summary(summary, enable_plot=True, enable_output=bool(output_dir))
     ConfettiOverlay(self)
@@ -5541,6 +6098,7 @@ def _ap_reset_application_state(self):
     self.current_multi_results = {}
     self.current_output_dir = None
     self.current_rendered_dataset = None
+    self.analysis_selected_groups = []
     self.temp_plot_appearance_settings = None
     self._wide_format_info = None
     self.result_cockpit.clear()
@@ -5576,6 +6134,12 @@ StatisticalAnalyzerApp._apply_mapping_heuristics = _ap_apply_mapping_heuristics
 StatisticalAnalyzerApp.update_mode_constraints = _ap_update_mode_constraints
 StatisticalAnalyzerApp.on_mapping_changed = _ap_on_mapping_changed
 StatisticalAnalyzerApp._set_workflow_state = _ap_set_workflow_state
+StatisticalAnalyzerApp._is_binary_outcome_for_help = _ap_is_binary_outcome_for_help
+StatisticalAnalyzerApp._is_continuous_factor1_for_help = _ap_is_continuous_factor1_for_help
+StatisticalAnalyzerApp._resolve_help_recipe_for_bucket = _ap_resolve_help_recipe_for_bucket
+StatisticalAnalyzerApp._ap_get_available_analysis_groups = _ap_get_available_analysis_groups
+StatisticalAnalyzerApp._ap_update_analysis_group_selection_ui = _ap_update_analysis_group_selection_ui
+StatisticalAnalyzerApp.open_analysis_group_selector = _ap_open_analysis_group_selector
 StatisticalAnalyzerApp._build_analysis_context = _ap_build_analysis_context
 StatisticalAnalyzerApp._detected_test_label = _ap_detected_test_label
 StatisticalAnalyzerApp._execute_single_analysis = _ap_execute_single_analysis
@@ -5587,6 +6151,9 @@ StatisticalAnalyzerApp._format_effect_size_metric = _ap_format_effect_size_metri
 StatisticalAnalyzerApp._is_ttest_result = _ap_is_ttest_result
 StatisticalAnalyzerApp._format_rationale = _ap_format_rationale
 StatisticalAnalyzerApp._format_posthoc_status = _ap_format_posthoc_status
+StatisticalAnalyzerApp._format_context_design = _ap_format_context_design
+StatisticalAnalyzerApp._format_context_sample_overview = _ap_format_context_sample_overview
+StatisticalAnalyzerApp._format_context_analysis_scope = _ap_format_context_analysis_scope
 StatisticalAnalyzerApp._render_result_summary = _ap_render_result_summary
 StatisticalAnalyzerApp.determine_and_run_test = _ap_determine_and_run_test
 StatisticalAnalyzerApp.configure_plot_from_result = _ap_configure_plot_from_result
@@ -5598,7 +6165,7 @@ StatisticalAnalyzerApp._maybe_pivot = _ap_maybe_pivot
 def _ap_open_exploratory_matrix_dialog(self):
     """Open the ExploratoryMatrixDialog with the currently loaded DataFrame."""
     if self.df is None or self.df.empty:
-        QMessageBox.warning(self, "Keine Daten", "Bitte zuerst eine Datei laden.")
+        QMessageBox.warning(self, "No data", "Please load a file first.")
         return
     output_dir = getattr(self, 'current_output_dir', None) or os.path.dirname(
         getattr(self, 'file_path', '') or ''

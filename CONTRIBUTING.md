@@ -13,6 +13,7 @@ This document explains how to contribute, the workflow we expect, coding style, 
 - Branch naming
 - Commit messages
 - Pull request (PR) structure and expectations
+- Internal UI design system
 - Code style and quality tools
 - Tests and testing expectations
 - Guidelines for adding new statistical functions
@@ -29,8 +30,20 @@ This document explains how to contribute, the workflow we expect, coding style, 
 3. Add the main repo as upstream:
    git remote add upstream https://github.com/philippkrumm/BioMedStatX.git
 4. Create a topic branch for your work (see Branch naming below).
+5. For GUI/visual changes, read docs/DEV_UI_DESIGN_SYSTEM.md before implementation.
 
 Always work in your fork and topic branches. Do not commit directly to the `main` (or `master`) branch.
+
+---
+
+## Internal UI design system
+
+For visual consistency across the desktop GUI and HTML report, use:
+
+- docs/DEV_UI_DESIGN_SYSTEM.md
+
+This document defines design principles, color/spacing direction, component behavior,
+and UI QA guardrails for contributors.
 
 ---
 

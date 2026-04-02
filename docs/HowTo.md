@@ -12,6 +12,28 @@ fontsize: 11pt
 
 This guide explains how to use the BioMedStatX application: from launching the program, importing data, running statistical analyses, customizing plots, and exporting results. All information is focused on the user interface, available statistics, and practical workflow — no programming or code knowledge required.
 
+## 0. First-Time Orientation
+
+If you are new to the app, this is the most important concept:
+
+| BioMedStatX decides automatically | You decide manually |
+|---|---|
+| Which supported model family fits your mapping | Which columns go into which buckets |
+| Which assumption checks run | Whether to apply an offered transformation |
+| Parametric vs nonparametric route (when assumptions fail) | Which post-hoc procedure to run when options are offered |
+| Which main test is executed | Whether to restrict rows via Filter bucket |
+| Which outputs are generated | Which groups to include via Select Groups for Analysis |
+
+Typical execution order for one analysis run:
+
+1. Validate mapping and active subset (Filter and selected groups).
+2. Run assumption checks.
+3. Offer transformation when needed.
+4. Run main test.
+5. Offer post-hoc selection if relevant.
+6. Build plots and decision path.
+7. Export results (Excel, plus optional HTML report depending workflow).
+
 ---
 
 ## 1. Launching the Application
@@ -30,6 +52,22 @@ This guide explains how to use the BioMedStatX application: from launching the p
 Click **Load Excel / CSV** to select your data file (Excel `.xlsx`/`.xls` or CSV `.csv`).
 
 After loading, select the **Worksheet** from the dropdown. A **Table Preview** shows the first rows of your data so you can verify it loaded correctly.
+
+Minimum data structure expectations:
+
+| Requirement | Why it matters |
+|---|---|
+| One row = one observation | Required for all statistical workflows |
+| At least one numeric measurement column | Needed for Dependent Variable |
+| At least one grouping or predictor column | Needed for test/model selection |
+| Repeated-measures designs need Subject ID | Links repeated rows to the same subject |
+| At least two levels in the compared grouping factor | Needed for group comparison tests |
+
+Practical recommendation:
+
+- Keep one header row with clear column names.
+- Avoid merged cells and mixed data types in one column.
+- Use categorical labels consistently (for example, always `WT` and not mixed `WT`, `wt`, `control`).
 
 ---
 
@@ -67,6 +105,8 @@ This is a common source of confusion:
 
 The mapping status line below the buckets tells you whether the current mapping is valid and which test will be inferred.
 
+After Factor 1 is mapped, you can use **Select Groups For Analysis** to limit the run to specific factor levels. If no subset is selected, all available groups are used.
+
 ---
 
 ## 4. Single vs. Multi-Dataset Analysis
@@ -82,12 +122,18 @@ Use the radio buttons above the table preview to switch between modes:
 
 Click **Start Auto Analysis**. The app infers the correct statistical test from your mapping and runs the full workflow automatically:
 
-1. Normality and variance checks
-2. Test selection (parametric or nonparametric)
-3. Main test execution
-4. Post-hoc comparisons (if significant)
-5. Plot generation
-6. Export to Excel
+1. Apply active data scope (Filter bucket and selected groups).
+2. Normality and variance checks.
+3. Test selection (parametric or nonparametric route).
+4. Main test execution.
+5. Post-hoc comparisons (if significant and applicable).
+6. Plot generation.
+7. Export.
+
+During this process, user prompts may appear for:
+
+- Transformation choice (when assumptions are violated).
+- Post-hoc method choice (when multiple procedures are valid).
 
 ---
 
@@ -158,11 +204,29 @@ BioMedStatX automatically selects the appropriate test. Supported designs includ
 
 Nonparametric fallbacks for Repeated Measures ANOVA (Friedman), Two-Way ANOVA (Freedman-Lane), and Mixed ANOVA (Brunner-Langer ATS) are fully implemented and applied automatically when normality assumptions cannot be met.
 
+How test responsibility is split:
+
+| Step | Owner |
+|---|---|
+| Mapping validation and test inference | BioMedStatX |
+| Assumption checks | BioMedStatX |
+| Fallback to nonparametric path | BioMedStatX |
+| Transformation acceptance | User |
+| Post-hoc procedure choice (when prompted) | User |
+| Final execution and export | BioMedStatX |
+
 ---
 
 ## 11. Decision Tree Visualization
 
-The statistical decision process is documented as a graphical flowchart. The actual path taken through the decision tree is highlighted. The image is included in the exported Excel workbook.
+The statistical decision process is documented as a graphical flowchart. The actual path taken through the decision tree is highlighted.
+
+Current behavior:
+
+- Excel export includes the decision tree image.
+- HTML report view includes an interactive decision tree with zoom, pan, and replay.
+- Highlighted arrows replay in sequence along the active path.
+- Initial HTML viewport focuses on the highlighted path by default (not the full tree), with reset returning to that focused default view.
 
 ---
 
@@ -178,6 +242,8 @@ After the analysis, all results are exported automatically to a comprehensive Ex
 - Raw data snapshot
 - Pairwise comparison table
 - A chronological analysis log
+
+Depending on workflow and export path, an offline HTML report can also be generated to provide an interactive companion view of results and decision path.
 
 Each sheet is clearly named for easy navigation.
 
@@ -324,7 +390,7 @@ For detailed guidance on interpreting diagnostics, see [CORRELATION_REGRESSION_G
 
 ## 18. Exploratory Correlation Matrix
 
-The **Explorative Korrelationsmatrix** button (in the Auto-pilot center panel, below Start Analysis) opens a dedicated dialog for exploring pairwise correlations across all numeric variables in your dataset.
+Open **Analysis -> Exploratory Correlation Matrix** to launch a dedicated dialog for exploring pairwise correlations across all numeric variables in your dataset.
 
 ### Dialog options
 
