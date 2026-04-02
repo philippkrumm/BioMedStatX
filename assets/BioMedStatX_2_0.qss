@@ -561,6 +561,26 @@ QMessageBox QCheckBox::indicator:checked {
     background: #0f766e;
 }
 
+QLabel#lblDialogDescription {
+    color: #5a7c84;
+}
+
+QLabel#lblSignificanceHint,
+QLabel#lblMutedHint {
+    color: #6b7c84;
+    font-style: italic;
+}
+
+QLabel#lblSectionHeading {
+    color: #16313a;
+    font-weight: 700;
+}
+
+QLabel#lblCriticalWarning {
+    color: #9f3a38;
+    font-weight: 700;
+}
+
 QDialog QListWidget,
 QMessageBox QListWidget {
     background: #f4f8fb;
@@ -577,6 +597,20 @@ QDialog#debugLogWindow {
     color: #16313a;
     font-family: "Segoe UI", "Avenir Next", sans-serif;
     font-size: 13px;
+}
+
+QWidget#debugLogWindow {
+    background: #f0f4f8;
+    border: none;
+    border-radius: 12px;
+}
+
+QTextEdit#debugConsoleText {
+    background: #0d2236;
+    border: 1px solid #1e3a56;
+    border-radius: 10px;
+    color: #d9e8f5;
+    padding: 8px;
 }
 
 QDialog#plotConfigDialog QGroupBox,
@@ -643,6 +677,33 @@ QDialog#plotAestheticsDialog QTabBar::tab:selected {
 
 QDialog#plotAestheticsDialog QTabBar::tab:hover:!selected {
     background: #d4efec;
+    color: #16313a;
+}
+
+QDialog#graphVisualizationHelpDialog,
+QDialog#statsExcelHelpDialog,
+QDialog#gettingStartedHelpDialog,
+QDialog#subjectWithinFactorDialog,
+QDialog#posthocSelectionDialog,
+QDialog#nonparamPosthocDialog,
+QDialog#pairSelectionDialog,
+QDialog#controlGroupDialog,
+QDialog#transformationSelectionDialog,
+QDialog#comparisonSelectionDialog,
+QDialog#groupSelectionDialog,
+QDialog#columnSelectionDialog,
+QDialog#pairwiseComparisonDialog,
+QDialog#twoWayAnovaDialog,
+QDialog#outlierDetectionDialog,
+QDialog#exploratoryMatrixDialog {
+    background: #f0f4f8;
+}
+
+QTextBrowser#helpDialogBrowser {
+    background: #f7fbff;
+    border: 1px solid #d7e6f1;
+    border-radius: 10px;
+    padding: 8px;
     color: #16313a;
 }
 

@@ -10,6 +10,7 @@ from itertools import combinations
 from datetime import datetime
 from matplotlib.ticker import ScalarFormatter
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QRadioButton, QDialogButtonBox
+from PyQt5.QtCore import Qt
 from decisiontreevisualizer import DecisionTreeVisualizer
 from lazy_imports import (
     get_pingouin, get_scipy_stats, get_seaborn,
@@ -2332,8 +2333,15 @@ except ImportError:
             
 class UIDialogManager:
     @staticmethod
+    def _configure_dialog(dialog, object_name=None):
+        if object_name:
+            dialog.setObjectName(object_name)
+        dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+
+    @staticmethod
     def select_posthoc_test_dialog(parent=None, progress_text=None, column_name=None, default_method=None, equal_variance=None):
         dialog = QDialog(parent)
+        UIDialogManager._configure_dialog(dialog, object_name="posthocSelectionDialog")
         layout = QVBoxLayout(dialog)
 
         # Set window title
@@ -2411,6 +2419,7 @@ class UIDialogManager:
         from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QRadioButton, QDialogButtonBox
 
         dialog = QDialog(parent)
+        UIDialogManager._configure_dialog(dialog, object_name="nonparamPosthocDialog")
         layout = QVBoxLayout(dialog)
 
         title = "Nonparametric Post-hoc Test"
@@ -2456,6 +2465,7 @@ class UIDialogManager:
         class PairSelectionDialog(QDialog):
             def __init__(self, groups, parent=None):
                 super().__init__(parent)
+                UIDialogManager._configure_dialog(self, object_name="pairSelectionDialog")
                 self.setWindowTitle("Select Group Pairs for Paired t-tests")
                 self.selected_pairs = []
                 layout = QVBoxLayout(self)
@@ -2517,6 +2527,7 @@ class UIDialogManager:
         class ControlGroupDialog(QDialog):
             def __init__(self, available_groups, parent=None):
                 super().__init__(parent)
+                UIDialogManager._configure_dialog(self, object_name="controlGroupDialog")
                 self.setWindowTitle("Select Control Group")
                 self.selected_group = None
                 self.groups = available_groups
@@ -2559,6 +2570,7 @@ class UIDialogManager:
         # This ensures consistent behavior between normal tests and advanced tests
         
         dialog = QDialog(parent)
+        UIDialogManager._configure_dialog(dialog, object_name="transformationSelectionDialog")
         layout = QVBoxLayout(dialog)
 
         # Set window title

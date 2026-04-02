@@ -1477,7 +1477,7 @@ class SignificanceTab(QWidget):
         else:
             no_data_label = QLabel("No post-hoc data available.\nRun analysis with a post-hoc test to enable bracket selection.")
             no_data_label.setWordWrap(True)
-            no_data_label.setStyleSheet("color: gray; font-style: italic;")
+            no_data_label.setObjectName("lblMutedHint")
             pairs_layout.addWidget(no_data_label)
 
         content_layout.addWidget(pairs_group)

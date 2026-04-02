@@ -169,3 +169,4 @@ For any non-trivial UI change:
 5. Shadow usage is subtle and not muddy.
 6. Animations do not cause instability or jank.
 7. HTML export remains readable in light, dark, and print contexts.
+8. Every text has to be in englisch!

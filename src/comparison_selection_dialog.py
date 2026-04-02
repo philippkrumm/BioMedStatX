@@ -4,6 +4,8 @@ from PyQt5.QtCore import Qt
 class ComparisonSelectionDialog(QDialog):
     def __init__(self, comparisons, parent=None, checked_by_default=True):
         super().__init__(parent)
+        self.setObjectName("comparisonSelectionDialog")
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self.setWindowTitle("Select Group Comparisons")
         self.selected = set()
         self.comparisons = comparisons
@@ -14,6 +16,7 @@ class ComparisonSelectionDialog(QDialog):
     def _init_ui(self):
         layout = QVBoxLayout(self)
         label = QLabel("Select the group comparisons you want to include in the post-hoc test:")
+        label.setObjectName("lblDialogDescription")
         layout.addWidget(label)
 
         # Scroll area for many comparisons

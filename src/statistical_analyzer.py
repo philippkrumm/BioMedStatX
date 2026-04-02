@@ -1,14 +1,12 @@
 import sys
 import time
 import os
-# --- FIX FÜR MACOS QT PLUGIN FEHLER ---
-# PyQt5 über pip bündelt eigene Qt5-Libs, die auf macOS 26 Tahoe nicht laden.
-# Stattdessen: Homebrew qt@5 Platform-Plugins verwenden.
 if sys.platform == "darwin":
-    _hb_qt_plugins = "/opt/homebrew/opt/qt@5/plugins"
-    if os.path.isdir(_hb_qt_plugins):
-        os.environ.setdefault("QT_QPA_PLATFORM_PLUGIN_PATH", _hb_qt_plugins)
-# --------------------------------------
+    # Keep Qt environment clean so PyQt uses one runtime only.
+    os.environ.pop("DYLD_FRAMEWORK_PATH", None)
+    os.environ.pop("DYLD_LIBRARY_PATH", None)
+    os.environ.pop("QT_PLUGIN_PATH", None)
+    os.environ.pop("QT_QPA_PLATFORM_PLUGIN_PATH", None)
 from PyQt5.QtWidgets import QDesktopWidget
 # Core imports - always needed
 import numpy as np
@@ -82,6 +80,13 @@ def _apply_elevation(widget, radius=18, x_offset=0, y_offset=4, opacity=0.18):
     shadow.setOffset(x_offset, y_offset)
     shadow.setColor(QColor(0, 0, 0, int(255 * opacity)))
     widget.setGraphicsEffect(shadow)
+    
+def _configure_dialog(dialog, object_name=None, remove_context_help=True):
+    """Apply common dialog defaults so all windows pick up the same QSS rules."""
+    if object_name:
+        dialog.setObjectName(object_name)
+    if remove_context_help and isinstance(dialog, QDialog):
+        dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
 
 
 DEFAULT_COLORS = ['#0f766e', '#1f7a5a', '#b7791f', '#9f3a38', '#1d4ed8', '#7c3aed']  # Teal, DarkGreen, Amber, DuskyRed, Indigo, Violet
@@ -157,8 +162,7 @@ class GroupSelectionDialog(QDialog):
             QMessageBox.critical(parent, "Error", "No groups available! Dialog will not open.")
             raise ValueError("No groups passed to GroupSelectionDialog.")
         super().__init__(parent)
-        # Remove the question mark from the window
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        _configure_dialog(self, object_name="groupSelectionDialog")
         self.setWindowTitle(window_title)
         self.resize(300, 400)
         
@@ -227,7 +231,7 @@ class HelpHubDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setObjectName("helpHubDialog")
+        _configure_dialog(self, object_name="helpHubDialog")
         self.setWindowTitle("BioMedStatX Help Hub")
         self.setModal(False)
         self.resize(1120, 760)
@@ -280,6 +284,48 @@ class HelpHubDialog(QDialog):
         self.recipe_browser = QTextBrowser()
         self.recipe_browser.setObjectName("helpRecipeBrowser")
         self.recipe_browser.setOpenExternalLinks(True)
+        self.recipe_browser.document().setDefaultStyleSheet("""
+            body { line-height: 1.45; }
+            h3 { margin-top: 14px; color: #16313a; }
+            table {
+                border-collapse: collapse;
+                width: 100%;
+                margin: 8px 0 12px 0;
+                display: block;
+                overflow-x: auto;
+            }
+            th, td {
+                border: 1px solid #cdd9e0;
+                padding: 6px 8px;
+                text-align: left;
+                white-space: nowrap;
+            }
+            th { background: #eaf1f6; font-weight: 700; }
+            tr:nth-child(even) td { background: #f8fbfd; }
+            table:nth-of-type(1) th { background: #e4f4ec; }
+            table:nth-of-type(1) { border-left: 4px solid #1f7a5a; }
+            table:nth-of-type(2) th { background: #f8e7e7; }
+            table:nth-of-type(2) { border-left: 4px solid #9f3a38; }
+            .badge {
+                display: inline-block;
+                margin-left: 8px;
+                padding: 1px 8px;
+                border-radius: 999px;
+                font-size: 11px;
+                font-weight: 700;
+                letter-spacing: 0.2px;
+            }
+            .badge-good {
+                color: #0f5132;
+                background: #d8f3e5;
+                border: 1px solid #9fd9bc;
+            }
+            .badge-bad {
+                color: #7d2e2c;
+                background: #fbe3e2;
+                border: 1px solid #efb1ad;
+            }
+        """)
         content_layout.addWidget(self.recipe_browser, 1)
 
         actions_layout = QHBoxLayout()
@@ -396,7 +442,7 @@ class ColumnSelectionDialog(QDialog):
             QMessageBox.critical(parent, "Error", "No measurement columns available! Dialog will not open.")
             raise ValueError("No measurement columns passed to ColumnSelectionDialog.")
         super().__init__(parent)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        _configure_dialog(self, object_name="columnSelectionDialog")
         self.setWindowTitle("Select Measurement Columns")
         self.resize(400, 500)
         
@@ -458,7 +504,7 @@ class PairwiseComparisonDialog(QDialog):
             QMessageBox.critical(parent, "Error", "At least 2 groups are required for pairwise comparisons!")
             raise ValueError("Too few groups passed to PairwiseComparisonDialog.")
         super().__init__(parent)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        _configure_dialog(self, object_name="pairwiseComparisonDialog")
         self.setWindowTitle("Pairwise Comparisons")
         self.resize(400, 300)
 
@@ -504,7 +550,6 @@ class PairwiseComparisonDialog(QDialog):
         # Hint text for explanation
         hint_label = QLabel("Note: Significance is automatically taken from the post-hoc tests.")
         hint_label.setObjectName("lblSignificanceHint")
-        hint_label.setStyleSheet("color: #666; font-style: italic;")
         content_layout.addWidget(hint_label)
 
         # Dependent samples with better description
@@ -567,7 +612,7 @@ class TwoWayAnovaDialog(QDialog):
             QMessageBox.critical(parent, "Error", "At least 2 groups are required for a Two-Way ANOVA!")
             raise ValueError("Too few groups passed to TwoWayAnovaDialog.")
         super().__init__(parent)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        _configure_dialog(self, object_name="twoWayAnovaDialog")
         self.setWindowTitle("Configure Two-Way ANOVA")
         self.resize(500, 400)
         self.groups = groups
@@ -671,7 +716,7 @@ class OutlierDetectionDialog(QDialog):
     def __init__(self, df, parent=None):
         super().__init__(parent)
         self.df = df
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        _configure_dialog(self, object_name="outlierDetectionDialog")
         self.setWindowTitle("Outlier Detection")
         self.setup_ui()
                 
@@ -683,7 +728,7 @@ class OutlierDetectionDialog(QDialog):
         if not OUTLIER_IMPORTS_AVAILABLE:
             warning_label = QLabel("Warning: Outlier detection is not available.\n"
                                 "Please install required packages: outliers, pingouin, openpyxl")
-            warning_label.setStyleSheet("color: red; font-weight: bold;")
+            warning_label.setObjectName("lblCriticalWarning")
             layout.addWidget(warning_label)
             
             button_box = QDialogButtonBox(QDialogButtonBox.Ok)
@@ -693,7 +738,7 @@ class OutlierDetectionDialog(QDialog):
         
         # Info section
         info_label = QLabel("Select data columns and parameters for outlier detection:")
-        info_label.setStyleSheet("font-weight: bold;")
+        info_label.setObjectName("lblSectionHeading")
         layout.addWidget(info_label)
         
         # Data selection section
@@ -781,7 +826,7 @@ class OutlierDetectionDialog(QDialog):
         # Test mode
         mode_layout = QVBoxLayout()
         mode_label = QLabel("Test Mode:")
-        mode_label.setStyleSheet("font-weight: bold;")
+        mode_label.setObjectName("lblSectionHeading")
         mode_layout.addWidget(mode_label)
         
         self.single_mode = QRadioButton("Single-pass detection (detect one outlier per test)")
@@ -796,7 +841,7 @@ class OutlierDetectionDialog(QDialog):
         # Test types
         test_layout = QVBoxLayout()
         test_label = QLabel("Tests to Perform:")
-        test_label.setStyleSheet("font-weight: bold;")
+        test_label.setObjectName("lblSectionHeading")
         test_layout.addWidget(test_label)
 
         self.modz_check = QCheckBox("Modified Z-Score Test (robust detection using median)")
@@ -913,8 +958,8 @@ class ExploratoryMatrixDialog(QDialog):
         super().__init__(parent)
         self.df = df
         self.output_dir = output_dir or os.getcwd()
+        _configure_dialog(self, object_name="exploratoryMatrixDialog")
         self.setWindowTitle("Exploratory Correlation Matrix")
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self.setMinimumWidth(520)
         self._build_ui()
 
@@ -1067,6 +1112,7 @@ class DebugConsoleWindow(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent, Qt.Window)
+        self.setObjectName("debugLogWindow")
         self.setWindowTitle("Debug Console")
         self.resize(700, 400)
         self.setWindowFlags(
@@ -1081,11 +1127,9 @@ class DebugConsoleWindow(QWidget):
         layout.setSpacing(4)
 
         self.text_edit = QTextEdit()
+        self.text_edit.setObjectName("debugConsoleText")
         self.text_edit.setReadOnly(True)
         self.text_edit.setFont(__import__('PyQt5.QtGui', fromlist=['QFont']).QFont("Courier", 10))
-        self.text_edit.setStyleSheet(
-            "QTextEdit { background: #1e1e1e; color: #d4d4d4; border: none; }"
-        )
         layout.addWidget(self.text_edit)
 
         btn_row = QHBoxLayout()
@@ -1349,10 +1393,12 @@ class StatisticalAnalyzerApp(QMainWindow):
     def show_graph_visualization_help(self):
         from PyQt5.QtWidgets import QDialog, QVBoxLayout, QTextBrowser, QPushButton
         dlg = QDialog(self)
+        _configure_dialog(dlg, object_name="graphVisualizationHelpDialog")
         dlg.setWindowTitle("Graph Visualization")
         dlg.resize(800, 600)
         layout = QVBoxLayout(dlg)
         browser = QTextBrowser()
+        browser.setObjectName("helpDialogBrowser")
         browser.setHtml("""
             <h3>Graph Visualization</h3>
             <ul>
@@ -1390,10 +1436,12 @@ class StatisticalAnalyzerApp(QMainWindow):
     def show_statistical_tests_excel_help(self):
         from PyQt5.QtWidgets import QDialog, QVBoxLayout, QTextBrowser, QPushButton
         dlg = QDialog(self)
+        _configure_dialog(dlg, object_name="statsExcelHelpDialog")
         dlg.setWindowTitle("Statistical Tests & Excel Export")
         dlg.resize(900, 600)
         layout = QVBoxLayout(dlg)
         browser = QTextBrowser()
+        browser.setObjectName("helpDialogBrowser")
         browser.setHtml("""
             <h3>Statistical Tests & Excel Export</h3>
             <ul>
@@ -1420,7 +1468,7 @@ class StatisticalAnalyzerApp(QMainWindow):
                         </li>
                         <li>The decision is based on normality tests (Shapiro-Wilk) and variance homogeneity (Levene test). When assumptions are violated, a non-parametric test is automatically selected.</li>
                         <li>Post-hoc tests (e.g. pairwise comparisons) are automatically added when significant differences are found.</li>
-                        <li><i>Note: Advanced tests like Mixed ANOVA, Two-Way ANOVA, and Repeated-Measures ANOVA are explained in the separate "Advanced Tests" help section.</i></li>
+                        <li><i>Note: For detailed data templates (including long-format examples), open the Help Hub (Recipes) from the Help menu.</i></li>
                     </ul>
                 </li>
                 <li><b>Interpreting Results:</b>
@@ -1439,7 +1487,7 @@ class StatisticalAnalyzerApp(QMainWindow):
                     </ul>
                 </li>
             </ul>
-            <p style='color:gray; font-size:90%'>Note: Advanced/complex tests (e.g. Mixed ANOVA, Two-Way ANOVA) are explained in a separate help page.</p>
+            <p style='color:gray; font-size:90%'>Note: Use Help -> Help Hub (Recipes) for detailed long-format templates for advanced and basic models.</p>
         """)
         layout.addWidget(browser)
         btn = QPushButton("OK")
@@ -2728,6 +2776,7 @@ class StatisticalAnalyzerApp(QMainWindow):
             # If dependent requires a subject dialog, show it first
             if plot_config['dependent'] and plot_config['needs_subject_selection']:
                 dlg = QDialog(self)
+                _configure_dialog(dlg, object_name="subjectWithinFactorDialog")
                 dlg.setWindowTitle("Select Subject & Within Factor")
                 layout = QFormLayout(dlg)
                 subject_cb = QComboBox(); subject_cb.addItems(self.df.columns)
@@ -2996,11 +3045,13 @@ class StatisticalAnalyzerApp(QMainWindow):
         from PyQt5.QtWidgets import QDialog, QVBoxLayout, QTextBrowser, QPushButton
         
         dlg = QDialog(self)
+        _configure_dialog(dlg, object_name="gettingStartedHelpDialog")
         dlg.setWindowTitle("Getting Started with BioMedStatX")
         dlg.resize(1000, 800)
         layout = QVBoxLayout(dlg)
         
         browser = QTextBrowser()
+        browser.setObjectName("helpDialogBrowser")
         browser.setHtml("""
             <h2>Getting Started with BioMedStatX</h2>
             <p><i>A step-by-step guide for first-time users</i></p>
@@ -3044,13 +3095,14 @@ class StatisticalAnalyzerApp(QMainWindow):
                 <li>The program automatically chooses parametric vs. non-parametric based on your data</li>
             </ul>
             
-            <h4>B) Advanced ANOVA Tests</h4>
-            <p>For more complex designs, use <b>Analysis → Run Advanced Tests</b>:</p>
+            <h4>B) Complex ANOVA Designs</h4>
+            <p>For repeated and multi-factor designs, map your columns in Smart Mapping and then run <b>Start Auto Analysis</b>:</p>
             <ul>
                 <li><b>Repeated Measures ANOVA:</b> Same subjects measured multiple times</li>
                 <li><b>Two-Way ANOVA:</b> Two independent factors (e.g., treatment × gender)</li>
                 <li><b>Mixed ANOVA:</b> Combination of between- and within-subject factors</li>
             </ul>
+            <p>Need a template? Open <b>Help -> Help Hub (Recipes)</b> and copy the long-format example directly into Excel.</p>
             
             <h3>Step 6: Additional Analysis Options</h3>
             

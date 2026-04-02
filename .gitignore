@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 *.pyo
 .venv/
+.venv*_backup_*/
 
 # Claude Code internal files
 .claude/
