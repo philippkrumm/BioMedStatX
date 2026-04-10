@@ -286,7 +286,7 @@ def perform_friedman_test(data, dv, within_factor, subject_col, alpha=0.05):
                 posthoc_name = f"Pairwise Wilcoxon Signed-Rank (Holm, n={n_subjects} subjects)"
 
         return {
-            "test": f"Repeated Measures ANOVA [Friedman Fallback]",
+            "test": "Friedman Test",
             "p_value": p_value,
             "statistic": chi2_stat,
             "posthoc_test": posthoc_name,
@@ -304,6 +304,7 @@ def perform_friedman_test(data, dv, within_factor, subject_col, alpha=0.05):
             "error": None,
             "df1": df1,
             "df2": None,
+            "model_type": "Friedman",
             "model_class": "Friedman",
             "model_family": None,
             "model_link": None,
@@ -326,7 +327,7 @@ def perform_friedman_test(data, dv, within_factor, subject_col, alpha=0.05):
 
     except Exception as exc:
         return {
-            "test": "Repeated Measures ANOVA [Friedman Fallback]",
+            "test": "Friedman Test",
             "p_value": None, "statistic": None,
             "posthoc_test": None, "pairwise_comparisons": [],
             "descriptive": {}, "descriptive_transformed": {},
@@ -336,6 +337,7 @@ def perform_friedman_test(data, dv, within_factor, subject_col, alpha=0.05):
             "confidence_interval": None, "ci_level": 0.95,
             "power": None, "effect_size": None, "effect_size_type": None,
             "error": str(exc), "df1": None, "df2": None,
+            "model_type": "Friedman",
             "model_class": "Friedman",
             "model_family": None, "model_link": None,
             "family_diagnostics": {}, "cov_struct_used": None, "covariance_estimator": None,
@@ -560,7 +562,7 @@ def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05, n_permu
             posthoc_name = "Pairwise Mann-Whitney U (Holm-corrected)"
 
         return {
-            "test": "Two-Way ANOVA [Freedman-Lane Permutation Fallback]",
+            "test": "Freedman-Lane Permutation Test",
             "p_value": primary_p,
             "statistic": primary_F,
             "posthoc_test": posthoc_name,
@@ -578,6 +580,7 @@ def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05, n_permu
             "error": None,
             "df1": df_AB if interaction_significant else (df_A if p_perm_A <= p_perm_B else df_B),
             "df2": df2,
+            "model_type": "FreedmanLanePermutation",
             "model_class": "Freedman-Lane Permutation",
             "model_family": None,
             "model_link": None,
@@ -601,7 +604,7 @@ def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05, n_permu
 
     except Exception as exc:
         return {
-            "test": "Two-Way ANOVA [Freedman-Lane Permutation Fallback]",
+            "test": "Freedman-Lane Permutation Test",
             "p_value": None, "statistic": None,
             "posthoc_test": None, "pairwise_comparisons": [],
             "descriptive": {}, "descriptive_transformed": {},
@@ -611,6 +614,7 @@ def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05, n_permu
             "confidence_interval": None, "ci_level": 0.95,
             "power": None, "effect_size": None, "effect_size_type": None,
             "error": str(exc), "df1": None, "df2": None,
+            "model_type": "FreedmanLanePermutation",
             "model_class": "Freedman-Lane Permutation",
             "model_family": None, "model_link": None,
             "family_diagnostics": {}, "cov_struct_used": None, "covariance_estimator": None,
@@ -878,7 +882,7 @@ def perform_brunner_langer_ats(data, dv, between_factor, within_factor, subject_
             posthoc_name = "Pairwise Wilcoxon/MWU (Holm-corrected)"
 
         return {
-            "test": "Mixed ANOVA [Brunner-Langer ATS Fallback]",
+            "test": "Brunner-Langer ATS Test",
             "p_value": primary_p,
             "statistic": primary_F,
             "posthoc_test": posthoc_name,
@@ -896,6 +900,7 @@ def perform_brunner_langer_ats(data, dv, between_factor, within_factor, subject_
             "error": None,
             "df1": primary_df1,
             "df2": round(df2_between, 2) if (primary_kind == "main" and primary_source == between_factor and df2_between) else None,
+            "model_type": "BrunnerLangerATS",
             "model_class": "Brunner-Langer ATS",
             "model_family": None,
             "model_link": None,
@@ -919,7 +924,7 @@ def perform_brunner_langer_ats(data, dv, between_factor, within_factor, subject_
 
     except Exception as exc:
         return {
-            "test": "Mixed ANOVA [Brunner-Langer ATS Fallback]",
+            "test": "Brunner-Langer ATS Test",
             "p_value": None, "statistic": None,
             "posthoc_test": None, "pairwise_comparisons": [],
             "descriptive": {}, "descriptive_transformed": {},
@@ -929,6 +934,7 @@ def perform_brunner_langer_ats(data, dv, between_factor, within_factor, subject_
             "confidence_interval": None, "ci_level": 0.95,
             "power": None, "effect_size": None, "effect_size_type": None,
             "error": str(exc), "df1": None, "df2": None,
+            "model_type": "BrunnerLangerATS",
             "model_class": "Brunner-Langer ATS",
             "model_family": None, "model_link": None,
             "family_diagnostics": {}, "cov_struct_used": None, "covariance_estimator": None,

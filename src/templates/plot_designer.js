@@ -244,6 +244,7 @@
     significanceLineWidth: 1.7,
     significanceSpacingScale: 1.0,
     significanceStarSize: 14,
+    significanceStarOffset: 2,
     exportWidth: 8,
     exportHeight: 6,
     pngScale: 3,
@@ -423,6 +424,7 @@
     document.getElementById("pd-significance-line-width").value = state.significanceLineWidth;
     document.getElementById("pd-significance-spacing").value = state.significanceSpacingScale;
     document.getElementById("pd-significance-size").value = state.significanceStarSize;
+    document.getElementById("pd-significance-star-offset").value = state.significanceStarOffset;
     document.getElementById("pd-auto-pattern").checked = state.autoPatternsEnabled;
     document.getElementById("pd-export-width").value = state.exportWidth;
     document.getElementById("pd-export-height").value = state.exportHeight;
@@ -507,6 +509,9 @@
     state.significanceStarSize = parseFloat(document.getElementById("pd-significance-size").value);
     if (!Number.isFinite(state.significanceStarSize)) state.significanceStarSize = 14;
     state.significanceStarSize = Math.min(36, Math.max(10, state.significanceStarSize));
+    state.significanceStarOffset = parseInt(document.getElementById("pd-significance-star-offset").value, 10);
+    if (!Number.isFinite(state.significanceStarOffset)) state.significanceStarOffset = 2;
+    state.significanceStarOffset = Math.min(30, Math.max(0, state.significanceStarOffset));
     state.autoPatternsEnabled = document.getElementById("pd-auto-pattern").checked;
     state.exportWidth = parseFloat(document.getElementById("pd-export-width").value) || 8;
     state.exportHeight = parseFloat(document.getElementById("pd-export-height").value) || 6;
@@ -1134,7 +1139,19 @@
       });
     }
     if (!candidates.length) return null;
-    return Math.max.apply(null, candidates);
+    var dataMax = Math.max.apply(null, candidates);
+    // Violin KDE rendering overshoots the data maximum; add buffer so brackets
+    // start above the visible violin tip rather than colliding with it.
+    if (state.plotType === "Violin") {
+      var lowerCandidates = [];
+      groupOrder.forEach(function (group) {
+        var mn = getStat(group, "min");
+        if (isFiniteNumber(mn)) lowerCandidates.push(mn);
+      });
+      var dataMin = lowerCandidates.length ? Math.min.apply(null, lowerCandidates) : 0;
+      return dataMax + Math.max((dataMax - dataMin) * 0.15, 0.5);
+    }
+    return dataMax;
   }
 
   function assignLanes(activePairs, yBase, yMin, yMax) {
@@ -1328,7 +1345,7 @@
         yref: "y",
         xanchor: "center",
         yanchor: "bottom",
-        yshift: Math.max(8, Math.round(state.significanceStarSize * 0.55)),
+        yshift: state.significanceStarOffset,
         font: { size: state.significanceStarSize, color: "#16313a" }
       });
     });

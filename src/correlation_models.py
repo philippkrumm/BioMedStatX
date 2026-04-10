@@ -183,6 +183,7 @@ class CorrelationModel:
             "method": self._method_used,
             "ci_lower": self.ci[0],
             "ci_upper": self.ci[1],
+            "confidence_interval": [self.ci[0], self.ci[1]],
             "n": self.n,
             "alpha": self._alpha,
             "interpretation": self._interpret(self.r),
@@ -384,8 +385,31 @@ class SimpleLinearRegressionModel:
         f_stat = float(self.result.fvalue) if hasattr(self.result, 'fvalue') and self.result.fvalue is not None else None
         f_p = float(self.result.f_pvalue) if hasattr(self.result, 'f_pvalue') and self.result.f_pvalue is not None else None
 
+        # Raw scatter points for descriptive summary and charts
+        association_points = []
+        if self._df is not None:
+            try:
+                x_obs = pd.to_numeric(self._df[self._x], errors="coerce").to_numpy(dtype=float)
+                y_obs = pd.to_numeric(self._df[self._y], errors="coerce").to_numpy(dtype=float)
+                valid = np.isfinite(x_obs) & np.isfinite(y_obs)
+                association_points = [
+                    {"x": float(xv), "y": float(yv)}
+                    for xv, yv in zip(x_obs[valid], y_obs[valid])
+                ]
+            except Exception:
+                pass
+
+        # Residuals and fitted values at top level for QQ plot and residuals-vs-fitted chart
+        residuals_list = None
+        fitted_list = None
+        try:
+            residuals_list = [float(v) for v in self.result.resid.values]
+            fitted_list = [float(v) for v in self.result.fittedvalues.values]
+        except Exception:
+            pass
+
         return {
-            "test": "Lineare Regression (OLS)",
+            "test": "Linear Regression (OLS)",
             "model_type": "LinearRegression",
             "alpha": self._alpha,
             "p_value": main_p,
@@ -403,11 +427,15 @@ class SimpleLinearRegressionModel:
             "n_observations": int(self.result.nobs),
             "coefficient_table": coef_table,
             "diagnostics": diag,
+            "residuals": residuals_list,
+            "model_residuals": residuals_list,
+            "fitted_values": fitted_list,
             "x_variable": self._x,
             "y_variable": self._y,
             "x_variable_display": self._x_label,
             "y_variable_display": self._y_label,
             "covariates_used": self._covariates,
+            "association_points": association_points,
             "plot_regression": self._build_regression_plot_payload(),
         }
 

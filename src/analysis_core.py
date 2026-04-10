@@ -4,7 +4,7 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
-from lazy_imports import get_scipy_stats, get_statsmodels_multitest
+from lazy_imports import get_scipy_stats, get_statsmodels_multitest, get_matplotlib_pyplot
 
 
 def get_results_exporter():
@@ -254,7 +254,7 @@ class AnalysisManager:
         inferred_test = analysis_context.get("inferred_test")
         if inferred_test in {"two_way_anova", "mixed_anova", "repeated_measures_anova",
                              "ancova", "two_way_ancova", "lmm", "logistic_regression",
-                             "correlation", "linear_regression"}:
+                             "beta_regression", "correlation", "linear_regression"}:
             local_kwargs["test"] = inferred_test
         if analysis_context.get("subject_column"):
             local_kwargs["subject_column"] = analysis_context.get("subject_column")
@@ -476,9 +476,10 @@ class AnalysisManager:
 
             # --- Clinical model dispatch (ANCOVA, LMM, Logistic Regression, Correlation, Linear Regression) ---
             if kwargs.get('test') in ('ancova', 'two_way_ancova', 'lmm', 'logistic_regression',
-                                      'correlation', 'linear_regression'):
+                                      'beta_regression', 'correlation', 'linear_regression'):
                 from clinical_models import (ANCOVAModel, LinearMixedModel,
-                                             LogisticRegressionModel, DataHealthScanner)
+                                             LogisticRegressionModel, BetaRegressionModel,
+                                             DataHealthScanner)
 
                 clinical_test = kwargs['test']
                 covariates = kwargs.get('covariates', [])
@@ -489,6 +490,7 @@ class AnalysisManager:
                 _model_type_map = {
                     'ancova': 'ANCOVA', 'two_way_ancova': 'ANCOVA',
                     'lmm': 'LMM', 'logistic_regression': 'LogisticRegression',
+                    'beta_regression': 'BetaRegression',
                 }
                 try:
                     _scanner = DataHealthScanner(
@@ -523,6 +525,50 @@ class AnalysisManager:
                     predictors = analysis_context.get('factor_columns', [])
                     model.fit(df, dv=value_cols[0], predictors=predictors, covariates=covariates or None)
                     test_results = model.as_results_dict()
+
+                elif clinical_test == 'beta_regression':
+                    from methodology_trace import MethodologyTrace
+                    _beta_trace = MethodologyTrace()
+                    _beta_predictors = analysis_context.get('factor_columns', [])
+                    _beta_n = int(df[value_cols[0]].dropna().count())
+                    _beta_n_pred = analysis_context.get('beta_n_predictors') or max(1, len(covariates or []) + 1)
+                    _beta_epv = analysis_context.get('beta_epv') or (_beta_n / _beta_n_pred)
+                    _beta_bias = analysis_context.get('beta_bias_corrected', _beta_epv < 10)
+                    _beta_sv = analysis_context.get('beta_sv_transformed', False)
+                    _beta_n_unique = int(df[value_cols[0]].dropna().nunique())
+
+                    if _beta_sv:
+                        _beta_trace.add(1, "Data Transformation",
+                            f"Boundary values (exact 0 or 1) were present in the outcome. "
+                            f"Smithson-Verkuilen transformation applied: y_adj = (y × (n−1) + 0.5) / n. "
+                            f"This pushes boundary values strictly inside (0,1) as required by Beta Regression.",
+                            detail=f"n={_beta_n}")
+
+                    if _beta_bias:
+                        _beta_trace.add(2, "Test Selection",
+                            f"Outcome detected as proportion (all values strictly in (0,1), "
+                            f"{_beta_n_unique} unique values). "
+                            f"EPV = {_beta_n} / {_beta_n_pred} = {_beta_epv:.1f} < 10. "
+                            f"Bias-corrected Beta Regression applied to compensate for "
+                            f"small sample bias (Peduzzi et al., 1996, adapted). "
+                            f"Note: EPV rule was derived for logistic regression — "
+                            f"interpretation should be cautious.",
+                            detail=f"EPV={_beta_epv:.1f}, n={_beta_n}, predictors={_beta_n_pred}")
+                    else:
+                        _beta_trace.add(2, "Test Selection",
+                            f"Outcome detected as proportion (all values strictly in (0,1), "
+                            f"{_beta_n_unique} unique values). "
+                            f"EPV = {_beta_n} / {_beta_n_pred} = {_beta_epv:.1f} ≥ 10. "
+                            f"Standard Beta Regression applied.",
+                            detail=f"EPV={_beta_epv:.1f}, n={_beta_n}, predictors={_beta_n_pred}")
+
+                    model = BetaRegressionModel()
+                    model.fit(df, dv=value_cols[0], predictors=_beta_predictors,
+                              covariates=covariates or None, bias_corrected=_beta_bias)
+                    test_results = model.as_results_dict()
+                    test_results["methodology_trace"] = _beta_trace
+                    test_results["sv_transformed"] = _beta_sv
+                    test_results["epv"] = round(_beta_epv, 2)
 
                 elif clinical_test in ('correlation', 'linear_regression'):
                     from correlation_models import (CorrelationModel, SimpleLinearRegressionModel,
@@ -575,7 +621,12 @@ class AnalysisManager:
                 # Skip the rest of the standard flow (normality check, post-hoc, etc.)
                 # Jump straight to export
                 results['groups'] = groups
-                results['raw_data'] = {g: filtered_samples[g][:] for g in groups}
+                # For continuous-variable models (correlation/regression/logistic), raw_data from
+                # filtered_samples has no meaningful group structure — skip it to avoid the group
+                # chart and descriptive table using X-values as bogus group labels.
+                _no_group_raw = clinical_test in ('correlation', 'linear_regression', 'logistic_regression', 'beta_regression')
+                if not _no_group_raw:
+                    results['raw_data'] = {g: filtered_samples[g][:] for g in groups}
                 results['selected_groups'] = analysis_context.get('selected_groups') or groups
                 results['group_column'] = analysis_context.get('selected_group_column') or analysis_context.get('factor_columns', [None])[0]
                 results['factor_columns'] = analysis_context.get('factor_columns', [])
@@ -1266,7 +1317,7 @@ class AnalysisManager:
                 analysis_log += f"\nPlots were saved as:\n"
                 analysis_log += f"  {file_base}.pdf\n"
                 analysis_log += f"  {file_base}.png\n"
-                plt.close(fig)
+                get_matplotlib_pyplot().close(fig)
                 results["_file_paths"] = {
                     "excel": os.path.abspath(excel_file),
                     "pdf": os.path.abspath(f"{file_base}.pdf"),
@@ -1286,7 +1337,7 @@ class AnalysisManager:
                         save_plot=save_plot, file_name=file_base+"_lines",
                         show_individual=show_individual_lines
                     )
-                    plt.close(line_fig)
+                    get_matplotlib_pyplot().close(line_fig)
                     line_plot_base = file_base+"_lines"
                     results["_file_paths"]["pdf_lines"] = os.path.abspath(f"{line_plot_base}.pdf")
                     results["_file_paths"]["png_lines"] = os.path.abspath(f"{line_plot_base}.png")

@@ -556,6 +556,189 @@ class LogisticRegressionModel:
         }
 
 
+class BetaRegressionModel:
+    """Beta regression for proportion outcomes strictly in (0, 1).
+
+    Uses statsmodels BetaModel (othermod.betareg) with a logit link.
+    Reports coefficients, 95% CI, pseudo-R², dispersion parameter (phi),
+    and fitted vs. residual data for diagnostics.
+    """
+
+    def __init__(self):
+        self.result = None
+        self._df = None
+        self._dv = None
+        self._predictors = None
+        self._covariates = None
+        self._bias_corrected = False
+        self._boot_se = None  # populated when bias_corrected=True via bootstrap
+
+    def fit(self, df, dv, predictors, covariates=None, bias_corrected=False):
+        from statsmodels.othermod.betareg import BetaModel
+
+        self._bias_corrected = bias_corrected
+        all_cols = [dv] + predictors + (covariates or [])
+        self._df = df.dropna(subset=all_cols).copy()
+
+        col_map = _sanitize_columns(self._df, all_cols)
+        self._dv = col_map[dv]
+        self._predictors = [col_map[p] for p in predictors]
+        self._covariates = [col_map[c] for c in (covariates or [])]
+
+        # Validate strictly (0, 1) — S-V transformation must have been applied upstream
+        series = self._df[self._dv]
+        if series.min() <= 0.0 or series.max() >= 1.0:
+            raise ValueError(
+                "Beta regression requires outcome values strictly between 0 and 1 (exclusive). "
+                "Values at exactly 0 or 1 are present — apply a boundary transformation first "
+                "(e.g. y_adj = (y * (n-1) + 0.5) / n)."
+            )
+
+        terms = [f"C({p})" for p in self._predictors]
+        if self._covariates:
+            terms.extend(self._covariates)
+        formula = f"{self._dv} ~ {' + '.join(terms)}"
+
+        model = BetaModel.from_formula(formula, data=self._df)
+        self.result = model.fit(disp=False)
+
+        if bias_corrected:
+            self._boot_se = self._bootstrap_se(formula, n_boot=1000)
+
+        return self
+
+    def _bootstrap_se(self, formula, n_boot=1000):
+        """Bootstrapped standard errors as bias correction for small samples."""
+        from statsmodels.othermod.betareg import BetaModel
+        boot_params = []
+        rng = np.random.default_rng(42)
+        n = len(self._df)
+        for _ in range(n_boot):
+            try:
+                idx = rng.integers(0, n, size=n)
+                boot_df = self._df.iloc[idx].reset_index(drop=True)
+                m = BetaModel.from_formula(formula, data=boot_df)
+                r = m.fit(disp=False, maxiter=100)
+                boot_params.append(r.params.values)
+            except Exception:
+                continue
+        if len(boot_params) < 10:
+            return None
+        boot_arr = np.array(boot_params)
+        return dict(zip(self.result.params.index, boot_arr.std(axis=0)))
+
+    def coefficients(self):
+        if self.result is None:
+            return []
+        conf = self.result.conf_int()
+        rows = []
+        for param in self.result.params.index:
+            if param in ("Intercept", "phi"):
+                continue
+            # Use bootstrapped SE if available, fall back to model SE
+            if self._boot_se and param in self._boot_se:
+                se = self._boot_se[param]
+                coef = float(self.result.params[param])
+                z = coef / se if se > 0 else float("nan")
+                from scipy.stats import norm
+                p = float(2 * (1 - norm.cdf(abs(z))))
+                ci_lower = coef - 1.96 * se
+                ci_upper = coef + 1.96 * se
+                se_source = "bootstrap"
+            else:
+                se = float(self.result.bse[param])
+                z = float(self.result.tvalues[param])
+                p = float(self.result.pvalues[param])
+                ci_lower = float(conf.loc[param, 0])
+                ci_upper = float(conf.loc[param, 1])
+                se_source = "model"
+            rows.append({
+                "parameter": str(param),
+                "coefficient": float(self.result.params[param]),
+                "ci_lower": ci_lower,
+                "ci_upper": ci_upper,
+                "std_err": se,
+                "std_err_source": se_source,
+                "z_value": z,
+                "p_value": p,
+            })
+        return rows
+
+    def as_results_dict(self):
+        if self.result is None:
+            return {"error": "Model not fitted"}
+
+        coef_table = self.coefficients()
+        main_p = coef_table[0]["p_value"] if coef_table else None
+        main_coef = coef_table[0]["coefficient"] if coef_table else None
+
+        # Pseudo-R² (McFadden)
+        pseudo_r2 = None
+        try:
+            ll_model = self.result.llf
+            ll_null = self.result.llnull if hasattr(self.result, "llnull") else None
+            if ll_null is not None and ll_null != 0:
+                pseudo_r2 = float(1 - ll_model / ll_null)
+        except Exception:
+            pass
+
+        # Dispersion parameter phi (precision)
+        phi = None
+        try:
+            if "phi" in self.result.params.index:
+                phi = float(self.result.params["phi"])
+        except Exception:
+            pass
+
+        # Fitted values and residuals for diagnostics
+        fitted = residuals = None
+        try:
+            fitted = [float(v) for v in self.result.predict()]
+            residuals = [float(v) for v in (self._df[self._dv].values - self.result.predict())]
+        except Exception:
+            pass
+
+        # Raw x/y data for chart: primary predictor vs observed outcome
+        xy_data = {}
+        try:
+            if self._predictors:
+                pred_col = self._predictors[0]
+                xy_data = {
+                    "x": [float(v) for v in self._df[pred_col].values],
+                    "y": [float(v) for v in self._df[self._dv].values],
+                    "x_label": pred_col,
+                }
+        except Exception:
+            pass
+
+        return {
+            "test": "Beta Regression",
+            "model_type": "BetaRegression",
+            "p_value": main_p,
+            "statistic": main_coef,
+            "statistic_type": "coefficient",
+            "effect_size": pseudo_r2,
+            "effect_size_type": "pseudo_R2",
+            "coefficients": coef_table,
+            "phi": phi,
+            "fitted_values": fitted,
+            "residuals": residuals,
+            "xy_data": xy_data,
+            "pseudo_r_squared": pseudo_r2,
+            "aic": float(self.result.aic) if hasattr(self.result, "aic") else None,
+            "bic": float(self.result.bic) if hasattr(self.result, "bic") else None,
+            "log_likelihood": float(self.result.llf) if hasattr(self.result, "llf") else None,
+            "n_observations": int(self.result.nobs),
+            "predictors_used": self._predictors,
+            "covariates_used": self._covariates,
+            "detection_note": "Outcome detected as proportion (all values strictly in (0,1))",
+            "bias_corrected": self._bias_corrected,
+            "bias_correction_method": "bootstrapped SE (n_boot=1000)" if self._bias_corrected and self._boot_se else (
+                "requested but bootstrap produced insufficient samples" if self._bias_corrected else None
+            ),
+        }
+
+
 class DataHealthScanner:
     """Pre-analysis data quality checks for clinical datasets.
 

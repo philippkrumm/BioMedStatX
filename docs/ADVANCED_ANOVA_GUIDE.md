@@ -196,21 +196,17 @@ Do you have repeated measurements?
 
 ---
 
-## Current Limitation: Advanced Nonparametric Fallbacks
+## Nonparametric Fallbacks
 
-BioMedStatX currently supports the advanced ANOVA user interface and the main parametric workflows for:
+When normality assumptions cannot be met — even after transformation — BioMedStatX automatically switches to the appropriate nonparametric alternative. The following fallbacks are fully implemented and production-ready:
 
-- Mixed ANOVA
-- Repeated Measures ANOVA
-- Two-Way ANOVA
+| Design | Nonparametric Test | Trigger |
+|---|---|---|
+| Repeated Measures ANOVA | **Friedman test** | Shapiro-Wilk residual normality violation |
+| Two-Way ANOVA | **Freedman-Lane permutation test** | Shapiro-Wilk residual normality violation |
+| Mixed ANOVA | **Brunner-Langer ATS** | Normality violation or non-spherical covariance structure |
 
-However, if the assumptions for these advanced designs are violated, the automatic nonparametric fallback path is not yet fully production-ready. In practice, this means:
-
-- assumption checks and transformation guidance are available,
-- the advanced parametric analysis path is implemented,
-- but automatic nonparametric substitution for these advanced ANOVA designs should not yet be relied on as a finalized feature.
-
-If your design requires a robust nonparametric alternative for an advanced factorial or repeated-measures setup, review the output carefully and validate the analysis strategy independently before reporting results.
+All three fallbacks are triggered automatically after the normality check pipeline completes. No user configuration is required. Results — including post-hoc comparisons, effect sizes, and descriptive statistics — are exported to Excel and the HTML report in the same format as the parametric path.
 
 ---
 
@@ -229,6 +225,16 @@ If your design requires a robust nonparametric alternative for an advanced facto
 - **Between-subjects:** Tukey HSD, Dunnett tests
 - **Within-subjects:** Paired t-tests with correction
 - **Mixed comparisons:** Combination of both approaches
+
+### Visualizations
+
+BioMedStatX generates design-specific charts automatically in the HTML report:
+
+- **Two-Way ANOVA — Interaction plot:** x-axis shows levels of Factor 1, one line per level of Factor 2, points show cell means with SE error bars. The interaction p-value is annotated on the chart. When the interaction is significant (p < 0.05), the interaction plot appears as the primary chart; it appears as a secondary chart when the interaction is not significant.
+
+- **Repeated Measures ANOVA — Profile plot:** x-axis shows within-factor levels (e.g., timepoints), a bold colored line shows the group mean ± SE, and individual subject trajectories are drawn as thin grey lines in the background. When individual trajectory data is unavailable, the chart renders the group mean line only.
+
+- **Mixed ANOVA — Mixed profile plot and interaction plot:** The mixed profile plot shows x-axis = within-factor levels with one line per between-group, simultaneously visualizing between-group differences and within-subject change. When the interaction is significant, both the interaction plot and mixed profile plot are shown; when the interaction is not significant, the mixed profile plot appears first.
 
 ---
 

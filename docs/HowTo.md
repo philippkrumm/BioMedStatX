@@ -204,6 +204,8 @@ BioMedStatX automatically selects the appropriate test. Supported designs includ
 
 Nonparametric fallbacks for Repeated Measures ANOVA (Friedman), Two-Way ANOVA (Freedman-Lane), and Mixed ANOVA (Brunner-Langer ATS) are fully implemented and applied automatically when normality assumptions cannot be met.
 
+Factorial ANOVA designs generate design-specific visualizations automatically in the HTML report: Two-Way ANOVA produces an interaction plot (cell means ± SE per factor combination); Repeated Measures ANOVA produces a profile plot with individual subject trajectories and the group mean ± SE; Mixed ANOVA produces a mixed profile plot (one line per between-group over within-factor levels) alongside an interaction plot when the interaction is significant. See [ADVANCED_ANOVA_GUIDE.md](./ADVANCED_ANOVA_GUIDE.md) for full details.
+
 How test responsibility is split:
 
 | Step | Owner |

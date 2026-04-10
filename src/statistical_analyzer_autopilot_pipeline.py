@@ -815,6 +815,7 @@ def _ap_build_analysis_context(self):
         context["selected_groups"] = []
 
     # --- Binary DV detection: Logistic Regression ---
+    # --- Proportion DV detection: Beta Regression ---
     if len(dv_columns) == 1:
         dv_col = dv_columns[0]
         _series = analysis_df[dv_col].dropna()
@@ -834,6 +835,33 @@ def _ap_build_analysis_context(self):
         )
         if is_binary:
             context["outcome_type"] = "binary"
+
+        # Beta regression: outcome is a continuous proportion in [0, 1]
+        # Detection is purely data-driven (no column name assumptions).
+        # Guard: >5 unique values rules out discrete encoded scales (e.g. 0/0.25/0.5/0.75/1).
+        if (
+            not is_binary
+            and pd.api.types.is_numeric_dtype(_series)
+            and len(_unique) > 5
+        ):
+            _min, _max = float(_series.min()), float(_series.max())
+            _in_unit_interval = _min >= 0.0 and _max <= 1.0
+            if _in_unit_interval:
+                _n = int(_series.count())
+                _n_predictors = max(1, len(covariate_columns) + 1)
+                _epv = _n / _n_predictors
+                _has_boundary = _min == 0.0 or _max == 1.0
+
+                if _has_boundary:
+                    # Apply Smithson-Verkuilen transformation to push boundary values inside (0,1)
+                    self.df[dv_col] = (self.df[dv_col] * (_n - 1) + 0.5) / _n
+                    context["beta_sv_transformed"] = True
+
+                context["outcome_type"] = "proportion"
+                context["beta_epv"] = _epv
+                context["beta_n"] = _n
+                context["beta_n_predictors"] = _n_predictors
+                context["beta_bias_corrected"] = _epv < 10
 
     if len(factor_columns) == 1:
         factor = factor_columns[0]
@@ -887,6 +915,15 @@ def _ap_build_analysis_context(self):
     if context.get("outcome_type") == "binary":
         context["inferred_test"] = "logistic_regression"
 
+    # 1b. Proportion DV → Beta Regression (overrides group-comparison tests)
+    elif context.get("outcome_type") == "proportion":
+        context["inferred_test"] = "beta_regression"
+        # Pass EPV info into covariates/analysis metadata for dispatch
+        if context.get("beta_bias_corrected"):
+            context["beta_regression_variant"] = "bias_corrected"
+        else:
+            context["beta_regression_variant"] = "standard"
+
     # 2. Unbalanced repeated-measures → LMM (when Subject ID + within-factor present)
     elif subject_column and context["within_factors"]:
         within_factor = context["within_factors"][0]
@@ -938,7 +975,7 @@ def _ap_build_analysis_context(self):
         raise ValueError("Single mode requires exactly one measurement column.")
     if context["mode"] == "multi" and len(dv_columns) < 2:
         raise ValueError("Multi mode requires at least two measurement columns (for example two or more genes).")
-    if context["mode"] == "multi" and context["inferred_test"] in {"independent_ttest", "paired_ttest", "logistic_regression"}:
+    if context["mode"] == "multi" and context["inferred_test"] in {"independent_ttest", "paired_ttest", "logistic_regression", "beta_regression"}:
         raise ValueError("Multi mode is restricted to ANOVA-capable designs.")
 
     return context
@@ -956,10 +993,25 @@ def _ap_detected_test_label(self, context):
         "two_way_ancova": "Two-Way ANCOVA",
         "lmm": "Linear Mixed Model (handles missing visits)",
         "logistic_regression": "Logistic Regression (Binary Outcome)",
+        "beta_regression": "Beta Regression (Proportion Outcome)",
         "correlation": "Korrelationsanalyse (Spearman/Pearson)",
         "linear_regression": "Lineare Regression (OLS)",
     }
-    return labels.get(context["inferred_test"], context["inferred_test"])
+    label = labels.get(context["inferred_test"], context["inferred_test"])
+    if context.get("inferred_test") == "beta_regression":
+        epv = context.get("beta_epv")
+        sv = context.get("beta_sv_transformed", False)
+        bias = context.get("beta_bias_corrected", False)
+        parts = []
+        if sv:
+            parts.append("Smithson-Verkuilen transformation applied (boundary values present)")
+        if bias and epv is not None:
+            parts.append(f"EPV = {epv:.1f} — small sample, bias correction applied")
+        elif epv is not None:
+            parts.append(f"EPV = {epv:.1f} — adequate sample size")
+        if parts:
+            label += "\n  " + "\n  ".join(parts)
+    return label
 
 
 def _ap_execute_single_analysis(self, context, dv_column, output_dir, skip_plots=True, title_suffix=None):
@@ -1186,6 +1238,24 @@ def _ap_format_rationale(self, context, results):
         reasons.append("Linear Mixed Model uses all available data (ML estimation) — missing visits do not cause patient dropout.")
     elif model_type == "LogisticRegression":
         reasons.append("Binary outcome detected. Logistic regression provides odds ratios and AUC.")
+    elif model_type == "BetaRegression":
+        epv = context.get("beta_epv")
+        sv = context.get("beta_sv_transformed", False)
+        bias = context.get("beta_bias_corrected", False)
+        if sv:
+            reasons.append("Boundary values (0 or 1) were present — Smithson-Verkuilen transformation applied before fitting.")
+        if bias and epv is not None:
+            reasons.append(
+                f"Proportion outcome detected (EPV = {epv:.1f} < 10 — small sample). "
+                f"Bias-corrected Beta Regression applied with bootstrapped standard errors."
+            )
+        elif epv is not None:
+            reasons.append(
+                f"Proportion outcome detected (EPV = {epv:.1f} ≥ 10 — adequate sample). "
+                f"Standard Beta Regression applied."
+            )
+        else:
+            reasons.append("Proportion outcome detected. Beta Regression applied.")
     elif results.get("transformation"):
         reasons.append(f"Transformation chosen by user: {results['transformation']}.")
 

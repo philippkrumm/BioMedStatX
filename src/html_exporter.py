@@ -26,11 +26,13 @@ class HTMLExporter:
     _CSS_URL_RE = re.compile(r"url\((?P<quote>['\"]?)(?P<path>[^\)\"']+)(?P=quote)\)", re.IGNORECASE)
 
     @staticmethod
-    def export_results_to_html(results: dict, output_file: str, analysis_log=None) -> str | None:
+    def export_results_to_html(results: dict, output_file: str, analysis_log=None, pre_generated_tree=None) -> str | None:
         try:
             output_path = Path(output_file).resolve()
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            context = HTMLExporter._prepare_single_report_context(results, analysis_log=analysis_log)
+            context = HTMLExporter._prepare_single_report_context(
+                results, analysis_log=analysis_log, pre_generated_tree=pre_generated_tree
+            )
             html = HTMLExporter._render_template(context, mode="single")
             with open(output_path, "w", encoding="utf-8") as handle:
                 handle.write(html)
@@ -97,7 +99,7 @@ class HTMLExporter:
         return str(value)
 
     @staticmethod
-    def _prepare_single_report_context(results: dict, analysis_log=None) -> dict:
+    def _prepare_single_report_context(results: dict, analysis_log=None, pre_generated_tree=None) -> dict:
         results_copy = copy.deepcopy(results or {})
         normalized = HTMLExporter._normalize_for_json(results_copy)
         analysis_log_text = analysis_log if analysis_log is not None else results_copy.get("analysis_log", "")
@@ -153,7 +155,7 @@ class HTMLExporter:
         plot_reference_lines = HTMLExporter._build_plot_reference_lines(results_copy)
 
         plot_designer_enabled = bool(plot_data)
-        decision_tree_image = HTMLExporter._embed_decision_tree(results_copy)
+        decision_tree_image = HTMLExporter._embed_decision_tree(results_copy, pre_generated_path=pre_generated_tree)
         decision_tree_json = HTMLExporter._build_decision_tree_json(results_copy)
         decision_path = HTMLExporter._build_decision_path_model(results_copy)
         methods_text = HTMLExporter._build_methods_text(results_copy, analysis_log_text)
@@ -266,12 +268,322 @@ class HTMLExporter:
         return f"{test_name} completed without a numeric p-value."
 
     @staticmethod
-    def _build_statistical_rows(results: dict) -> list[dict]:
+    def _build_ancova_statistical_rows(results: dict) -> list[dict]:
         rows = []
+        anova_table = results.get("anova_table") or []
+        covariate_effects = results.get("covariate_effects") or []
+        covariates_used = results.get("covariates_used") or []
+
+        # --- Table 1: ANOVA Table (Type II SS) ---
+        rows.append({"label": "── ANOVA Table (Type II SS) ──", "value": ""})
+        rows.append({"label": "Source", "value": "Sum of Sq. | df | F | p-value | η²"})
+        total_ss = sum(float(r.get("sum_sq") or 0) for r in anova_table)
+        for entry in anova_table:
+            source = str(entry.get("source", ""))
+            ss = entry.get("sum_sq")
+            df = entry.get("df")
+            f_val = entry.get("F")
+            p_val = entry.get("p_value")
+            eta_sq = float(ss / total_ss) if (ss is not None and total_ss > 0) else None
+            is_cov = any(cov in source for cov in covariates_used) and "C(" not in source
+            label = f"[Cov] {source}" if is_cov else source
+            value = (
+                f"{HTMLExporter._format_metric(ss)} | "
+                f"df={HTMLExporter._format_metric(df)} | "
+                f"F={HTMLExporter._format_metric(f_val)} | "
+                f"{HTMLExporter._format_p_value(p_val)} | "
+                f"η²={HTMLExporter._format_metric(eta_sq)}"
+            )
+            rows.append({"label": label, "value": value})
+
+        # --- Table 2: Covariate Effects ---
+        if covariate_effects:
+            rows.append({"label": "── Covariate Effects ──", "value": ""})
+            rows.append({"label": "Covariate", "value": "Coefficient | SE | t | p-value | 95% CI"})
+            for eff in covariate_effects:
+                cov = str(eff.get("covariate", ""))
+                beta = eff.get("coefficient")
+                se = eff.get("std_err")
+                t_val = eff.get("t_value")
+                p_val = eff.get("p_value")
+                ci_l = eff.get("ci_lower")
+                ci_u = eff.get("ci_upper")
+                value = (
+                    f"β={HTMLExporter._format_metric(beta)} | "
+                    f"SE={HTMLExporter._format_metric(se)} | "
+                    f"t={HTMLExporter._format_metric(t_val)} | "
+                    f"{HTMLExporter._format_p_value(p_val)} | "
+                    f"[{HTMLExporter._format_metric(ci_l)}, {HTMLExporter._format_metric(ci_u)}]"
+                )
+                rows.append({"label": cov, "value": value})
+
+        # --- Table 3: Model Fit ---
+        rows.append({"label": "── Model Fit ──", "value": ""})
+        rows.append({"label": "R²", "value": HTMLExporter._format_metric(results.get("r_squared"))})
+        rows.append({"label": "Adjusted R²", "value": HTMLExporter._format_metric(results.get("r_squared_adj"))})
+        rows.append({"label": "AIC", "value": HTMLExporter._format_metric(results.get("aic"))})
+        rows.append({"label": "N observations", "value": HTMLExporter._format_metric(results.get("n_observations"))})
+
+        return rows
+
+    @staticmethod
+    def _lmm_icc_interpretation(icc_val) -> str:
+        if icc_val is None:
+            return "N/A"
+        try:
+            v = float(icc_val)
+        except (TypeError, ValueError):
+            return "N/A"
+        if v < 0.1:
+            return "Negligible clustering"
+        if v < 0.3:
+            return "Small clustering"
+        if v < 0.6:
+            return "Moderate clustering"
+        return "Strong clustering — LMM justified"
+
+    @staticmethod
+    def _build_lmm_statistical_rows(results: dict) -> list[dict]:
+        rows = []
+
+        # Table 1: Fixed Effects
+        fe_table = results.get("fixed_effects_table") or []
+        rows.append({"label": "── Fixed Effects ──", "value": ""})
+        rows.append({"label": "Parameter", "value": "Coefficient | SE | z | p-value | 95% CI"})
+        for fe in fe_table:
+            param = str(fe.get("parameter", ""))
+            coef = fe.get("coefficient")
+            se = fe.get("std_err")
+            z = fe.get("z_value")
+            p_val = fe.get("p_value")
+            ci_l = fe.get("ci_lower")
+            ci_u = fe.get("ci_upper")
+            value = (
+                f"β={HTMLExporter._format_metric(coef)} | "
+                f"SE={HTMLExporter._format_metric(se)} | "
+                f"z={HTMLExporter._format_metric(z)} | "
+                f"{HTMLExporter._format_p_value(p_val)} | "
+                f"[{HTMLExporter._format_metric(ci_l)}, {HTMLExporter._format_metric(ci_u)}]"
+            )
+            rows.append({"label": param, "value": value})
+
+        # Table 2: Random Effects & Model Fit
+        rows.append({"label": "── Random Effects & Model Fit ──", "value": ""})
+        rows.append({
+            "label": "Random intercept variance",
+            "value": HTMLExporter._format_metric(results.get("random_effects_variance")),
+        })
+        rows.append({
+            "label": "Residual variance",
+            "value": HTMLExporter._format_metric(results.get("residual_variance")),
+        })
+        icc_val = results.get("icc")
+        icc_interp = HTMLExporter._lmm_icc_interpretation(icc_val)
+        rows.append({
+            "label": "Intraclass Correlation (ICC)",
+            "value": f"{HTMLExporter._format_metric(icc_val)} — {icc_interp}",
+        })
+        rows.append({"label": "AIC", "value": HTMLExporter._format_metric(results.get("aic"))})
+        rows.append({"label": "BIC", "value": HTMLExporter._format_metric(results.get("bic"))})
+        rows.append({"label": "Log-likelihood", "value": HTMLExporter._format_metric(results.get("log_likelihood"))})
+        rows.append({"label": "N subjects", "value": HTMLExporter._format_metric(results.get("n_subjects"))})
+        rows.append({"label": "N observations", "value": HTMLExporter._format_metric(results.get("n_observations"))})
+
+        converged = results.get("converged")
+        if converged is None:
+            conv_str = "Not available"
+        elif converged:
+            conv_str = "Yes"
+        else:
+            conv_str = "No — results may be unreliable"
+        rows.append({"label": "Converged", "value": conv_str})
+
+        return rows
+
+    @staticmethod
+    def _build_corr_matrix_statistical_rows(results: dict) -> list[dict]:
+        """Dedicated statistical rows for CorrelationMatrix."""
+        rows = [{"label": "── Correlation Matrix ──", "value": ""}]
+        method_map = {
+            "pearson": "Pearson",
+            "spearman": "Spearman",
+            "auto": "Auto (Pearson or Spearman per pair based on normality)",
+        }
+        method = str(results.get("method") or "").lower()
+        rows.append({"label": "Method", "value": method_map.get(method, method or "—")})
+
+        correction_map = {
+            "fdr_bh": "Benjamini-Hochberg FDR",
+            "bonferroni": "Bonferroni",
+        }
+        correction = results.get("correction")
+        rows.append({
+            "label": "Correction method",
+            "value": correction_map.get(str(correction or "").lower(), str(correction) if correction else "None"),
+        })
+
+        variables = results.get("variables") or []
+        n_vars = len(variables)
+        rows.append({"label": "N variables", "value": str(n_vars)})
+
+        n_tests = n_vars * (n_vars - 1) // 2
+        rows.append({"label": "N pairwise tests", "value": str(n_tests)})
+
+        # Count significant pairs (upper triangle only)
+        p_matrix = results.get("p_matrix") or {}
+        p_corr_matrix = results.get("p_corrected_matrix") or {}
+        n_sig_raw = 0
+        n_sig_corr = 0
+        for idx_i, var_i in enumerate(variables):
+            for idx_j, var_j in enumerate(variables):
+                if idx_j <= idx_i:
+                    continue
+                p_raw = (p_matrix.get(var_i) or {}).get(var_j)
+                p_corr = (p_corr_matrix.get(var_i) or {}).get(var_j)
+                if isinstance(p_raw, (int, float)) and p_raw < 0.05:
+                    n_sig_raw += 1
+                if isinstance(p_corr, (int, float)) and p_corr < 0.05:
+                    n_sig_corr += 1
+        rows.append({"label": "N significant (uncorrected)", "value": str(n_sig_raw)})
+        rows.append({"label": "N significant (FDR-corrected)", "value": str(n_sig_corr)})
+
+        if results.get("pairwise_deletion"):
+            rows.append({"label": "Missing data handling", "value": "Pairwise deletion — n varies per pair"})
+
+        strata = results.get("strata")
+        if strata:
+            rows.append({"label": "N strata", "value": str(len(strata))})
+
+        if not rows[1:]:
+            rows.append({"label": "Status", "value": "No structured statistical summary available."})
+        return rows
+
+    @staticmethod
+    def _build_beta_statistical_rows(results: dict) -> list[dict]:
+        """Dedicated statistical rows for Beta Regression.
+        The coefficient table is rendered separately as an HTML block via chart_blocks."""
+        rows = [{"label": "── Model Fit ──", "value": ""}]
         for label, key in [
             ("Test", "test"),
             ("Model type", "model_type"),
-            ("Statistic", "statistic"),
+            ("p-value (primary predictor)", "p_value"),
+        ]:
+            value = results.get(key)
+            if key in results and HTMLExporter._has_display_value(value):
+                display = HTMLExporter._format_p_value(value) if key.startswith("p_value") else HTMLExporter._format_metric(value)
+                rows.append({"label": label, "value": display})
+
+        pseudo_r2 = results.get("pseudo_r_squared")
+        if pseudo_r2 is not None:
+            rows.append({"label": "Pseudo-R² (McFadden)", "value": HTMLExporter._format_metric(pseudo_r2)})
+
+        phi = results.get("phi")
+        if phi is not None:
+            phi_f = float(phi)
+            if phi_f < 1:
+                phi_interp = "High variance relative to mean"
+            elif phi_f <= 5:
+                phi_interp = "Moderate dispersion"
+            else:
+                phi_interp = "Low dispersion — precise estimates"
+            rows.append({"label": "Dispersion parameter (φ)", "value": f"{HTMLExporter._format_metric(phi)} — {phi_interp}"})
+
+        for label, key in [
+            ("AIC", "aic"),
+            ("BIC", "bic"),
+            ("N observations", "n_observations"),
+        ]:
+            value = results.get(key)
+            if value is not None:
+                rows.append({"label": label, "value": HTMLExporter._format_metric(value)})
+
+        bc = results.get("bias_corrected")
+        if bc is not None:
+            rows.append({"label": "Bias corrected", "value": "Yes" if bc else "No"})
+            if bc:
+                bc_method = results.get("bias_correction_method")
+                if bc_method:
+                    rows.append({"label": "Bias correction method", "value": str(bc_method)})
+
+        if len(rows) <= 1:
+            rows.append({"label": "Status", "value": "No structured statistical summary available."})
+        return rows
+
+    @staticmethod
+    def _build_logistic_statistical_rows(results: dict) -> list[dict]:
+        """Dedicated statistical rows for Logistic Regression: Model Fit only.
+        The OR table is rendered separately as an HTML block via chart_blocks."""
+        rows = [
+            {"label": "── Model Fit ──", "value": ""},
+        ]
+        for label, key in [
+            ("Test", "test"),
+            ("Model type", "model_type"),
+            ("p-value (primary predictor)", "p_value"),
+            ("Adjusted p-value", "p_value_fdr"),
+        ]:
+            value = results.get(key)
+            if key in results and HTMLExporter._has_display_value(value):
+                display = HTMLExporter._format_p_value(value) if key.startswith("p_value") else HTMLExporter._format_metric(value)
+                rows.append({"label": label, "value": display})
+
+        auc = results.get("effect_size")
+        if auc is not None:
+            rows.append({"label": "AUC (ROC)", "value": HTMLExporter._format_metric(auc)})
+
+        pseudo_r2 = results.get("pseudo_r_squared")
+        if pseudo_r2 is not None:
+            rows.append({"label": "McFadden pseudo-R²", "value": HTMLExporter._format_metric(pseudo_r2)})
+
+        aic = results.get("aic")
+        if aic is not None:
+            rows.append({"label": "AIC", "value": HTMLExporter._format_metric(aic)})
+
+        bic = results.get("bic")
+        if bic is not None:
+            rows.append({"label": "BIC", "value": HTMLExporter._format_metric(bic)})
+
+        n = results.get("n_observations")
+        if n is not None:
+            rows.append({"label": "N observations", "value": HTMLExporter._format_metric(n)})
+
+        if len(rows) <= 1:
+            rows.append({"label": "Status", "value": "No structured statistical summary available."})
+        return rows
+
+    @staticmethod
+    def _build_statistical_rows(results: dict) -> list[dict]:
+        rows = []
+        model_type = results.get("model_type", "")
+        statistic_type = results.get("statistic_type", "")
+
+        if model_type == "ANCOVA":
+            return HTMLExporter._build_ancova_statistical_rows(results)
+
+        if model_type == "LMM":
+            return HTMLExporter._build_lmm_statistical_rows(results)
+
+        if model_type == "LogisticRegression":
+            return HTMLExporter._build_logistic_statistical_rows(results)
+
+        if model_type == "BetaRegression":
+            return HTMLExporter._build_beta_statistical_rows(results)
+
+        if model_type == "CorrelationMatrix":
+            return HTMLExporter._build_corr_matrix_statistical_rows(results)
+
+        # Determine the label for the "statistic" row based on model type
+        if statistic_type == "odds_ratio":
+            stat_label = "Odds Ratio (first predictor)"
+        elif statistic_type == "coefficient":
+            stat_label = "Coefficient (first predictor)"
+        else:
+            stat_label = "Statistic"
+
+        for label, key in [
+            ("Test", "test"),
+            ("Model type", "model_type"),
+            (stat_label, "statistic"),
             ("p-value", "p_value"),
             ("Adjusted p-value", "p_value_fdr"),
             ("Effect size", "effect_size"),
@@ -291,6 +603,63 @@ class HTMLExporter:
                 else:
                     display = HTMLExporter._format_metric(value)
                 rows.append({"label": label, "value": display})
+
+        # For Logistic Regression: add Wald z-statistic from odds_ratios table
+        if model_type == "LogisticRegression":
+            or_table = results.get("odds_ratios") or []
+            if or_table and isinstance(or_table[0], dict):
+                z_val = or_table[0].get("z_value")
+                if z_val is not None:
+                    rows.append({"label": "Wald z-statistic (first predictor)", "value": HTMLExporter._format_metric(z_val)})
+
+        # For Correlation: add sample size, interpretation, and statistic type
+        if model_type == "Correlation":
+            n_val = results.get("n")
+            if n_val is not None:
+                rows.append({"label": "Sample size (n)", "value": HTMLExporter._format_metric(n_val)})
+            method = str(results.get("method") or "").capitalize()
+            if method:
+                rows.append({"label": "Correlation method", "value": method})
+            interp = results.get("interpretation")
+            if interp:
+                rows.append({"label": "Interpretation", "value": str(interp)})
+
+        # For Brunner-Langer ATS: add statistic type label and RTE table rows
+        if model_type == "BrunnerLangerATS":
+            rows.append({"label": "Statistic type", "value": "ANOVA-Type Statistic (ATS) — not a standard F-value"})
+            rte = results.get("RTE")
+            if rte is not None:
+                rte_rows = []
+                try:
+                    if isinstance(rte, pd.DataFrame):
+                        rte_rows = rte.to_dict(orient="records")
+                except Exception:
+                    pass
+                if not rte_rows and isinstance(rte, dict) and "data" in rte:
+                    cols = rte.get("columns", [])
+                    rte_rows = [dict(zip(cols, row)) for row in (rte.get("data") or [])]
+                if rte_rows:
+                    rows.append({"label": "Relative Treatment Effects (RTE)", "value": "RTE near 0.5 = no effect"})
+                    for rte_row in rte_rows:
+                        between = rte_row.get("between_group", "")
+                        within = rte_row.get("within_level", "")
+                        rte_val = rte_row.get("RTE")
+                        n_cell = rte_row.get("n")
+                        group_label = f"RTE: {between} / {within}"
+                        rte_display = HTMLExporter._format_metric(rte_val)
+                        if n_cell is not None:
+                            rte_display += f"  (n={int(n_cell)})"
+                        rows.append({"label": group_label, "value": rte_display})
+
+        # For Freedman-Lane Permutation: add n_permutations
+        if model_type == "FreedmanLanePermutation":
+            n_perm = results.get("n_permutations")
+            if n_perm is not None:
+                rows.append({"label": "Permutations (n)", "value": HTMLExporter._format_metric(n_perm)})
+            stat_type = results.get("StatisticType")
+            if stat_type:
+                rows.append({"label": "Statistic type", "value": str(stat_type)})
+
         for factor in results.get("factors", []) or []:
             if not isinstance(factor, dict):
                 continue
@@ -319,55 +688,362 @@ class HTMLExporter:
     @staticmethod
     def _build_assumption_summary(results: dict) -> dict:
         rows = []
-        normality_tests = results.get("normality_tests", {}) or {}
-        # Fallback: extract from nested test_info structure used by one-way ANOVA path
-        test_info_raw = results.get("test_info", {}) or {}
-        if not normality_tests and test_info_raw:
-            _has_tr = test_info_raw.get("transformation") not in (None, "None", "No further")
-            _phase = "post_transformation" if _has_tr else "pre_transformation"
-            _norm = test_info_raw.get(_phase, {}).get("residuals_normality", {})
-            if _norm:
-                normality_tests = {"Model residuals": _norm}
-        for label, payload in normality_tests.items():
-            if not isinstance(payload, dict):
-                continue
-            rows.append({
-                "name": f"Normality: {HTMLExporter._prettify_label(label)}",
-                "statistic": HTMLExporter._format_metric(payload.get("statistic")),
-                "p_value": HTMLExporter._format_p_value(payload.get("p_value")),
-                "p_value_style": HTMLExporter._p_heat_style(payload.get("p_value")),
-                "status_label": HTMLExporter._bool_label(payload.get("is_normal")),
-                "status_class": HTMLExporter._bool_class(payload.get("is_normal")),
-            })
-        variance_test = results.get("variance_test", {}) or {}
-        # Fallback: extract from nested test_info structure
-        if not variance_test and test_info_raw:
-            _has_tr = test_info_raw.get("transformation") not in (None, "None", "No further")
-            _phase = "post_transformation" if _has_tr else "pre_transformation"
-            variance_test = test_info_raw.get(_phase, {}).get("variance", {}) or {}
-        if isinstance(variance_test, dict) and variance_test:
-            _var_name = variance_test.get("test_name", "Levene")
-            rows.append({
-                "name": f"Variance homogeneity ({_var_name})",
-                "statistic": HTMLExporter._format_metric(variance_test.get("statistic")),
-                "p_value": HTMLExporter._format_p_value(variance_test.get("p_value")),
-                "p_value_style": HTMLExporter._p_heat_style(variance_test.get("p_value")),
-                "status_label": HTMLExporter._bool_label(variance_test.get("equal_variance")),
-                "status_class": HTMLExporter._bool_class(variance_test.get("equal_variance")),
-            })
-            transformed = variance_test.get("transformed")
-            if isinstance(transformed, dict):
-                _var_name_tr = transformed.get("test_name", _var_name)
+        model_type = results.get("model_type", "")
+
+        # --- Beta Regression: residual normality, S-V transformation, EPV ---
+        if model_type == "BetaRegression":
+            residuals = HTMLExporter._coerce_numeric_sequence(results.get("residuals"))
+            if residuals and len(residuals) >= 3:
+                try:
+                    from scipy import stats as _stats
+                    sw_stat, sw_p = _stats.shapiro(residuals)
+                    sw_normal = sw_p >= 0.05
+                    rows.append({
+                        "name": "Residual normality (Shapiro-Wilk)",
+                        "statistic": HTMLExporter._format_metric(sw_stat),
+                        "p_value": HTMLExporter._format_p_value(sw_p),
+                        "p_value_style": HTMLExporter._p_heat_style(sw_p),
+                        "status_label": HTMLExporter._bool_label(sw_normal),
+                        "status_class": HTMLExporter._bool_class(sw_normal),
+                    })
+                except Exception:
+                    rows.append({
+                        "name": "Residual normality (Shapiro-Wilk)",
+                        "statistic": "—",
+                        "p_value": "—",
+                        "p_value_style": "",
+                        "status_label": "Assessed visually via Q-Q plot",
+                        "status_class": "is-neutral",
+                    })
+            else:
                 rows.append({
-                    "name": f"Variance homogeneity ({_var_name_tr}, transformed)",
-                    "statistic": HTMLExporter._format_metric(transformed.get("statistic")),
-                    "p_value": HTMLExporter._format_p_value(transformed.get("p_value")),
-                    "p_value_style": HTMLExporter._p_heat_style(transformed.get("p_value")),
-                    "status_label": HTMLExporter._bool_label(transformed.get("equal_variance")),
-                    "status_class": HTMLExporter._bool_class(transformed.get("equal_variance")),
+                    "name": "Residual normality (Shapiro-Wilk)",
+                    "statistic": "—",
+                    "p_value": "—",
+                    "p_value_style": "",
+                    "status_label": "Assessed visually via Q-Q plot",
+                    "status_class": "is-neutral",
                 })
+
+            if results.get("sv_transformed"):
+                rows.append({
+                    "name": "Smithson-Verkuilen transformation",
+                    "statistic": "Applied",
+                    "p_value": "—",
+                    "p_value_style": "",
+                    "status_label": "Boundary values present — squeezed from [0,1] to strictly (0,1)",
+                    "status_class": "is-neutral",
+                })
+
+            epv = results.get("epv")
+            if epv is not None:
+                epv_f = float(epv)
+                if epv_f < 10:
+                    epv_label = f"EPV = {HTMLExporter._format_metric(epv)} — Small sample relative to predictors — bias-corrected estimation applied"
+                    epv_class = "is-danger"
+                else:
+                    epv_label = f"EPV = {HTMLExporter._format_metric(epv)} — Adequate sample size"
+                    epv_class = "is-significant"
+                rows.append({
+                    "name": "Events per variable (EPV)",
+                    "statistic": HTMLExporter._format_metric(epv),
+                    "p_value": "—",
+                    "p_value_style": "",
+                    "status_label": epv_label,
+                    "status_class": epv_class,
+                })
+
+        # --- CorrelationMatrix: method justification ---
+        if model_type == "CorrelationMatrix":
+            method = str(results.get("method") or "").lower()
+            method_map = {
+                "pearson": "Pearson",
+                "spearman": "Spearman",
+                "auto": "Auto (Pearson or Spearman selected per pair based on Shapiro-Wilk normality test)",
+            }
+            method_label = method_map.get(method, method or "—")
+            if method == "pearson":
+                status_label = "Pearson requires bivariate normality — verify via Q-Q plots"
+                status_class = "is-neutral"
+            elif method == "spearman":
+                status_label = "Spearman is distribution-free — no normality required"
+                status_class = "is-significant"
+            else:
+                status_label = "Method auto-selected per pair — verify individual pair choices"
+                status_class = "is-neutral"
+            rows.append({
+                "name": f"Correlation method: {method_label}",
+                "statistic": "—",
+                "p_value": "—",
+                "p_value_style": "",
+                "status_label": status_label,
+                "status_class": status_class,
+            })
+            correction = results.get("correction")
+            correction_map = {"fdr_bh": "Benjamini-Hochberg FDR", "bonferroni": "Bonferroni"}
+            corr_label = correction_map.get(str(correction or "").lower(), str(correction) if correction else "None")
+            rows.append({
+                "name": f"Multiple testing correction: {corr_label}",
+                "statistic": "—",
+                "p_value": "—",
+                "p_value_style": "",
+                "status_label": "Controls false discovery rate across all pairwise tests" if correction else "No correction applied",
+                "status_class": "is-significant" if correction else "is-neutral",
+            })
+            if results.get("pairwise_deletion"):
+                rows.append({
+                    "name": "Missing data handling",
+                    "statistic": "—",
+                    "p_value": "—",
+                    "p_value_style": "",
+                    "status_label": "Pairwise deletion — each pair uses all available complete cases",
+                    "status_class": "is-neutral",
+                })
+
+        # --- Correlation: normality_check (Shapiro-Wilk per variable for method selection) ---
+        normality_check = results.get("normality_check") or {}
+        if model_type == "Correlation" and normality_check:
+            x_var = results.get("x_variable", "")
+            y_var = results.get("y_variable", "")
+            for var_key, var_label in [(x_var, results.get("x_variable_display", x_var)),
+                                       (y_var, results.get("y_variable_display", y_var))]:
+                payload = normality_check.get(var_key, {})
+                if isinstance(payload, dict) and "p_value" in payload:
+                    rows.append({
+                        "name": f"Normality: {HTMLExporter._prettify_label(var_label)} (Shapiro-Wilk)",
+                        "statistic": HTMLExporter._format_metric(payload.get("statistic")),
+                        "p_value": HTMLExporter._format_p_value(payload.get("p_value")),
+                        "p_value_style": HTMLExporter._p_heat_style(payload.get("p_value")),
+                        "status_label": HTMLExporter._bool_label(payload.get("normal")),
+                        "status_class": HTMLExporter._bool_class(payload.get("normal")),
+                    })
+
+        # --- Linear Regression: diagnostics (Shapiro-Wilk residuals, Breusch-Pagan, Ramsey RESET) ---
+        elif model_type == "LinearRegression":
+            diag = results.get("diagnostics") or {}
+            norm_d = diag.get("normality") or {}
+            if norm_d and "p_value" in norm_d:
+                rows.append({
+                    "name": "Normality of residuals (Shapiro-Wilk)",
+                    "statistic": HTMLExporter._format_metric(norm_d.get("statistic")),
+                    "p_value": HTMLExporter._format_p_value(norm_d.get("p_value")),
+                    "p_value_style": HTMLExporter._p_heat_style(norm_d.get("p_value")),
+                    "status_label": HTMLExporter._bool_label(norm_d.get("assumption_holds")),
+                    "status_class": HTMLExporter._bool_class(norm_d.get("assumption_holds")),
+                })
+            homo_d = diag.get("homoscedasticity") or {}
+            if homo_d and "p_value" in homo_d:
+                rows.append({
+                    "name": "Homoscedasticity (Breusch-Pagan)",
+                    "statistic": HTMLExporter._format_metric(homo_d.get("statistic")),
+                    "p_value": HTMLExporter._format_p_value(homo_d.get("p_value")),
+                    "p_value_style": HTMLExporter._p_heat_style(homo_d.get("p_value")),
+                    "status_label": HTMLExporter._bool_label(homo_d.get("assumption_holds")),
+                    "status_class": HTMLExporter._bool_class(homo_d.get("assumption_holds")),
+                })
+            lin_d = diag.get("linearity") or {}
+            if lin_d and "p_value" in lin_d:
+                rows.append({
+                    "name": "Linearity (Ramsey RESET)",
+                    "statistic": HTMLExporter._format_metric(lin_d.get("statistic")),
+                    "p_value": HTMLExporter._format_p_value(lin_d.get("p_value")),
+                    "p_value_style": HTMLExporter._p_heat_style(lin_d.get("p_value")),
+                    "status_label": HTMLExporter._bool_label(lin_d.get("assumption_holds")),
+                    "status_class": HTMLExporter._bool_class(lin_d.get("assumption_holds")),
+                })
+
+        # --- Logistic Regression: Hosmer-Lemeshow goodness-of-fit + AUC interpretation ---
+        elif model_type == "LogisticRegression":
+            hl = results.get("hosmer_lemeshow") or {}
+            if hl and "p_value" in hl:
+                hl_p = hl.get("p_value")
+                # HL passes (good fit) when p > 0.05 (no significant deviation from expected)
+                goodness_of_fit = isinstance(hl_p, (int, float)) and hl_p > 0.05
+                rows.append({
+                    "name": "Goodness-of-fit (Hosmer-Lemeshow)",
+                    "statistic": HTMLExporter._format_metric(hl.get("chi2")),
+                    "p_value": HTMLExporter._format_p_value(hl_p),
+                    "p_value_style": HTMLExporter._p_heat_style(hl_p),
+                    "status_label": HTMLExporter._bool_label(goodness_of_fit),
+                    "status_class": HTMLExporter._bool_class(goodness_of_fit),
+                })
+            auc = results.get("effect_size")
+            if auc is not None and isinstance(auc, (int, float)):
+                if auc < 0.6:
+                    auc_interp, auc_ok = "Poor discrimination", False
+                elif auc < 0.7:
+                    auc_interp, auc_ok = "Acceptable", True
+                elif auc < 0.8:
+                    auc_interp, auc_ok = "Good", True
+                elif auc < 0.9:
+                    auc_interp, auc_ok = "Excellent", True
+                else:
+                    auc_interp, auc_ok = "Outstanding", True
+                rows.append({
+                    "name": "Discrimination (AUC interpretation)",
+                    "statistic": HTMLExporter._format_metric(auc),
+                    "p_value": "—",
+                    "p_value_style": "",
+                    "status_label": auc_interp,
+                    "status_class": "is-significant" if auc_ok else "is-danger",
+                })
+
+        # --- ANCOVA: residual normality + slope homogeneity ---
+        elif model_type == "ANCOVA":
+            normality_tests = results.get("normality_tests") or {}
+            if normality_tests:
+                for label, payload in normality_tests.items():
+                    if not isinstance(payload, dict):
+                        continue
+                    rows.append({
+                        "name": f"Normality: {HTMLExporter._prettify_label(label)} (Shapiro-Wilk)",
+                        "statistic": HTMLExporter._format_metric(payload.get("statistic")),
+                        "p_value": HTMLExporter._format_p_value(payload.get("p_value")),
+                        "p_value_style": HTMLExporter._p_heat_style(payload.get("p_value")),
+                        "status_label": HTMLExporter._bool_label(payload.get("is_normal")),
+                        "status_class": HTMLExporter._bool_class(payload.get("is_normal")),
+                    })
+            else:
+                rows.append({
+                    "name": "Residual Normality (Shapiro-Wilk)",
+                    "statistic": "N/A",
+                    "p_value": "—",
+                    "p_value_style": "",
+                    "status_label": "Assessed visually via Q-Q plot",
+                    "status_class": "is-neutral",
+                })
+            slope_hom = results.get("slope_homogeneity") or {}
+            for interaction_key, payload in slope_hom.items():
+                if not isinstance(payload, dict):
+                    continue
+                f_val = payload.get("F")
+                p_val = payload.get("p_value")
+                holds = payload.get("assumption_holds")
+                rows.append({
+                    "name": f"Slope Homogeneity: {interaction_key}",
+                    "statistic": HTMLExporter._format_metric(f_val),
+                    "p_value": HTMLExporter._format_p_value(p_val),
+                    "p_value_style": HTMLExporter._p_heat_style(p_val),
+                    "status_label": HTMLExporter._bool_label(holds),
+                    "status_class": HTMLExporter._bool_class(holds),
+                })
+
+        # --- LMM: convergence + ICC + residual normality ---
+        elif model_type == "LMM":
+            rows.append({
+                "name": "Residual Normality",
+                "statistic": "—",
+                "p_value": "—",
+                "p_value_style": "",
+                "status_label": "Assessed visually via Q-Q plot",
+                "status_class": "is-neutral",
+            })
+            converged = results.get("converged")
+            conv_holds = bool(converged) if converged is not None else None
+            rows.append({
+                "name": "Model Convergence",
+                "statistic": "—",
+                "p_value": "—",
+                "p_value_style": "",
+                "status_label": "Yes" if converged is True else ("No" if converged is False else "Not available"),
+                "status_class": HTMLExporter._bool_class(conv_holds),
+            })
+            icc_val = results.get("icc")
+            icc_interp = HTMLExporter._lmm_icc_interpretation(icc_val)
+            icc_justified = (float(icc_val) >= 0.1) if isinstance(icc_val, (int, float)) else None
+            rows.append({
+                "name": "Intraclass Correlation (ICC) — ICC > 0.1 justifies LMM",
+                "statistic": HTMLExporter._format_metric(icc_val),
+                "p_value": icc_interp,
+                "p_value_style": "",
+                "status_label": "LMM justified" if icc_justified else ("ICC < 0.1 — LMM may be unnecessary" if icc_justified is False else "N/A"),
+                "status_class": "is-significant" if icc_justified else ("is-neutral" if icc_justified is None else "is-danger"),
+            })
+
+        # --- Standard tests: normality_tests + fallback from test_info ---
+        elif model_type == "BetaRegression":
+            pass  # handled above in dedicated Beta Regression block
+        elif model_type == "CorrelationMatrix":
+            pass  # handled above in dedicated CorrelationMatrix block
+        else:
+            normality_tests = results.get("normality_tests", {}) or {}
+            # Fallback: extract from nested test_info structure used by one-way ANOVA path
+            test_info_raw = results.get("test_info", {}) or {}
+            if not normality_tests and test_info_raw:
+                _has_tr = test_info_raw.get("transformation") not in (None, "None", "No further")
+                _phase = "post_transformation" if _has_tr else "pre_transformation"
+                _norm = test_info_raw.get(_phase, {}).get("residuals_normality", {})
+                if _norm:
+                    normality_tests = {"Model residuals": _norm}
+            for label, payload in normality_tests.items():
+                if not isinstance(payload, dict):
+                    continue
+                rows.append({
+                    "name": f"Normality: {HTMLExporter._prettify_label(label)}",
+                    "statistic": HTMLExporter._format_metric(payload.get("statistic")),
+                    "p_value": HTMLExporter._format_p_value(payload.get("p_value")),
+                    "p_value_style": HTMLExporter._p_heat_style(payload.get("p_value")),
+                    "status_label": HTMLExporter._bool_label(payload.get("is_normal")),
+                    "status_class": HTMLExporter._bool_class(payload.get("is_normal")),
+                })
+            variance_test = results.get("variance_test", {}) or {}
+            # Fallback: extract from nested test_info structure
+            if not variance_test and test_info_raw:
+                _has_tr = test_info_raw.get("transformation") not in (None, "None", "No further")
+                _phase = "post_transformation" if _has_tr else "pre_transformation"
+                variance_test = test_info_raw.get(_phase, {}).get("variance", {}) or {}
+            if isinstance(variance_test, dict) and variance_test:
+                _var_name = variance_test.get("test_name", "Levene")
+                rows.append({
+                    "name": f"Variance homogeneity ({_var_name})",
+                    "statistic": HTMLExporter._format_metric(variance_test.get("statistic")),
+                    "p_value": HTMLExporter._format_p_value(variance_test.get("p_value")),
+                    "p_value_style": HTMLExporter._p_heat_style(variance_test.get("p_value")),
+                    "status_label": HTMLExporter._bool_label(variance_test.get("equal_variance")),
+                    "status_class": HTMLExporter._bool_class(variance_test.get("equal_variance")),
+                })
+                transformed = variance_test.get("transformed")
+                if isinstance(transformed, dict):
+                    _var_name_tr = transformed.get("test_name", _var_name)
+                    rows.append({
+                        "name": f"Variance homogeneity ({_var_name_tr}, transformed)",
+                        "statistic": HTMLExporter._format_metric(transformed.get("statistic")),
+                        "p_value": HTMLExporter._format_p_value(transformed.get("p_value")),
+                        "p_value_style": HTMLExporter._p_heat_style(transformed.get("p_value")),
+                        "status_label": HTMLExporter._bool_label(transformed.get("equal_variance")),
+                        "status_class": HTMLExporter._bool_class(transformed.get("equal_variance")),
+                    })
+        # For ANCOVA/LMM: inject model-specific note shown by the template
+        model_type_check = results.get("model_type", "")
+        if model_type_check == "ANCOVA":
+            slope_hom = results.get("slope_homogeneity") or {}
+            any_violated = any(
+                isinstance(v, dict) and v.get("assumption_holds") is False
+                for v in slope_hom.values()
+            )
+            if any_violated:
+                sphericity_correction_note = (
+                    "Homogeneity of regression slopes violated — the covariate effect differs between groups. "
+                    "ANCOVA results should be interpreted with caution; consider interaction models."
+                )
+            else:
+                sphericity_correction_note = (
+                    "Homogeneity of regression slopes: key ANCOVA assumption. "
+                    "Parallel regression slopes support valid covariate adjustment."
+                )
+        elif model_type_check == "LMM":
+            converged_check = results.get("converged")
+            if converged_check is False:
+                sphericity_correction_note = (
+                    "Model did not converge — results may be unreliable. "
+                    "Consider simplifying the random effects structure."
+                )
+            else:
+                sphericity_correction_note = None
+        else:
+            sphericity_correction_note = None
+
         sphericity = results.get("sphericity_test", {}) or {}
-        sphericity_correction_note = None
         if isinstance(sphericity, dict) and sphericity:
             status_value = sphericity.get("sphericity_met")
             if status_value is None and sphericity.get("p_value") is not None:
@@ -410,6 +1086,137 @@ class HTMLExporter:
 
     @staticmethod
     def _build_descriptive_summary(results: dict) -> dict:
+        model_type = results.get("model_type", "")
+
+        # --- ANCOVA: adjusted group means ---
+        if model_type == "ANCOVA":
+            adjusted_means = results.get("adjusted_means") or {}
+            covariates_used = results.get("covariates_used") or []
+            rows = []
+            for factor, levels in adjusted_means.items():
+                if not isinstance(levels, dict):
+                    continue
+                for level, stats in levels.items():
+                    if not isinstance(stats, dict):
+                        continue
+                    rows.append({
+                        "group": str(level),
+                        "n": HTMLExporter._format_metric(stats.get("n")),
+                        "raw_mean": HTMLExporter._format_metric(stats.get("raw_mean")),
+                        "adj_mean": HTMLExporter._format_metric(stats.get("adjusted_mean")),
+                        "raw_sd": HTMLExporter._format_metric(stats.get("raw_sd")),
+                    })
+            cov_str = ", ".join(covariates_used) if covariates_used else "—"
+            return {
+                "rows": rows,
+                "has_transformed": False,
+                "title": "Adjusted Group Means",
+                "group_col_label": "Group",
+                "columns": ["Group", "N", "Raw Mean", "Adj. Mean", "Raw SD"],
+                "column_keys": ["group", "n", "raw_mean", "adj_mean", "raw_sd"],
+                "note": f"Means adjusted for covariates: {cov_str}",
+            }
+
+        # --- Correlation / Linear Regression: bivariate variable summary from association_points ---
+        if model_type in ("Correlation", "LinearRegression"):
+            points = results.get("association_points") or []
+            x_label = results.get("x_variable_display") or results.get("x_variable") or "X"
+            y_label = results.get("y_variable_display") or results.get("y_variable") or "Y"
+            rows = []
+            if points:
+                x_vals = [p["x"] for p in points if "x" in p]
+                y_vals = [p["y"] for p in points if "y" in p]
+                for label, vals in [(x_label, x_vals), (y_label, y_vals)]:
+                    if not vals:
+                        continue
+                    arr = np.array(vals, dtype=float)
+                    rows.append({
+                        "group": str(label),
+                        "n": len(arr),
+                        "mean": HTMLExporter._format_metric(float(np.mean(arr))),
+                        "median": HTMLExporter._format_metric(float(np.median(arr))),
+                        "sd": HTMLExporter._format_metric(float(np.std(arr, ddof=1)) if len(arr) > 1 else None),
+                        "sem": HTMLExporter._format_metric(float(stats.sem(arr)) if len(arr) > 1 else None),
+                        "min": HTMLExporter._format_metric(float(np.min(arr))),
+                        "max": HTMLExporter._format_metric(float(np.max(arr))),
+                    })
+            return {
+                "rows": rows,
+                "has_transformed": False,
+                "title": "Variable summary",
+                "group_col_label": "Variable",
+            }
+
+        # --- CorrelationMatrix: variable N summary from n_matrix diagonal ---
+        if model_type == "CorrelationMatrix":
+            variables = results.get("variables") or []
+            n_matrix = results.get("n_matrix") or {}
+            rows = []
+            for var in variables:
+                n_val = (n_matrix.get(var) or {}).get(var)
+                rows.append({
+                    "group": HTMLExporter._prettify_label(var),
+                    "n": HTMLExporter._format_metric(int(n_val) if n_val is not None else None),
+                    "mean": "—",
+                    "median": "—",
+                    "sd": "—",
+                    "min": "—",
+                    "max": "—",
+                })
+            return {
+                "rows": rows,
+                "has_transformed": False,
+                "title": "Variable overview",
+                "group_col_label": "Variable",
+                "note": "N = non-missing observations per variable. Descriptive statistics not stored — run per-variable analysis for full summary.",
+            }
+
+        # --- Logistic Regression: no meaningful group-level summary ---
+        if model_type == "LogisticRegression":
+            return {
+                "rows": [],
+                "has_transformed": False,
+                "title": "Descriptive Statistics",
+                "group_col_label": "Group",
+            }
+
+        # --- LMM: model structure summary ---
+        if model_type == "LMM":
+            fe_used = results.get("fixed_effects_used") or []
+            covariates = results.get("covariates_used") or []
+            desc_rows = [
+                {
+                    "label": "N subjects (random intercept grouping)",
+                    "value": HTMLExporter._format_metric(results.get("n_subjects")),
+                },
+                {
+                    "label": "N total observations",
+                    "value": HTMLExporter._format_metric(results.get("n_observations")),
+                },
+                {
+                    "label": "Fixed effects",
+                    "value": ", ".join(str(f) for f in fe_used) if fe_used else "—",
+                },
+                {
+                    "label": "Random intercept variable",
+                    "value": str(results.get("random_intercept") or "—"),
+                },
+                {
+                    "label": "Covariates",
+                    "value": ", ".join(str(c) for c in covariates) if covariates else "None",
+                },
+            ]
+            return {
+                "rows": desc_rows,
+                "has_transformed": False,
+                "title": "Model Structure Summary",
+                "group_col_label": "Parameter",
+                "columns": ["Parameter", "Value"],
+                "column_keys": ["label", "value"],
+                "note": "Random intercept model — observations nested within subjects.",
+            }
+
+        # --- Standard group comparison tests ---
         raw_data = results.get("raw_data") or results.get("samples") or {}
         transformed = results.get("raw_data_transformed") or results.get("transformed_data") or {}
         rows = []
@@ -445,6 +1252,8 @@ class HTMLExporter:
         return {
             "rows": rows,
             "has_transformed": bool(transformed and transformed != raw_data),
+            "title": "Group-level summary",
+            "group_col_label": "Group",
         }
 
     @staticmethod
@@ -502,23 +1311,654 @@ class HTMLExporter:
         }
 
     @staticmethod
+    def _build_lmm_chart(results: dict) -> dict | None:
+        if results.get("model_type") != "LMM":
+            return None
+        fe_table = results.get("fixed_effects_table") or []
+        if not fe_table:
+            return None
+        try:
+            import plotly.graph_objects as go
+
+            valid = [
+                fe for fe in fe_table
+                if fe.get("coefficient") is not None
+                and fe.get("ci_lower") is not None
+                and fe.get("ci_upper") is not None
+            ]
+            if not valid:
+                return None
+
+            # Reverse so intercept ends up at bottom of the y-axis
+            valid = list(reversed(valid))
+            params = [str(fe.get("parameter", "")) for fe in valid]
+            coefs = [float(fe["coefficient"]) for fe in valid]
+            lowers = [float(fe["ci_lower"]) for fe in valid]
+            uppers = [float(fe["ci_upper"]) for fe in valid]
+            pvals = [fe.get("p_value") for fe in valid]
+
+            colors = [
+                "#0f766e" if (pv is not None and float(pv) < 0.05) else "#94a3b8"
+                for pv in pvals
+            ]
+            error_minus = [c - l for c, l in zip(coefs, lowers)]
+            error_plus = [u - c for c, u in zip(coefs, uppers)]
+
+            figure = go.Figure()
+            figure.add_vline(x=0, line=dict(color="#64748b", width=1, dash="dot"))
+            figure.add_trace(go.Scatter(
+                x=coefs,
+                y=params,
+                mode="markers",
+                marker=dict(
+                    size=10,
+                    color=colors,
+                    line=dict(width=1.2, color="#16313a"),
+                ),
+                error_x=dict(
+                    type="data",
+                    symmetric=False,
+                    array=error_plus,
+                    arrayminus=error_minus,
+                    color="#64748b",
+                    thickness=1.8,
+                    width=6,
+                ),
+                hovertemplate="<b>%{y}</b><br>β = %{x:.4f}<extra></extra>",
+                name="Fixed effect",
+            ))
+            figure.update_layout(
+                template="plotly_white",
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="#fffdf8",
+                margin=dict(l=180, r=30, t=24, b=48),
+                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
+                xaxis_title="Coefficient (β)",
+                yaxis=dict(title="", automargin=True),
+                showlegend=False,
+                height=max(260, len(params) * 44 + 80),
+            )
+            html = HTMLExporter._figure_to_html(figure, div_id="biomedstatx-lmm-chart")
+            if not html:
+                return None
+            return {
+                "title": "Fixed Effects (Coefficient Plot)",
+                "subtitle": (
+                    "Dots = coefficient estimate (β), lines = 95% CI. "
+                    "Teal = significant (p < 0.05), grey = not significant. "
+                    "Vertical dashed line at β = 0."
+                ),
+                "html": html,
+                "div_id": "biomedstatx-lmm-chart",
+            }
+        except Exception as exc:
+            print(f"WARNING HTML EXPORT: LMM chart generation failed: {exc}")
+            return None
+
+    @staticmethod
+    def _build_trajectory_chart(results: dict) -> dict | None:
+        trajectories = results.get("plot_subject_trajectories")
+        if not isinstance(trajectories, list) or len(trajectories) < 1:
+            return None
+        try:
+            import plotly.graph_objects as go
+
+            figure = go.Figure()
+            palette = ["#0f766e", "#1f7a5a", "#b7791f", "#9f3a38", "#1d4ed8", "#7c3aed"]
+
+            # Collect all timepoints/conditions in order
+            all_groups: list[str] = []
+            seen: set[str] = set()
+            for traj in trajectories:
+                for pt in (traj.get("points") or []):
+                    g = str(pt.get("group", ""))
+                    if g and g not in seen:
+                        all_groups.append(g)
+                        seen.add(g)
+
+            if not all_groups:
+                return None
+
+            group_idx = {g: i for i, g in enumerate(all_groups)}
+
+            # Subject lines (thin grey)
+            for traj in trajectories:
+                pts = traj.get("points") or []
+                if len(pts) < 2:
+                    continue
+                x_pts = [group_idx[pt["group"]] for pt in pts if pt.get("group") in group_idx]
+                y_pts = [pt["value"] for pt in pts if pt.get("group") in group_idx]
+                figure.add_trace(go.Scatter(
+                    x=x_pts, y=y_pts,
+                    mode="lines+markers",
+                    line=dict(color="rgba(100,120,130,0.28)", width=1),
+                    marker=dict(size=4, color="rgba(100,120,130,0.4)"),
+                    showlegend=False,
+                    hoverinfo="skip",
+                ))
+
+            # Group mean line (bold, colored)
+            from collections import defaultdict
+            group_values: dict[str, list[float]] = defaultdict(list)
+            for traj in trajectories:
+                for pt in (traj.get("points") or []):
+                    g = str(pt.get("group", ""))
+                    if g in group_idx:
+                        group_values[g].append(float(pt["value"]))
+
+            mean_x = sorted(group_values.keys(), key=lambda g: group_idx[g])
+            mean_y = [float(np.mean(group_values[g])) for g in mean_x]
+            mean_x_idx = [group_idx[g] for g in mean_x]
+
+            figure.add_trace(go.Scatter(
+                x=mean_x_idx, y=mean_y,
+                mode="lines+markers",
+                line=dict(color=palette[0], width=2.5),
+                marker=dict(size=8, color=palette[0]),
+                name="Group mean",
+                showlegend=True,
+            ))
+
+            figure.update_layout(
+                template="plotly_white",
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="#fffdf8",
+                margin=dict(l=48, r=20, t=24, b=56),
+                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
+                xaxis=dict(
+                    tickmode="array",
+                    tickvals=list(range(len(all_groups))),
+                    ticktext=all_groups,
+                    title="Condition / Timepoint",
+                ),
+                yaxis_title="Observed values",
+                legend=dict(orientation="h", x=0.01, y=1.08),
+            )
+
+            html = HTMLExporter._figure_to_html(figure, div_id="biomedstatx-trajectory-chart")
+            if not html:
+                return None
+            n_subjects = len(trajectories)
+            return {
+                "title": "Subject Trajectories",
+                "subtitle": f"Individual profiles (n={n_subjects}) with group mean overlay.",
+                "html": html,
+                "div_id": "biomedstatx-trajectory-chart",
+            }
+        except Exception as exc:
+            print(f"WARNING HTML EXPORT: trajectory chart generation failed: {exc}")
+            return None
+
+    @staticmethod
+    def _build_interaction_plot(results: dict) -> dict | None:
+        """Interaction plot for Two-Way ANOVA and Mixed ANOVA — cell means ± SE."""
+        model_type = results.get("model_type", "")
+        if model_type not in ("TwoWayANOVA", "MixedANOVA"):
+            return None
+        descriptive = results.get("descriptive") or {}
+        if not descriptive:
+            return None
+        factors = results.get("factors") or []
+        if model_type == "MixedANOVA":
+            between_list = [f["factor"] for f in factors if f.get("type") == "between"]
+            within_list = [f["factor"] for f in factors if f.get("type") == "within"]
+            if not between_list or not within_list:
+                return None
+            # x-axis = between-factor levels, one line per within-factor level
+            factor_x = between_list[0]
+            factor_line = within_list[0]
+        else:
+            between_list = [f["factor"] for f in factors if f.get("type") == "between"]
+            if len(between_list) >= 2:
+                factor_x, factor_line = between_list[0], between_list[1]
+            elif len(factors) >= 2:
+                factor_x = factors[0]["factor"]
+                factor_line = factors[1]["factor"]
+            else:
+                return None
+        # Build cell grid from descriptive
+        cell_data: dict = {}
+        x_levels_order: list = []
+        line_levels_order: list = []
+        seen_x: set = set()
+        seen_line: set = set()
+        for key, stats in descriptive.items():
+            parts_dict: dict = {}
+            for part in key.split(", "):
+                if "=" in part:
+                    fname, fval = part.split("=", 1)
+                    parts_dict[fname.strip()] = fval.strip()
+            x_val = parts_dict.get(factor_x)
+            line_val = parts_dict.get(factor_line)
+            if x_val is None or line_val is None:
+                continue
+            if x_val not in seen_x:
+                x_levels_order.append(x_val)
+                seen_x.add(x_val)
+            if line_val not in seen_line:
+                line_levels_order.append(line_val)
+                seen_line.add(line_val)
+            cell_data.setdefault(x_val, {})[line_val] = {
+                "mean": float(stats["mean"]) if stats.get("mean") is not None else None,
+                "se": float(stats.get("stderr") or stats.get("se") or 0),
+                "n": stats.get("n", 0),
+            }
+        if not cell_data:
+            return None
+        try:
+            import plotly.graph_objects as go
+            palette = ["#0f766e", "#b7791f", "#1d4ed8", "#9f3a38", "#7c3aed", "#1f7a5a"]
+            interactions = results.get("interactions") or []
+            interaction_sig = any(
+                isinstance(inter.get("p_value"), (int, float)) and inter["p_value"] < 0.05
+                for inter in interactions
+            )
+            fig = go.Figure()
+            for idx, line_level in enumerate(line_levels_order):
+                color = palette[idx % len(palette)]
+                y_vals = []
+                y_err = []
+                hover_texts = []
+                for x_val in x_levels_order:
+                    cell = cell_data.get(x_val, {}).get(line_level)
+                    if cell and cell["mean"] is not None:
+                        y_vals.append(cell["mean"])
+                        y_err.append(cell["se"])
+                        hover_texts.append(
+                            f"{factor_x}={x_val}, {factor_line}={line_level}<br>"
+                            f"Mean: {cell['mean']:.3f} ± {cell['se']:.3f} SE<br>n={cell['n']}"
+                        )
+                    else:
+                        y_vals.append(None)
+                        y_err.append(0)
+                        hover_texts.append("")
+                fig.add_trace(go.Scatter(
+                    x=x_levels_order,
+                    y=y_vals,
+                    mode="lines+markers",
+                    name=f"{factor_line}={line_level}",
+                    line=dict(color=color, width=2),
+                    marker=dict(size=8, color=color),
+                    error_y=dict(type="data", array=y_err, visible=True,
+                                 color=color, thickness=1.5, width=4),
+                    hovertext=hover_texts,
+                    hoverinfo="text",
+                ))
+            interaction_note = ""
+            if interactions:
+                inter = interactions[0]
+                ip = inter.get("p_value")
+                if isinstance(ip, (int, float)):
+                    interaction_note = (
+                        f"Interaction p = {HTMLExporter._format_p_value(ip)}"
+                        + (" — significant" if ip < 0.05 else "")
+                    )
+            fig.update_layout(
+                template="plotly_white",
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="#fffdf8",
+                margin=dict(l=56, r=20, t=36, b=64),
+                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
+                xaxis=dict(title=factor_x),
+                yaxis=dict(title="Cell Mean"),
+                legend=dict(title=dict(text=factor_line), orientation="h", x=0.01, y=1.1),
+                annotations=[dict(
+                    x=0.5, y=-0.2, xref="paper", yref="paper",
+                    text=interaction_note, showarrow=False,
+                    font=dict(size=11, color="#b7791f" if interaction_sig else "#555"),
+                )] if interaction_note else [],
+            )
+            html = HTMLExporter._figure_to_html(fig, div_id="biomedstatx-interaction-plot")
+            if not html:
+                return None
+            return {
+                "title": "Interaction Plot — Cell Means ± SE",
+                "subtitle": f"{factor_x} × {factor_line}",
+                "html": html,
+                "div_id": "biomedstatx-interaction-plot",
+            }
+        except Exception as exc:
+            print(f"WARNING HTML EXPORT: interaction plot failed: {exc}")
+            return None
+
+    @staticmethod
+    def _build_profile_plot(results: dict) -> dict | None:
+        """Profile plot for RM-ANOVA — group mean ± SE with individual trajectories."""
+        if results.get("model_type") != "RepeatedMeasuresANOVA":
+            return None
+        descriptive = results.get("descriptive") or {}
+        if not descriptive:
+            return None
+        # Determine within factor name from factors list or infer from descriptive keys
+        factors = results.get("factors") or []
+        within_list = [f["factor"] for f in factors if f.get("type") == "within"]
+        if within_list:
+            within_factor = within_list[0]
+        else:
+            within_factor = None
+            for key in descriptive:
+                if "=" in key and ", " not in key:
+                    within_factor = key.split("=")[0].strip()
+                    break
+        if not within_factor:
+            return None
+        # Parse timepoint → stats
+        level_stats: dict = {}
+        for key, stats in descriptive.items():
+            if "=" in key:
+                fname, fval = key.split("=", 1)
+                if fname.strip() == within_factor:
+                    level_stats[fval.strip()] = stats
+        if not level_stats:
+            return None
+        levels = list(level_stats.keys())
+        try:
+            levels_sorted = sorted(levels, key=lambda x: float(x))
+        except (ValueError, TypeError):
+            levels_sorted = sorted(levels)
+        means = [level_stats[lv].get("mean") for lv in levels_sorted]
+        ses = [float(level_stats[lv].get("stderr") or level_stats[lv].get("se") or 0) for lv in levels_sorted]
+        try:
+            import plotly.graph_objects as go
+            palette = ["#0f766e", "#1f7a5a", "#b7791f", "#9f3a38", "#1d4ed8", "#7c3aed"]
+            fig = go.Figure()
+            level_idx = {lv: i for i, lv in enumerate(levels_sorted)}
+            # Individual subject trajectories (grey thin lines)
+            trajectories = results.get("plot_subject_trajectories") or []
+            for traj in trajectories:
+                pts = traj.get("points") or []
+                if len(pts) < 2:
+                    continue
+                x_pts = []
+                y_pts = []
+                for pt in pts:
+                    group_name = str(pt.get("group", ""))
+                    if "=" in group_name:
+                        _, lv = group_name.split("=", 1)
+                        lv = lv.strip()
+                    else:
+                        lv = group_name
+                    if lv in level_idx:
+                        x_pts.append(level_idx[lv])
+                        y_pts.append(float(pt["value"]))
+                if len(x_pts) < 2:
+                    continue
+                fig.add_trace(go.Scatter(
+                    x=x_pts, y=y_pts,
+                    mode="lines+markers",
+                    line=dict(color="rgba(100,120,130,0.22)", width=1),
+                    marker=dict(size=3, color="rgba(100,120,130,0.35)"),
+                    showlegend=False,
+                    hoverinfo="skip",
+                ))
+            # Group mean ± SE
+            fig.add_trace(go.Scatter(
+                x=list(range(len(levels_sorted))),
+                y=means,
+                mode="lines+markers",
+                name="Group mean ± SE",
+                line=dict(color=palette[0], width=2.5),
+                marker=dict(size=9, color=palette[0]),
+                error_y=dict(type="data", array=ses, visible=True,
+                             color=palette[0], thickness=1.5, width=5),
+            ))
+            fig.update_layout(
+                template="plotly_white",
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="#fffdf8",
+                margin=dict(l=56, r=20, t=36, b=60),
+                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
+                xaxis=dict(
+                    tickmode="array",
+                    tickvals=list(range(len(levels_sorted))),
+                    ticktext=levels_sorted,
+                    title=within_factor,
+                ),
+                yaxis=dict(title="Observed values"),
+                legend=dict(orientation="h", x=0.01, y=1.1),
+            )
+            n_subjects = len(trajectories)
+            subtitle = f"Mean ± SE across {within_factor} levels"
+            if n_subjects:
+                subtitle += f" | n={n_subjects} subjects"
+            html = HTMLExporter._figure_to_html(fig, div_id="biomedstatx-profile-plot")
+            if not html:
+                return None
+            return {
+                "title": "Profile Plot — Means ± SE across Timepoints",
+                "subtitle": subtitle,
+                "html": html,
+                "div_id": "biomedstatx-profile-plot",
+            }
+        except Exception as exc:
+            print(f"WARNING HTML EXPORT: profile plot failed: {exc}")
+            return None
+
+    @staticmethod
+    def _build_mixed_profile_plot(results: dict) -> dict | None:
+        """Profile plot for Mixed ANOVA — one line per between-group over within-factor levels."""
+        if results.get("model_type") != "MixedANOVA":
+            return None
+        descriptive = results.get("descriptive") or {}
+        if not descriptive:
+            return None
+        factors = results.get("factors") or []
+        between_list = [f["factor"] for f in factors if f.get("type") == "between"]
+        within_list = [f["factor"] for f in factors if f.get("type") == "within"]
+        if not between_list or not within_list:
+            return None
+        factor_between = between_list[0]
+        factor_within = within_list[0]
+        # Collect cell data: {between_level: {within_level: {mean, se}}}
+        profile_data: dict = {}
+        between_order: list = []
+        within_order: list = []
+        seen_b: set = set()
+        seen_w: set = set()
+        for key, stats in descriptive.items():
+            parts_dict: dict = {}
+            for part in key.split(", "):
+                if "=" in part:
+                    fname, fval = part.split("=", 1)
+                    parts_dict[fname.strip()] = fval.strip()
+            b_val = parts_dict.get(factor_between)
+            w_val = parts_dict.get(factor_within)
+            if b_val is None or w_val is None:
+                continue
+            if b_val not in seen_b:
+                between_order.append(b_val)
+                seen_b.add(b_val)
+            if w_val not in seen_w:
+                within_order.append(w_val)
+                seen_w.add(w_val)
+            profile_data.setdefault(b_val, {})[w_val] = {
+                "mean": float(stats["mean"]) if stats.get("mean") is not None else None,
+                "se": float(stats.get("stderr") or stats.get("se") or 0),
+                "n": stats.get("n", 0),
+            }
+        if not profile_data:
+            return None
+        try:
+            within_sorted = sorted(within_order, key=lambda x: float(x))
+        except (ValueError, TypeError):
+            within_sorted = sorted(within_order)
+        try:
+            import plotly.graph_objects as go
+            palette = ["#0f766e", "#b7791f", "#1d4ed8", "#9f3a38", "#7c3aed", "#1f7a5a"]
+            fig = go.Figure()
+            for idx, b_level in enumerate(between_order):
+                color = palette[idx % len(palette)]
+                y_vals = []
+                y_err = []
+                hover_texts = []
+                for w_level in within_sorted:
+                    cell = profile_data.get(b_level, {}).get(w_level)
+                    if cell and cell["mean"] is not None:
+                        y_vals.append(cell["mean"])
+                        y_err.append(cell["se"])
+                        hover_texts.append(
+                            f"{factor_between}={b_level}, {factor_within}={w_level}<br>"
+                            f"Mean: {cell['mean']:.3f} ± {cell['se']:.3f} SE<br>n={cell['n']}"
+                        )
+                    else:
+                        y_vals.append(None)
+                        y_err.append(0)
+                        hover_texts.append("")
+                fig.add_trace(go.Scatter(
+                    x=within_sorted,
+                    y=y_vals,
+                    mode="lines+markers",
+                    name=f"{factor_between}={b_level}",
+                    line=dict(color=color, width=2.5),
+                    marker=dict(size=9, color=color),
+                    error_y=dict(type="data", array=y_err, visible=True,
+                                 color=color, thickness=1.5, width=5),
+                    hovertext=hover_texts,
+                    hoverinfo="text",
+                ))
+            fig.update_layout(
+                template="plotly_white",
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="#fffdf8",
+                margin=dict(l=56, r=20, t=36, b=60),
+                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
+                xaxis=dict(title=factor_within),
+                yaxis=dict(title="Group mean"),
+                legend=dict(title=dict(text=factor_between), orientation="h", x=0.01, y=1.1),
+            )
+            html = HTMLExporter._figure_to_html(fig, div_id="biomedstatx-mixed-profile-plot")
+            if not html:
+                return None
+            return {
+                "title": "Profile Plot — Group Means ± SE",
+                "subtitle": f"{factor_between} groups over {factor_within} levels",
+                "html": html,
+                "div_id": "biomedstatx-mixed-profile-plot",
+            }
+        except Exception as exc:
+            print(f"WARNING HTML EXPORT: mixed profile plot failed: {exc}")
+            return None
+
+    @staticmethod
     def _build_single_chart_bundle(results: dict) -> list[dict]:
         charts = []
-        group_chart = HTMLExporter._build_group_comparison_chart(results)
-        if group_chart:
+        lmm_chart = HTMLExporter._build_lmm_chart(results)
+        if lmm_chart:
             charts.append({
-                "title": "Group Comparison",
-                "subtitle": "Distribution overview with boxplots and individual observations.",
-                "html": group_chart["html"],
-                "group_order": group_chart["group_order"],
-                "div_id": "biomedstatx-group-chart",
+                "title": lmm_chart["title"],
+                "subtitle": lmm_chart["subtitle"],
+                "html": lmm_chart["html"],
+                "div_id": lmm_chart["div_id"],
             })
+        ancova_chart = HTMLExporter._build_ancova_chart(results)
+        if ancova_chart:
+            charts.append({
+                "title": ancova_chart["title"],
+                "subtitle": ancova_chart["subtitle"],
+                "html": ancova_chart["html"],
+                "div_id": ancova_chart["div_id"],
+            })
+        model_type = results.get("model_type", "")
+        if model_type == "LogisticRegression":
+            # OR table as inline HTML block (6-column, not 2-col stats table)
+            or_block = HTMLExporter._build_or_table_html(results)
+            if or_block:
+                charts.append(or_block)
+            # ROC curve replaces meaningless boxplot of binary outcome
+            roc_block = HTMLExporter._build_roc_chart(results)
+            if roc_block:
+                charts.append(roc_block)
+        elif model_type == "BetaRegression":
+            # Coefficient table as inline HTML block
+            beta_coef_block = HTMLExporter._build_beta_coefficient_table_html(results)
+            if beta_coef_block:
+                charts.append(beta_coef_block)
+            # Scatter + fitted curve replaces meaningless boxplot for proportion outcome
+            beta_chart = HTMLExporter._build_beta_regression_chart(results)
+            if beta_chart:
+                charts.append(beta_chart)
+        elif model_type == "CorrelationMatrix":
+            # Heatmaps replace meaningless boxplot — no group data, matrix data only
+            charts.extend(HTMLExporter._build_correlation_matrix_charts(results))
+        elif model_type in ("TwoWayANOVA", "MixedANOVA"):
+            interactions = results.get("interactions") or []
+            interaction_sig = any(
+                isinstance(inter.get("p_value"), (int, float)) and inter["p_value"] < 0.05
+                for inter in interactions
+            )
+            interaction_plot = HTMLExporter._build_interaction_plot(results)
+            if model_type == "MixedANOVA":
+                mixed_profile = HTMLExporter._build_mixed_profile_plot(results)
+                if interaction_sig:
+                    # Significant interaction → interaction plot is primary
+                    if interaction_plot:
+                        charts.append(interaction_plot)
+                    if mixed_profile:
+                        charts.append(mixed_profile)
+                else:
+                    # Not significant → profile plot is primary
+                    if mixed_profile:
+                        charts.append(mixed_profile)
+                    if interaction_plot:
+                        charts.append(interaction_plot)
+            else:
+                # TwoWayANOVA: interaction plot first when significant, boxplot always shown
+                if interaction_sig and interaction_plot:
+                    charts.append(interaction_plot)
+                group_chart = HTMLExporter._build_group_comparison_chart(results)
+                if group_chart:
+                    charts.append({
+                        "title": "Group Comparison",
+                        "subtitle": "Distribution overview with boxplots and individual observations.",
+                        "html": group_chart["html"],
+                        "group_order": group_chart["group_order"],
+                        "div_id": "biomedstatx-group-chart",
+                    })
+                if not interaction_sig and interaction_plot:
+                    charts.append(interaction_plot)
+        elif model_type == "RepeatedMeasuresANOVA":
+            # Profile plot with subject trajectories is primary
+            profile_plot = HTMLExporter._build_profile_plot(results)
+            if profile_plot:
+                charts.append(profile_plot)
+            # Boxplot as secondary context
+            group_chart = HTMLExporter._build_group_comparison_chart(results)
+            if group_chart:
+                charts.append({
+                    "title": "Group Comparison",
+                    "subtitle": "Distribution overview with boxplots and individual observations.",
+                    "html": group_chart["html"],
+                    "group_order": group_chart["group_order"],
+                    "div_id": "biomedstatx-group-chart",
+                })
+        else:
+            group_chart = HTMLExporter._build_group_comparison_chart(results)
+            if group_chart:
+                charts.append({
+                    "title": "Group Comparison",
+                    "subtitle": "Distribution overview with boxplots and individual observations.",
+                    "html": group_chart["html"],
+                    "group_order": group_chart["group_order"],
+                    "div_id": "biomedstatx-group-chart",
+                })
+        # Trajectory chart for repeated/paired designs
+        # Skip for RM-ANOVA and Mixed ANOVA — profile plots already incorporate trajectories
+        if model_type not in ("RepeatedMeasuresANOVA", "MixedANOVA"):
+            trajectory_chart = HTMLExporter._build_trajectory_chart(results)
+            if trajectory_chart:
+                charts.append({
+                    "title": trajectory_chart["title"],
+                    "subtitle": trajectory_chart["subtitle"],
+                    "html": trajectory_chart["html"],
+                    "div_id": trajectory_chart["div_id"],
+                })
         correlation_chart = HTMLExporter._build_correlation_chart(results)
         if correlation_chart:
             charts.append({
                 "title": str(correlation_chart.get("title") or "Association Overview"),
                 "subtitle": str(correlation_chart.get("subtitle") or "Scatter-based visualization of paired variables."),
                 "html": correlation_chart.get("html"),
+                "div_id": correlation_chart.get("div_id"),
             })
         return charts
 
@@ -582,6 +2022,437 @@ class HTMLExporter:
         except Exception as exc:
             print(f"WARNING HTML EXPORT: group chart generation failed: {exc}")
             return None
+
+    @staticmethod
+    def _build_or_table_html(results: dict) -> dict | None:
+        """Renders the Odds Ratios table as an inline HTML block for chart_blocks injection."""
+        or_table = results.get("odds_ratios") or []
+        if not or_table:
+            return None
+        rows_html = ""
+        for row in or_table:
+            p_val = row.get("p_value")
+            is_sig = isinstance(p_val, (int, float)) and p_val < 0.05
+            or_display = HTMLExporter._format_metric(row.get("odds_ratio"))
+            if is_sig:
+                or_display = f"<strong>{or_display}</strong>"
+            p_style = "color:var(--success)" if is_sig else "color:var(--muted)"
+            rows_html += (
+                f"<tr>"
+                f"<td>{row.get('parameter', '')}</td>"
+                f"<td class='num-cell'>{or_display}</td>"
+                f"<td class='num-cell'>{HTMLExporter._format_metric(row.get('ci_lower'))}</td>"
+                f"<td class='num-cell'>{HTMLExporter._format_metric(row.get('ci_upper'))}</td>"
+                f"<td class='num-cell'>{HTMLExporter._format_metric(row.get('z_value'))}</td>"
+                f"<td class='num-cell' style='{p_style}'>{HTMLExporter._format_p_value(p_val)}</td>"
+                f"</tr>"
+            )
+        html = (
+            "<div class='table-shell'>"
+            "<table>"
+            "<thead><tr>"
+            "<th>Parameter</th><th>OR</th><th>95% CI Lower</th><th>95% CI Upper</th><th>z</th><th>p-value</th>"
+            "</tr></thead>"
+            f"<tbody>{rows_html}</tbody>"
+            "</table></div>"
+        )
+        return {
+            "title": "Odds Ratios",
+            "subtitle": "Exponentiated coefficients with 95% confidence intervals. Bold OR = p &lt; 0.05.",
+            "html": html,
+            "div_id": "biomedstatx-or-table",
+        }
+
+    @staticmethod
+    def _build_beta_coefficient_table_html(results: dict) -> dict | None:
+        """Renders the Beta Regression coefficient table as an inline HTML block."""
+        coef_table = results.get("coefficients") or []
+        if not coef_table:
+            return None
+        rows_html = ""
+        for row in coef_table:
+            p_val = row.get("p_value")
+            is_sig = isinstance(p_val, (int, float)) and p_val < 0.05
+            coef_display = HTMLExporter._format_metric(row.get("coefficient"))
+            if is_sig:
+                coef_display = f"<strong>{coef_display}</strong>"
+            p_style = "color:var(--success)" if is_sig else "color:var(--muted)"
+            rows_html += (
+                f"<tr>"
+                f"<td>{row.get('parameter', '')}</td>"
+                f"<td class='num-cell'>{coef_display}</td>"
+                f"<td class='num-cell'>{HTMLExporter._format_metric(row.get('std_err'))}</td>"
+                f"<td class='num-cell'>{HTMLExporter._format_metric(row.get('z_value'))}</td>"
+                f"<td class='num-cell' style='{p_style}'>{HTMLExporter._format_p_value(p_val)}</td>"
+                f"<td class='num-cell'>{HTMLExporter._format_metric(row.get('ci_lower'))}</td>"
+                f"<td class='num-cell'>{HTMLExporter._format_metric(row.get('ci_upper'))}</td>"
+                f"</tr>"
+            )
+        html = (
+            "<div class='table-shell'>"
+            "<p style='font-size:0.78rem;color:var(--muted);margin:0 0 6px 0'>"
+            "Coefficients on the logit scale. Bold = p &lt; 0.05.</p>"
+            "<table>"
+            "<thead><tr>"
+            "<th>Parameter</th><th>Coefficient</th><th>SE</th><th>z</th>"
+            "<th>p-value</th><th>95% CI Lower</th><th>95% CI Upper</th>"
+            "</tr></thead>"
+            f"<tbody>{rows_html}</tbody>"
+            "</table></div>"
+        )
+        return {
+            "title": "Coefficients (logit scale)",
+            "subtitle": "Log-odds scale coefficients with standard errors and 95% confidence intervals.",
+            "html": html,
+            "div_id": "biomedstatx-beta-coef-table",
+        }
+
+    @staticmethod
+    def _build_roc_chart(results: dict) -> dict | None:
+        """Builds a Plotly ROC curve with diagonal reference line and AUC annotation."""
+        if results.get("model_type") != "LogisticRegression":
+            return None
+        roc = results.get("roc_data") or {}
+        fpr = roc.get("fpr") or []
+        tpr = roc.get("tpr") or []
+        auc = roc.get("auc")
+        if len(fpr) < 2 or len(tpr) < 2:
+            return None
+        try:
+            import plotly.graph_objects as go
+
+            figure = go.Figure()
+            # Diagonal reference line (random classifier)
+            figure.add_trace(go.Scatter(
+                x=[0, 1],
+                y=[0, 1],
+                mode="lines",
+                line=dict(color="#9f3a38", width=1, dash="dash"),
+                name="Random classifier",
+                hoverinfo="skip",
+            ))
+            # ROC curve
+            auc_label = f"AUC = {auc:.3f}" if auc is not None else "ROC Curve"
+            figure.add_trace(go.Scatter(
+                x=fpr,
+                y=tpr,
+                mode="lines",
+                line=dict(color="#0f766e", width=2.5),
+                name=auc_label,
+                hovertemplate="FPR: %{x:.3f}<br>TPR: %{y:.3f}<extra></extra>",
+            ))
+            # AUC annotation in lower-right area
+            if auc is not None:
+                figure.add_annotation(
+                    x=0.65,
+                    y=0.12,
+                    text=f"<b>AUC = {auc:.3f}</b>",
+                    showarrow=False,
+                    font=dict(size=14, color="#0f766e"),
+                    bgcolor="rgba(255,253,248,0.85)",
+                    bordercolor="#0f766e",
+                    borderwidth=1,
+                    borderpad=6,
+                )
+            figure.update_layout(
+                template="plotly_white",
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="#fffdf8",
+                margin=dict(l=50, r=20, t=24, b=56),
+                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
+                xaxis_title="False Positive Rate",
+                yaxis_title="True Positive Rate",
+                xaxis=dict(range=[0, 1]),
+                yaxis=dict(range=[0, 1]),
+                showlegend=True,
+                legend=dict(x=0.55, y=0.06),
+            )
+            html = HTMLExporter._figure_to_html(figure, div_id="biomedstatx-roc-chart")
+            if not html:
+                return None
+            subtitle = f"Receiver Operating Characteristic — {auc_label}" if auc is not None else "Receiver Operating Characteristic"
+            return {
+                "title": "ROC Curve",
+                "subtitle": subtitle,
+                "html": html,
+                "div_id": "biomedstatx-roc-chart",
+            }
+        except Exception as exc:
+            print(f"WARNING HTML EXPORT: ROC chart generation failed: {exc}")
+            return None
+
+    @staticmethod
+    def _build_beta_regression_chart(results: dict) -> dict | None:
+        """Scatter plot of observed proportions vs primary predictor with fitted curve overlay."""
+        if results.get("model_type") != "BetaRegression":
+            return None
+        fitted = results.get("fitted_values") or []
+        xy_data = results.get("xy_data") or {}
+        x_values = HTMLExporter._coerce_numeric_sequence(xy_data.get("x"))
+        y_values = HTMLExporter._coerce_numeric_sequence(xy_data.get("y"))
+        if not x_values or not y_values or len(x_values) != len(fitted):
+            return None
+        try:
+            import plotly.graph_objects as go
+
+            x_arr = np.array(x_values, dtype=float)
+            y_arr = np.array(y_values, dtype=float)
+            fitted_arr = np.array(fitted, dtype=float)
+            sort_idx = np.argsort(x_arr)
+            x_label = HTMLExporter._prettify_label(xy_data.get("x_label") or "Predictor")
+
+            figure = go.Figure()
+            figure.add_trace(go.Scatter(
+                x=x_arr,
+                y=y_arr,
+                mode="markers",
+                marker=dict(size=7, color="#0f766e", opacity=0.72),
+                name="Observed",
+                hovertemplate=f"{x_label}: %{{x:.3f}}<br>Observed: %{{y:.3f}}<extra></extra>",
+            ))
+            figure.add_trace(go.Scatter(
+                x=x_arr[sort_idx],
+                y=fitted_arr[sort_idx],
+                mode="lines",
+                line=dict(color="#b7791f", width=2.5),
+                name="Fitted",
+                hovertemplate="Fitted: %{y:.3f}<extra></extra>",
+            ))
+            figure.update_layout(
+                template="plotly_white",
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="#fffdf8",
+                margin=dict(l=50, r=20, t=24, b=56),
+                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
+                xaxis_title=x_label,
+                yaxis_title="Proportion (outcome)",
+                yaxis=dict(range=[0, 1]),
+                showlegend=True,
+                legend=dict(x=0.75, y=0.06),
+            )
+            html = HTMLExporter._figure_to_html(figure, div_id="biomedstatx-beta-chart")
+            if not html:
+                return None
+            return {
+                "title": "Beta Regression: Observed vs. Fitted",
+                "subtitle": "Proportion outcome (y-axis fixed [0, 1]). Orange line = model-fitted values.",
+                "html": html,
+                "div_id": "biomedstatx-beta-chart",
+            }
+        except Exception as exc:
+            print(f"WARNING HTML EXPORT: Beta regression chart failed: {exc}")
+            return None
+
+    @staticmethod
+    def _build_correlation_matrix_charts(results: dict) -> list[dict]:
+        """Builds heatmap chart(s) for CorrelationMatrix model type.
+
+        Returns a list of chart dicts — one r-heatmap + one p-heatmap for the
+        overall matrix, repeated per stratum when stratified.
+        """
+        if results.get("model_type") != "CorrelationMatrix":
+            return []
+
+        variables = results.get("variables") or []
+        if len(variables) < 2:
+            return []
+
+        try:
+            import plotly.graph_objects as go
+            import math as _math
+        except Exception:
+            return []
+
+        correction_map = {"fdr_bh": "FDR-corrected", "bonferroni": "Bonferroni-corrected"}
+        correction = results.get("correction")
+        p_label = correction_map.get(str(correction or "").lower(), "corrected") if correction else "uncorrected"
+
+        def _make_heatmap_pair(r_mat_d: dict, p_corr_d: dict, title_prefix: str) -> list[dict]:
+            """Build r-heatmap and p-heatmap for one matrix."""
+            k = len(variables)
+            # Build 2-D lists row=y(variable_i), col=x(variable_j)
+            z_r, z_p, text_r, text_p = [], [], [], []
+            for vi in variables:
+                row_r, row_p, tr, tp = [], [], [], []
+                for vj in variables:
+                    r_val = (r_mat_d.get(vi) or {}).get(vj)
+                    p_val = (p_corr_d.get(vi) or {}).get(vj)
+                    rv = r_val if (r_val is not None and not _math.isnan(r_val)) else float("nan")
+                    pv = p_val if (p_val is not None and not _math.isnan(p_val)) else float("nan")
+                    row_r.append(rv)
+                    row_p.append(pv)
+                    tr.append(f"{rv:.2f}" if not _math.isnan(rv) else "")
+                    tp.append(f"{pv:.3f}" if not _math.isnan(pv) else "")
+                z_r.append(row_r)
+                z_p.append(row_p)
+                text_r.append(tr)
+                text_p.append(tp)
+
+            var_labels = [HTMLExporter._prettify_label(v) for v in variables]
+            cell_px = max(55, min(90, 700 // k))
+            fig_h = max(350, k * cell_px + 120)
+
+            # --- Chart 1: r-value heatmap ---
+            # Build per-cell annotations coloured by significance
+            annots_r = []
+            for i, vi in enumerate(variables):
+                for j, vj in enumerate(variables):
+                    r_val = (r_mat_d.get(vi) or {}).get(vj)
+                    p_val = (p_corr_d.get(vi) or {}).get(vj)
+                    is_diag = vi == vj
+                    is_sig = (
+                        not is_diag
+                        and isinstance(p_val, (int, float))
+                        and not _math.isnan(p_val)
+                        and p_val < 0.05
+                    )
+                    if r_val is not None and not _math.isnan(r_val):
+                        text = f"<b>{r_val:.2f}</b>" if is_sig else f"{r_val:.2f}"
+                    else:
+                        text = ""
+                    font_color = "#111111" if is_sig else "#aaaaaa"
+                    annots_r.append(dict(
+                        x=var_labels[j],
+                        y=var_labels[i],
+                        text=text,
+                        font=dict(size=11, color=font_color),
+                        showarrow=False,
+                    ))
+
+            fig_r = go.Figure(go.Heatmap(
+                z=z_r,
+                x=var_labels,
+                y=var_labels,
+                zmin=-1, zmax=1,
+                colorscale=[
+                    [0.0, "#2166ac"],
+                    [0.25, "#92c5de"],
+                    [0.5, "#f7f7f7"],
+                    [0.75, "#f4a582"],
+                    [1.0, "#d6604d"],
+                ],
+                showscale=True,
+                colorbar=dict(title="r", thickness=14, len=0.8),
+                hovertemplate="<b>%{y}</b> × <b>%{x}</b><br>r = %{z:.3f}<extra></extra>",
+            ))
+            fig_r.update_layout(
+                annotations=annots_r,
+                template="plotly_white",
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="#fffdf8",
+                height=fig_h,
+                margin=dict(l=20, r=20, t=36, b=20),
+                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", size=12, color="#16313a"),
+                xaxis=dict(side="bottom", tickangle=-35),
+                yaxis=dict(autorange="reversed"),
+            )
+            div_r = f"biomedstatx-corrmat-r-{title_prefix.replace(' ', '-').lower()}"
+            html_r = HTMLExporter._figure_to_html(fig_r, div_id=div_r)
+
+            # --- Chart 2: p-value heatmap ---
+            annots_p = []
+            for i, vi in enumerate(variables):
+                for j, vj in enumerate(variables):
+                    p_val = (p_corr_d.get(vi) or {}).get(vj)
+                    is_diag = vi == vj
+                    if is_diag:
+                        text = "—"
+                        font_color = "#cccccc"
+                    elif p_val is not None and not _math.isnan(p_val):
+                        text = f"{p_val:.3f}"
+                        font_color = "#111111" if p_val < 0.05 else "#888888"
+                    else:
+                        text = ""
+                        font_color = "#aaaaaa"
+                    annots_p.append(dict(
+                        x=var_labels[j],
+                        y=var_labels[i],
+                        text=text,
+                        font=dict(size=10, color=font_color),
+                        showarrow=False,
+                    ))
+
+            # Clamp diagonal NaN to 1.0 for display (diagonal has no p-value)
+            z_p_display = []
+            for i, vi in enumerate(variables):
+                row = []
+                for j, vj in enumerate(variables):
+                    p_val = z_p[i][j]
+                    if vi == vj:
+                        row.append(1.0)
+                    elif not _math.isnan(p_val):
+                        row.append(p_val)
+                    else:
+                        row.append(float("nan"))
+                z_p_display.append(row)
+
+            fig_p = go.Figure(go.Heatmap(
+                z=z_p_display,
+                x=var_labels,
+                y=var_labels,
+                zmin=0, zmax=1,
+                colorscale=[
+                    [0.0, "#1a7340"],
+                    [0.05, "#52b788"],
+                    [0.1, "#b7e4c7"],
+                    [0.5, "#f0f0f0"],
+                    [1.0, "#ffffff"],
+                ],
+                showscale=True,
+                colorbar=dict(title="p", thickness=14, len=0.8),
+                hovertemplate="<b>%{y}</b> × <b>%{x}</b><br>p = %{z:.4f}<extra></extra>",
+            ))
+            fig_p.update_layout(
+                annotations=annots_p,
+                template="plotly_white",
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="#fffdf8",
+                height=fig_h,
+                margin=dict(l=20, r=20, t=36, b=20),
+                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", size=12, color="#16313a"),
+                xaxis=dict(side="bottom", tickangle=-35),
+                yaxis=dict(autorange="reversed"),
+            )
+            div_p = f"biomedstatx-corrmat-p-{title_prefix.replace(' ', '-').lower()}"
+            html_p = HTMLExporter._figure_to_html(fig_p, div_id=div_p)
+
+            out = []
+            if html_r:
+                out.append({
+                    "title": f"Correlation Matrix (r values){' — ' + title_prefix if title_prefix else ''}",
+                    "subtitle": f"Significance based on {p_label} p-values. Bold black = significant (p < 0.05). Grey = non-significant.",
+                    "html": html_r,
+                    "div_id": div_r,
+                })
+            if html_p:
+                out.append({
+                    "title": f"FDR-corrected p-values{' — ' + title_prefix if title_prefix else ''}",
+                    "subtitle": f"Darker green = smaller p-value. Dark cells (p < 0.05) indicate significant correlations.",
+                    "html": html_p,
+                    "div_id": div_p,
+                })
+            return out
+
+        charts = []
+        try:
+            # Overall matrix
+            r_mat = results.get("r_matrix") or {}
+            pc_mat = results.get("p_corrected_matrix") or {}
+            charts.extend(_make_heatmap_pair(r_mat, pc_mat, ""))
+        except Exception as exc:
+            print(f"WARNING HTML EXPORT: CorrelationMatrix overall heatmap failed: {exc}")
+
+        # Stratified matrices
+        strata = results.get("strata") or {}
+        for stratum_name, stratum_data in strata.items():
+            try:
+                r_s = stratum_data.get("r_matrix") or {}
+                pc_s = stratum_data.get("p_corrected_matrix") or {}
+                charts.extend(_make_heatmap_pair(r_s, pc_s, str(stratum_name)))
+            except Exception as exc:
+                print(f"WARNING HTML EXPORT: CorrelationMatrix stratum '{stratum_name}' heatmap failed: {exc}")
+
+        return charts
 
     @staticmethod
     def _build_correlation_chart(results: dict) -> dict | None:
@@ -672,16 +2543,96 @@ class HTMLExporter:
                 showlegend=True,
                 legend=dict(orientation="h", x=0.01, y=1.08),
             )
-            html = HTMLExporter._figure_to_html(figure)
+            html = HTMLExporter._figure_to_html(figure, div_id="biomedstatx-assoc-chart")
             if not html:
                 return None
+            corr_method = str(results.get("method") or "").lower()
+            if model_type == "LinearRegression":
+                chart_title = "Regression Overview"
+                chart_subtitle = "Observed values with OLS trend estimate and 95% confidence band."
+            elif corr_method == "spearman":
+                chart_title = "Association Overview"
+                chart_subtitle = "Spearman correlation — no parametric trend line shown."
+            else:
+                chart_title = "Association Overview"
+                chart_subtitle = "Observed values with trend estimate and 95% confidence band."
             return {
-                "title": "Regression Overview" if model_type == "LinearRegression" else "Association Overview",
-                "subtitle": "Observed values with trend estimate and 95% confidence band.",
+                "title": chart_title,
+                "subtitle": chart_subtitle,
                 "html": html,
+                "div_id": "biomedstatx-assoc-chart",
             }
         except Exception as exc:
             print(f"WARNING HTML EXPORT: association chart generation failed: {exc}")
+            return None
+
+    @staticmethod
+    def _build_ancova_chart(results: dict) -> dict | None:
+        if results.get("model_type") != "ANCOVA":
+            return None
+        adjusted_means = results.get("adjusted_means") or {}
+        covariates_used = results.get("covariates_used") or []
+        if not adjusted_means:
+            return None
+        try:
+            import plotly.graph_objects as go
+
+            figure = go.Figure()
+            palette = ["#0f766e", "#1f7a5a", "#b7791f", "#9f3a38", "#1d4ed8", "#7c3aed"]
+
+            for _factor, levels in adjusted_means.items():
+                if not isinstance(levels, dict):
+                    continue
+                group_labels, adj_means_vals, raw_sds, ns = [], [], [], []
+                for level, stats in levels.items():
+                    if not isinstance(stats, dict):
+                        continue
+                    adj_mean = stats.get("adjusted_mean")
+                    if adj_mean is None:
+                        continue
+                    group_labels.append(str(level))
+                    adj_means_vals.append(float(adj_mean))
+                    raw_sds.append(float(stats.get("raw_sd") or 0))
+                    ns.append(int(stats.get("n") or 0))
+
+                for i, (label, mean, sd, n) in enumerate(zip(group_labels, adj_means_vals, raw_sds, ns)):
+                    color = palette[i % len(palette)]
+                    figure.add_trace(go.Bar(
+                        x=[label],
+                        y=[mean],
+                        name=f"{label} (n={n})",
+                        error_y=dict(type="data", array=[sd], visible=True, color=color),
+                        marker_color=color,
+                        marker_opacity=0.82,
+                        width=0.45,
+                    ))
+
+            if not figure.data:
+                return None
+
+            cov_str = ", ".join(covariates_used) if covariates_used else "none"
+            figure.update_layout(
+                template="plotly_white",
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="#fffdf8",
+                margin=dict(l=48, r=20, t=24, b=56),
+                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
+                yaxis_title="Outcome",
+                xaxis_title="Group",
+                showlegend=True,
+                legend=dict(orientation="h", x=0.01, y=1.08),
+            )
+            html = HTMLExporter._figure_to_html(figure, div_id="biomedstatx-ancova-chart")
+            if not html:
+                return None
+            return {
+                "title": "Adjusted Group Means",
+                "subtitle": f"Estimated marginal means ± SD. Adjusted for: {cov_str}.",
+                "html": html,
+                "div_id": "biomedstatx-ancova-chart",
+            }
+        except Exception as exc:
+            print(f"WARNING HTML EXPORT: ANCOVA chart generation failed: {exc}")
             return None
 
     @staticmethod
@@ -745,7 +2696,8 @@ class HTMLExporter:
         if not x_values or not y_values:
             return None
 
-        if not (fit_x and fit_y and len(fit_x) == len(fit_y)):
+        method = str(results.get("method") or "").lower()
+        if not (fit_x and fit_y and len(fit_x) == len(fit_y)) and method != "spearman":
             fit_data = HTMLExporter._simple_linear_fit_with_ci(x_values, y_values, alpha=float(results.get("alpha", 0.05)))
             if fit_data is not None:
                 fit_x = fit_data["x"]
@@ -874,7 +2826,7 @@ class HTMLExporter:
                 yaxis=dict(title=dict(text="Observed quantiles", font=dict(size=11), standoff=8)),
                 legend=dict(orientation="h", y=1.08, x=0),
             )
-            return HTMLExporter._figure_to_html(figure)
+            return HTMLExporter._figure_to_html(figure, div_id="biomedstatx-qq-chart")
         except Exception as exc:
             print(f"WARNING HTML EXPORT: QQ plot generation failed: {exc}")
             return None
@@ -1047,7 +2999,17 @@ class HTMLExporter:
             return None
 
     @staticmethod
-    def _embed_decision_tree(results: dict) -> str | None:
+    def _embed_decision_tree(results: dict, pre_generated_path: str | None = None) -> str | None:
+        # If caller already generated the tree, encode it directly without re-generating or deleting.
+        if pre_generated_path and os.path.exists(pre_generated_path):
+            try:
+                with open(pre_generated_path, "rb") as handle:
+                    encoded = base64.b64encode(handle.read()).decode("ascii")
+                return f"data:image/png;base64,{encoded}"
+            except Exception as exc:
+                print(f"WARNING HTML EXPORT: decision tree embedding (pre-generated) failed: {exc}")
+                return None
+
         temp_path = None
         try:
             from decisiontreevisualizer import DecisionTreeVisualizer
@@ -1497,10 +3459,10 @@ body{margin:0;font-family:"Segoe UI","Helvetica Neue",Arial,sans-serif;line-heig
 {% if mode == "single" %}<nav id="toc" aria-label="Sections"><a href="#sec-decision" data-label="Decision Path"></a><a href="#sec-results" data-label="Main Results"></a><a href="#sec-assumptions" data-label="Assumptions"></a><a href="#sec-descriptive" data-label="Descriptives"></a><a href="#sec-pairwise" data-label="Pairwise"></a><a href="#sec-charts" data-label="Charts"></a><a href="#sec-raw" data-label="Raw Data"></a><a href="#sec-methods" data-label="Methods"></a></nav>
 <section id="sec-decision" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Decision Path</div><h2 id="hd-decision">How BioMedStatX reached this decision<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-decision">&#9432;</button></h2><div class="info-panel" id="info-decision" role="region" aria-labelledby="hd-decision"><div class="info-panel-inner">{{ context.info_texts.decision }}</div></div></div></div><div id="decision-path" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px">{% for step in context.decision_path %}<div class="decision-step{% if step.active %} is-active{% endif %}" data-step="{{ loop.index0 }}" style="display:flex;align-items:center;gap:6px;padding:.35rem .8rem;border-radius:999px;border:1px solid var(--line);background:var(--surface-2);font-size:.82rem"><span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:{% if step.active %}var(--accent){% else %}var(--line){% endif %}"></span><span>{{ step.title }}</span></div>{% endfor %}</div><div class="decision-tree-frame{% if context.decision_tree_json == 'null' %} is-empty{% endif %}">{% if context.decision_tree_json != "null" %}<div id="tree-toolbar"><button class="tree-ctrl" id="tree-zoom-in">＋</button><button class="tree-ctrl" id="tree-zoom-out">－</button><span class="tree-zoom-label" id="tree-zoom-pct">100%</span><button class="tree-ctrl" id="tree-reset">Reset</button><span style="flex:1"></span><button class="tree-ctrl" id="tree-replay" title="Replay path animation">&#9654; Replay</button><span class="small muted" style="margin-left:8px">Scroll to zoom · Drag to pan</span></div><div id="tree-viewport"><div id="tree-canvas"><div id="dyn-tree-host"></div></div><div id="tree-tooltip"></div></div>{% else %}<div class="empty-state">Decision tree was not available for this analysis.</div>{% endif %}</div></section>
 <section id="sec-results" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Statistical Engine</div><h2 id="hd-results">Main results<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-results">&#9432;</button></h2><div class="info-panel" id="info-results" role="region" aria-labelledby="hd-results"><div class="info-panel-inner">{{ context.info_texts.results }}</div></div></div></div><div class="table-shell"><table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>{% for row in context.statistical_rows %}<tr><td>{{ row.label }}</td><td class="num-cell">{{ row.value }}</td></tr>{% endfor %}</tbody></table></div></section>
-<section id="sec-assumptions" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Assumptions</div><h2 id="hd-assumptions">Model validity checks<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-assumptions">&#9432;</button></h2><div class="info-panel" id="info-assumptions" role="region" aria-labelledby="hd-assumptions"><div class="info-panel-inner">{{ context.info_texts.assumptions }}</div></div><p class="muted">{{ context.assumptions.interpretation }}</p>{% if context.assumptions.sphericity_correction_note %}<p class="muted" style="margin-top:.35rem;font-size:.88rem;color:var(--warning)">&#9888; {{ context.assumptions.sphericity_correction_note }}</p>{% endif %}</div><div class="badge is-info">Transformation: {{ context.assumptions.transformation }}</div></div>{% if context.assumptions.rows %}<div class="table-shell"><table><thead><tr><th>Check</th><th>Statistic</th><th>p-value</th><th>Status</th></tr></thead><tbody>{% for row in context.assumptions.rows %}<tr class="{{ row.status_class }}"><td>{{ row.name }}</td><td class="num-cell">{{ row.statistic }}</td><td class="num-cell" style="{{ row.p_value_style }}">{{ row.p_value }}</td><td>{{ row.status_label }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state">No structured assumption summary was available for this result.</div>{% endif %}<div class="assumption-visual-grid">{% if context.assumptions.qq_plot_html %}<div class="chart-card"><div class="section-kicker">Q-Q Diagnostic</div><h3>Observed quantiles against the normal reference line</h3>{{ context.assumptions.qq_plot_html | safe }}</div>{% endif %}{% if context.assumptions.distribution_plot_html %}<div class="chart-card"><div class="section-kicker">Group Distribution View</div><h3>Boxplots with jittered observations</h3>{{ context.assumptions.distribution_plot_html | safe }}</div>{% endif %}{% if context.assumptions.residual_plot_html %}<div class="chart-card"><div class="section-kicker">Residual Structure</div><h3>Residuals versus fitted values</h3>{{ context.assumptions.residual_plot_html | safe }}</div>{% endif %}{% if not context.assumptions.qq_plot_html and not context.assumptions.distribution_plot_html and not context.assumptions.residual_plot_html %}<div class="empty-state">Visual assumption diagnostics were not available for this result structure.</div>{% endif %}</div></section>
-<section id="sec-descriptive" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Descriptive Statistics</div><h2 id="hd-descriptive">Group-level summary<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-descriptive">&#9432;</button></h2><div class="info-panel" id="info-descriptive" role="region" aria-labelledby="hd-descriptive"><div class="info-panel-inner">{{ context.info_texts.descriptive }}</div></div></div></div>{% if context.descriptive.rows %}<div class="table-shell"><table><thead><tr><th>Group</th><th>n</th><th>Mean</th><th>Median</th><th>SD</th><th>SEM</th><th>Min</th><th>Max</th></tr></thead><tbody>{% for row in context.descriptive.rows %}<tr><td>{{ row.group }}</td><td class="num-cell">{{ row.n }}</td><td class="num-cell">{{ row.mean }}</td><td class="num-cell">{{ row.median }}</td><td class="num-cell">{{ row.sd }}</td><td class="num-cell">{{ row.sem }}</td><td class="num-cell">{{ row.min }}</td><td class="num-cell">{{ row.max }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state">No descriptive summary could be derived from the available result payload.</div>{% endif %}</section>
+<section id="sec-assumptions" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Assumptions</div><h2 id="hd-assumptions">Model validity checks<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-assumptions">&#9432;</button></h2><div class="info-panel" id="info-assumptions" role="region" aria-labelledby="hd-assumptions"><div class="info-panel-inner">{{ context.info_texts.assumptions }}</div></div><p class="muted">{{ context.assumptions.interpretation }}</p>{% if context.assumptions.sphericity_correction_note %}<p class="muted" style="margin-top:.35rem;font-size:.88rem;color:var(--warning)">&#9888; {{ context.assumptions.sphericity_correction_note }}</p>{% endif %}</div><div class="badge is-info">Transformation: {{ context.assumptions.transformation }}</div></div>{% if context.assumptions.rows %}<div class="table-shell"><table><thead><tr><th>Check</th><th>Statistic</th><th>p-value</th><th>Status</th></tr></thead><tbody>{% for row in context.assumptions.rows %}<tr class="{{ row.status_class }}"><td>{{ row.name }}</td><td class="num-cell">{{ row.statistic }}</td><td class="num-cell" style="{{ row.p_value_style }}">{{ row.p_value }}</td><td>{{ row.status_label }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state">No structured assumption summary was available for this result.</div>{% endif %}<div class="assumption-visual-grid">{% if context.assumptions.qq_plot_html %}<div class="chart-card"><div class="section-kicker">Q-Q Diagnostic</div><h3>Observed quantiles against the normal reference line</h3>{{ context.assumptions.qq_plot_html | safe }}<div class="toolbar" style="margin-top:12px"><button type="button" onclick="downloadPlotlyChart('biomedstatx-qq-chart','svg','biomedstatx_qq_plot')">Download SVG</button><button type="button" onclick="downloadPlotlyChart('biomedstatx-qq-chart','png','biomedstatx_qq_plot')">Download PNG</button></div></div>{% endif %}{% if context.assumptions.distribution_plot_html %}<div class="chart-card"><div class="section-kicker">Group Distribution View</div><h3>Boxplots with jittered observations</h3>{{ context.assumptions.distribution_plot_html | safe }}</div>{% endif %}{% if context.assumptions.residual_plot_html %}<div class="chart-card"><div class="section-kicker">Residual Structure</div><h3>Residuals versus fitted values</h3>{{ context.assumptions.residual_plot_html | safe }}</div>{% endif %}{% if not context.assumptions.qq_plot_html and not context.assumptions.distribution_plot_html and not context.assumptions.residual_plot_html %}<div class="empty-state">Visual assumption diagnostics were not available for this result structure.</div>{% endif %}</div></section>
+<section id="sec-descriptive" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Descriptive Statistics</div><h2 id="hd-descriptive">{{ context.descriptive.title or "Group-level summary" }}<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-descriptive">&#9432;</button></h2><div class="info-panel" id="info-descriptive" role="region" aria-labelledby="hd-descriptive"><div class="info-panel-inner">{{ context.info_texts.descriptive }}</div></div></div></div>{% if context.descriptive.rows %}<div class="table-shell"><table><thead><tr><th>{{ context.descriptive.group_col_label or "Group" }}</th><th>n</th><th>Mean</th><th>Median</th><th>SD</th><th>SEM</th><th>Min</th><th>Max</th></tr></thead><tbody>{% for row in context.descriptive.rows %}<tr><td>{{ row.group }}</td><td class="num-cell">{{ row.n }}</td><td class="num-cell">{{ row.mean }}</td><td class="num-cell">{{ row.median }}</td><td class="num-cell">{{ row.sd }}</td><td class="num-cell">{{ row.sem }}</td><td class="num-cell">{{ row.min }}</td><td class="num-cell">{{ row.max }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state">No descriptive summary could be derived from the available result payload.</div>{% endif %}</section>
 {% if context.pairwise_rows %}<section id="sec-pairwise" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Pairwise Comparisons</div><h2 id="hd-pairwise">Post-hoc findings<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-pairwise">&#9432;</button></h2><div class="info-panel" id="info-pairwise" role="region" aria-labelledby="hd-pairwise"><div class="info-panel-inner">{{ context.info_texts.pairwise }}</div></div></div></div><div class="table-shell"><table><thead><tr>{% if context.group_chart_div_id %}<th title="Show bracket in chart">Chart</th>{% endif %}<th>Comparison</th><th>Procedure</th><th>Statistic</th><th>p-value</th><th>Effect size</th><th>Interpretation</th></tr></thead><tbody>{% for row in context.pairwise_rows %}<tr class="{{ row.row_class }}">{% if context.group_chart_div_id %}<td style="text-align:center"><input type="checkbox" class="bracket-toggle" data-pair-id="{{ row.pair_id }}" {% if row.significant and row.stars %}checked{% endif %} aria-label="Show bracket for {{ row.comparison }}"></td>{% endif %}<td>{{ row.comparison }}</td><td>{{ row.test }}</td><td class="num-cell">{{ row.statistic }}</td><td class="num-cell" style="{{ row.p_value_style }}">{{ row.p_value }}</td><td class="num-cell">{{ row.effect_size }}</td><td>{{ "Significant" if row.significant else "Not significant" }}</td></tr>{% endfor %}</tbody></table></div></section>{% endif %}
-<section id="sec-charts" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Interactive Charts</div><h2 id="hd-charts">Visual evidence<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-charts">&#9432;</button></h2><div class="info-panel" id="info-charts" role="region" aria-labelledby="hd-charts"><div class="info-panel-inner">{{ context.info_texts.charts }}</div></div></div></div>{% if context.chart_blocks %}{% for chart in context.chart_blocks %}<div class="chart-card"><div class="section-kicker">{{ chart.title }}</div><h3>{{ chart.subtitle }}</h3>{{ chart.html | safe }}</div>{% endfor %}{% else %}<div class="empty-state">No interactive chart could be created from the current result structure.</div>{% endif %}</section>
+<section id="sec-charts" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Interactive Charts</div><h2 id="hd-charts">Visual evidence<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-charts">&#9432;</button></h2><div class="info-panel" id="info-charts" role="region" aria-labelledby="hd-charts"><div class="info-panel-inner">{{ context.info_texts.charts }}</div></div></div></div>{% if context.chart_blocks %}{% for chart in context.chart_blocks %}<div class="chart-card"><div class="section-kicker">{{ chart.title }}</div><h3>{{ chart.subtitle }}</h3>{{ chart.html | safe }}{% if chart.div_id %}<div class="toolbar" style="margin-top:12px"><button type="button" onclick="downloadPlotlyChart('{{ chart.div_id }}','svg','biomedstatx_{{ chart.title | lower | replace(' ','_') }}')">Download SVG</button><button type="button" onclick="downloadPlotlyChart('{{ chart.div_id }}','png','biomedstatx_{{ chart.title | lower | replace(' ','_') }}')">Download PNG</button></div>{% endif %}</div>{% endfor %}{% else %}<div class="empty-state">No interactive chart could be created from the current result structure.</div>{% endif %}</section>
 <section id="sec-raw" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Raw Data Vault</div><h2 id="hd-raw">Searchable raw values<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-raw">&#9432;</button></h2><div class="info-panel" id="info-raw" role="region" aria-labelledby="hd-raw"><div class="info-panel-inner">{{ context.info_texts.raw }}</div></div></div></div><div class="toolbar"><input id="raw-search" type="search" placeholder="Filter raw data"><button type="button" onclick="copyTable('raw-data-table')">Copy table</button><button type="button" onclick="downloadTableCSV('raw-data-table','biomedstatx_raw_data.csv')">Download CSV</button></div>{% if context.raw_data_table.rows %}<div class="table-shell"><table id="raw-data-table"><thead><tr><th>Group</th><th>Index</th><th>Raw value</th>{% if context.raw_data_table.has_transformed %}<th>Transformed value</th>{% endif %}</tr></thead><tbody>{% for row in context.raw_data_table.rows %}<tr><td>{{ row.group }}</td><td>{{ row.index }}</td><td>{{ row.raw_value }}</td>{% if context.raw_data_table.has_transformed %}<td>{{ row.transformed_value }}</td>{% endif %}</tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state">No raw data were embedded in this result structure.</div>{% endif %}</section>
 <section id="sec-methods" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Methods Snippet</div><h2 id="hd-methods">Reusable narrative text<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-methods">&#9432;</button></h2><div class="info-panel" id="info-methods" role="region" aria-labelledby="hd-methods"><div class="info-panel-inner">{{ context.info_texts.methods }}</div></div></div></div><div class="toolbar"><button type="button" onclick="copyText('methods-text')">Copy methods text</button></div><div id="methods-text" class="methods">{{ context.methods_text }}</div></section>
 {% else %}
@@ -1522,9 +3484,9 @@ function svgEl(tag,attrs){const e=document.createElementNS(ns,tag);Object.entrie
 const nodes=TREE_DATA.nodes,edges=TREE_DATA.edges;
 const xs=nodes.map(n=>n.x),ys=nodes.map(n=>n.y);
 const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
-const NW=110,NH=44,PAD=80,SCALE=42;
-const toSvg=(x,y)=>[(x-minX)*SCALE+PAD,(maxY-y)*SCALE+PAD];
-const svgW=(maxX-minX)*SCALE+PAD*2,svgH=(maxY-minY)*SCALE+PAD*2;
+const NW=110,NH=44,PAD=80,SCALE=42,Y_SCALE=62;
+const toSvg=(x,y)=>[(x-minX)*SCALE+PAD,(maxY-y)*Y_SCALE+PAD];
+const svgW=(maxX-minX)*SCALE+PAD*2,svgH=(maxY-minY)*Y_SCALE+PAD*2;
 const svg=svgEl('svg',{viewBox:'0 0 '+svgW+' '+svgH,width:svgW,height:svgH});
 const defs=svgEl('defs');
 ['act','dim'].forEach(function(k){
@@ -1689,6 +3651,7 @@ function copyText(elementId){const node=document.getElementById(elementId);if(!n
 function tableToTSV(tableId){const table=document.getElementById(tableId);if(!table)return'';return Array.from(table.querySelectorAll('tr')).map((row)=>Array.from(row.querySelectorAll('th,td')).map((cell)=>(cell.innerText||'').replace(/\n/g,' ').trim()).join('\t')).join('\n');}
 function copyTable(tableId){const text=tableToTSV(tableId);if(text){navigator.clipboard.writeText(text).catch(()=>{});}}
 function downloadTableCSV(tableId,fileName){const table=document.getElementById(tableId);if(!table)return;const rows=Array.from(table.querySelectorAll('tr')).map((row)=>Array.from(row.querySelectorAll('th,td')).map((cell)=>{const value=(cell.innerText||'').replace(/\n/g,' ').trim().replace(/"/g,'""');return `"${value}"`;}).join(',')).join('\n');const blob=new Blob([rows],{type:'text/csv;charset=utf-8;'});const url=URL.createObjectURL(blob);const link=document.createElement('a');link.href=url;link.download=fileName;document.body.appendChild(link);link.click();document.body.removeChild(link);URL.revokeObjectURL(url);}
+function downloadPlotlyChart(divId,fmt,fileName){const el=document.getElementById(divId);if(!el||!window.Plotly){alert('Chart not available for download.');return;}Plotly.downloadImage(el,{format:fmt,filename:fileName||'biomedstatx_chart',width:1200,height:900,scale:3});}
 const rawSearch=document.getElementById('raw-search');if(rawSearch){rawSearch.addEventListener('input',(event)=>{const needle=String(event.target.value||'').toLowerCase();document.querySelectorAll('#raw-data-table tbody tr').forEach((row)=>{row.style.display=row.innerText.toLowerCase().includes(needle)?'':'none';});});}
 (function(){function toggleInfo(btn){var p=document.getElementById(btn.getAttribute('aria-controls'));if(!p)return;var open=p.classList.toggle('is-open');btn.setAttribute('aria-expanded',open?'true':'false');if(open){p.style.maxHeight=p.scrollHeight+'px';}else{p.style.maxHeight='0';}}document.querySelectorAll('.info-btn').forEach(function(b){b.addEventListener('click',function(){toggleInfo(b);});b.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();toggleInfo(b);}});});}());
 const tocLinks=document.querySelectorAll('#toc a');if(tocLinks.length){const tocObserver=new IntersectionObserver((entries)=>{entries.forEach((entry)=>{const link=document.querySelector(`#toc a[href="#${entry.target.id}"]`);if(link)link.classList.toggle('is-active',entry.isIntersecting);});},{threshold:.25,rootMargin:'-10% 0px -65% 0px'});document.querySelectorAll('section[id]').forEach((sec)=>tocObserver.observe(sec));}

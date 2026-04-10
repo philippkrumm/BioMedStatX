@@ -1447,6 +1447,7 @@ class StatisticalTester:
         """
         results = {
             "test": "Mixed ANOVA",
+            "model_type": "MixedANOVA",
             "p_value": None,
             "statistic": None,
             "effect_size": None,
@@ -1808,6 +1809,7 @@ class StatisticalTester:
         """
         results = {
             "test": "Repeated Measures ANOVA",
+            "model_type": "RepeatedMeasuresANOVA",
             "p_value": None,
             "statistic": None,
             "effect_size": None,
@@ -2082,6 +2084,7 @@ class StatisticalTester:
         """
         results = {
             "test": f"Two-Way ANOVA ({between[0]} * {between[1]})",
+            "model_type": "TwoWayANOVA",
             "factors": [],
             "interactions": [],
             "p_value": None,

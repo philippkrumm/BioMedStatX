@@ -65,7 +65,7 @@ class ResultsExporter:
     """
     _temp_files = set()
     @staticmethod
-    def export_results_to_excel(results, output_file, analysis_log=None):
+    def export_results_to_excel(results, output_file, analysis_log=None, pre_generated_tree=None):
         print(f"DEBUG: Current working directory before export: {os.getcwd()}")
         original_dir = os.getcwd()
         
@@ -119,8 +119,10 @@ class ResultsExporter:
             ResultsExporter._write_linear_regression_sheet(workbook, results, fmt)
         elif model_type == "LogisticRegression":
             ResultsExporter._write_logistic_regression_sheet(workbook, results, fmt)
+        elif model_type == "BetaRegression":
+            ResultsExporter._write_beta_regression_sheet(workbook, results, fmt)
         # 13. Decision Tree
-        ResultsExporter._write_decision_tree_sheet(workbook, results, fmt)
+        ResultsExporter._write_decision_tree_sheet(workbook, results, fmt, pre_generated_tree=pre_generated_tree)
         # 14. Methodology Log (replaces old Methodology + Analysis Log sheets)
         ResultsExporter._write_methodology_log_sheet(
             workbook,
@@ -1049,6 +1051,8 @@ class ResultsExporter:
             _sheet_desc.append(("Linear Regression", "Model summary, coefficients, diagnostics"))
         elif _mt == "LogisticRegression":
             _sheet_desc.append(("Logistic Regression", "Odds ratios, Hosmer-Lemeshow, ROC/AUC"))
+        elif _mt == "BetaRegression":
+            _sheet_desc.append(("Beta Regression", "Coefficients, pseudo-R², dispersion (phi), diagnostics"))
         _sheet_desc += [
             ("Decision Tree",    "Visual flowchart of statistical decisions made"),
             ("Methodology Log",  "Step-by-step audit trail and suggested Methods section text"),
@@ -1147,6 +1151,8 @@ class ResultsExporter:
             sheet_rows.append(("Linear Regression", "Model summary, coefficients, diagnostics"))
         elif _mt == "LogisticRegression":
             sheet_rows.append(("Logistic Regression", "Odds ratios, calibration, ROC/AUC"))
+        elif _mt == "BetaRegression":
+            sheet_rows.append(("Beta Regression", "Coefficients, pseudo-R², dispersion (phi), diagnostics"))
         sheet_rows.extend([
             ("Decision Tree", "Visual flowchart of the applied decision path"),
             ("Methodology Log", "Audit trail and methods-text helper"),
@@ -4071,6 +4077,76 @@ class ResultsExporter:
             ws.write(row, 0, "Interpretation", fmt["cell"])
             ws.write(row, 1, interp, fmt["cell"])
         row += 1
+
+        ws.write(row, 0, "N observations", fmt["cell"])
+        ws.write(row, 1, results.get("n_observations"), fmt["cell"])
+        row += 2
+        ResultsExporter._write_data_health_section(ws, row, results, fmt)
+
+    # ------------------------------------------------------------------
+    # Beta Regression sheet
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _write_beta_regression_sheet(workbook, results, fmt):
+        ws = workbook.add_worksheet("Beta Regression")
+        ws.set_column('A:A', 38)
+        ws.set_column('B:H', 16)
+        row = 0
+
+        ws.write(row, 0, "Beta Regression Details", fmt["title"])
+        row += 1
+        detection_note = results.get("detection_note")
+        if detection_note:
+            ws.write(row, 0, detection_note, fmt["italic_grey"])
+        row += 2
+
+        # Coefficients table
+        coef_table = results.get("coefficients", [])
+        if coef_table:
+            ws.write(row, 0, "Coefficients (logit scale)", fmt["section_header"])
+            row += 1
+            headers = ["Parameter", "Coefficient", "CI Lower (95%)", "CI Upper (95%)", "Std. Error", "z-value", "p-value"]
+            for c, h in enumerate(headers):
+                ws.write(row, c, h, fmt["header"])
+            row += 1
+            for entry in coef_table:
+                ws.write(row, 0, str(entry.get("parameter", "")), fmt["cell"])
+                ws.write(row, 1, entry.get("coefficient"), fmt["cell"])
+                ws.write(row, 2, entry.get("ci_lower"), fmt["cell"])
+                ws.write(row, 3, entry.get("ci_upper"), fmt["cell"])
+                ws.write(row, 4, entry.get("std_err"), fmt["cell"])
+                ws.write(row, 5, entry.get("z_value"), fmt["cell"])
+                p_val = entry.get("p_value")
+                if p_val is not None:
+                    cell_fmt = fmt["sig_highlight"] if p_val < 0.05 else fmt["cell"]
+                    ws.write(row, 6, p_val, cell_fmt)
+                else:
+                    ws.write(row, 6, "N/A", fmt["cell"])
+                row += 1
+            row += 1
+
+        # Model fit statistics
+        ws.write(row, 0, "Model Fit Statistics", fmt["section_header"])
+        row += 1
+        phi = results.get("phi")
+        for key, label in [
+            ("pseudo_r_squared", "Pseudo R-squared (McFadden)"),
+            ("aic", "AIC"),
+            ("bic", "BIC"),
+            ("log_likelihood", "Log-Likelihood"),
+        ]:
+            ws.write(row, 0, label, fmt["cell"])
+            val = results.get(key)
+            ws.write(row, 1, val if val is not None else "N/A", fmt["cell"])
+            row += 1
+        ws.write(row, 0, "Dispersion parameter (phi)", fmt["cell"])
+        ws.write(row, 1, phi if phi is not None else "N/A", fmt["cell"])
+        row += 1
+        ws.write(row, 0, "Interpretation of phi", fmt["cell"])
+        if phi is not None:
+            ws.write(row, 1, "Higher phi = lower variance around the mean (more precise fit)", fmt["cell"])
+        row += 2
 
         ws.write(row, 0, "N observations", fmt["cell"])
         ws.write(row, 1, results.get("n_observations"), fmt["cell"])

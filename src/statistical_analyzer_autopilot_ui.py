@@ -42,6 +42,11 @@ from PyQt5.QtWidgets import (
 
 from decisiontreevisualizer import DecisionTreeVisualizer
 
+try:
+    from help_content import HELP_RECIPES
+except ImportError:
+    HELP_RECIPES = []
+
 AUTO_PILOT_STEP_ORDER = ["load", "map", "analyze", "results"]
 
 def _safe_file_slug(text):
