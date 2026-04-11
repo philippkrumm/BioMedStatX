@@ -7,4 +7,11 @@ m <- aov(Value ~ Group, data=df)
 s <- summary(m)[[1]]
 p_val <- s[["Pr(>F)"]][1]
 f_val <- s[["F value"]][1]
-cat(p_val, f_val, "\n")
+# eta-squared = SS_between / SS_total; Cohen's f = sqrt(eta2 / (1 - eta2))
+ss     <- s[["Sum Sq"]]
+eta_sq <- ss[1] / sum(ss)
+cohens_f <- sqrt(eta_sq / (1 - eta_sq))
+# Tukey HSD post-hoc — 3 pairs for 3-group fixture (lexicographic order)
+tukey   <- TukeyHSD(m)$Group
+p_tukey <- tukey[, "p adj"]
+cat(p_val, f_val, eta_sq, cohens_f, p_tukey[1], p_tukey[2], p_tukey[3], "\n")

@@ -12,4 +12,7 @@ if (all(c("Before","After") %in% colnames(df))) {
   after  <- df_wide[, paste0("Value.", grps[2])]
 }
 res <- t.test(before, after, paired=TRUE)
-cat(res$p.value, res$statistic, "\n")
+# Cohen's d for paired data: mean(diff) / sd(diff) — matches Python formula
+diffs <- before - after
+d <- mean(diffs) / sd(diffs)
+cat(res$p.value, res$statistic, d, "\n")

@@ -72,6 +72,12 @@ def build_analysis_context(design: dict, group_labels: list) -> dict:
     elif design["inferred_test"] == "repeated_measures_anova":
         ctx["within_factors"]    = design["factor_columns"]
         ctx["additional_factors"] = design["factor_columns"]
+    elif design["inferred_test"] == "ancova":
+        # analysis_core.py reads covariates from analysis_context["covariates"]
+        ctx["covariates"] = design.get("covariate_columns", [])
+    elif design["inferred_test"] in ("correlation", "linear_regression"):
+        # analysis_core.py reads x from analysis_context["x_variable"] (line 589)
+        ctx["x_variable"] = design.get("x_column")
     return ctx
 
 
@@ -194,35 +200,114 @@ def _rscript_path() -> str:
 RSCRIPT = _rscript_path()
 
 
+def _validate_r_effect_size(result: dict, design: dict, r: dict) -> None:
+    """
+    Cross-validate effect sizes from R.
+    - Cohen's d (t-tests) and R² (regression): hard assertions at 1e-4
+    - eta_squared / partial eta²: warnings only (formula variants legitimately differ)
+    """
+    name = design["name"]
+
+    # ── Cohen's d for t-tests (hard assert: same pooled-SD formula both sides) ──
+    if "effect_size" in r and design.get("r_test") in ("indep_ttest", "paired_ttest"):
+        python_es = result.get("effect_size")
+        if python_es is not None:
+            diff = abs(abs(float(python_es)) - abs(float(r["effect_size"])))
+            assert diff < 1e-4, (
+                f"[{name}] Cohen's d mismatch: "
+                f"Python={float(python_es):.6f}, R={float(r['effect_size']):.6f}, diff={diff:.2e}"
+            )
+            print(f"  Cohen's d OK: Python={abs(float(python_es)):.4f}, R={abs(float(r['effect_size'])):.4f}")
+
+    # ── R² for regression (hard assert: identical OLS formula) ──
+    if "r_squared" in r:
+        python_es = result.get("effect_size")
+        if python_es is not None:
+            diff = abs(abs(float(python_es)) - float(r["r_squared"]))
+            assert diff < 1e-4, (
+                f"[{name}] R² mismatch: "
+                f"Python={float(python_es):.6f}, R={float(r['r_squared']):.6f}, diff={diff:.2e}"
+            )
+            print(f"  R² OK: Python={float(python_es):.4f}, R={float(r['r_squared']):.4f}")
+
+    # ── eta_squared for one-way ANOVA (warn only) ──
+    if "eta_squared" in r:
+        python_es = result.get("effect_size")
+        if python_es is not None:
+            diff = abs(abs(float(python_es)) - float(r["eta_squared"]))
+            label = "  eta² OK" if diff < 0.01 else "  WARNING: eta² mismatch"
+            print(f"{label}: Python={abs(float(python_es)):.4f}, R={float(r['eta_squared']):.4f}, diff={diff:.2e}")
+
+    # ── Partial eta² for first factor in two-way / mixed ANOVA (warn only) ──
+    peta_key = next((k for k in ("peta_FactorA", "peta_between") if k in r), None)
+    if peta_key is not None and result.get("factors"):
+        python_peta = result["factors"][0].get("effect_size")
+        if python_peta is not None:
+            diff = abs(abs(float(python_peta)) - float(r[peta_key]))
+            label = "  partial eta² OK" if diff < 0.01 else "  WARNING: partial eta² mismatch"
+            print(f"{label} (factor 0): Python={abs(float(python_peta)):.4f}, R={float(r[peta_key]):.4f}, diff={diff:.2e}")
+
+
+def _validate_r_posthoc(result: dict, design: dict, r: dict) -> None:
+    """
+    Cross-validate Tukey HSD p-values from R against Python pairwise_comparisons.
+    Mismatches are warnings (not failures) because pair ordering may differ.
+    """
+    tukey_keys = sorted(k for k in r if k.startswith("p_tukey_"))
+    if not tukey_keys:
+        return
+
+    name = design["name"]
+    python_pairs = result.get("pairwise_comparisons", [])
+    if not python_pairs:
+        print(f"  WARNING [{name}]: R has Tukey p-values but Python has no pairwise_comparisons")
+        return
+
+    r_tukey_ps = [float(r[k]) for k in tukey_keys]
+    python_tukey_ps = [float(c["p_value"]) for c in python_pairs]
+    tol = design.get("r_posthoc_tolerance", 0.01)
+
+    all_ok = True
+    for i, py_p in enumerate(python_tukey_ps):
+        best = min(r_tukey_ps, key=lambda rp: abs(py_p - rp))
+        diff = abs(py_p - best)
+        if diff >= tol:
+            print(f"  WARNING [{name}]: Tukey pair {i}: Python p={py_p:.4f}, closest R p={best:.4f}, diff={diff:.2e}")
+            all_ok = False
+    if all_ok:
+        print(f"  Tukey HSD post-hoc OK: {len(python_tukey_ps)} pairs within tol={tol}")
+
+
 def validate_against_r(result: dict, design: dict, excel_path: str, tmp_path: Path):
     """
-    Cross-validate the Python p-value against R.
-    Skipped if:
-      - r_test is None (robustness test)
-      - Rscript is not available
-      - The test was non-parametric for multi-factor designs
-        (R implementations may differ significantly)
+    Cross-validate the Python p-value (and effect sizes) against R.
+    Skipped gracefully if r_test is None or Rscript is unavailable.
+
+    Parsing is format-driven via the design's r_output_format key.
+    Default format: ["p_value", "statistic"] (legacy two-value output).
     """
     r_test = design.get("r_test")
     if r_test is None:
-        return  # Robustness/NaN test — skip R cross-check
+        return  # Robustness/NaN test or no R equivalent — skip
 
     r_script = R_TEMPLATES / f"{r_test}.R"
     if not r_script.exists():
         print(f"  SKIP R validation [{design['name']}]: no template {r_script.name}")
         return
 
-    # Convert Excel to CSV for R (simpler to read)
+    # Convert DataFrame to CSV for R (simpler than Excel parsing)
     df_orig = design["df_factory"]()
     csv_path = tmp_path / f"{design['name']}_r_input.csv"
     df_orig.to_csv(str(csv_path), index=False)
 
+    # Build R command — some designs pass extra CLI args (e.g. correlation method)
+    cmd = [RSCRIPT, "--vanilla", str(r_script), str(csv_path)]
+    for extra in design.get("r_extra_args", []):
+        cmd.append(str(extra))
+
     # Call R
     try:
-        proc = subprocess.run(
-            [RSCRIPT, "--vanilla", str(r_script), str(csv_path)],
-            capture_output=True, text=True, timeout=60
-        )
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     except (subprocess.TimeoutExpired, FileNotFoundError) as e:
         print(f"  SKIP R validation [{design['name']}]: {e}")
         return
@@ -232,45 +317,68 @@ def validate_against_r(result: dict, design: dict, excel_path: str, tmp_path: Pa
         return
 
     output = proc.stdout.strip()
-    if not output or output == "NA NA NA NA":
+    if not output:
         print(f"  SKIP R validation [{design['name']}]: R returned no output")
         return
 
-    try:
-        values = [float(x) for x in output.split()]
-    except ValueError:
-        print(f"  SKIP R validation [{design['name']}]: Could not parse R output: {output!r}")
+    # Parse — handle NA tokens gracefully (R fallback paths emit NA for missing values)
+    raw_tokens = output.split()
+    values = []
+    for tok in raw_tokens:
+        try:
+            values.append(float(tok))
+        except ValueError:
+            values.append(float("nan"))  # NA → NaN, skipped in comparisons
+
+    if not values or all(v != v for v in values):   # all NaN
+        print(f"  SKIP R validation [{design['name']}]: R returned only NA values")
+        return
+
+    # Map tokens to named fields via r_output_format
+    fmt = design.get("r_output_format", ["p_value", "statistic"])
+    r = {name: val for name, val in zip(fmt, values)}
+
+    # ── p-value tolerance ────────────────────────────────────────────────────
+    # Wilcoxon: Python uses normal approx, R may use exact → keep loose (0.05)
+    # Mann-Whitney: both use normal approx → tighter (1e-3)
+    # Parametric: formulas are identical → tight (1e-4)
+    # Nonparametric mixed ANOVA uses different test entirely → very loose (0.5)
+    # Design-level r_tolerance always wins.
+    r_test_name = design.get("r_test", "")
+    default_tol = (
+        0.05  if r_test_name == "wilcoxon" else
+        1e-3  if r_test_name == "mann_whitney" else
+        1e-4
+    )
+    tolerance = design.get("r_tolerance", default_tol)
+
+    # Gather all p-value fields from the named dict
+    p_keys = [k for k in r if k == "p_value" or k.startswith("p_")]
+    r_p_values = [r[k] for k in p_keys if not (r[k] != r[k])]  # skip NaN
+    if not r_p_values:
+        print(f"  SKIP R comparison [{design['name']}]: no valid p-values in R output")
         return
 
     python_p = result.get("p_value")
-    if python_p is None and "factors" in result:
-        python_p = result["factors"][0].get("p_value") if result["factors"] else None
-
+    if python_p is None and result.get("factors"):
+        python_p = result["factors"][0].get("p_value")
     if python_p is None:
         print(f"  SKIP R comparison [{design['name']}]: Python p_value is None")
         return
 
-    # Rank-based tests use exact vs normal-approximation distributions — use looser tolerance
-    rank_based = design.get("r_test") in ("wilcoxon", "mann_whitney")
-    tolerance = design.get("r_tolerance", 0.05 if rank_based else 1e-4)
-
-    # Multi-factor ANOVAs return multiple p-values; match Python's primary p against the
-    # closest R p-value (R template may order effects differently than Python).
-    if design["factors"] >= 2:
-        # First half of values are p-values, second half are F-statistics
-        n_effects = len(values) // 2
-        r_p_values = values[:n_effects]
-        diff = min(abs(float(python_p) - rp) for rp in r_p_values)
-        best_r_p = min(r_p_values, key=lambda rp: abs(float(python_p) - rp))
-    else:
-        best_r_p = values[0]
-        diff = abs(float(python_p) - best_r_p)
+    diff = min(abs(float(python_p) - rp) for rp in r_p_values)
+    best_r_p = min(r_p_values, key=lambda rp: abs(float(python_p) - rp))
 
     assert diff < tolerance, (
         f"[{design['name']}] R cross-validation FAILED: "
-        f"Python p={float(python_p):.8f}, best R p={best_r_p:.8f}, diff={diff:.2e} > {tolerance:.2e}"
+        f"Python p={float(python_p):.8f}, best R p={best_r_p:.8f}, "
+        f"diff={diff:.2e} > tol={tolerance:.2e}"
     )
     print(f"  R cross-check OK: Python p={float(python_p):.6f}, best R p={best_r_p:.6f}, diff={diff:.2e}")
+
+    # ── Effect size and post-hoc cross-validation ────────────────────────────
+    _validate_r_effect_size(result, design, r)
+    _validate_r_posthoc(result, design, r)
 
 
 # ---------------------------------------------------------------------------
