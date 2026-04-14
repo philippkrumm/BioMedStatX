@@ -291,6 +291,35 @@ def _ap_init_ui(self):
     self.mapping_feedback_label.setWordWrap(True)
     center_layout.addWidget(self.mapping_feedback_label)
 
+    # --- Correlation transform widget (hidden until correlation is detected) ---
+    self.corr_transform_widget = QWidget()
+    corr_tr_layout = QVBoxLayout(self.corr_transform_widget)
+    corr_tr_layout.setContentsMargins(0, 4, 0, 0)
+    corr_tr_layout.setSpacing(4)
+
+    corr_tr_title = QLabel("Variable Transformations (optional)")
+    corr_tr_title.setObjectName("panelDescription")
+    corr_tr_layout.addWidget(corr_tr_title)
+
+    _TRANSFORMS = ["none", "log10", "sqrt", "boxcox"]
+
+    x_row = QHBoxLayout()
+    x_row.addWidget(QLabel("X transform:"))
+    self.corr_x_transform_combo = QComboBox()
+    self.corr_x_transform_combo.addItems(_TRANSFORMS)
+    x_row.addWidget(self.corr_x_transform_combo)
+    corr_tr_layout.addLayout(x_row)
+
+    y_row = QHBoxLayout()
+    y_row.addWidget(QLabel("Y transform:"))
+    self.corr_y_transform_combo = QComboBox()
+    self.corr_y_transform_combo.addItems(_TRANSFORMS)
+    y_row.addWidget(self.corr_y_transform_combo)
+    corr_tr_layout.addLayout(y_row)
+
+    self.corr_transform_widget.setVisible(False)
+    center_layout.addWidget(self.corr_transform_widget)
+
     self.start_analysis_button = QPushButton("Start Auto Analysis")
     self.start_analysis_button.setObjectName("primaryButton")
     self.start_analysis_button.clicked.connect(self.determine_and_run_test)
@@ -689,6 +718,16 @@ def _ap_on_mapping_changed(self):
         self.mapping_feedback_label.setText("Mapping looks valid. Start the analysis when you are ready.")
     self.start_analysis_button.setEnabled(True)
 
+    try:
+        context = self._ap_build_analysis_context()
+        is_correlation = context.get("inferred_test") == "correlation"
+    except Exception:
+        is_correlation = False
+    self.corr_transform_widget.setVisible(is_correlation)
+    if not is_correlation:
+        self.corr_x_transform_combo.setCurrentIndex(0)
+        self.corr_y_transform_combo.setCurrentIndex(0)
+
 
 def _ap_browse_file(self):
     file_path, _ = QFileDialog.getOpenFileName(
@@ -977,6 +1016,14 @@ def _ap_build_analysis_context(self):
         raise ValueError("Multi mode requires at least two measurement columns (for example two or more genes).")
     if context["mode"] == "multi" and context["inferred_test"] in {"independent_ttest", "paired_ttest", "logistic_regression", "beta_regression"}:
         raise ValueError("Multi mode is restricted to ANOVA-capable designs.")
+
+    # Correlation variable transforms (only meaningful when inferred_test == 'correlation')
+    if hasattr(self, 'corr_x_transform_combo'):
+        context['x_transform'] = self.corr_x_transform_combo.currentText() or 'none'
+        context['y_transform'] = self.corr_y_transform_combo.currentText() or 'none'
+    else:
+        context['x_transform'] = 'none'
+        context['y_transform'] = 'none'
 
     return context
 
