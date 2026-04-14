@@ -9,6 +9,8 @@ Tests for the correlation transform & retest feature:
   - No transformation → Spearman path preserved
 """
 import sys
+import tempfile
+import os
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -229,3 +231,97 @@ def test_decision_tree_correlation_without_transform_renders():
     viz = DecisionTreeVisualizer()
     fig = viz.create_association_tree(mock_results)
     assert fig is not None
+
+
+# ---------------------------------------------------------------------------
+# Integration — AnalysisManager end-to-end
+# ---------------------------------------------------------------------------
+
+from stats_functions import AnalysisManager
+
+
+def _corr_context(x_transform='none', y_transform='none'):
+    return {
+        "dv_columns":      ["y"],
+        "factor_columns":  ["x"],
+        "group_labels":    [],
+        "subject_column":  None,
+        "dependent":       False,
+        "inferred_test":   "correlation",
+        "x_variable":      "x",
+        "between_factors": [],
+        "within_factors":  [],
+        "additional_factors": [],
+        "selected_groups": [],
+        "covariates":      [],
+        "x_transform":     x_transform,
+        "y_transform":     y_transform,
+    }
+
+
+def test_analysis_manager_correlation_no_transform():
+    df = _make_lognormal_df(n=100)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        excel_path = os.path.join(tmpdir, "test_correlation.xlsx")
+        df.to_excel(excel_path, index=False, sheet_name="Data")
+
+        ctx = _corr_context()
+        mgr = AnalysisManager()
+        results = mgr.analyze(
+            file_path=excel_path,
+            group_col="x",
+            groups=[],
+            sheet_name=0,
+            value_cols=["y"],
+            skip_plots=True,
+            skip_excel=True,
+            analysis_context=ctx,
+        )
+        assert results.get("model_type") == "Correlation"
+        assert results.get("method") in ("pearson", "spearman")
+
+
+def test_analysis_manager_correlation_log10_transform():
+    df = _make_lognormal_df(n=80, seed=7)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        excel_path = os.path.join(tmpdir, "test_correlation_log10.xlsx")
+        df.to_excel(excel_path, index=False, sheet_name="Data")
+
+        ctx = _corr_context(x_transform='log10', y_transform='log10')
+        mgr = AnalysisManager()
+        results = mgr.analyze(
+            file_path=excel_path,
+            group_col="x",
+            groups=[],
+            sheet_name=0,
+            value_cols=["y"],
+            skip_plots=True,
+            skip_excel=True,
+            analysis_context=ctx,
+        )
+        assert results.get("model_type") == "Correlation"
+        assert results.get("x_transform") == "log10"
+        assert results.get("y_transform") == "log10"
+        # After log10, lognormal data should be normal -> Pearson
+        assert results.get("method") == "pearson"
+
+
+def test_analysis_manager_correlation_results_has_transformation_key():
+    df = _make_lognormal_df(n=100)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        excel_path = os.path.join(tmpdir, "test_correlation_transform.xlsx")
+        df.to_excel(excel_path, index=False, sheet_name="Data")
+
+        ctx = _corr_context(x_transform='sqrt', y_transform='none')
+        mgr = AnalysisManager()
+        results = mgr.analyze(
+            file_path=excel_path,
+            group_col="x",
+            groups=[],
+            sheet_name=0,
+            value_cols=["y"],
+            skip_plots=True,
+            skip_excel=True,
+            analysis_context=ctx,
+        )
+        assert "transformation" in results
