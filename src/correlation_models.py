@@ -69,6 +69,60 @@ def _fisher_z_ci(r, n, alpha=0.05):
         return (None, None)
 
 
+_VALID_TRANSFORMS = ('none', 'log10', 'sqrt', 'boxcox')
+
+
+def _apply_transform(vals: np.ndarray, name: str) -> np.ndarray:
+    """Apply a named transformation to a 1-D float array.
+
+    Handles non-positive values automatically:
+    - log10 / sqrt: shifts so minimum becomes 1 / 0 respectively.
+    - boxcox:       shifts so minimum becomes 1 (scipy requirement).
+
+    Args:
+        vals: 1-D numpy array of finite floats.
+        name: one of 'none', 'log10', 'sqrt', 'boxcox'.
+
+    Returns:
+        Transformed array of the same shape.
+
+    Raises:
+        ValueError: if name is not a recognised transformation.
+    """
+    if name not in _VALID_TRANSFORMS:
+        raise ValueError(
+            f"Unknown transformation '{name}'. "
+            f"Choose from: {', '.join(_VALID_TRANSFORMS)}."
+        )
+    if name == 'none':
+        return vals.copy()
+
+    v = vals.astype(float)
+
+    if name == 'log10':
+        min_val = v.min()
+        shift = -min_val + 1.0 if min_val <= 0 else 0.0
+        return np.log10(v + shift)
+
+    if name == 'sqrt':
+        min_val = v.min()
+        shift = -min_val if min_val < 0 else 0.0
+        return np.sqrt(v + shift)
+
+    if name == 'boxcox':
+        from scipy.stats import boxcox as _scipy_boxcox, boxcox_normmax
+        min_val = v.min()
+        shift = -min_val + 1.0 if min_val <= 0 else 0.0
+        v_shifted = v + shift
+        try:
+            lam = boxcox_normmax(v_shifted)
+            transformed = _scipy_boxcox(v_shifted, lam)
+        except Exception:
+            # Fall back to log (lam ≈ 0) when boxcox_normmax fails
+            transformed = np.log(v_shifted)
+        return transformed
+
+
 # ---------------------------------------------------------------------------
 # 1. CorrelationModel
 # ---------------------------------------------------------------------------
@@ -93,18 +147,27 @@ class CorrelationModel:
         self._y_label = None
         self._points = []
         self._alpha = 0.05
+        self._x_transform = 'none'
+        self._y_transform = 'none'
 
-    def fit(self, df, x_col, y_col, method='auto', alpha=0.05):
+    def fit(self, df, x_col, y_col, method='auto', alpha=0.05,
+            x_transform='none', y_transform='none'):
         """Fit the correlation model.
 
         Args:
-            df:       DataFrame
-            x_col:   first variable (predictor)
-            y_col:   second variable (outcome)
-            method:  'auto', 'pearson', or 'spearman'
-            alpha:   significance level (used for auto-detection and CI width)
+            df:           DataFrame
+            x_col:        first variable (predictor)
+            y_col:        second variable (outcome)
+            method:       'auto', 'pearson', or 'spearman'
+            alpha:        significance level for auto-detection and CI width
+            x_transform:  transformation applied to x before testing
+                          ('none', 'log10', 'sqrt', 'boxcox')
+            y_transform:  transformation applied to y before testing
         """
         self._alpha = alpha
+        self._x_transform = x_transform or 'none'
+        self._y_transform = y_transform or 'none'
+
         work = df.dropna(subset=[x_col, y_col]).copy()
         self.n = len(work)
 
@@ -120,26 +183,56 @@ class CorrelationModel:
         self._x_label = str(x_col)
         self._y_label = str(y_col)
 
-        x_vals = work[self._x].values.astype(float)
-        y_vals = work[self._y].values.astype(float)
-        self._points = [{"x": float(x), "y": float(y)} for x, y in zip(x_vals, y_vals)]
+        x_raw = work[self._x].values.astype(float)
+        y_raw = work[self._y].values.astype(float)
 
-        # --- Determine method ---
+        # Store scatter points from raw (untransformed) values for plots
+        self._points = [{"x": float(x), "y": float(y)} for x, y in zip(x_raw, y_raw)]
+
+        # --- Apply transformations ---
+        x_vals = _apply_transform(x_raw, self._x_transform)
+        y_vals = _apply_transform(y_raw, self._y_transform)
+
+        # --- Normality check (on transformed values) ---
         self._normality_check = None
         if method == 'auto':
+            # Pre-transform normality (raw values) — stored for the decision tree
+            sw_stat_x_raw, px_raw = scipy_stats.shapiro(x_raw[:5000])
+            sw_stat_y_raw, py_raw = scipy_stats.shapiro(y_raw[:5000])
+
             sw_stat_x, px = scipy_stats.shapiro(x_vals[:5000])
             sw_stat_y, py = scipy_stats.shapiro(y_vals[:5000])
+
             self._method_used = 'pearson' if (px > alpha and py > alpha) else 'spearman'
-            self._normality_check = {
-                "test": "Shapiro-Wilk (auto method selection)",
-                x_col: {"statistic": float(sw_stat_x), "p_value": float(px), "normal": bool(px > alpha)},
-                y_col: {"statistic": float(sw_stat_y), "p_value": float(py), "normal": bool(py > alpha)},
-                "both_normal": bool(px > alpha and py > alpha),
-            }
+
+            has_transform = (self._x_transform != 'none' or self._y_transform != 'none')
+            if has_transform:
+                self._normality_check = {
+                    "test": "Shapiro-Wilk (auto method selection)",
+                    "pre_transform": {
+                        x_col: {"statistic": float(sw_stat_x_raw), "p_value": float(px_raw), "normal": bool(px_raw > alpha)},
+                        y_col: {"statistic": float(sw_stat_y_raw), "p_value": float(py_raw), "normal": bool(py_raw > alpha)},
+                        "both_normal": bool(px_raw > alpha and py_raw > alpha),
+                    },
+                    "post_transform": {
+                        x_col: {"statistic": float(sw_stat_x), "p_value": float(px), "normal": bool(px > alpha)},
+                        y_col: {"statistic": float(sw_stat_y), "p_value": float(py), "normal": bool(py > alpha)},
+                        "both_normal": bool(px > alpha and py > alpha),
+                    },
+                    "both_normal": bool(px > alpha and py > alpha),
+                }
+            else:
+                # Backward-compatible: no pre/post keys when no transformation
+                self._normality_check = {
+                    "test": "Shapiro-Wilk (auto method selection)",
+                    x_col: {"statistic": float(sw_stat_x), "p_value": float(px), "normal": bool(px > alpha)},
+                    y_col: {"statistic": float(sw_stat_y), "p_value": float(py), "normal": bool(py > alpha)},
+                    "both_normal": bool(px > alpha and py > alpha),
+                }
         else:
             self._method_used = method
 
-        # --- Compute r and p ---
+        # --- Compute r and p on (possibly transformed) values ---
         if self._method_used == 'pearson':
             self.r, self.p = scipy_stats.pearsonr(x_vals, y_vals)
         else:
@@ -193,6 +286,13 @@ class CorrelationModel:
             "y_variable_display": self._y_label,
             "association_points": self._points,
             "normality_check": self._normality_check,
+            "transformation": (
+                f"{self._x_transform}/{self._y_transform}"
+                if (self._x_transform != 'none' or self._y_transform != 'none')
+                else 'none'
+            ),
+            "x_transform": getattr(self, '_x_transform', 'none'),
+            "y_transform": getattr(self, '_y_transform', 'none'),
         }
 
 
