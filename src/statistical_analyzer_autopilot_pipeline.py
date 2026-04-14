@@ -1066,12 +1066,15 @@ def _ap_detected_test_label(self, context):
     return label
 
 
-def _ap_execute_single_analysis(self, context, dv_column, output_dir, skip_plots=True, title_suffix=None):
+def _ap_execute_single_analysis(self, context, dv_column, output_dir, skip_plots=True, title_suffix=None, file_base_override=None):
     if not self.file_path:
         raise ValueError("No input file selected.")
 
     base_name = os.path.splitext(os.path.basename(self.file_path))[0]
-    file_base = os.path.join(output_dir, f"{_safe_file_slug(base_name)}_{_safe_file_slug(dv_column)}")
+    if file_base_override is not None:
+        file_base = file_base_override
+    else:
+        file_base = os.path.join(output_dir, f"{_safe_file_slug(base_name)}_{_safe_file_slug(dv_column)}")
     group_labels = context.get("group_labels", [])
     colors = [DEFAULT_COLORS[index % len(DEFAULT_COLORS)] for index, _ in enumerate(group_labels)]
     hatches = [DEFAULT_HATCHES[index % len(DEFAULT_HATCHES)] for index, _ in enumerate(group_labels)]
@@ -1429,9 +1432,21 @@ def _ap_determine_and_run_test(self):
         QMessageBox.warning(self, "Invalid Mapping", str(exc))
         return
 
-    output_dir = QFileDialog.getExistingDirectory(self, "Select output directory for analysis")
-    if not output_dir:
+    _ap_base_name = _safe_file_slug(os.path.splitext(os.path.basename(self.file_path))[0])
+    if context["mode"] == "single":
+        _ap_suggested = f"{_ap_base_name}_{_safe_file_slug(context['dv_columns'][0])}.xlsx"
+    else:
+        _ap_suggested = f"{_ap_base_name}_multi_dataset_results.xlsx"
+
+    ap_file_path, _ = QFileDialog.getSaveFileName(
+        self, "Save Analysis Results", _ap_suggested,
+        "Excel Files (*.xlsx);;All Files (*)"
+    )
+    if not ap_file_path:
         return
+    if not ap_file_path.lower().endswith('.xlsx'):
+        ap_file_path += '.xlsx'
+    output_dir = os.path.dirname(ap_file_path) or os.getcwd()
 
     self._set_workflow_state("analyze", "Running analysis", running=True)
     self.mapping_feedback_label.setText("Auto-pilot is analyzing the mapped design.")
@@ -1440,7 +1455,8 @@ def _ap_determine_and_run_test(self):
 
     try:
         if context["mode"] == "single":
-            result = self._execute_single_analysis(context, context["dv_columns"][0], output_dir, skip_plots=True)
+            file_base_override = os.path.splitext(ap_file_path)[0]
+            result = self._execute_single_analysis(context, context["dv_columns"][0], output_dir, skip_plots=True, file_base_override=file_base_override)
             self._render_result_summary(
                 context,
                 result,
@@ -1457,8 +1473,7 @@ def _ap_determine_and_run_test(self):
                 QApplication.processEvents()
                 all_results[dv_column] = self._execute_single_analysis(per_dv_context, dv_column, output_dir, skip_plots=True)
 
-            base_name = _safe_file_slug(os.path.splitext(os.path.basename(self.file_path))[0])
-            combined_excel = os.path.join(output_dir, f"{base_name}_multi_dataset_results.xlsx")
+            combined_excel = ap_file_path
             export_result = ExportDispatcher.export_multi_dataset_results(all_results, combined_excel)
             if export_result.get("warning"):
                 print(f"WARNING: {export_result['warning']}")

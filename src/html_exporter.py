@@ -552,6 +552,128 @@ class HTMLExporter:
         return rows
 
     @staticmethod
+    def _build_factorial_anova_statistical_rows(results: dict) -> list[dict]:
+        """ANOVA effects table for TwoWayANOVA, MixedANOVA, and RepeatedMeasuresANOVA.
+        Shows all main effects and interactions with F, df, p-value, and η²p."""
+        rows = []
+        model_type = results.get("model_type", "")
+
+        # Basic identity rows
+        for label, key in [
+            ("Test", "test"),
+            ("Model type", "model_type"),
+            ("Transformation", "transformation"),
+            ("Post-hoc test", "posthoc_test"),
+        ]:
+            value = results.get(key)
+            if key in results and HTMLExporter._has_display_value(value):
+                rows.append({"label": label, "value": HTMLExporter._format_metric(value)})
+
+        factors = results.get("factors") or []
+        interactions = results.get("interactions") or []
+
+        if factors or interactions:
+            rows.append({"label": "── ANOVA Effects Table ──", "value": ""})
+            rows.append({"label": "Source", "value": "F (df₁, df₂) | p-value | η²p"})
+
+            for factor in factors:
+                name = str(factor.get("factor", ""))
+                ftype = factor.get("type", "")
+                F = factor.get("F")
+                df1 = factor.get("df1")
+                df2 = factor.get("df2")
+                p = factor.get("p_value")
+                eta = factor.get("effect_size")
+
+                label = name
+                if ftype == "between":
+                    label += " (between-subject)"
+                elif ftype == "within":
+                    label += " (within-subject)"
+
+                parts = []
+                if F is not None:
+                    if df1 is not None and df2 is not None:
+                        parts.append(f"F({df1:.0f}, {df2:.0f}) = {F:.4f}")
+                    else:
+                        parts.append(f"F = {F:.4f}")
+                if p is not None:
+                    parts.append(HTMLExporter._format_p_value(p))
+                if eta is not None:
+                    try:
+                        parts.append(f"η²p = {float(eta):.4f}")
+                    except (TypeError, ValueError):
+                        pass
+
+                rows.append({"label": label, "value": " | ".join(parts)})
+
+            for inter in interactions:
+                inter_factors = inter.get("factors") or []
+                name = " × ".join(str(f) for f in inter_factors) if inter_factors else "Interaction"
+                F = inter.get("F")
+                df1 = inter.get("df1")
+                df2 = inter.get("df2")
+                p = inter.get("p_value")
+                eta = inter.get("effect_size")
+
+                parts = []
+                if F is not None:
+                    if df1 is not None and df2 is not None:
+                        parts.append(f"F({df1:.0f}, {df2:.0f}) = {F:.4f}")
+                    else:
+                        parts.append(f"F = {F:.4f}")
+                if p is not None:
+                    parts.append(HTMLExporter._format_p_value(p))
+                if eta is not None:
+                    try:
+                        parts.append(f"η²p = {float(eta):.4f}")
+                    except (TypeError, ValueError):
+                        pass
+
+                rows.append({"label": name + " (interaction)", "value": " | ".join(parts)})
+        else:
+            # Fallback: single primary effect summary (RM-ANOVA single factor)
+            for label, key in [
+                ("Statistic", "statistic"),
+                ("p-value", "p_value"),
+                ("Effect size", "effect_size"),
+                ("Effect size type", "effect_size_type"),
+                ("Degrees of freedom 1", "df1"),
+                ("Degrees of freedom 2", "df2"),
+            ]:
+                value = results.get(key)
+                if key in results and HTMLExporter._has_display_value(value):
+                    if key == "p_value":
+                        rows.append({"label": label, "value": HTMLExporter._format_p_value(value)})
+                    else:
+                        rows.append({"label": label, "value": HTMLExporter._format_metric(value)})
+
+        # Primary effect summary line (e.g. "Main effect: Timepoint")
+        primary_effect = results.get("primary_effect") or {}
+        if isinstance(primary_effect, dict):
+            primary_factor = primary_effect.get("factor") or primary_effect.get("source")
+            if not primary_factor and factors:
+                # fall back: find factor with smallest p-value or the primary one
+                primary_factor = factors[0].get("factor")
+            p_primary = primary_effect.get("p_value")
+            F_primary = primary_effect.get("F")
+            df1_p = primary_effect.get("df1")
+            df2_p = primary_effect.get("df2")
+            if primary_factor and F_primary is not None and p_primary is not None and df1_p is not None and df2_p is not None:
+                summary = (
+                    f"F({df1_p:.4f}, {df2_p:.4f}) = {F_primary:.4f}, "
+                    f"{HTMLExporter._format_p_value(p_primary)}"
+                )
+                rows.append({"label": f"Main effect: {primary_factor}", "value": summary})
+        else:
+            # Try the legacy "main_effect_*" style key
+            for key, value in results.items():
+                if key.startswith("main_effect:") or key.startswith("main_effect_"):
+                    rows.append({"label": key.replace("_", " ").replace(":", ":"), "value": str(value)})
+
+        return rows
+
+    @staticmethod
     def _build_statistical_rows(results: dict) -> list[dict]:
         rows = []
         model_type = results.get("model_type", "")
@@ -559,6 +681,9 @@ class HTMLExporter:
 
         if model_type == "ANCOVA":
             return HTMLExporter._build_ancova_statistical_rows(results)
+
+        if model_type in ("TwoWayANOVA", "MixedANOVA", "RepeatedMeasuresANOVA"):
+            return HTMLExporter._build_factorial_anova_statistical_rows(results)
 
         if model_type == "LMM":
             return HTMLExporter._build_lmm_statistical_rows(results)
@@ -1651,6 +1776,13 @@ class HTMLExporter:
                 "subtitle": f"{factor_x} × {factor_line}",
                 "html": html,
                 "div_id": "biomedstatx-interaction-plot",
+                "info": (
+                    "Each line represents one level of the line-factor, plotted across levels of the x-axis factor.\n"
+                    "Crossing or diverging lines indicate an interaction: the effect of one factor depends on the level of the other.\n"
+                    "Parallel lines indicate no interaction — each factor acts independently.\n"
+                    "Error bars show the standard error of the mean (SE) for each cell.\n\n"
+                    "Hover over any point to see exact cell mean, SE, and n."
+                ),
             }
         except Exception as exc:
             print(f"WARNING HTML EXPORT: interaction plot failed: {exc}")
@@ -1764,6 +1896,13 @@ class HTMLExporter:
                 "subtitle": subtitle,
                 "html": html,
                 "div_id": "biomedstatx-profile-plot",
+                "info": (
+                    "Shows the group mean (±SE) at each level of the within-subject factor.\n"
+                    "Grey lines trace individual subject trajectories — they reveal whether each participant follows the overall group trend.\n"
+                    "Stable, parallel individual trajectories support the assumption of a consistent within-subject effect.\n"
+                    "Error bars show the standard error of the mean (SE).\n\n"
+                    "Hover over any point to see exact mean, SE, and n."
+                ),
             }
         except Exception as exc:
             print(f"WARNING HTML EXPORT: profile plot failed: {exc}")
@@ -1869,6 +2008,13 @@ class HTMLExporter:
                 "subtitle": f"{factor_between} groups over {factor_within} levels",
                 "html": html,
                 "div_id": "biomedstatx-mixed-profile-plot",
+                "info": (
+                    "Each line represents one between-subject group, plotted across levels of the within-subject factor.\n"
+                    "Parallel lines indicate that the within-factor effect is consistent across groups (no interaction).\n"
+                    "Crossing or diverging lines indicate a Group × Time interaction — the effect of the within-factor differs by group.\n"
+                    "Error bars show the standard error of the mean (SE) for each cell.\n\n"
+                    "Hover over any point to see exact cell mean, SE, and n."
+                ),
             }
         except Exception as exc:
             print(f"WARNING HTML EXPORT: mixed profile plot failed: {exc}")
@@ -3467,6 +3613,8 @@ class HTMLExporter:
                 "Interactive Plotly charts rendered fully offline inside this file.\n"
                 "Boxplots show the median (central line), interquartile range (box), "
                 "1.5\u00d7IQR whiskers, and individual observations as jittered points.\n"
+                "Interaction plots and profile plots show cell means \u00b1 SE across factor levels.\n"
+                "Click the \u24d8 button on each chart for a description of what it shows.\n"
                 "Hover over any element to see exact values."
             ),
             "raw": (
@@ -3673,11 +3821,14 @@ function buildFocusRect(){
 }
 const focusRect=buildFocusRect();
 function getDefaultView(vw,vh){
-    const margin=40;
+    const margin=80;
     if(focusRect){
-        const fit=Math.min((vw-margin)/focusRect.w,(vh-margin)/focusRect.h);
-        const s=Math.min(Math.max(fit,0.15),4);
-        return {sc:s,tx:(vw-focusRect.w*s)/2-focusRect.x*s,ty:(vh-focusRect.h*s)/2-focusRect.y*s};
+        const fitW=(vw-margin)/focusRect.w;
+        const fitH=(vh-margin)/focusRect.h;
+        const s=Math.min(fitW,fitH,1.5);
+        const cx=focusRect.x+focusRect.w/2;
+        const cy=focusRect.y+focusRect.h/2;
+        return {sc:s,tx:vw/2-cx*s,ty:vh/2-cy*s};
     }
     const s=Math.min((vw-margin)/svgW,(vh-margin)/svgH,1);
     return {sc:s,tx:(vw-svgW*s)/2,ty:(vh-svgH*s)/2};

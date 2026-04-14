@@ -1498,15 +1498,22 @@ class StatisticalAnalyzerApp(QMainWindow):
         if current_row < 0:
             QMessageBox.warning(self, "Error", "Please select a plot from the list.")
             return
-            
-        # Ask for output directory
-        output_dir = QFileDialog.getExistingDirectory(self, "Select output directory")
-        if not output_dir:
+
+        plot_config = self.plot_configs[current_row]
+        suggested = plot_config.get('file_name') or "_".join(plot_config['groups'])
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Save Analysis Results", suggested + ".xlsx",
+            "Excel Files (*.xlsx);;All Files (*)"
+        )
+        if not file_path:
             return
-            
+        if not file_path.lower().endswith('.xlsx'):
+            file_path += '.xlsx'
+        output_dir = os.path.dirname(file_path) or os.getcwd()
+        file_name_override = os.path.splitext(os.path.basename(file_path))[0]
+
         try:
-            plot_config = self.plot_configs[current_row]
-            self.run_single_analysis(plot_config, output_dir)
+            self.run_single_analysis(plot_config, output_dir, file_name_override=file_name_override)
             # Success dialog is now handled in run_single_analysis via centralized method
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error during analysis: {str(e)}")
@@ -1618,7 +1625,7 @@ class StatisticalAnalyzerApp(QMainWindow):
         plt = get_matplotlib()
         plt.close('all')  # Close all matplotlib figures to free memory
     
-    def run_single_analysis(self, plot_config, output_dir=None):
+    def run_single_analysis(self, plot_config, output_dir=None, file_name_override=None):
         print("DEBUG EXECUTION: run_single_analysis started")
         print(f"DEBUG EXECUTION: plot_config = {plot_config}")
         print(f"DEBUG EXECUTION: output_dir = {output_dir}")
@@ -1654,7 +1661,7 @@ class StatisticalAnalyzerApp(QMainWindow):
             'y_label': plot_config.get('y_label'),
             'title': plot_config.get('title', 'Preview'),
             'error_type': plot_config.get('error_type', 'sd'),
-            'file_name': plot_config.get('file_name') or "_".join(plot_config['groups']),
+            'file_name': file_name_override or plot_config.get('file_name') or "_".join(plot_config['groups']),
             'show_individual_lines': plot_config.get('show_individual_lines', True),
             'value_cols': value_cols,
         }
@@ -2144,12 +2151,18 @@ class StatisticalAnalyzerApp(QMainWindow):
         print("DEBUG MULTI:   selected_columns =", self.selected_columns)
         print("DEBUG MULTI:   available_groups =", self.available_groups)
         try:
-            # Ask for output directory
-            output_dir = QFileDialog.getExistingDirectory(
-                self, "Select output directory for multi-dataset analysis")
-            if not output_dir:
-                print("No output directory selected")
+            # Ask for output file (determines both directory and filename)
+            multi_file_path, _ = QFileDialog.getSaveFileName(
+                self, "Save Multi-Dataset Analysis Results", "All_Datasets_Analysis.xlsx",
+                "Excel Files (*.xlsx);;All Files (*)"
+            )
+            if not multi_file_path:
+                print("No output file selected")
                 return
+            if not multi_file_path.lower().endswith('.xlsx'):
+                multi_file_path += '.xlsx'
+            output_dir = os.path.dirname(multi_file_path) or os.getcwd()
+            multi_excel_path = multi_file_path
 
             # Select groups for analysis
             print("Opening group dialog...")
@@ -2354,7 +2367,7 @@ class StatisticalAnalyzerApp(QMainWindow):
 
                 if all_results:
                     print("DEBUG MULTI: About to call export_multi_dataset_results()")
-                    excel_path = os.path.join(output_dir, "All_Datasets_Analysis.xlsx")
+                    excel_path = multi_excel_path
                     print(f"DEBUG MULTI: Excel path will be: {excel_path}")
                     export_result = ExportDispatcher.export_multi_dataset_results(all_results, excel_path)
                     if export_result.get("warning"):
@@ -2363,7 +2376,6 @@ class StatisticalAnalyzerApp(QMainWindow):
 
                     # Collect all output files for centralized success dialog
                     files = []
-                    excel_path = os.path.join(output_dir, "All_Datasets_Analysis.xlsx")
                     if os.path.exists(excel_path):
                         files.append(excel_path)
 

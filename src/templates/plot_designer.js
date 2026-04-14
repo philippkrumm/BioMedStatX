@@ -252,7 +252,9 @@
     patterns: {},
     symbols: {},
     autoPatternsEnabled: false,
-    visiblePairIds: []
+    visiblePairIds: [],
+    groupLabels: {},
+    spaghettiOpacity: 0.35
   };
 
   function hasUsableSubjectTrajectories() {
@@ -267,6 +269,7 @@
   function updatePairedLineControlState() {
     var wrapper = document.getElementById("pd-paired-lines-wrap");
     var checkbox = document.getElementById("pd-show-paired-lines");
+    var opacityRow = document.getElementById("pd-spaghetti-opacity-row");
     if (!wrapper || !checkbox) {
       return;
     }
@@ -278,6 +281,9 @@
     if (!available || raincloudMode) {
       checkbox.checked = false;
       state.showPairedLines = false;
+    }
+    if (opacityRow) {
+      opacityRow.style.display = (available && !raincloudMode && checkbox.checked) ? "" : "none";
     }
   }
 
@@ -381,7 +387,12 @@
     state.colors[group] = defaultPalette[index % defaultPalette.length];
     state.patterns[group] = "";
     state.symbols[group] = defaultSymbolCycle[index % defaultSymbolCycle.length];
+    state.groupLabels[group] = group;
   });
+
+  if (hasUsableSubjectTrajectories()) {
+    state.showPairedLines = true;
+  }
 
   function setControlDefaults() {
     document.getElementById("pd-plot-type").value = state.plotType;
@@ -429,7 +440,10 @@
     document.getElementById("pd-export-width").value = state.exportWidth;
     document.getElementById("pd-export-height").value = state.exportHeight;
     document.getElementById("pd-png-scale").value = String(state.pngScale);
+    var spaghettiOpacityEl = document.getElementById("pd-spaghetti-opacity");
+    if (spaghettiOpacityEl) spaghettiOpacityEl.value = state.spaghettiOpacity;
     updatePairedLineControlState();
+    buildNodeLabelControls();
     updateEncodingControlVisibility();
     updateControlAvailability();
     updateFontPreviewStatus();
@@ -518,6 +532,14 @@
     state.pngScale = parseFloat(document.getElementById("pd-png-scale").value) || 3;
     updateFontPreviewStatus();
 
+    var spaghettiOpacityEl = document.getElementById("pd-spaghetti-opacity");
+    if (spaghettiOpacityEl) {
+      var parsedSpaghettiOpacity = parseFloat(spaghettiOpacityEl.value);
+      state.spaghettiOpacity = Number.isFinite(parsedSpaghettiOpacity) ? Math.min(0.9, Math.max(0.05, parsedSpaghettiOpacity)) : 0.35;
+    }
+    Array.from(document.querySelectorAll(".pd-node-label-input")).forEach(function (node) {
+      if (node.dataset.group) state.groupLabels[node.dataset.group] = node.value;
+    });
     Array.from(document.querySelectorAll(".pd-pattern-select")).forEach(function (node) {
       state.patterns[node.dataset.group] = node.value;
     });
@@ -549,6 +571,38 @@
       input.dataset.group = group;
       input.addEventListener("input", function () {
         state.colors[group] = input.value;
+        buildPlot();
+      });
+      row.appendChild(label);
+      row.appendChild(input);
+      root.appendChild(row);
+    });
+  }
+
+  function buildNodeLabelControls() {
+    var root = document.getElementById("pd-node-label-controls");
+    var groupSection = document.getElementById("pd-node-labels-group");
+    if (!root) return;
+    if (!groupOrder.length) {
+      if (groupSection) groupSection.style.display = "none";
+      return;
+    }
+    if (groupSection) groupSection.style.display = "";
+    root.innerHTML = "";
+    groupOrder.forEach(function (group) {
+      var row = document.createElement("div");
+      row.className = "pd-row";
+      var label = document.createElement("label");
+      label.textContent = group;
+      label.style.fontSize = "0.78rem";
+      label.style.color = "var(--muted)";
+      var input = document.createElement("input");
+      input.type = "text";
+      input.value = state.groupLabels[group] !== undefined ? state.groupLabels[group] : group;
+      input.dataset.group = group;
+      input.className = "pd-node-label-input";
+      input.addEventListener("input", function () {
+        state.groupLabels[group] = input.value;
         buildPlot();
       });
       row.appendChild(label);
@@ -758,6 +812,10 @@
         return;
       }
 
+      var lineOpacity = state.spaghettiOpacity;
+      var markerOpacity = Math.min(0.95, lineOpacity + 0.12);
+      var lineColor = "rgba(22,49,58," + lineOpacity.toFixed(2) + ")";
+      var markerColor = "rgba(22,49,58," + markerOpacity.toFixed(2) + ")";
       traces.push({
         type: "scatter",
         mode: "lines+markers",
@@ -765,11 +823,11 @@
         y: points.map(function (p) { return p.y; }),
         connectgaps: false,
         line: {
-          color: "rgba(22,49,58,0.32)",
+          color: lineColor,
           width: 1.1
         },
         marker: {
-          color: "rgba(22,49,58,0.45)",
+          color: markerColor,
           size: 4,
           symbol: "circle"
         },
@@ -1142,6 +1200,8 @@
     var dataMax = Math.max.apply(null, candidates);
     // Violin KDE rendering overshoots the data maximum; add buffer so brackets
     // start above the visible violin tip rather than colliding with it.
+    // KDE bandwidth can push the violin tip well beyond the data max, especially
+    // when data is clustered near the extremes — use a larger buffer (30 %).
     if (state.plotType === "Violin") {
       var lowerCandidates = [];
       groupOrder.forEach(function (group) {
@@ -1149,7 +1209,7 @@
         if (isFiniteNumber(mn)) lowerCandidates.push(mn);
       });
       var dataMin = lowerCandidates.length ? Math.min.apply(null, lowerCandidates) : 0;
-      return dataMax + Math.max((dataMax - dataMin) * 0.15, 0.5);
+      return dataMax + Math.max((dataMax - dataMin) * 0.30, 1.5);
     }
     return dataMax;
   }
@@ -1250,7 +1310,10 @@
         return { shapes: [], annotations: [], yAxisMax: yMax, xAxisMax: null };
       }
 
-      var xBase = yMax;
+      // Raincloud KDE also overshoots the data maximum on the x-axis — apply
+      // the same 30 % range buffer used for vertical Violin plots.
+      var dataRangeRaincloud = Math.abs(yMax - yMin) || Math.abs(yMax) || 1;
+      var xBase = yMax + Math.max(dataRangeRaincloud * 0.30, 1.5);
       if (!Number.isFinite(xBase)) {
         return { shapes: [], annotations: [], yAxisMax: yMax, xAxisMax: null };
       }
@@ -1504,6 +1567,7 @@
 
   function buildPlot() {
     readStateFromControls();
+    updatePairedLineControlState();
     updateEncodingControlVisibility();
     updateControlAvailability();
 
@@ -1644,7 +1708,7 @@
       xaxis: {
         title: { text: state.xLabel, font: { size: state.axisSize } },
         tickvals: groupOrder.map(function (_, index) { return index + 1; }),
-        ticktext: groupOrder,
+        ticktext: groupOrder.map(function (g) { return state.groupLabels[g] !== undefined ? state.groupLabels[g] : g; }),
         tickangle: state.xTickAngle,
         type: state.logX ? "log" : "linear",
         showgrid: state.gridStyle === "major" || state.gridStyle === "both",
@@ -1692,7 +1756,7 @@
       var horizontalYAxis = {
         title: { text: state.xLabel, font: { size: state.axisSize } },
         tickvals: groupOrder.map(function (_, index) { return index + 1; }),
-        ticktext: groupOrder,
+        ticktext: groupOrder.map(function (g) { return state.groupLabels[g] !== undefined ? state.groupLabels[g] : g; }),
         showgrid: false,
         zeroline: false,
         showline: true,

@@ -804,7 +804,7 @@ class DecisionTreeVisualizer:
                                 highlighted.add(('MIXED_ANOVA_STANDARD', 'MIXED_POSTHOC'))
                                 
                             # Determine specific Mixed post-hoc test
-                            posthoc_test = results.get("posthoc_test", "")
+                            posthoc_test = results.get("posthoc_test") or ""
                             if "tukey" in posthoc_test.lower():
                                 highlighted.add(('MIXED_POSTHOC', 'MIXED_TUKEY'))
                             elif "between" in posthoc_test.lower():

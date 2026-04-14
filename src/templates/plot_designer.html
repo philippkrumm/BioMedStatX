@@ -55,7 +55,11 @@
           </select>
         </div>
         <label class="pd-check"><input id="pd-show-points" type="checkbox" checked> Show points</label>
-        <label class="pd-check" id="pd-paired-lines-wrap"><input id="pd-show-paired-lines" type="checkbox"> Show paired subject lines</label>
+        <label class="pd-check" id="pd-paired-lines-wrap"><input id="pd-show-paired-lines" type="checkbox"> Show individual subject lines (Spaghetti)</label>
+        <div class="pd-row" id="pd-spaghetti-opacity-row">
+          <label for="pd-spaghetti-opacity">Individual line opacity</label>
+          <input id="pd-spaghetti-opacity" type="range" min="0.05" max="0.9" step="0.05" value="0.35">
+        </div>
         <label class="pd-check"><input id="pd-show-error-bars" type="checkbox" checked> Show error bars (Bar)</label>
         <div class="pd-row">
           <label for="pd-central-measure">Central measure</label>
@@ -82,6 +86,12 @@
             <option value="minus">Bottom only</option>
           </select>
         </div>
+      </div>
+
+      <div class="pd-group" id="pd-node-labels-group">
+        <h4>X-Axis Node Labels</h4>
+        <p class="pd-note" style="margin-top:0;margin-bottom:8px;">Vorausgefüllt aus den Gruppennamen — hier anpassen.</p>
+        <div id="pd-node-label-controls"></div>
       </div>
 
       <div class="pd-group">
