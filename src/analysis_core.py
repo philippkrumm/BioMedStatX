@@ -601,7 +601,14 @@ class AnalysisManager:
 
                     if clinical_test == 'correlation':
                         model = CorrelationModel()
-                        model.fit(analysis_df, x_col=x_col, y_col=y_col, method='auto')
+                        model.fit(
+                            analysis_df,
+                            x_col=x_col,
+                            y_col=y_col,
+                            method='auto',
+                            x_transform=analysis_context.get('x_transform', 'none'),
+                            y_transform=analysis_context.get('y_transform', 'none'),
+                        )
                         test_results = model.as_results_dict()
                     else:  # linear_regression
                         model = SimpleLinearRegressionModel()
