@@ -639,6 +639,10 @@ def _ap_resolve_help_recipe_for_bucket(self, bucket_widget, fallback_recipe_id=N
 
 
 def _ap_on_mapping_changed(self):
+    # Hide the correlation transform widget on every mapping change;
+    # it will be re-shown at the bottom if inferred_test == 'correlation'.
+    if hasattr(self, 'corr_transform_widget'):
+        self.corr_transform_widget.setVisible(False)
     if self.df is None:
         self.start_analysis_button.setEnabled(False)
         self.mapping_feedback_label.setText("Load a file to activate the mapping workflow.")
@@ -723,10 +727,11 @@ def _ap_on_mapping_changed(self):
         is_correlation = context.get("inferred_test") == "correlation"
     except Exception:
         is_correlation = False
-    self.corr_transform_widget.setVisible(is_correlation)
-    if not is_correlation:
-        self.corr_x_transform_combo.setCurrentIndex(0)
-        self.corr_y_transform_combo.setCurrentIndex(0)
+    if hasattr(self, 'corr_transform_widget'):
+        self.corr_transform_widget.setVisible(is_correlation)
+        if not is_correlation:
+            self.corr_x_transform_combo.setCurrentIndex(0)
+            self.corr_y_transform_combo.setCurrentIndex(0)
 
 
 def _ap_browse_file(self):
