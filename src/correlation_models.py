@@ -72,7 +72,7 @@ def _fisher_z_ci(r, n, alpha=0.05):
 _VALID_TRANSFORMS = ('none', 'log10', 'sqrt', 'boxcox')
 
 
-def _apply_transform(vals: np.ndarray, name: str) -> np.ndarray:
+def _apply_transform(vals: np.ndarray, name: str):
     """Apply a named transformation to a 1-D float array.
 
     Handles non-positive values automatically:
@@ -84,7 +84,15 @@ def _apply_transform(vals: np.ndarray, name: str) -> np.ndarray:
         name: one of 'none', 'log10', 'sqrt', 'boxcox'.
 
     Returns:
-        Transformed array of the same shape.
+        Tuple (transformed_array, boxcox_lambda, shift).
+        ``boxcox_lambda`` is a float when name == 'boxcox' and optimisation
+        succeeded; ``None`` for all other transforms or on fallback.
+        ``shift`` is the additive constant c that was applied before the
+        transformation (0.0 when no shift was required).  Documenting c is
+        required for mathematical reproducibility: the full Box-Cox formula is
+        y = ((x + c)^λ - 1) / λ, and log10 / sqrt are similarly applied as
+        log10(x + c) / sqrt(x + c).  A reviewer cannot reconstruct the
+        transformed values from λ alone without knowing c.
 
     Raises:
         ValueError: if name is not a recognised transformation.
@@ -95,19 +103,19 @@ def _apply_transform(vals: np.ndarray, name: str) -> np.ndarray:
             f"Choose from: {', '.join(_VALID_TRANSFORMS)}."
         )
     if name == 'none':
-        return vals.copy()
+        return vals.copy(), None, 0.0
 
     v = vals.astype(float)
 
     if name == 'log10':
         min_val = v.min()
         shift = -min_val + 1.0 if min_val <= 0 else 0.0
-        return np.log10(v + shift)
+        return np.log10(v + shift), None, float(shift)
 
     if name == 'sqrt':
         min_val = v.min()
         shift = -min_val if min_val < 0 else 0.0
-        return np.sqrt(v + shift)
+        return np.sqrt(v + shift), None, float(shift)
 
     if name == 'boxcox':
         from scipy.stats import boxcox as _scipy_boxcox, boxcox_normmax
@@ -117,10 +125,10 @@ def _apply_transform(vals: np.ndarray, name: str) -> np.ndarray:
         try:
             lam = boxcox_normmax(v_shifted)
             transformed = _scipy_boxcox(v_shifted, lam)
+            return transformed, float(lam), float(shift)
         except Exception:
             # Fall back to log (lam ≈ 0) when boxcox_normmax fails
-            transformed = np.log(v_shifted)
-        return transformed
+            return np.log(v_shifted), None, float(shift)
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +157,10 @@ class CorrelationModel:
         self._alpha = 0.05
         self._x_transform = 'none'
         self._y_transform = 'none'
+        self._x_boxcox_lambda = None
+        self._y_boxcox_lambda = None
+        self._x_transform_shift = 0.0
+        self._y_transform_shift = 0.0
 
     def fit(self, df, x_col, y_col, method='auto', alpha=0.05,
             x_transform='none', y_transform='none'):
@@ -190,8 +202,8 @@ class CorrelationModel:
         self._points = [{"x": float(x), "y": float(y)} for x, y in zip(x_raw, y_raw)]
 
         # --- Apply transformations ---
-        x_vals = _apply_transform(x_raw, self._x_transform)
-        y_vals = _apply_transform(y_raw, self._y_transform)
+        x_vals, self._x_boxcox_lambda, self._x_transform_shift = _apply_transform(x_raw, self._x_transform)
+        y_vals, self._y_boxcox_lambda, self._y_transform_shift = _apply_transform(y_raw, self._y_transform)
 
         # --- Normality check (on transformed values) ---
         self._normality_check = None
@@ -260,6 +272,36 @@ class CorrelationModel:
             strength = "very strong"
         return f"{direction.capitalize()}, {strength} (|r| = {abs_r:.3f})"
 
+    def _build_transformation_label(self) -> str:
+        """Return a human-readable transformation string for the results export.
+
+        Embeds all parameters required for full mathematical reproducibility:
+        - Box-Cox:  boxcox(λ=0.3141, c=1.00)  — both λ and shift c are needed
+                    to reconstruct y = ((x+c)^λ - 1) / λ
+        - log10:    log10(c=4.50)              — only shown when shift != 0
+        - sqrt:     sqrt(c=0.50)               — only shown when shift != 0
+        - no shift: boxcox(λ=0.3141)           — c omitted when 0.0
+        Falls back to plain name when lambda optimisation failed.
+        Returns 'none' when no transformation was applied to either variable.
+        """
+        def _fmt(name, lam, shift):
+            shift_part = f", c={shift:.4f}" if shift != 0.0 else ""
+            if name == 'boxcox':
+                if lam is not None:
+                    return f"boxcox(λ={lam:.4f}{shift_part})"
+                # Fallback: optimisation failed, log was used instead
+                return f"boxcox→log{shift_part}" if shift != 0.0 else "boxcox→log"
+            if name in ('log10', 'sqrt') and shift != 0.0:
+                return f"{name}(c={shift:.4f})"
+            return name
+
+        x_label = _fmt(self._x_transform, self._x_boxcox_lambda, self._x_transform_shift)
+        y_label = _fmt(self._y_transform, self._y_boxcox_lambda, self._y_transform_shift)
+
+        if self._x_transform == 'none' and self._y_transform == 'none':
+            return 'none'
+        return f"{x_label}/{y_label}"
+
     def as_results_dict(self):
         if self.r is None:
             return {"error": "Model not fitted"}
@@ -286,13 +328,15 @@ class CorrelationModel:
             "y_variable_display": self._y_label,
             "association_points": self._points,
             "normality_check": self._normality_check,
-            "transformation": (
-                f"{self._x_transform}/{self._y_transform}"
-                if (self._x_transform != 'none' or self._y_transform != 'none')
-                else 'none'
-            ),
+            "transformation": self._build_transformation_label(),
             "x_transform": getattr(self, '_x_transform', 'none'),
             "y_transform": getattr(self, '_y_transform', 'none'),
+            "x_boxcox_lambda": getattr(self, '_x_boxcox_lambda', None),
+            "y_boxcox_lambda": getattr(self, '_y_boxcox_lambda', None),
+            # Shift c applied before each transformation (0.0 = no shift needed).
+            # Required alongside λ for full reproducibility: y = ((x+c)^λ−1)/λ
+            "x_transform_shift": getattr(self, '_x_transform_shift', 0.0),
+            "y_transform_shift": getattr(self, '_y_transform_shift', 0.0),
         }
 
 
