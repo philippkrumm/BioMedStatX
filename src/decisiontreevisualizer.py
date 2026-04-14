@@ -1438,6 +1438,14 @@ class DecisionTreeVisualizer:
             print(f"WARNING DecisionTreeVisualizer.get_tree_json: {exc}")
             return None
 
+    def create_association_tree(self, results, output_path=None):
+        """
+        Public instance-method wrapper around _visualize_association_test.
+        Returns the saved file path (str) on success, or None on failure.
+        """
+        model_type = results.get("model_type", "Correlation")
+        return DecisionTreeVisualizer._visualize_association_test(results, model_type, output_path)
+
     @staticmethod
     def _visualize_association_test(results, model_type, output_path=None):
         """
@@ -1453,15 +1461,20 @@ class DecisionTreeVisualizer:
             p_value = results.get("p_value", None)
             alpha = results.get("alpha", 0.05)
             method = results.get("method", "")
+            transformation = results.get("transformation", "none")
 
             # ── Extract assumption check results ──────────────────────────────
-            normality_check = results.get("normality_check") or {}
+            _nc = results.get("normality_check")
+            normality_check = _nc if isinstance(_nc, dict) else {}
             diagnostics = results.get("diagnostics") or {}
             slope_homogeneity = results.get("slope_homogeneity") or {}
 
             # Correlation: normality of both variables
-            norm_x_ok = normality_check.get(list(normality_check.keys())[0], {}).get("normal", None) if normality_check and len(normality_check) >= 1 else None
-            norm_y_ok = normality_check.get(list(normality_check.keys())[1], {}).get("normal", None) if normality_check and len(normality_check) >= 2 else None
+            _nc_keys = list(normality_check.keys()) if normality_check else []
+            _nc_v0 = normality_check.get(_nc_keys[0]) if len(_nc_keys) >= 1 else None
+            _nc_v1 = normality_check.get(_nc_keys[1]) if len(_nc_keys) >= 2 else None
+            norm_x_ok = _nc_v0.get("normal", None) if isinstance(_nc_v0, dict) else None
+            norm_y_ok = _nc_v1.get("normal", None) if isinstance(_nc_v1, dict) else None
             both_normal = normality_check.get("both_normal", None)
 
             # Linear Regression diagnostics
@@ -1492,46 +1505,102 @@ class DecisionTreeVisualizer:
             highlighted = set()
 
             if model_type == "Correlation":
-                # Determine which method was used
                 used_pearson = method.lower() == "pearson" or (both_normal is True)
+                was_transformed = str(transformation).lower() not in ('none', 'null', '')
 
-                r_val   = results.get("r", None)
-                r_label = f"r = {r_val:.3f}" if r_val is not None else ""
-                p_label = f"p = {p_value:.4f}" if p_value is not None else ""
+                r_val    = results.get("r", None)
+                r_label  = f"r = {r_val:.3f}" if r_val is not None else ""
+                p_label  = f"p = {p_value:.4f}" if p_value is not None else ""
                 sig_label = "Significant" if sig else "Not Significant"
 
-                nodes_info = {
-                    'START':      {"label": "Start\nCorrelation Analysis", "pos": (0, 10)},
-                    'OUTLIER':    {"label": "Check for Outliers\n(Visual / MAD)", "pos": (0, 8.5)},
-                    'NORMALITY':  {"label": f"Shapiro-Wilk\nX normal: {_yn(norm_x_ok)}  Y normal: {_yn(norm_y_ok)}", "pos": (0, 7)},
-                    'BOTH_NORM':  {"label": f"Both Normal?\n{_yn(both_normal)}", "pos": (0, 5.5)},
-                    'PEARSON':    {"label": "Pearson Correlation\n(parametric)", "pos": (-3, 4)},
-                    'SPEARMAN':   {"label": "Spearman Correlation\n(non-parametric)", "pos": (3, 4)},
-                    'RESULT':     {"label": f"Result\n{r_label}  {p_label}\n{sig_label}", "pos": (0, 2.5)},
-                    'CI':         {"label": "95% CI\n(Fisher z-transform)", "pos": (-2, 1)},
-                    'EFFECT':     {"label": "Effect Size  |r|\n(small≥.1 med≥.3 large≥.5)", "pos": (2, 1)},
-                }
-                edges = {
-                    ('START', 'OUTLIER'),
-                    ('OUTLIER', 'NORMALITY'),
-                    ('NORMALITY', 'BOTH_NORM'),
-                    ('BOTH_NORM', 'PEARSON'),
-                    ('BOTH_NORM', 'SPEARMAN'),
-                    ('PEARSON', 'RESULT'),
-                    ('SPEARMAN', 'RESULT'),
-                    ('RESULT', 'CI'),
-                    ('RESULT', 'EFFECT'),
-                }
-                # Highlight path
-                highlighted = {('START', 'OUTLIER'), ('OUTLIER', 'NORMALITY'), ('NORMALITY', 'BOTH_NORM')}
-                if used_pearson:
-                    highlighted.add(('BOTH_NORM', 'PEARSON'))
-                    highlighted.add(('PEARSON', 'RESULT'))
+                x_tr = results.get("x_transform", "none")
+                y_tr = results.get("y_transform", "none")
+                tr_label = f"X: {x_tr}\nY: {y_tr}" if was_transformed else ""
+
+                # Pull pre/post normality from nested structure when transform was used
+                nc = results.get("normality_check") or {}
+                if was_transformed and "pre_transform" in nc:
+                    pre_nc = nc["pre_transform"]
+                    post_nc = nc["post_transform"]
+                    pre_both = pre_nc.get("both_normal", False)
+                    post_both = post_nc.get("both_normal", False)
                 else:
-                    highlighted.add(('BOTH_NORM', 'SPEARMAN'))
-                    highlighted.add(('SPEARMAN', 'RESULT'))
-                highlighted.add(('RESULT', 'CI'))
-                highlighted.add(('RESULT', 'EFFECT'))
+                    pre_both  = nc.get("both_normal", both_normal)
+                    post_both = both_normal
+
+                if was_transformed:
+                    nodes_info = {
+                        'START':       {"label": "Start\nCorrelation Analysis",                                "pos": (0, 12)},
+                        'OUTLIER':     {"label": "Check for Outliers\n(Visual / MAD)",                         "pos": (0, 10.5)},
+                        'NORM_RAW':    {"label": f"Shapiro-Wilk (raw)\nBoth normal: {_yn(pre_both)}",          "pos": (0, 9)},
+                        'NOT_NORMAL':  {"label": "Not Normal\n\u2192 Apply Transformation",                    "pos": (0, 7.5)},
+                        'TRANSFORM':   {"label": f"Transform Variables\n{tr_label}",                           "pos": (0, 6)},
+                        'NORM_AFTER':  {"label": f"Shapiro-Wilk (transformed)\nBoth normal: {_yn(post_both)}", "pos": (0, 4.5)},
+                        'BOTH_NORM':   {"label": f"Both Normal?\n{_yn(post_both)}",                            "pos": (0, 3)},
+                        'PEARSON':     {"label": "Pearson Correlation\n(parametric)",                          "pos": (-3, 1.5)},
+                        'SPEARMAN':    {"label": "Spearman Correlation\n(non-parametric)",                     "pos": (3, 1.5)},
+                        'RESULT':      {"label": f"Result\n{r_label}  {p_label}\n{sig_label}",                "pos": (0, 0)},
+                        'CI':          {"label": "95% CI\n(Fisher z-transform)",                               "pos": (-2, -1.5)},
+                        'EFFECT':      {"label": "Effect Size  |r|\n(small\u2265.1 med\u2265.3 large\u2265.5)", "pos": (2, -1.5)},
+                    }
+                    edges = {
+                        ('START',      'OUTLIER'),
+                        ('OUTLIER',    'NORM_RAW'),
+                        ('NORM_RAW',   'NOT_NORMAL'),
+                        ('NOT_NORMAL', 'TRANSFORM'),
+                        ('TRANSFORM',  'NORM_AFTER'),
+                        ('NORM_AFTER', 'BOTH_NORM'),
+                        ('BOTH_NORM',  'PEARSON'),
+                        ('BOTH_NORM',  'SPEARMAN'),
+                        ('PEARSON',    'RESULT'),
+                        ('SPEARMAN',   'RESULT'),
+                        ('RESULT',     'CI'),
+                        ('RESULT',     'EFFECT'),
+                    }
+                    highlighted = {
+                        ('START', 'OUTLIER'), ('OUTLIER', 'NORM_RAW'),
+                        ('NORM_RAW', 'NOT_NORMAL'), ('NOT_NORMAL', 'TRANSFORM'),
+                        ('TRANSFORM', 'NORM_AFTER'), ('NORM_AFTER', 'BOTH_NORM'),
+                    }
+                    if used_pearson:
+                        highlighted.update([('BOTH_NORM', 'PEARSON'), ('PEARSON', 'RESULT')])
+                    else:
+                        highlighted.update([('BOTH_NORM', 'SPEARMAN'), ('SPEARMAN', 'RESULT')])
+                    highlighted.update([('RESULT', 'CI'), ('RESULT', 'EFFECT')])
+
+                else:
+                    # Original tree — no transformation
+                    nodes_info = {
+                        'START':      {"label": "Start\nCorrelation Analysis",                                                   "pos": (0, 10)},
+                        'OUTLIER':    {"label": "Check for Outliers\n(Visual / MAD)",                                            "pos": (0, 8.5)},
+                        'NORMALITY':  {"label": f"Shapiro-Wilk\nX normal: {_yn(norm_x_ok)}  Y normal: {_yn(norm_y_ok)}",        "pos": (0, 7)},
+                        'BOTH_NORM':  {"label": f"Both Normal?\n{_yn(both_normal)}",                                             "pos": (0, 5.5)},
+                        'PEARSON':    {"label": "Pearson Correlation\n(parametric)",                                             "pos": (-3, 4)},
+                        'SPEARMAN':   {"label": "Spearman Correlation\n(non-parametric)",                                        "pos": (3, 4)},
+                        'RESULT':     {"label": f"Result\n{r_label}  {p_label}\n{sig_label}",                                   "pos": (0, 2.5)},
+                        'CI':         {"label": "95% CI\n(Fisher z-transform)",                                                  "pos": (-2, 1)},
+                        'EFFECT':     {"label": "Effect Size  |r|\n(small\u2265.1 med\u2265.3 large\u2265.5)",                  "pos": (2, 1)},
+                    }
+                    edges = {
+                        ('START', 'OUTLIER'),
+                        ('OUTLIER', 'NORMALITY'),
+                        ('NORMALITY', 'BOTH_NORM'),
+                        ('BOTH_NORM', 'PEARSON'),
+                        ('BOTH_NORM', 'SPEARMAN'),
+                        ('PEARSON', 'RESULT'),
+                        ('SPEARMAN', 'RESULT'),
+                        ('RESULT', 'CI'),
+                        ('RESULT', 'EFFECT'),
+                    }
+                    highlighted = {('START', 'OUTLIER'), ('OUTLIER', 'NORMALITY'), ('NORMALITY', 'BOTH_NORM')}
+                    if used_pearson:
+                        highlighted.add(('BOTH_NORM', 'PEARSON'))
+                        highlighted.add(('PEARSON', 'RESULT'))
+                    else:
+                        highlighted.add(('BOTH_NORM', 'SPEARMAN'))
+                        highlighted.add(('SPEARMAN', 'RESULT'))
+                    highlighted.add(('RESULT', 'CI'))
+                    highlighted.add(('RESULT', 'EFFECT'))
 
             elif model_type == "LinearRegression":
                 r2 = results.get("r_squared", None)

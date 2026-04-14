@@ -161,3 +161,71 @@ def test_backward_compat_no_transform_args():
     res = m.as_results_dict()
     assert 'method' in res
     assert 'r' in res
+
+
+# ---------------------------------------------------------------------------
+# Decision tree smoke tests — headless
+# ---------------------------------------------------------------------------
+
+def test_decision_tree_correlation_with_transform_renders():
+    """DecisionTreeVisualizer must produce a figure when transformation != 'none'."""
+    import matplotlib
+    matplotlib.use("Agg")  # headless
+    from decisiontreevisualizer import DecisionTreeVisualizer
+
+    mock_results = {
+        "model_type": "Correlation",
+        "method": "pearson",
+        "r": 0.72,
+        "p_value": 0.001,
+        "alpha": 0.05,
+        "transformation": "log10/log10",
+        "x_transform": "log10",
+        "y_transform": "log10",
+        "normality_check": {
+            "test": "Shapiro-Wilk (auto method selection)",
+            "pre_transform": {
+                "X": {"statistic": 0.85, "p_value": 0.02, "normal": False},
+                "Y": {"statistic": 0.87, "p_value": 0.03, "normal": False},
+                "both_normal": False,
+            },
+            "post_transform": {
+                "X": {"statistic": 0.97, "p_value": 0.42, "normal": True},
+                "Y": {"statistic": 0.96, "p_value": 0.38, "normal": True},
+                "both_normal": True,
+            },
+            "both_normal": True,
+        },
+    }
+
+    viz = DecisionTreeVisualizer()
+    fig = viz.create_association_tree(mock_results)
+    assert fig is not None, "Expected a matplotlib Figure, got None"
+
+
+def test_decision_tree_correlation_without_transform_renders():
+    """Original (no-transform) correlation tree still renders after refactor."""
+    import matplotlib
+    matplotlib.use("Agg")
+    from decisiontreevisualizer import DecisionTreeVisualizer
+
+    mock_results = {
+        "model_type": "Correlation",
+        "method": "spearman",
+        "r": 0.51,
+        "p_value": 0.04,
+        "alpha": 0.05,
+        "transformation": "none",
+        "x_transform": "none",
+        "y_transform": "none",
+        "normality_check": {
+            "test": "Shapiro-Wilk (auto method selection)",
+            "X": {"statistic": 0.83, "p_value": 0.01, "normal": False},
+            "Y": {"statistic": 0.88, "p_value": 0.02, "normal": False},
+            "both_normal": False,
+        },
+    }
+
+    viz = DecisionTreeVisualizer()
+    fig = viz.create_association_tree(mock_results)
+    assert fig is not None
