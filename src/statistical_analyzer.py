@@ -39,17 +39,6 @@ try:
 except ImportError:
     UPDATE_AVAILABLE = False
     print("Warning: Updater module not available")
-# Import the new PlotAestheticsDialog for advanced plot appearance configuration
-try:
-    from plot_aesthetics_dialog import PlotAestheticsDialog
-    PLOT_MODULES_AVAILABLE = True
-    print(f"SUCCESS: Imported PlotAestheticsDialog from plot_aesthetics_dialog.py")
-    print(f"DEBUG: PlotAestheticsDialog class: {PlotAestheticsDialog}")
-except ImportError as e:
-    print(f"WARNING: Could not import new plot modules: {e}")
-    PlotAestheticsDialog = None
-    PLOT_MODULES_AVAILABLE = False
-
 try:
     from help_content import HELP_RECIPES
 except ImportError as e:
@@ -670,12 +659,8 @@ class StatisticalAnalyzerApp(QMainWindow):
         analyze_selected_button = QPushButton("Start selected analysis")
         analyze_selected_button.setObjectName("btnAnalyzeSelected")
         analyze_selected_button.clicked.connect(self.run_selected_analysis)
-        multi_analyze_button = QPushButton("Start multi-dataset analysis")
-        multi_analyze_button.setObjectName("btnMultiDatasetAnalyze")
-        multi_analyze_button.clicked.connect(self.run_multi_dataset_analysis)
         actions_layout.addWidget(analyze_button)
         actions_layout.addWidget(analyze_selected_button)
-        actions_layout.addWidget(multi_analyze_button)
         
         main_layout.addLayout(actions_layout)
         
@@ -2133,301 +2118,6 @@ class StatisticalAnalyzerApp(QMainWindow):
             print(f"DEBUG: Decision tree cleanup warning during close: {close_exc}")
         super().closeEvent(event)
     
-    def run_multi_dataset_analysis(self):
-        """Runs separate analyses for multiple datasets, 
-        with individual plot configuration and a shared Excel file."""
-        print("DEBUG MULTI: ENTERED run_multi_dataset_analysis()")
-        print("DEBUG MULTI:   self.multi_dataset_analysis =", getattr(self, "multi_dataset_analysis", None))
-        print("DEBUG MULTI:   self.selected_columns =", getattr(self, "selected_columns", None))
-        
-        if not hasattr(self, 'multi_dataset_analysis') or not self.multi_dataset_analysis:
-            QMessageBox.warning(self, "Warning", "Please select multi-dataset analysis in the column selection dialog first.")
-            return
-            
-        if len(self.selected_columns) <= 1:
-            QMessageBox.warning(self, "Warning", "Multi-dataset analysis requires multiple selected datasets.")
-            return
-        print("DEBUG MULTI: Passed all pre-checks.  → proceed with multi-dataset loop")
-        print("DEBUG MULTI:   selected_columns =", self.selected_columns)
-        print("DEBUG MULTI:   available_groups =", self.available_groups)
-        try:
-            # Ask for output file (determines both directory and filename)
-            multi_file_path, _ = QFileDialog.getSaveFileName(
-                self, "Save Multi-Dataset Analysis Results", "All_Datasets_Analysis.xlsx",
-                "Excel Files (*.xlsx);;All Files (*)"
-            )
-            if not multi_file_path:
-                print("No output file selected")
-                return
-            if not multi_file_path.lower().endswith('.xlsx'):
-                multi_file_path += '.xlsx'
-            output_dir = os.path.dirname(multi_file_path) or os.getcwd()
-            multi_excel_path = multi_file_path
-
-            # Select groups for analysis
-            print("Opening group dialog...")
-            dialog = GroupSelectionDialog(self.available_groups, self)
-            if dialog.exec_() != QDialog.Accepted:
-                print("Group dialog cancelled")
-                return
-                
-            selected_groups = dialog.get_selected_groups()
-            if not selected_groups:
-                QMessageBox.warning(self, "Warning", "Please select at least one group.")
-                return
-
-            all_results = {}
-            plot_configs = {}
-
-            # Remember current working directory
-            original_cwd = os.getcwd()
-            
-            try:
-                os.chdir(output_dir)
-                print(f"Changed to output directory: {output_dir}")
-
-                # ── PHASE A: Analyze all datasets first (no dialog yet) ─────────────────
-                progress = QMessageBox()
-                progress.setWindowTitle("Analyzing datasets...")
-                progress.setText(f"Pre-analyzing {len(self.selected_columns)} dataset(s). Please wait…")
-                progress.setStandardButtons(QMessageBox.NoButton)
-                progress.show()
-                QApplication.processEvents()
-
-                for i, column in enumerate(self.selected_columns):
-                    progress.setText(f"Analyzing dataset {i+1}/{len(self.selected_columns)}: {column}")
-                    QApplication.processEvents()
-                    print(f"DEBUG MULTI: Pre-analyzing '{column}' ({i+1}/{len(self.selected_columns)})")
-                    try:
-                        stat_kwargs = {
-                            'file_path': self.file_path,
-                            'group_col': self.group_col_combo.currentText(),
-                            'groups': selected_groups,
-                            'sheet_name': self.sheet_combo.currentText() if self.sheet_combo.isEnabled() else 0,
-                            'value_cols': [column],
-                            'combine_columns': False,
-                            'skip_plots': True,   # statistics only — no rendering yet
-                            'skip_excel': True,
-                            'dataset_name': column,
-                        }
-                        results = AnalysisManager.analyze(**stat_kwargs)
-                        if isinstance(results, dict) and results.get('error'):
-                            print(f"WARNING: analysis error for '{column}': {results['error']}")
-                            all_results[column] = None
-                        else:
-                            all_results[column] = results
-                            print(f"✓ '{column}' analyzed — pairwise: "
-                                  f"{len((results or {}).get('pairwise_comparisons', []))} comparisons")
-                    except Exception as e:
-                        print(f"ERROR pre-analyzing '{column}': {e}")
-                        traceback.print_exc()
-                        all_results[column] = None  # isolated failure — others continue
-
-                try:
-                    progress.close()
-                except Exception:
-                    pass
-
-                # ── PHASE B: Open PlotAestheticsDialog per dataset (analysis-first) ───
-                base_filename = ""
-                if hasattr(self, 'file_path') and self.file_path:
-                    base_filename = os.path.splitext(os.path.basename(self.file_path))[0]
-
-                n_valid = sum(1 for r in all_results.values() if r is not None)
-                dialog_idx = 0
-                for column, result in all_results.items():
-                    if result is None:
-                        print(f"Skipping dialog for '{column}' (analysis failed)")
-                        continue
-                    dialog_idx += 1
-                    samples_for_dlg = result.get('raw_data') or result.get('samples') or {}
-                    default_filename = f"{base_filename}_{column}_analyzed" if base_filename else f"{column}_analyzed"
-                    dlg = PlotAestheticsDialog(
-                        groups=selected_groups,
-                        samples=samples_for_dlg,
-                        analysis_result=result,
-                        parent=self,
-                        default_filename=default_filename,
-                        show_export_controls=True,
-                    )
-                    # Pre-fill sensible file name
-                    if hasattr(dlg, 'file_name_edit'):
-                        dlg.file_name_edit.setText(f"{column}_analysis")
-                    dlg.setWindowTitle(f"Configure plot for '{column}' ({dialog_idx}/{n_valid})")
-                    if dlg.exec_() != QDialog.Accepted:
-                        print(f"Dialog for '{column}' cancelled — skipping")
-                        continue
-                    plot_config = dlg.get_config()
-                    # Guarantee original group keys are preserved
-                    plot_config['groups'] = list(selected_groups)
-                    plot_configs[column] = plot_config
-                    print(f"Config for '{column}' saved")
-
-                if not plot_configs:
-                    QMessageBox.warning(self, "Aborted", "No datasets were configured for export.")
-                    return
-
-                # ── PHASE C: Render configured datasets ─────────────────────────────────
-                progress = QMessageBox()
-                progress.setWindowTitle("Rendering plots…")
-                progress.setText("Rendering plots. Please wait…")
-                progress.setStandardButtons(QMessageBox.NoButton)
-                progress.show()
-                QApplication.processEvents()
-
-                for i, (column, plot_config) in enumerate(plot_configs.items()):
-                    progress.setText(f"Rendering dataset {i+1}/{len(plot_configs)}: {column}")
-                    QApplication.processEvents()
-                    print(f"Starting render for '{column}'…")
-                    try:
-                        kwargs = {
-                            'file_path': self.file_path,
-                            'group_col': self.group_col_combo.currentText(),
-                            'groups': plot_config['groups'],
-                            'sheet_name': self.sheet_combo.currentText() if self.sheet_combo.isEnabled() else 0,
-                            'value_cols': [column],
-                            'combine_columns': False,
-                            'width': plot_config.get('width', 12),
-                            'height': plot_config.get('height', 10),
-                            'dependent': plot_config.get('dependent', False),
-                            'skip_plots': not plot_config.get('create_plot', True),
-                            'skip_excel': True,
-                            'x_label': plot_config.get('x_label'),
-                            'y_label': plot_config.get('y_label'),
-                            'title': plot_config.get('title', column),
-                            'error_type': plot_config.get('error_type', 'sd'),
-                            'file_name': plot_config.get('file_name', f"{column}_analysis"),
-                            'dataset_name': column,
-                            'plot_type': plot_config.get('plot_type', 'Bar'),
-                            'dpi': plot_config.get('dpi', 300),
-                            'fontsize_title': plot_config.get('fontsize_title', 12),
-                            'fontsize_axis': plot_config.get('fontsize_axis', 9),
-                            'fontsize_ticks': plot_config.get('fontsize_ticks', 7),
-                            'logy': plot_config.get('logy', False),
-                            'logx': plot_config.get('logx', False),
-                            'despine': plot_config.get('despine', True),
-                            'alpha': plot_config.get('alpha', 0.8),
-                            'bar_edge_color': plot_config.get('bar_edge_color', 'black'),
-                        }
-                        # Colors — use original group keys for matching (never display labels)
-                        colors_dict = plot_config.get('colors', {})
-                        kwargs['colors'] = [
-                            colors_dict.get(group, DEFAULT_COLORS[j % len(DEFAULT_COLORS)])
-                            for j, group in enumerate(plot_config['groups'])
-                        ]
-                        # Hatches
-                        hatches_dict = plot_config.get('hatches', {})
-                        if hatches_dict:
-                            kwargs['hatches'] = [hatches_dict.get(group, '') for group in plot_config['groups']]
-                        # Pass pairwise results from pre-analysis for significance display
-                        pre_result = all_results.get(column)
-                        if pre_result:
-                            kwargs['pairwise_results'] = pre_result.get('pairwise_comparisons', [])
-
-                        start_time = time.time()
-                        results = AnalysisManager.analyze(**kwargs)
-                        analysis_time = time.time() - start_time
-
-                        if isinstance(results, dict):
-                            if results.get('error'):
-                                print(f"WARNING: render error for '{column}': {results['error']}")
-                            else:
-                                all_results[column] = results  # update with rendered results
-                        print(f"✓ Render for '{column}' done in {analysis_time:.2f}s")
-
-                        # --- Export with font embedding / metadata if requested ---
-                        if plot_config.get('create_plot', True) and (
-                            plot_config.get('embed_fonts', False) or plot_config.get('add_metadata', False)
-                        ):
-                            filename = plot_config.get('file_name', f"{column}_analysis")
-                            filetype = "pdf"
-                            out_path = os.path.join(os.getcwd(), f"{filename}.{filetype}")
-                            fig = results.get('figure', None) if isinstance(results, dict) else None
-                            if fig is None:
-                                import matplotlib.pyplot as _plt
-                                fig = _plt.gcf()
-                            DataVisualizer.export_with_metadata(
-                                fig, out_path,
-                                metadata={"Title": plot_config.get('title', column), "Description": ""},
-                                embed_fonts=plot_config.get('embed_fonts', True),
-                                dpi=plot_config.get('dpi', 300),
-                                filetype=filetype
-                            )
-                    except Exception as e:
-                        QMessageBox.critical(self, "Error", f"Error rendering '{column}': {e}")
-                        traceback.print_exc()
-
-                try:
-                    progress.close()
-                except Exception:
-                    pass
-
-                # Filter all_results to only successfully completed datasets
-                all_results = {k: v for k, v in all_results.items() if v is not None}
-
-                if all_results:
-                    print("DEBUG MULTI: About to call export_multi_dataset_results()")
-                    excel_path = multi_excel_path
-                    print(f"DEBUG MULTI: Excel path will be: {excel_path}")
-                    export_result = ExportDispatcher.export_multi_dataset_results(all_results, excel_path)
-                    if export_result.get("warning"):
-                        print(f"WARNING: {export_result['warning']}")
-                    print("DEBUG MULTI: export_multi_dataset_results() completed successfully")
-
-                    # Collect all output files for centralized success dialog
-                    files = []
-                    if os.path.exists(excel_path):
-                        files.append(excel_path)
-
-                    # Check for plot files if any plots were created
-                    any_plots = any(plot_config.get('create_plot', True) for plot_config in plot_configs.values())
-                    if any_plots:
-                        for column, plot_config in plot_configs.items():
-                            if plot_config.get('create_plot', True):
-                                file_name = plot_config.get('file_name', f"{column}_analysis")
-                                for ext in ('pdf', 'png'):
-                                    plot_path = os.path.join(output_dir, f"{file_name}.{ext}")
-                                    if os.path.exists(plot_path):
-                                        files.append(plot_path)
-
-                    # Use centralized success dialog
-                    analysis_type = f"Multi-dataset analysis ({len(all_results)} datasets: {', '.join(all_results.keys())})"
-                    self.show_analysis_success_dialog(analysis_type, files, output_dir)
-
-                    # Update cockpit to reflect multi-dataset completion
-                    n = len(all_results)
-                    names = ", ".join(all_results.keys())
-                    multi_summary = {
-                        "subtitle": f"Multi-dataset analysis complete — {n} dataset(s) analyzed.",
-                        "metric_normality": "Per dataset (see sheets)",
-                        "metric_variance": "Per dataset (see sheets)",
-                        "inference_main_test": f"{n} dataset(s) analyzed:\n{names}\n\nSee Excel file for full results.",
-                        "inference_effect_size": "Per dataset (reported in dedicated result sheets)",
-                        "context_design": "Multi-dataset mode — each dependent variable is analyzed with its own inferred model.",
-                        "context_sample_overview": f"Datasets analyzed: {n}",
-                        "context_analysis_scope": "Results consolidated into one shared Excel workbook.",
-                    }
-                    self.result_cockpit.set_summary(multi_summary, enable_plot=False, enable_output=True)
-                    self.current_output_dir = output_dir
-                else:
-                    print("DEBUG MULTI: all_results is empty, skipping export")
-                    QMessageBox.warning(self, "No Results", "No analysis results were generated.")
-
-            except Exception as e:
-                print(f"ERROR in main flow of multi-dataset analysis: {str(e)}")
-                import traceback
-                traceback.print_exc()
-                QMessageBox.critical(self, "Critical error", 
-                                f"An unexpected error occurred: {str(e)}")
-
-        except Exception as e:
-            print(f"CRITICAL ERROR in run_multi_dataset_analysis: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            QMessageBox.critical(self, "Critical error", 
-                            f"A serious error occurred: {str(e)}")
-    
-        os.chdir(original_cwd)
             
     def configure_two_way_anova(self):
         """Configure Two-Way ANOVA"""
@@ -2597,6 +2287,46 @@ from statistical_analyzer_autopilot_pipeline import (
 
 attach_autopilot_methods(StatisticalAnalyzerApp)
 
+class _CrashSafeApp(QApplication):
+    """QApplication subclass that catches exceptions in Qt event handlers."""
+    def notify(self, receiver, event):
+        try:
+            return super().notify(receiver, event)
+        except Exception:
+            import traceback as _tb
+            _tb.print_exc()
+            return False
+
+
+def _install_global_excepthook():
+    """Install a global exception hook that logs crashes to a file and shows a dialog."""
+    import traceback as _tb
+    log_path = os.path.join(os.path.dirname(__file__), "..", "crash_log.txt")
+
+    def _excepthook(exc_type, exc_value, exc_tb):
+        msg = "".join(_tb.format_exception(exc_type, exc_value, exc_tb))
+        try:
+            with open(log_path, "a", encoding="utf-8") as f:
+                import datetime
+                f.write(f"\n=== {datetime.datetime.now()} ===\n{msg}\n")
+        except Exception:
+            pass
+        print(msg, file=sys.stderr)
+        # Show dialog if a QApplication exists
+        try:
+            if QApplication.instance():
+                QMessageBox.critical(
+                    None,
+                    "Unerwarteter Fehler",
+                    f"Ein Fehler ist aufgetreten:\n\n{exc_type.__name__}: {exc_value}\n\n"
+                    f"Details wurden in crash_log.txt gespeichert.",
+                )
+        except Exception:
+            pass
+
+    sys.excepthook = _excepthook
+
+
 if __name__ == "__main__":
     try:
         # Timer-Warnungen unterdrücken
@@ -2608,7 +2338,9 @@ if __name__ == "__main__":
             QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
         if hasattr(Qt, "AA_UseHighDpiPixmaps"):
             QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
-        
+
+        _install_global_excepthook()
+
         # Apply stylesheet if available
         try:
             stylesheet = _load_auto_pilot_stylesheet()
@@ -2616,8 +2348,8 @@ if __name__ == "__main__":
         except:
             stylesheet = ""
             print("No stylesheet found")
-        
-        app = QApplication(sys.argv)
+
+        app = _CrashSafeApp(sys.argv)
         app.setStyleSheet(stylesheet)
         window = StatisticalAnalyzerApp()
         window.show()
