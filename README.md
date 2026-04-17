@@ -152,7 +152,6 @@ Additional documentation can be added to the [`docs/`](./docs) folder.
 - ANCOVA (One-Way and Two-Way) is supported when continuous covariates are placed in the Covariates bucket alongside a categorical Factor 1.
 - Linear Mixed Models (LMM) and Logistic Regression are available for longitudinal and binary outcome designs via the Auto-pilot.
 - Correlation (Pearson/Spearman) and linear regression (OLS) are supported via the Auto-pilot when a continuous variable is assigned to the Factor 1 bucket.
-- Exploratory correlation matrices are available via the dedicated button in the Auto-pilot panel.
 - Exploratory correlation matrices are available via **Analysis -> Exploratory Correlation Matrix**.
 - Subgroup analyses can be performed using the Filter bucket to restrict any analysis to a subset of rows.
 - For Windows and macOS end users, the recommended path is to use the packaged application from the GitHub Releases page. The repository launcher scripts are mainly intended for source-based usage.

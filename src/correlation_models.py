@@ -201,14 +201,44 @@ class CorrelationModel:
         # Store scatter points from raw (untransformed) values for plots
         self._points = [{"x": float(x), "y": float(y)} for x, y in zip(x_raw, y_raw)]
 
+        # --- Normality check on raw data (auto mode only) ---
+        # For correlation, the transform choice is data-driven: Shapiro-Wilk runs on the
+        # raw values first.  Only if normality is violated does a dialog appear asking the
+        # user to select log10 or Box-Cox.  The transform is then applied and Shapiro-Wilk
+        # is re-run to decide Pearson vs. Spearman.  This mirrors the ANOVA/t-test flow in
+        # assumption_checks.py and prevents blind pre-analysis transformation.
+        self._normality_check = None
+        if method == 'auto' and self._x_transform == 'none' and self._y_transform == 'none':
+            sw_stat_x_raw, px_raw = scipy_stats.shapiro(x_raw[:5000])
+            sw_stat_y_raw, py_raw = scipy_stats.shapiro(y_raw[:5000])
+            both_normal_raw = (px_raw > alpha and py_raw > alpha)
+
+            if not both_normal_raw:
+                # Normality violated — offer log10 / Box-Cox (no arcsin, which is for proportions)
+                _corr_transforms = [
+                    ("Log10 transformation (for positive, right-skewed data)", "log10"),
+                    ("Box-Cox transformation (automatic lambda optimization)", "boxcox"),
+                ]
+                try:
+                    from statistical_testing.assumption_checks import _get_ui_dialog_manager
+                    _ui = _get_ui_dialog_manager()
+                    chosen = _ui.select_transformation_dialog(
+                        parent=None,
+                        transforms=_corr_transforms,
+                        column_name=f"{x_col} / {y_col}",
+                    )
+                except Exception:
+                    chosen = "log10"
+                if chosen:
+                    self._x_transform = chosen
+                    self._y_transform = chosen
+
         # --- Apply transformations ---
         x_vals, self._x_boxcox_lambda, self._x_transform_shift = _apply_transform(x_raw, self._x_transform)
         y_vals, self._y_boxcox_lambda, self._y_transform_shift = _apply_transform(y_raw, self._y_transform)
 
-        # --- Normality check (on transformed values) ---
-        self._normality_check = None
+        # --- Final normality check (on possibly transformed values) ---
         if method == 'auto':
-            # Pre-transform normality (raw values) — stored for the decision tree
             sw_stat_x_raw, px_raw = scipy_stats.shapiro(x_raw[:5000])
             sw_stat_y_raw, py_raw = scipy_stats.shapiro(y_raw[:5000])
 
@@ -219,8 +249,12 @@ class CorrelationModel:
 
             has_transform = (self._x_transform != 'none' or self._y_transform != 'none')
             if has_transform:
+                # Even if Spearman is chosen (transform reverted), keep the full
+                # normality chain so the report can explain the decision path.
                 self._normality_check = {
                     "test": "Shapiro-Wilk (auto method selection)",
+                    "transform_attempted": self._x_transform,
+                    "transform_reverted": self._method_used == 'spearman',
                     "pre_transform": {
                         x_col: {"statistic": float(sw_stat_x_raw), "p_value": float(px_raw), "normal": bool(px_raw > alpha)},
                         y_col: {"statistic": float(sw_stat_y_raw), "p_value": float(py_raw), "normal": bool(py_raw > alpha)},
@@ -234,7 +268,6 @@ class CorrelationModel:
                     "both_normal": bool(px > alpha and py > alpha),
                 }
             else:
-                # Backward-compatible: no pre/post keys when no transformation
                 self._normality_check = {
                     "test": "Shapiro-Wilk (auto method selection)",
                     x_col: {"statistic": float(sw_stat_x), "p_value": float(px), "normal": bool(px > alpha)},
@@ -244,11 +277,23 @@ class CorrelationModel:
         else:
             self._method_used = method
 
-        # --- Compute r and p on (possibly transformed) values ---
+        # --- Compute r and p ---
+        # Pearson requires normally distributed data → run on transformed values.
+        # Spearman is rank-based and monotone-transformation-invariant, so running
+        # it on transformed data yields the same r but falsely implies the transform
+        # was necessary.  When Spearman is chosen we therefore revert to raw data
+        # and clear the transform metadata so the output is not misleading.
         if self._method_used == 'pearson':
             self.r, self.p = scipy_stats.pearsonr(x_vals, y_vals)
         else:
-            self.r, self.p = scipy_stats.spearmanr(x_vals, y_vals)
+            # Spearman on raw data; discard transform bookkeeping
+            self.r, self.p = scipy_stats.spearmanr(x_raw, y_raw)
+            self._x_transform = 'none'
+            self._y_transform = 'none'
+            self._x_boxcox_lambda = None
+            self._y_boxcox_lambda = None
+            self._x_transform_shift = 0.0
+            self._y_transform_shift = 0.0
 
         self.r = float(self.r)
         self.p = float(self.p)
@@ -365,19 +410,32 @@ class SimpleLinearRegressionModel:
         self._y_label = None
         self._covariates = None
         self._alpha = 0.05
+        self._x_transform = 'none'
+        self._y_transform = 'none'
+        self._x_boxcox_lambda = None
+        self._y_boxcox_lambda = None
+        self._x_transform_shift = 0.0
+        self._y_transform_shift = 0.0
+        self._x_raw_vals = None
+        self._y_raw_vals = None
 
-    def fit(self, df, x_col, y_col, covariates=None, alpha=0.05):
+    def fit(self, df, x_col, y_col, covariates=None, alpha=0.05,
+            x_transform='none', y_transform='none'):
         """Fit OLS model.
 
         Args:
-            x_col:      continuous primary predictor column name
-            y_col:      outcome column name
-            covariates: list of additional continuous predictor column names
-            alpha:      significance level for diagnostics
+            x_col:        continuous primary predictor column name
+            y_col:        outcome column name
+            covariates:   list of additional continuous predictor column names
+            alpha:        significance level for diagnostics
+            x_transform:  pre-fit transformation for X ('none', 'log10', 'sqrt', 'boxcox')
+            y_transform:  pre-fit transformation for Y ('none', 'log10', 'sqrt', 'boxcox')
         """
         import statsmodels.formula.api as smf
 
         self._alpha = alpha
+        self._x_transform = x_transform or 'none'
+        self._y_transform = y_transform or 'none'
         all_cols = [x_col, y_col] + (covariates or [])
         work = df.dropna(subset=all_cols).copy()
         n = len(work)
@@ -397,16 +455,93 @@ class SimpleLinearRegressionModel:
         self._covariates = [col_map[c] for c in (covariates or [])]
         self._df = work
 
+        # Apply pre-fit transformations (reuses the same helper as CorrelationModel).
+        x_raw = pd.to_numeric(self._df[self._x], errors='coerce').to_numpy(dtype=float)
+        y_raw = pd.to_numeric(self._df[self._y], errors='coerce').to_numpy(dtype=float)
+        self._x_raw_vals = x_raw
+        self._y_raw_vals = y_raw
+        x_vals, self._x_boxcox_lambda, self._x_transform_shift = _apply_transform(x_raw, self._x_transform)
+        y_vals, self._y_boxcox_lambda, self._y_transform_shift = _apply_transform(y_raw, self._y_transform)
+
+        # Write transformed values back into the working DataFrame so statsmodels sees them.
+        self._df = self._df.copy()
+        self._df[self._x] = x_vals
+        self._df[self._y] = y_vals
+
         terms = [self._x] + self._covariates
         formula = f"{self._y} ~ {' + '.join(terms)}"
 
         self.result = smf.ols(formula, data=self._df).fit()
         return self
 
+    def _build_coef_interpretation(self, beta):
+        """Return a human-readable sentence describing β given the active transforms."""
+        xt = self._x_transform
+        yt = self._y_transform
+
+        if xt == 'none' and yt == 'none':
+            return (
+                f"Absolute change: a 1-unit increase in X is associated with a "
+                f"β = {beta:.4f} unit change in Y."
+            )
+        if xt == 'none' and yt == 'log10':
+            factor = 10 ** beta
+            direction = "increase" if beta >= 0 else "decrease"
+            return (
+                f"Log-linear model (Y log10-transformed): a 1-unit increase in X "
+                f"multiplies Y by 10^β ≈ {factor:.4f} "
+                f"(i.e., a {direction} by factor {factor:.4f})."
+            )
+        if xt == 'log10' and yt == 'none':
+            return (
+                f"Lin-log model (X log10-transformed): a 10-fold increase in X "
+                f"is associated with a β = {beta:.4f} unit change in Y."
+            )
+        if xt == 'log10' and yt == 'log10':
+            return (
+                f"Log-log model — elasticity: a 1% increase in X is associated "
+                f"with approximately a β = {beta:.4f}% change in Y."
+            )
+        if xt == 'none' and yt == 'sqrt':
+            return (
+                f"Sqrt(Y)-linear model: a 1-unit increase in X changes √Y by β = {beta:.4f}; "
+                f"back-transformation required for units of Y."
+            )
+        if xt == 'sqrt' and yt == 'none':
+            return (
+                f"Lin-√X model: a 1-unit increase in √X is associated with a "
+                f"β = {beta:.4f} unit change in Y."
+            )
+        # Generic fallback for boxcox or other combinations
+        xt_label = xt if xt != 'none' else 'untransformed'
+        yt_label = yt if yt != 'none' else 'untransformed'
+        return (
+            f"Transformed model (X: {xt_label}, Y: {yt_label}): β = {beta:.4f} "
+            f"on the transformed scale. Direct interpretation requires back-transformation."
+        )
+
+    @staticmethod
+    def _transform_axis_label(label: str, transform: str) -> str:
+        """Prefix an axis label with the active transform so the plot scale is clear."""
+        if not transform or transform == 'none':
+            return label
+        _pretty = {
+            'log10': 'log\u2081\u2080',
+            'log':   'ln',
+            'sqrt':  '\u221a',
+            'boxcox': 'BoxCox',
+        }
+        prefix = _pretty.get(transform, transform)
+        if transform == 'sqrt':
+            return f"{prefix}({label})"
+        return f"{prefix}({label})"
+
     def _build_regression_plot_payload(self, n_points=180):
         if self.result is None or self._df is None:
             return None
         try:
+            # self._df holds *transformed* values — use those for scatter + fit line
+            # so that points and line are on the same (transformed) scale.
             x_obs = pd.to_numeric(self._df[self._x], errors="coerce").to_numpy(dtype=float)
             y_obs = pd.to_numeric(self._df[self._y], errors="coerce").to_numpy(dtype=float)
             valid = np.isfinite(x_obs) & np.isfinite(y_obs)
@@ -433,9 +568,15 @@ class SimpleLinearRegressionModel:
             ci_lower = prediction["mean_ci_lower"].to_numpy(dtype=float)
             ci_upper = prediction["mean_ci_upper"].to_numpy(dtype=float)
 
+            # Axis labels reflect the active transformation so the reader knows the scale.
+            x_label = self._transform_axis_label(self._x_label, self._x_transform)
+            y_label = self._transform_axis_label(self._y_label, self._y_transform)
+
             return {
-                "x_label": self._x_label,
-                "y_label": self._y_label,
+                "x_label": x_label,
+                "y_label": y_label,
+                "x_transform": self._x_transform,
+                "y_transform": self._y_transform,
                 "points": [{"x": float(x), "y": float(y)} for x, y in zip(x_obs, y_obs)],
                 "fit": {
                     "x": [float(value) for value in x_fit.tolist()],
@@ -529,12 +670,12 @@ class SimpleLinearRegressionModel:
         f_stat = float(self.result.fvalue) if hasattr(self.result, 'fvalue') and self.result.fvalue is not None else None
         f_p = float(self.result.f_pvalue) if hasattr(self.result, 'f_pvalue') and self.result.f_pvalue is not None else None
 
-        # Raw scatter points for descriptive summary and charts
+        # Raw scatter points for descriptive summary and charts (original scale, pre-transform)
         association_points = []
-        if self._df is not None:
+        if self._x_raw_vals is not None and self._y_raw_vals is not None:
             try:
-                x_obs = pd.to_numeric(self._df[self._x], errors="coerce").to_numpy(dtype=float)
-                y_obs = pd.to_numeric(self._df[self._y], errors="coerce").to_numpy(dtype=float)
+                x_obs = self._x_raw_vals
+                y_obs = self._y_raw_vals
                 valid = np.isfinite(x_obs) & np.isfinite(y_obs)
                 association_points = [
                     {"x": float(xv), "y": float(yv)}
@@ -551,6 +692,8 @@ class SimpleLinearRegressionModel:
             fitted_list = [float(v) for v in self.result.fittedvalues.values]
         except Exception:
             pass
+
+        coef_interp = self._build_coef_interpretation(main_beta) if main_beta is not None else None
 
         return {
             "test": "Linear Regression (OLS)",
@@ -581,6 +724,19 @@ class SimpleLinearRegressionModel:
             "covariates_used": self._covariates,
             "association_points": association_points,
             "plot_regression": self._build_regression_plot_payload(),
+            # Transform metadata (mirrors CorrelationModel fields for export parity)
+            "x_transform": self._x_transform,
+            "y_transform": self._y_transform,
+            "x_boxcox_lambda": self._x_boxcox_lambda,
+            "y_boxcox_lambda": self._y_boxcox_lambda,
+            "x_transform_shift": self._x_transform_shift,
+            "y_transform_shift": self._y_transform_shift,
+            "transformation": (
+                f"{self._x_transform}/{self._y_transform}"
+                if (self._x_transform != 'none' or self._y_transform != 'none')
+                else "none"
+            ),
+            "coef_interpretation": coef_interp,
         }
 
 

@@ -714,11 +714,20 @@ class UIDialogManager:
         return groups[0]  # Default: first group
     
     @staticmethod
-    def select_transformation_dialog(parent=None, progress_text=None, column_name=None, force_show=False):
+    def select_transformation_dialog(parent=None, progress_text=None, column_name=None, force_show=False,
+                                     transforms=None):
+        """Show a dialog to select a data transformation.
+
+        Args:
+            transforms: optional list of ('label', 'value') tuples to restrict the offered
+                        transformations.  When None the full set (log10, boxcox, arcsin_sqrt)
+                        is shown.  For correlation analyses pass the two-item subset
+                        [('Log10 ...', 'log10'), ('Box-Cox ...', 'boxcox')].
+        """
         # NO CACHING - Each analysis starts fresh and shows the dialog every time
         # This ensures consistent behavior between normal tests and advanced tests
         UIDialogManager._ensure_qt_application()
-        
+
         dialog = QDialog(parent)
         UIDialogManager._configure_dialog(dialog, object_name="transformationSelectionDialog")
         layout = QVBoxLayout(dialog)
@@ -736,17 +745,20 @@ class UIDialogManager:
         layout.addWidget(info)
 
         # RadioButtons for transformations
-        options = [
-            ("Log10 transformation (for positive, right-skewed data)", "log10"),
-            ("Box-Cox transformation (automatic lambda optimization)", "boxcox"),
-            ("Arcsin square root transformation (for percentages/proportions)", "arcsin_sqrt"),
-        ]
+        if transforms is None:
+            options = [
+                ("Log10 transformation (for positive, right-skewed data)", "log10"),
+                ("Box-Cox transformation (automatic lambda optimization)", "boxcox"),
+                ("Arcsin square root transformation (for percentages/proportions)", "arcsin_sqrt"),
+            ]
+        else:
+            options = list(transforms)
         radio_buttons = []
         for label, value in options:
             rb = QRadioButton(label)
             layout.addWidget(rb)
             radio_buttons.append((rb, value))
-        radio_buttons[0][0].setChecked(True)  # Default: Log10
+        radio_buttons[0][0].setChecked(True)  # Default: first option
 
         # OK/Cancel buttons
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)

@@ -400,8 +400,10 @@ class ResultsExporter:
                 ws.merge_range(row, 0, row, 3, note, fmt.get("explanation", fmt["cell"]))
                 row += 1
 
+        _clinical_models = {'correlation', 'linear_regression', 'logistic_regression', 'beta_regression'}
+        _is_clinical = results.get('model_type') in _clinical_models or results.get('test', '').lower().startswith(('correlation', 'linear regression', 'logistic', 'beta'))
         plot_paths = results.get("assumption_plot_paths")
-        if not isinstance(plot_paths, dict) or not any(plot_paths.values()):
+        if not _is_clinical and (not isinstance(plot_paths, dict) or not any(plot_paths.values())):
             try:
                 plot_paths = get_assumption_visualizer().generate_assumption_plots(results)
                 if isinstance(plot_paths, dict):
@@ -673,26 +675,31 @@ class ResultsExporter:
             # Use the pre-generated decision tree path
             pre_generated_tree = dataset_tree_paths.get(dataset_name)
             
+            def _sheet(suffix):
+                """Return a sheet name <= 31 chars by truncating dataset_name if needed."""
+                max_name = 31 - len(suffix)
+                return dataset_name[:max_name] + suffix
+
             try:
                 # Create all the detailed sheets for this dataset
-                ResultsExporter._write_summary_sheet(workbook, results, fmt, f"{dataset_name}_Summary")
-                ResultsExporter._write_results_sheet(workbook, results, fmt, f"{dataset_name}_Results")
-                ResultsExporter._write_descriptive_sheet(workbook, results, fmt, f"{dataset_name}_Descriptive")
+                ResultsExporter._write_summary_sheet(workbook, results, fmt, _sheet("_Summary"))
+                ResultsExporter._write_results_sheet(workbook, results, fmt, _sheet("_Results"))
+                ResultsExporter._write_descriptive_sheet(workbook, results, fmt, _sheet("_Descriptive"))
                 _groups = results.get("groups", [])
                 _pairwise = results.get("pairwise_comparisons", [])
                 if len(_groups) >= 3 and _pairwise:
-                    ResultsExporter._write_pairwise_sheet(workbook, results, fmt, f"{dataset_name}_Pairwise")
-                ResultsExporter._write_assumptions_sheet(workbook, results, fmt, f"{dataset_name}_Assumptions")
-                ResultsExporter._write_decision_tree_sheet(workbook, results, fmt, f"{dataset_name}_DecisionTree", pre_generated_tree)
+                    ResultsExporter._write_pairwise_sheet(workbook, results, fmt, _sheet("_Pairwise"))
+                ResultsExporter._write_assumptions_sheet(workbook, results, fmt, _sheet("_Assumptions"))
+                ResultsExporter._write_decision_tree_sheet(workbook, results, fmt, _sheet("_DecisionTree"), pre_generated_tree)
                 ResultsExporter._write_methodology_log_sheet(
                     workbook,
                     results,
                     fmt,
                     trace=results.get("methodology_trace"),
                     analysis_log=results.get("analysis_log"),
-                    sheet_name=f"{dataset_name}_MethodLog",
+                    sheet_name=_sheet("_MethodLog"),
                 )
-                ResultsExporter._write_rawdata_sheet(workbook, results, fmt, f"{dataset_name}_RawData")
+                ResultsExporter._write_rawdata_sheet(workbook, results, fmt, _sheet("_RawData"))
                     
             except Exception as e:
                 print(f"DEBUG MULTI: Error creating sheets for {dataset_name}: {str(e)}")

@@ -6,6 +6,7 @@ import os
 import random
 import re
 import sys
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +54,7 @@ class HTMLExporter:
             return str(output_path)
         except Exception as exc:
             print(f"WARNING HTML EXPORT: Failed to write multi report to '{output_file}': {exc}")
+            traceback.print_exc()
             return None
 
     @staticmethod
@@ -196,19 +198,51 @@ class HTMLExporter:
     def _prepare_multi_report_context(all_results: dict) -> dict:
         cards = []
         significant_count = 0
-        for dataset_name, results in (all_results or {}).items():
-            hero = HTMLExporter._build_hero_context(results or {}, dataset_name=str(dataset_name))
-            assumptions = HTMLExporter._build_assumption_summary(results or {})
+        for idx, (dataset_name, results) in enumerate((all_results or {}).items()):
+            r = results or {}
+            hero = HTMLExporter._build_hero_context(r, dataset_name=str(dataset_name))
+            assumptions = HTMLExporter._build_assumption_summary(r)
+
+            # --- detail context (accordion panel) ---
+            stat_rows = HTMLExporter._build_statistical_rows(r)
+            decision_path = HTMLExporter._build_decision_path_model(r)
+            methods_text = HTMLExporter._build_methods_text(r, r.get("analysis_log", ""))
+
+            # Scatter / correlation chart as inline Plotly HTML
+            # Each card gets a unique div_id so Plotly can render all of them
+            scatter_html = ""
+            try:
+                chart = HTMLExporter._build_correlation_chart(r, div_id=f"biomedstatx-scatter-{idx}")
+                if chart and chart.get("html"):
+                    scatter_html = chart["html"]
+            except Exception:
+                pass
+
+            # FDR-adjusted p if available
+            p_fdr = r.get("p_value_fdr")
+            p_fdr_display = HTMLExporter._format_p_value(p_fdr) if p_fdr is not None else None
+
+            card_id = f"card-{idx}"
             cards.append({
+                "card_id": card_id,
                 "dataset_name": str(dataset_name),
                 "test_name": hero["test_name"],
                 "p_value_display": hero["p_value_display"],
+                "p_fdr_display": p_fdr_display,
                 "significance_label": hero["significance_label"],
                 "significance_class": hero["significance_class"],
-                "transformation": str((results or {}).get("transformation") or "None"),
-                "pairwise_count": len((results or {}).get("pairwise_comparisons") or []),
+                "effect_size_display": hero["effect_size_display"],
+                "effect_label": hero["effect_label"],
+                "effect_magnitude": hero["effect_magnitude"],
+                "transformation": str(r.get("transformation") or "None"),
+                "pairwise_count": len(r.get("pairwise_comparisons") or []),
                 "summary_note": hero["summary_note"],
                 "assumptions": assumptions,
+                # detail fields
+                "stat_rows": stat_rows,
+                "decision_path": decision_path,
+                "methods_text": methods_text,
+                "scatter_html": scatter_html,
             })
             if hero["is_significant"]:
                 significant_count += 1
@@ -321,6 +355,17 @@ class HTMLExporter:
         rows.append({"label": "── Model Fit ──", "value": ""})
         rows.append({"label": "R²", "value": HTMLExporter._format_metric(results.get("r_squared"))})
         rows.append({"label": "Adjusted R²", "value": HTMLExporter._format_metric(results.get("r_squared_adj"))})
+        _xt_fit = results.get("x_transform", "none") or "none"
+        _yt_fit = results.get("y_transform", "none") or "none"
+        if _xt_fit != "none" or _yt_fit != "none":
+            rows.append({
+                "label": "R² Note",
+                "value": (
+                    "R² is on the transformed scale (X: {}, Y: {}). "
+                    "It is not directly comparable to untransformed models and "
+                    "does not reflect variance explained in the original units."
+                ).format(_xt_fit, _yt_fit),
+            })
         rows.append({"label": "AIC", "value": HTMLExporter._format_metric(results.get("aic"))})
         rows.append({"label": "N observations", "value": HTMLExporter._format_metric(results.get("n_observations"))})
 
@@ -748,6 +793,22 @@ class HTMLExporter:
             interp = results.get("interpretation")
             if interp:
                 rows.append({"label": "Interpretation", "value": str(interp)})
+
+        # For Linear Regression: add transformation labels and coefficient interpretation disclaimer
+        if model_type == "LinearRegression":
+            xt = results.get("x_transform", "none") or "none"
+            yt = results.get("y_transform", "none") or "none"
+            if xt != "none" or yt != "none":
+                rows.append({
+                    "label": "Variable transformations",
+                    "value": f"X: {xt} | Y: {yt}",
+                })
+            coef_interp = results.get("coef_interpretation")
+            if coef_interp:
+                rows.append({
+                    "label": "\u03b2 Interpretation",
+                    "value": str(coef_interp),
+                })
 
         # For Brunner-Langer ATS: add statistic type label and RTE table rows
         if model_type == "BrunnerLangerATS":
@@ -1447,6 +1508,26 @@ class HTMLExporter:
 
     @staticmethod
     def _build_raw_data_table(results: dict) -> dict:
+        # Column-mode: correlation/regression embeds raw data as named columns
+        raw_data_columns = results.get("raw_data_columns")
+        if raw_data_columns and isinstance(raw_data_columns, dict):
+            col_names = list(raw_data_columns.keys())
+            col_values = [raw_data_columns[c] for c in col_names]
+            n_rows = max((len(v) for v in col_values), default=0)
+            rows = []
+            for i in range(n_rows):
+                row = {"index": i + 1}
+                for col, vals in zip(col_names, col_values):
+                    row[col] = HTMLExporter._format_metric(vals[i] if i < len(vals) else None, digits=6)
+                rows.append(row)
+            return {
+                "rows": rows,
+                "has_transformed": False,
+                "column_mode": True,
+                "columns": col_names,
+            }
+
+        # Group-mode: group-based analyses embed raw data keyed by group name
         raw_data = results.get("raw_data") or results.get("samples") or {}
         transformed = results.get("raw_data_transformed") or results.get("transformed_data") or {}
         rows = []
@@ -1468,6 +1549,8 @@ class HTMLExporter:
         return {
             "rows": rows,
             "has_transformed": any(row["transformed_value"] != "N/A" for row in rows),
+            "column_mode": False,
+            "columns": [],
         }
 
     @staticmethod
@@ -2636,7 +2719,7 @@ class HTMLExporter:
         return charts
 
     @staticmethod
-    def _build_correlation_chart(results: dict) -> dict | None:
+    def _build_correlation_chart(results: dict, div_id: str = "biomedstatx-assoc-chart") -> dict | None:
         model_type = str(results.get("model_type") or "")
         if model_type not in {"Correlation", "LinearRegression"}:
             return None
@@ -2724,7 +2807,7 @@ class HTMLExporter:
                 showlegend=True,
                 legend=dict(orientation="h", x=0.01, y=1.08),
             )
-            html = HTMLExporter._figure_to_html(figure, div_id="biomedstatx-assoc-chart")
+            html = HTMLExporter._figure_to_html(figure, div_id=div_id)
             if not html:
                 return None
             corr_method = str(results.get("method") or "").lower()
@@ -3213,6 +3296,9 @@ class HTMLExporter:
 
     @staticmethod
     def _build_methods_text(results: dict, analysis_log: Any) -> str:
+        trace = results.get("methodology_trace")
+        if trace and hasattr(trace, "to_methods_paragraph"):
+            return trace.to_methods_paragraph()
         if isinstance(analysis_log, list):
             return "\n".join(str(line) for line in analysis_log)
         if isinstance(analysis_log, str) and analysis_log.strip():
@@ -3227,8 +3313,16 @@ class HTMLExporter:
         if results.get("effect_size_type"):
             lines.append(f"Effect size metric: {results.get('effect_size_type')}")
 
-        # For Correlation: document any automatic shift applied before transformation.
-        # Reviewers need c to reproduce the transformed values (y = f(x + c)).
+        # For Correlation: add benchmark reference and document any automatic shift.
+        if results.get("model_type") == "Correlation":
+            es_type = str(results.get("effect_size_type") or "").lower()
+            if any(k in es_type for k in ["rho", "pearson", "spearman", "correlation"]) or es_type.strip() in ("r", "ρ"):
+                lines.append(
+                    "Effect size interpretation (Cohen 1988 conventions for r): "
+                    "negligible\u202f<\u202f0.1,\u2002small\u202f\u2265\u202f0.1,"
+                    "\u2002medium\u202f\u2265\u202f0.3,\u2002large\u202f\u2265\u202f0.5 (|\u03c1| or |r|)."
+                )
+        # Reviewers need the shift constant c to reproduce transformed values (y = f(x + c)).
         if results.get("model_type") == "Correlation":
             x_shift = results.get("x_transform_shift") or 0.0
             y_shift = results.get("y_transform_shift") or 0.0
@@ -3259,6 +3353,12 @@ class HTMLExporter:
             bool(assumptions.get("distribution_plot_html")),
             bool(assumptions.get("residual_plot_html")),
         ])
+        # Multi-mode: scatter charts live inside dataset_cards, not chart_blocks
+        if mode == "multi" and not plotly_enabled:
+            plotly_enabled = any(
+                bool(card.get("scatter_html"))
+                for card in (context.get("dataset_cards") or [])
+            )
         plotly_bundle = HTMLExporter._plotly_bundle() if plotly_enabled else ""
         math_render_enabled = bool(context.get("math_render_enabled"))
         if math_render_enabled:
@@ -3667,7 +3767,7 @@ body{margin:0;font-family:"Segoe UI","Helvetica Neue",Arial,sans-serif;line-heig
 <section id="sec-descriptive" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Descriptive Statistics</div><h2 id="hd-descriptive">{{ context.descriptive.title or "Group-level summary" }}<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-descriptive">i</button></h2><div class="info-panel" id="info-descriptive" role="region" aria-labelledby="hd-descriptive"><div class="info-panel-inner">{{ context.info_texts.descriptive }}</div></div></div></div>{% if context.descriptive.rows %}<div class="table-shell"><table><thead><tr><th>{{ context.descriptive.group_col_label or "Group" }}</th><th>n</th><th>Mean</th><th>Median</th><th>SD</th><th>SEM</th><th>Min</th><th>Max</th></tr></thead><tbody>{% for row in context.descriptive.rows %}<tr><td>{{ row.group }}</td><td class="num-cell">{{ row.n }}</td><td class="num-cell">{{ row.mean }}</td><td class="num-cell">{{ row.median }}</td><td class="num-cell">{{ row.sd }}</td><td class="num-cell">{{ row.sem }}</td><td class="num-cell">{{ row.min }}</td><td class="num-cell">{{ row.max }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state">No descriptive summary could be derived from the available result payload.</div>{% endif %}</section>
 {% if context.pairwise_rows %}<section id="sec-pairwise" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Pairwise Comparisons</div><h2 id="hd-pairwise">Post-hoc findings<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-pairwise">i</button></h2><div class="info-panel" id="info-pairwise" role="region" aria-labelledby="hd-pairwise"><div class="info-panel-inner">{{ context.info_texts.pairwise }}</div></div></div></div><div class="table-shell"><table><thead><tr>{% if context.group_chart_div_id %}<th title="Show bracket in chart">Chart</th>{% endif %}<th>Comparison</th><th>Procedure</th><th>Statistic</th><th>p-value</th><th>Effect size</th><th>Interpretation</th></tr></thead><tbody>{% for row in context.pairwise_rows %}<tr class="{{ row.row_class }}">{% if context.group_chart_div_id %}<td style="text-align:center"><input type="checkbox" class="bracket-toggle" data-pair-id="{{ row.pair_id }}" {% if row.significant and row.stars %}checked{% endif %} aria-label="Show bracket for {{ row.comparison }}"></td>{% endif %}<td>{{ row.comparison }}</td><td>{{ row.test }}</td><td class="num-cell">{{ row.statistic }}</td><td class="num-cell" style="{{ row.p_value_style }}">{{ row.p_value }}</td><td class="num-cell">{{ row.effect_size }}</td><td>{{ "Significant" if row.significant else "Not significant" }}</td></tr>{% endfor %}</tbody></table></div></section>{% endif %}
 <section id="sec-charts" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Interactive Charts</div><h2 id="hd-charts">Visual evidence<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-charts">i</button></h2><div class="info-panel" id="info-charts" role="region" aria-labelledby="hd-charts"><div class="info-panel-inner">{{ context.info_texts.charts }}</div></div></div></div>{% if context.chart_blocks %}{% for chart in context.chart_blocks %}<div class="chart-card"><div class="section-kicker">{{ chart.title }}</div><h3>{{ chart.subtitle }}</h3>{{ chart.html | safe }}{% if chart.div_id %}<div class="toolbar" style="margin-top:12px"><button type="button" onclick="downloadPlotlyChart('{{ chart.div_id }}','svg','biomedstatx_{{ chart.title | lower | replace(' ','_') }}')">Download SVG</button><button type="button" onclick="downloadPlotlyChart('{{ chart.div_id }}','png','biomedstatx_{{ chart.title | lower | replace(' ','_') }}')">Download PNG</button></div>{% endif %}</div>{% endfor %}{% else %}<div class="empty-state">No interactive chart could be created from the current result structure.</div>{% endif %}</section>
-<section id="sec-raw" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Raw Data Vault</div><h2 id="hd-raw">Searchable raw values<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-raw">i</button></h2><div class="info-panel" id="info-raw" role="region" aria-labelledby="hd-raw"><div class="info-panel-inner">{{ context.info_texts.raw }}</div></div></div></div><div class="toolbar"><input id="raw-search" type="search" placeholder="Filter raw data"><button type="button" onclick="copyTable('raw-data-table')">Copy table</button><button type="button" onclick="downloadTableCSV('raw-data-table','biomedstatx_raw_data.csv')">Download CSV</button></div>{% if context.raw_data_table.rows %}<div class="table-shell"><table id="raw-data-table"><thead><tr><th>Group</th><th>Index</th><th>Raw value</th>{% if context.raw_data_table.has_transformed %}<th>Transformed value</th>{% endif %}</tr></thead><tbody>{% for row in context.raw_data_table.rows %}<tr><td>{{ row.group }}</td><td>{{ row.index }}</td><td>{{ row.raw_value }}</td>{% if context.raw_data_table.has_transformed %}<td>{{ row.transformed_value }}</td>{% endif %}</tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state">No raw data were embedded in this result structure.</div>{% endif %}</section>
+<section id="sec-raw" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Raw Data Vault</div><h2 id="hd-raw">Searchable raw values<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-raw">i</button></h2><div class="info-panel" id="info-raw" role="region" aria-labelledby="hd-raw"><div class="info-panel-inner">{{ context.info_texts.raw }}</div></div></div></div><div class="toolbar"><input id="raw-search" type="search" placeholder="Filter raw data"><button type="button" onclick="copyTable('raw-data-table')">Copy table</button><button type="button" onclick="downloadTableCSV('raw-data-table','biomedstatx_raw_data.csv')">Download CSV</button></div>{% if context.raw_data_table.rows %}<div class="table-shell"><table id="raw-data-table"><thead><tr>{% if context.raw_data_table.column_mode %}<th>#</th>{% for col in context.raw_data_table.columns %}<th>{{ col }}</th>{% endfor %}{% else %}<th>Group</th><th>Index</th><th>Raw value</th>{% if context.raw_data_table.has_transformed %}<th>Transformed value</th>{% endif %}{% endif %}</tr></thead><tbody>{% for row in context.raw_data_table.rows %}<tr>{% if context.raw_data_table.column_mode %}<td>{{ row.index }}</td>{% for col in context.raw_data_table.columns %}<td>{{ row[col] }}</td>{% endfor %}{% else %}<td>{{ row.group }}</td><td>{{ row.index }}</td><td>{{ row.raw_value }}</td>{% if context.raw_data_table.has_transformed %}<td>{{ row.transformed_value }}</td>{% endif %}{% endif %}</tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state">No raw data were embedded in this result structure.</div>{% endif %}</section>
 <section id="sec-methods" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Methods Snippet</div><h2 id="hd-methods">Reusable narrative text<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-methods">i</button></h2><div class="info-panel" id="info-methods" role="region" aria-labelledby="hd-methods"><div class="info-panel-inner">{{ context.info_texts.methods }}</div></div></div></div><div class="toolbar"><button type="button" onclick="copyText('methods-text')">Copy methods text</button></div><div id="methods-text" class="methods">{{ context.methods_text }}</div></section>
 {% else %}
 <section class="section is-visible"><div class="section-head"><div><div class="section-kicker">Dataset Overview</div><h2>Summary across exported analyses</h2></div></div><div class="dataset-grid">{% for card in context.dataset_cards %}<article class="dataset-card"><div class="section-kicker">{{ card.dataset_name }}</div><h3>{{ card.test_name }}</h3><p class="small muted">{{ card.summary_note }}</p><div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0 14px;"><span class="badge {{ card.significance_class }}">{{ card.significance_label }}</span><span class="badge is-neutral">{{ card.p_value_display }}</span></div><p class="small">Transformation: {{ card.transformation }}</p><p class="small">Pairwise comparisons: {{ card.pairwise_count }}</p>{% if card.assumptions.rows %}<div class="table-shell" style="margin-top:14px;"><table><thead><tr><th>Check</th><th>p-value</th><th>Status</th></tr></thead><tbody>{% for row in card.assumptions.rows[:4] %}<tr class="{{ row.status_class }}"><td>{{ row.name }}</td><td>{{ row.p_value }}</td><td>{{ row.status_label }}</td></tr>{% endfor %}</tbody></table></div>{% endif %}</article>{% endfor %}</div></section>

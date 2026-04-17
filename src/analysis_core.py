@@ -424,11 +424,37 @@ class AnalysisManager:
         analysis_log += f"Date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
         analysis_log += f"File: {file_path}\n"
         analysis_log += f"Worksheet: {sheet_name}\n"
-        analysis_log += f"Group column: {group_col}\n"
-        analysis_log += f"Value column(s): {', '.join(value_cols) if value_cols else 'All numeric columns'}\n"
-        analysis_log += f"Groups to analyze: {', '.join(map(str, groups))}\n"
-        analysis_log += f"Dependent samples: {'Yes' if dependent else 'No'}\n"
-        analysis_log += f"Error bar type: {'SEM (standard error)' if error_type == 'se' else 'SD (standard deviation)'}\n"
+
+        _test_type = kwargs.get('test', '')
+        _analysis_context = kwargs.get('analysis_context', {}) or {}
+        _is_continuous_analysis = _test_type in ('correlation', 'linear_regression',
+                                                   'logistic_regression', 'beta_regression',
+                                                   'ancova', 'two_way_ancova', 'lmm')
+        if _is_continuous_analysis:
+            # For regression/correlation the "group_col" slot holds the predictor/factor variable
+            _dv_cols = _analysis_context.get('dv_columns') or value_cols
+            _factor_cols = _analysis_context.get('factor_columns') or ([group_col] if group_col else [])
+            _test_label_map = {
+                'correlation': 'Correlation',
+                'linear_regression': 'Linear Regression',
+                'logistic_regression': 'Logistic Regression',
+                'beta_regression': 'Beta Regression',
+                'ancova': 'ANCOVA',
+                'two_way_ancova': 'Two-Way ANCOVA',
+                'lmm': 'Linear Mixed Model',
+            }
+            analysis_log += f"Analysis Type: {_test_label_map.get(_test_type, _test_type)}\n"
+            analysis_log += f"Predictor / Factor variable(s): {', '.join(_factor_cols) if _factor_cols else group_col}\n"
+            analysis_log += f"Outcome / Dependent variable(s): {', '.join(_dv_cols) if _dv_cols else ', '.join(value_cols) if value_cols else 'All numeric columns'}\n"
+            _covariates = kwargs.get('covariates') or _analysis_context.get('covariates') or []
+            if _covariates:
+                analysis_log += f"Covariates: {', '.join(_covariates)}\n"
+        else:
+            analysis_log += f"Group column: {group_col}\n"
+            analysis_log += f"Value column(s): {', '.join(value_cols) if value_cols else 'All numeric columns'}\n"
+            analysis_log += f"Groups to analyze: {', '.join(map(str, groups))}\n"
+            analysis_log += f"Dependent samples: {'Yes' if dependent else 'No'}\n"
+            analysis_log += f"Error bar type: {'SEM (standard error)' if error_type == 'se' else 'SD (standard deviation)'}\n"
 
         if compare:
             compare_str = ", ".join([f"{g1} vs {g2}" for g1, g2 in compare])
@@ -467,9 +493,10 @@ class AnalysisManager:
                     raise ValueError(f"Group '{group}' contains no data.")
 
             analysis_log += f"Data imported successfully.\n"
-            analysis_log += "Number of data points per group:\n"
-            for group, values in filtered_samples.items():
-                analysis_log += f"  {group}: {len(values)} data points\n"
+            if not _is_continuous_analysis:
+                analysis_log += "Number of data points per group:\n"
+                for group, values in filtered_samples.items():
+                    analysis_log += f"  {group}: {len(values)} data points\n"
 
             # Initialize the result dictionary (important: before first assignments!)
             results = {}
@@ -613,7 +640,9 @@ class AnalysisManager:
                     else:  # linear_regression
                         model = SimpleLinearRegressionModel()
                         model.fit(analysis_df, x_col=x_col, y_col=y_col,
-                                  covariates=covariates or None)
+                                  covariates=covariates or None,
+                                  x_transform=analysis_context.get('x_transform', 'none'),
+                                  y_transform=analysis_context.get('y_transform', 'none'))
                         test_results = model.as_results_dict()
 
                 # Attach health report to results (non-blocking)
@@ -631,9 +660,22 @@ class AnalysisManager:
                 # For continuous-variable models (correlation/regression/logistic), raw_data from
                 # filtered_samples has no meaningful group structure — skip it to avoid the group
                 # chart and descriptive table using X-values as bogus group labels.
+                # Instead, embed raw data as named columns for the Raw Data Vault.
                 _no_group_raw = clinical_test in ('correlation', 'linear_regression', 'logistic_regression', 'beta_regression')
                 if not _no_group_raw:
                     results['raw_data'] = {g: filtered_samples[g][:] for g in groups}
+                else:
+                    if clinical_test in ('correlation', 'linear_regression'):
+                        _raw_col_names = [c for c in ([x_col, y_col] + (covariates or [])) if c]
+                        _raw_source = analysis_df
+                    else:  # logistic_regression / beta_regression
+                        _predictors_used = analysis_context.get('factor_columns', [])
+                        _raw_col_names = [c for c in ([value_cols[0]] + _predictors_used + (covariates or [])) if c]
+                        _raw_source = df
+                    _valid_raw_cols = [c for c in _raw_col_names if c in _raw_source.columns]
+                    if _valid_raw_cols:
+                        _raw_df = _raw_source[_valid_raw_cols].dropna()
+                        results['raw_data_columns'] = {col: _raw_df[col].tolist() for col in _valid_raw_cols}
                 results['selected_groups'] = analysis_context.get('selected_groups') or groups
                 results['group_column'] = analysis_context.get('selected_group_column') or analysis_context.get('factor_columns', [None])[0]
                 results['factor_columns'] = analysis_context.get('factor_columns', [])
@@ -1365,7 +1407,9 @@ class AnalysisManager:
                 "value_cols": value_cols,
                 "groups": groups,
                 "dependent": dependent,
-                "error_type": error_type
+                "error_type": error_type,
+                "test_type": kwargs.get('test', ''),
+                "analysis_context": kwargs.get('analysis_context') or {},
             }
             # Build protocol
             def build_analysis_log(results, params):
@@ -1377,16 +1421,41 @@ class AnalysisManager:
                     log.append(f"File: {params['file_path']}")
                 if 'sheet_name' in params:
                     log.append(f"Worksheet: {params['sheet_name']}")
-                if 'group_col' in params:
-                    log.append(f"Group column: {params['group_col']}")
-                if 'value_cols' in params:
-                    log.append(f"Value column(s): {', '.join(params['value_cols'])}")
-                if 'groups' in params:
-                    log.append(f"Groups to analyze: {', '.join(params['groups'])}")
-                if 'dependent' in params:
-                    log.append(f"Dependent samples: {'Yes' if params['dependent'] else 'No'}")
-                if 'error_type' in params:
-                    log.append(f"Error bar type: {'SEM (standard error)' if params['error_type']=='se' else 'SD (standard deviation)'}")
+
+                _test_t = params.get('test_type', '') or _ctx.get('inferred_test', '') or results.get('test', '')
+                _ctx = params.get('analysis_context') or {}
+                _continuous_tests = ('correlation', 'linear_regression', 'logistic_regression',
+                                     'beta_regression', 'ancova', 'two_way_ancova', 'lmm')
+                _is_continuous = _test_t in _continuous_tests
+                _test_label_map = {
+                    'correlation': 'Correlation',
+                    'linear_regression': 'Linear Regression',
+                    'logistic_regression': 'Logistic Regression',
+                    'beta_regression': 'Beta Regression',
+                    'ancova': 'ANCOVA',
+                    'two_way_ancova': 'Two-Way ANCOVA',
+                    'lmm': 'Linear Mixed Model',
+                }
+                if _is_continuous:
+                    log.append(f"Analysis Type: {_test_label_map.get(_test_t, _test_t)}")
+                    _factor_cols = _ctx.get('factor_columns') or ([params['group_col']] if params.get('group_col') else [])
+                    _dv_cols = _ctx.get('dv_columns') or params.get('value_cols') or []
+                    log.append(f"Predictor / Factor variable(s): {', '.join(_factor_cols) if _factor_cols else '—'}")
+                    log.append(f"Outcome / Dependent variable(s): {', '.join(_dv_cols) if _dv_cols else '—'}")
+                    _covariates = params.get('covariates') or _ctx.get('covariates') or []
+                    if _covariates:
+                        log.append(f"Covariates: {', '.join(_covariates)}")
+                else:
+                    if 'group_col' in params:
+                        log.append(f"Group column: {params['group_col']}")
+                    if 'value_cols' in params:
+                        log.append(f"Value column(s): {', '.join(params['value_cols'])}")
+                    if 'groups' in params:
+                        log.append(f"Groups to analyze: {', '.join(str(g) for g in params['groups'])}")
+                    if 'dependent' in params:
+                        log.append(f"Dependent samples: {'Yes' if params['dependent'] else 'No'}")
+                    if 'error_type' in params:
+                        log.append(f"Error bar type: {'SEM (standard error)' if params['error_type']=='se' else 'SD (standard deviation)'}")
                 log.append("\n--- ANALYSIS ---\n")
                 if results.get('import_status'):
                     log.append("Data imported successfully.")

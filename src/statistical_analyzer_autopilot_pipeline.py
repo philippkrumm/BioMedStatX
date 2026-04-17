@@ -8,6 +8,7 @@ from PyQt5.QtGui import QColor, QDesktopServices
 from PyQt5.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QCheckBox,
     QComboBox,
     QDialog,
     QFileDialog,
@@ -291,15 +292,29 @@ def _ap_init_ui(self):
     self.mapping_feedback_label.setWordWrap(True)
     center_layout.addWidget(self.mapping_feedback_label)
 
-    # --- Correlation transform widget (hidden until correlation is detected) ---
+    # --- Correlation / Regression widget (hidden until continuous-factor design detected) ---
     self.corr_transform_widget = QWidget()
     corr_tr_layout = QVBoxLayout(self.corr_transform_widget)
     corr_tr_layout.setContentsMargins(0, 4, 0, 0)
-    corr_tr_layout.setSpacing(4)
+    corr_tr_layout.setSpacing(6)
+
+    # Mode toggle: Correlation (default) vs. Simple Linear Regression
+    self.corr_regression_toggle = QCheckBox("Als Lineare Regression analysieren (Y = a + bX)")
+    self.corr_regression_toggle.setObjectName("panelDescription")
+    self.corr_regression_toggle.setChecked(False)
+    self.corr_regression_toggle.stateChanged.connect(self.on_mapping_changed)
+    corr_tr_layout.addWidget(self.corr_regression_toggle)
+
+    # Transform controls — only meaningful for regression (theoretical choice before fit).
+    # For correlation the transform is chosen reactively after Shapiro-Wilk, so no UI needed.
+    self.corr_reg_transform_container = QWidget()
+    reg_tr_inner = QVBoxLayout(self.corr_reg_transform_container)
+    reg_tr_inner.setContentsMargins(0, 4, 0, 0)
+    reg_tr_inner.setSpacing(4)
 
     corr_tr_title = QLabel("Variable Transformations (optional)")
     corr_tr_title.setObjectName("panelDescription")
-    corr_tr_layout.addWidget(corr_tr_title)
+    reg_tr_inner.addWidget(corr_tr_title)
 
     _TRANSFORMS = ["none", "log10", "sqrt", "boxcox"]
 
@@ -308,14 +323,43 @@ def _ap_init_ui(self):
     self.corr_x_transform_combo = QComboBox()
     self.corr_x_transform_combo.addItems(_TRANSFORMS)
     x_row.addWidget(self.corr_x_transform_combo)
-    corr_tr_layout.addLayout(x_row)
+    reg_tr_inner.addLayout(x_row)
 
     y_row = QHBoxLayout()
     y_row.addWidget(QLabel("Y transform:"))
     self.corr_y_transform_combo = QComboBox()
     self.corr_y_transform_combo.addItems(_TRANSFORMS)
     y_row.addWidget(self.corr_y_transform_combo)
-    corr_tr_layout.addLayout(y_row)
+    reg_tr_inner.addLayout(y_row)
+
+    # Warning: shown only when regression mode is active AND a transform is selected.
+    self.corr_transform_warning = QLabel(
+        "Note: Transformation changes the interpretation of \u03b2. "
+        "The HTML report will include the correct interpretation."
+    )
+    self.corr_transform_warning.setObjectName("warningLabel")
+    self.corr_transform_warning.setWordWrap(True)
+    self.corr_transform_warning.setVisible(False)
+    reg_tr_inner.addWidget(self.corr_transform_warning)
+
+    self.corr_reg_transform_container.setVisible(False)
+    corr_tr_layout.addWidget(self.corr_reg_transform_container)
+
+    def _update_transform_warning():
+        if not hasattr(self, 'corr_regression_toggle') or not hasattr(self, 'corr_x_transform_combo'):
+            return
+        is_regression = self.corr_regression_toggle.isChecked()
+        # Show transform controls only in regression mode
+        self.corr_reg_transform_container.setVisible(is_regression)
+        has_transform = (
+            self.corr_x_transform_combo.currentText() not in ('none', '')
+            or self.corr_y_transform_combo.currentText() not in ('none', '')
+        )
+        self.corr_transform_warning.setVisible(is_regression and has_transform)
+
+    self.corr_x_transform_combo.currentIndexChanged.connect(_update_transform_warning)
+    self.corr_y_transform_combo.currentIndexChanged.connect(_update_transform_warning)
+    self.corr_regression_toggle.stateChanged.connect(_update_transform_warning)
 
     self.corr_transform_widget.setVisible(False)
     center_layout.addWidget(self.corr_transform_widget)
@@ -458,8 +502,16 @@ def _ap_apply_mapping_heuristics(self):
     if len(factor_candidates) > 1:
         self.factor2_bucket.assign_column(factor_candidates[1], _infer_column_kind(self.df[factor_candidates[1]]))
 
-    if subject_column:
-        self.subject_bucket.assign_column(subject_column, _infer_column_kind(self.df[subject_column]))
+    if subject_column and factor_candidates:
+        # Only assign Subject ID when it actually creates a repeated-measures structure:
+        # each subject must appear under more than one level of Factor 1.
+        factor1_col = factor_candidates[0]
+        try:
+            subject_span = self.df.groupby(subject_column)[factor1_col].nunique(dropna=True)
+            if subject_span.max() > 1:
+                self.subject_bucket.assign_column(subject_column, _infer_column_kind(self.df[subject_column]))
+        except Exception:
+            pass  # silently skip if validation fails
 
 
 def _ap_update_mode_constraints(self):
@@ -502,6 +554,15 @@ def _ap_update_analysis_group_selection_ui(self):
     self.analysis_selected_groups = [group for group in available_groups if group in selected_set]
 
     has_factor1 = bool(self.factor1_bucket.get_assigned_columns())
+
+    # Continuous Factor 1 → correlation/regression path, group selection not applicable
+    if has_factor1 and self._is_continuous_factor1_for_help():
+        self.analysis_group_button.setEnabled(False)
+        self.analysis_group_label.setText(
+            "Factor 1 is continuous \u2192 Correlation / Regression (no group selection needed)."
+        )
+        return
+
     self.analysis_group_button.setEnabled(has_factor1 and len(available_groups) >= 2)
 
     if not has_factor1:
@@ -639,8 +700,8 @@ def _ap_resolve_help_recipe_for_bucket(self, bucket_widget, fallback_recipe_id=N
 
 
 def _ap_on_mapping_changed(self):
-    # Hide the correlation transform widget on every mapping change;
-    # it will be re-shown at the bottom if inferred_test == 'correlation'.
+    # Hide the corr/regression widget on every mapping change;
+    # it will be re-shown below if is_corr_family is detected.
     if hasattr(self, 'corr_transform_widget'):
         self.corr_transform_widget.setVisible(False)
     if self.df is None:
@@ -723,15 +784,39 @@ def _ap_on_mapping_changed(self):
     self.start_analysis_button.setEnabled(True)
 
     try:
-        context = self._ap_build_analysis_context()
-        is_correlation = context.get("inferred_test") == "correlation"
-    except Exception:
-        is_correlation = False
+        context = self._build_analysis_context()
+        is_corr_family = context.get("is_corr_family", False)
+    except Exception as _ctx_err:
+        import traceback
+        print(f"DEBUG _ap_on_mapping_changed context error: {_ctx_err}")
+        traceback.print_exc()
+        # Fallback: check directly whether the single factor looks continuous
+        try:
+            factor_columns = [c for c in [
+                *self.factor1_bucket.get_assigned_columns(),
+                *self.factor2_bucket.get_assigned_columns(),
+            ] if c]
+            subject_columns = self.subject_bucket.get_assigned_columns()
+            if len(factor_columns) == 1 and not subject_columns and self.df is not None:
+                from correlation_models import _is_continuous as _corr_is_continuous
+                is_corr_family = _corr_is_continuous(self.df, factor_columns[0])
+            else:
+                is_corr_family = False
+        except Exception:
+            is_corr_family = False
     if hasattr(self, 'corr_transform_widget'):
-        self.corr_transform_widget.setVisible(is_correlation)
-        if not is_correlation:
+        self.corr_transform_widget.setVisible(is_corr_family)
+        if not is_corr_family:
             self.corr_x_transform_combo.setCurrentIndex(0)
             self.corr_y_transform_combo.setCurrentIndex(0)
+            if hasattr(self, 'corr_regression_toggle'):
+                self.corr_regression_toggle.setChecked(False)
+        else:
+            # When switching away from regression mode, reset transform combos so that
+            # no stale regression transform is passed to the correlation model.
+            if hasattr(self, 'corr_regression_toggle') and not self.corr_regression_toggle.isChecked():
+                self.corr_x_transform_combo.setCurrentIndex(0)
+                self.corr_y_transform_combo.setCurrentIndex(0)
 
 
 def _ap_browse_file(self):
@@ -1010,7 +1095,13 @@ def _ap_build_analysis_context(self):
                 if covariate_columns:
                     context["inferred_test"] = "linear_regression"
                 else:
-                    context["inferred_test"] = "correlation"
+                    # Mark as corr-family so the mode widget stays visible regardless of toggle.
+                    context["is_corr_family"] = True
+                    _use_regression = (
+                        hasattr(self, "corr_regression_toggle")
+                        and self.corr_regression_toggle.isChecked()
+                    )
+                    context["inferred_test"] = "linear_regression" if _use_regression else "correlation"
                 context["x_variable"] = factor_columns[0]
         except Exception:
             pass  # correlation_models not available — skip silently
@@ -1022,7 +1113,7 @@ def _ap_build_analysis_context(self):
     if context["mode"] == "multi" and context["inferred_test"] in {"independent_ttest", "paired_ttest", "logistic_regression", "beta_regression"}:
         raise ValueError("Multi mode is restricted to ANOVA-capable designs.")
 
-    # Correlation variable transforms (only meaningful when inferred_test == 'correlation')
+    # Variable transforms (meaningful for both correlation and user-selected linear regression)
     if hasattr(self, 'corr_x_transform_combo'):
         context['x_transform'] = self.corr_x_transform_combo.currentText() or 'none'
         context['y_transform'] = self.corr_y_transform_combo.currentText() or 'none'
@@ -1066,7 +1157,7 @@ def _ap_detected_test_label(self, context):
     return label
 
 
-def _ap_execute_single_analysis(self, context, dv_column, output_dir, skip_plots=True, title_suffix=None, file_base_override=None):
+def _ap_execute_single_analysis(self, context, dv_column, output_dir, skip_plots=True, title_suffix=None, file_base_override=None, skip_excel=False):
     if not self.file_path:
         raise ValueError("No input file selected.")
 
@@ -1101,9 +1192,10 @@ def _ap_execute_single_analysis(self, context, dv_column, output_dir, skip_plots
         save_plot=True,
         skip_plots=skip_plots,
         error_type="sd",
-        skip_excel=False,
+        skip_excel=skip_excel,
         analysis_context=single_context,
         subject_column=context.get("subject_column"),
+        test=single_context.get("inferred_test", ""),
     )
     return result
 
@@ -1471,7 +1563,7 @@ def _ap_determine_and_run_test(self):
                 per_dv_context["dv_columns"] = [dv_column]
                 per_dv_context["current_dv"] = dv_column
                 QApplication.processEvents()
-                all_results[dv_column] = self._execute_single_analysis(per_dv_context, dv_column, output_dir, skip_plots=True)
+                all_results[dv_column] = self._execute_single_analysis(per_dv_context, dv_column, output_dir, skip_plots=True, skip_excel=True)
 
             combined_excel = ap_file_path
             export_result = ExportDispatcher.export_multi_dataset_results(all_results, combined_excel)
@@ -1575,6 +1667,7 @@ def _ap_configure_plot_from_result(self):
             plot_type=appearance.get("plot_type", "Bar"),
             dpi=appearance.get("dpi", 300),
             colors_override=plot_config["colors"],
+            test=context.get("inferred_test", ""),
         )
 
         files = []

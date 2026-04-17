@@ -1610,42 +1610,91 @@ class DecisionTreeVisualizer:
                 f_sig = (f_p is not None and f_p < alpha)
                 covariates = results.get("covariates_used", [])
                 is_multiple = len(covariates) > 0
+                xt = results.get("x_transform", "none") or "none"
+                yt = results.get("y_transform", "none") or "none"
+                has_transform = xt != "none" or yt != "none"
 
-                nodes_info = {
-                    'START':     {"label": "Start\nLinear Regression (OLS)", "pos": (0, 12)},
-                    'TYPE':      {"label": f"{'Multiple' if is_multiple else 'Simple'} Regression\n({'≥2 predictors' if is_multiple else '1 predictor'})", "pos": (0, 10.5)},
-                    'DIAG':      {"label": "Check Assumptions\n(Residual Diagnostics)", "pos": (0, 9)},
-                    'NORM_RES':  {"label": f"Shapiro-Wilk\nResiduals normal: {_yn(norm_resid_ok)}", "pos": (-4, 7.5)},
-                    'HOMOSC':    {"label": f"Breusch-Pagan\nHomoscedasticity: {_yn(homosced_ok)}", "pos": (0, 7.5)},
-                    'LINEAR':    {"label": f"Ramsey RESET\nLinearity: {_yn(linearity_ok)}", "pos": (4, 7.5)},
-                    'FIT':       {"label": f"Overall Model Fit\n{r2_label}  {f_p_label}", "pos": (0, 5.5)},
-                    'SIG_YES':   {"label": "Model Significant\nInterpret Coefficients", "pos": (-3, 4)},
-                    'SIG_NO':    {"label": "Model Not Significant\n(No reliable inference)", "pos": (3, 4)},
-                    'COEFF':     {"label": "Coefficient Table\n(β, SE, t, p, 95% CI)", "pos": (-3, 2.5)},
-                    'EFFECT':    {"label": "Effect Size\nR² (small≥.01 med≥.09 large≥.25)", "pos": (0, 1)},
-                    'AIC_BIC':   {"label": "Model Comparison\nAIC / BIC", "pos": (3, 2.5)},
-                }
-                edges = {
-                    ('START', 'TYPE'),
-                    ('TYPE', 'DIAG'),
-                    ('DIAG', 'NORM_RES'),
-                    ('DIAG', 'HOMOSC'),
-                    ('DIAG', 'LINEAR'),
-                    ('NORM_RES', 'FIT'),
-                    ('HOMOSC', 'FIT'),
-                    ('LINEAR', 'FIT'),
-                    ('FIT', 'SIG_YES'),
-                    ('FIT', 'SIG_NO'),
-                    ('SIG_YES', 'COEFF'),
-                    ('SIG_YES', 'AIC_BIC'),
-                    ('COEFF', 'EFFECT'),
-                    ('AIC_BIC', 'EFFECT'),
-                }
-                highlighted = {
-                    ('START', 'TYPE'), ('TYPE', 'DIAG'),
-                    ('DIAG', 'NORM_RES'), ('DIAG', 'HOMOSC'), ('DIAG', 'LINEAR'),
-                    ('NORM_RES', 'FIT'), ('HOMOSC', 'FIT'), ('LINEAR', 'FIT'),
-                }
+                if has_transform:
+                    _tr_parts = []
+                    if xt != "none":
+                        _tr_parts.append(f"X: {xt}")
+                    if yt != "none":
+                        _tr_parts.append(f"Y: {yt}")
+                    _tr_label = "Variable Transformation\n(" + ",  ".join(_tr_parts) + ")"
+
+                    nodes_info = {
+                        'START':     {"label": "Start\nLinear Regression (OLS)", "pos": (0, 12)},
+                        'TYPE':      {"label": f"{'Multiple' if is_multiple else 'Simple'} Regression\n({'≥2 predictors' if is_multiple else '1 predictor'})", "pos": (0, 10.5)},
+                        'TRANSFORM': {"label": _tr_label, "pos": (0, 9.25)},
+                        'DIAG':      {"label": "Check Assumptions\n(Residual Diagnostics)", "pos": (0, 8)},
+                        'NORM_RES':  {"label": f"Shapiro-Wilk\nResiduals normal: {_yn(norm_resid_ok)}", "pos": (-4, 6.5)},
+                        'HOMOSC':    {"label": f"Breusch-Pagan\nHomoscedasticity: {_yn(homosced_ok)}", "pos": (0, 6.5)},
+                        'LINEAR':    {"label": f"Ramsey RESET\nLinearity: {_yn(linearity_ok)}", "pos": (4, 6.5)},
+                        'FIT':       {"label": f"Overall Model Fit\n{r2_label}  {f_p_label}", "pos": (0, 5)},
+                        'SIG_YES':   {"label": "Model Significant\nInterpret Coefficients", "pos": (-3, 3.5)},
+                        'SIG_NO':    {"label": "Model Not Significant\n(No reliable inference)", "pos": (3, 3.5)},
+                        'COEFF':     {"label": "Coefficient Table\n(β, SE, t, p, 95% CI)", "pos": (-3, 2)},
+                        'EFFECT':    {"label": "Effect Size\nR² (small≥.01 med≥.09 large≥.25)", "pos": (0, 0.75)},
+                        'AIC_BIC':   {"label": "Model Comparison\nAIC / BIC", "pos": (3, 2)},
+                    }
+                    edges = {
+                        ('START', 'TYPE'),
+                        ('TYPE', 'TRANSFORM'),
+                        ('TRANSFORM', 'DIAG'),
+                        ('DIAG', 'NORM_RES'),
+                        ('DIAG', 'HOMOSC'),
+                        ('DIAG', 'LINEAR'),
+                        ('NORM_RES', 'FIT'),
+                        ('HOMOSC', 'FIT'),
+                        ('LINEAR', 'FIT'),
+                        ('FIT', 'SIG_YES'),
+                        ('FIT', 'SIG_NO'),
+                        ('SIG_YES', 'COEFF'),
+                        ('SIG_YES', 'AIC_BIC'),
+                        ('COEFF', 'EFFECT'),
+                        ('AIC_BIC', 'EFFECT'),
+                    }
+                    highlighted = {
+                        ('START', 'TYPE'), ('TYPE', 'TRANSFORM'), ('TRANSFORM', 'DIAG'),
+                        ('DIAG', 'NORM_RES'), ('DIAG', 'HOMOSC'), ('DIAG', 'LINEAR'),
+                        ('NORM_RES', 'FIT'), ('HOMOSC', 'FIT'), ('LINEAR', 'FIT'),
+                    }
+                else:
+                    nodes_info = {
+                        'START':     {"label": "Start\nLinear Regression (OLS)", "pos": (0, 12)},
+                        'TYPE':      {"label": f"{'Multiple' if is_multiple else 'Simple'} Regression\n({'≥2 predictors' if is_multiple else '1 predictor'})", "pos": (0, 10.5)},
+                        'DIAG':      {"label": "Check Assumptions\n(Residual Diagnostics)", "pos": (0, 9)},
+                        'NORM_RES':  {"label": f"Shapiro-Wilk\nResiduals normal: {_yn(norm_resid_ok)}", "pos": (-4, 7.5)},
+                        'HOMOSC':    {"label": f"Breusch-Pagan\nHomoscedasticity: {_yn(homosced_ok)}", "pos": (0, 7.5)},
+                        'LINEAR':    {"label": f"Ramsey RESET\nLinearity: {_yn(linearity_ok)}", "pos": (4, 7.5)},
+                        'FIT':       {"label": f"Overall Model Fit\n{r2_label}  {f_p_label}", "pos": (0, 5.5)},
+                        'SIG_YES':   {"label": "Model Significant\nInterpret Coefficients", "pos": (-3, 4)},
+                        'SIG_NO':    {"label": "Model Not Significant\n(No reliable inference)", "pos": (3, 4)},
+                        'COEFF':     {"label": "Coefficient Table\n(β, SE, t, p, 95% CI)", "pos": (-3, 2.5)},
+                        'EFFECT':    {"label": "Effect Size\nR² (small≥.01 med≥.09 large≥.25)", "pos": (0, 1)},
+                        'AIC_BIC':   {"label": "Model Comparison\nAIC / BIC", "pos": (3, 2.5)},
+                    }
+                    edges = {
+                        ('START', 'TYPE'),
+                        ('TYPE', 'DIAG'),
+                        ('DIAG', 'NORM_RES'),
+                        ('DIAG', 'HOMOSC'),
+                        ('DIAG', 'LINEAR'),
+                        ('NORM_RES', 'FIT'),
+                        ('HOMOSC', 'FIT'),
+                        ('LINEAR', 'FIT'),
+                        ('FIT', 'SIG_YES'),
+                        ('FIT', 'SIG_NO'),
+                        ('SIG_YES', 'COEFF'),
+                        ('SIG_YES', 'AIC_BIC'),
+                        ('COEFF', 'EFFECT'),
+                        ('AIC_BIC', 'EFFECT'),
+                    }
+                    highlighted = {
+                        ('START', 'TYPE'), ('TYPE', 'DIAG'),
+                        ('DIAG', 'NORM_RES'), ('DIAG', 'HOMOSC'), ('DIAG', 'LINEAR'),
+                        ('NORM_RES', 'FIT'), ('HOMOSC', 'FIT'), ('LINEAR', 'FIT'),
+                    }
                 if f_sig:
                     highlighted.add(('FIT', 'SIG_YES'))
                     highlighted.add(('SIG_YES', 'COEFF'))

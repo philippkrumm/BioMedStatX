@@ -27,13 +27,150 @@ body{margin:0;font-family:"Segoe UI","Helvetica Neue",Arial,sans-serif;line-heig
 <section id="sec-decision" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Decision Path</div><h2 id="hd-decision">How BioMedStatX reached this decision<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-decision">&#9432;</button></h2><div class="info-panel" id="info-decision" role="region" aria-labelledby="hd-decision"><div class="info-panel-inner">{{ context.info_texts.decision }}</div></div></div></div><div id="decision-path" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px">{% for step in context.decision_path %}<div class="decision-step{% if step.active %} is-active{% endif %}" data-step="{{ loop.index0 }}" style="display:flex;align-items:center;gap:6px;padding:.35rem .8rem;border-radius:999px;border:1px solid var(--line);background:var(--surface-2);font-size:.82rem"><span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:{% if step.active %}var(--accent){% else %}var(--line){% endif %}"></span><span>{{ step.title }}</span></div>{% endfor %}</div><div class="decision-tree-frame{% if context.decision_tree_json == 'null' %} is-empty{% endif %}">{% if context.decision_tree_json != "null" %}<div id="tree-toolbar"><button class="tree-ctrl" id="tree-zoom-in">＋</button><button class="tree-ctrl" id="tree-zoom-out">－</button><span class="tree-zoom-label" id="tree-zoom-pct">100%</span><button class="tree-ctrl" id="tree-reset">Reset</button><span style="flex:1"></span><button class="tree-ctrl" id="tree-replay" title="Replay path animation">&#9654; Replay</button><span class="small muted" style="margin-left:8px">Scroll to zoom · Drag to pan</span></div><div id="tree-viewport"><div id="tree-canvas"><div id="dyn-tree-host"></div></div><div id="tree-tooltip"></div></div>{% else %}<div class="empty-state">Decision tree was not available for this analysis.</div>{% endif %}</div></section>
 <section id="sec-results" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Statistical Engine</div><h2 id="hd-results">Main results<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-results">&#9432;</button></h2><div class="info-panel" id="info-results" role="region" aria-labelledby="hd-results"><div class="info-panel-inner">{{ context.info_texts.results }}</div></div></div></div><div class="table-shell"><table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>{% for row in context.statistical_rows %}<tr><td>{{ row.label }}</td><td class="num-cell">{{ row.value }}</td></tr>{% endfor %}</tbody></table></div></section>
 <section id="sec-assumptions" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Assumptions</div><h2 id="hd-assumptions">Model validity checks<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-assumptions">&#9432;</button></h2><div class="info-panel" id="info-assumptions" role="region" aria-labelledby="hd-assumptions"><div class="info-panel-inner">{{ context.info_texts.assumptions }}</div></div><p class="muted">{{ context.assumptions.interpretation }}</p>{% if context.assumptions.sphericity_correction_note %}<p class="muted" style="margin-top:.35rem;font-size:.88rem;color:var(--warning)">&#9888; {{ context.assumptions.sphericity_correction_note }}</p>{% endif %}</div><div class="badge is-info">Transformation: {{ context.assumptions.transformation }}</div></div>{% if context.assumptions.rows %}<div class="table-shell"><table><thead><tr><th>Check</th><th>Statistic</th><th>p-value</th><th>Status</th></tr></thead><tbody>{% for row in context.assumptions.rows %}<tr class="{{ row.status_class }}"><td>{{ row.name }}</td><td class="num-cell">{{ row.statistic }}</td><td class="num-cell" style="{{ row.p_value_style }}">{{ row.p_value }}</td><td>{{ row.status_label }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state">No structured assumption summary was available for this result.</div>{% endif %}<div class="assumption-visual-grid">{% if context.assumptions.qq_plot_html %}<div class="chart-card"><div class="section-kicker">Q-Q Diagnostic</div><h3>Observed quantiles against the normal reference line</h3>{{ context.assumptions.qq_plot_html | safe }}</div>{% endif %}{% if context.assumptions.distribution_plot_html %}<div class="chart-card"><div class="section-kicker">Group Distribution View</div><h3>Boxplots with jittered observations</h3>{{ context.assumptions.distribution_plot_html | safe }}</div>{% endif %}{% if context.assumptions.residual_plot_html %}<div class="chart-card"><div class="section-kicker">Residual Structure</div><h3>Residuals versus fitted values</h3>{{ context.assumptions.residual_plot_html | safe }}</div>{% endif %}{% if not context.assumptions.qq_plot_html and not context.assumptions.distribution_plot_html and not context.assumptions.residual_plot_html %}<div class="empty-state">Visual assumption diagnostics were not available for this result structure.</div>{% endif %}</div></section>
-<section id="sec-descriptive" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Descriptive Statistics</div><h2 id="hd-descriptive">Group-level summary<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-descriptive">&#9432;</button></h2><div class="info-panel" id="info-descriptive" role="region" aria-labelledby="hd-descriptive"><div class="info-panel-inner">{{ context.info_texts.descriptive }}</div></div></div></div>{% if context.descriptive.rows %}<div class="table-shell"><table><thead><tr><th>Group</th><th>n</th><th>Mean</th><th>Median</th><th>SD</th><th>SEM</th><th>Min</th><th>Max</th></tr></thead><tbody>{% for row in context.descriptive.rows %}<tr><td>{{ row.group }}</td><td class="num-cell">{{ row.n }}</td><td class="num-cell">{{ row.mean }}</td><td class="num-cell">{{ row.median }}</td><td class="num-cell">{{ row.sd }}</td><td class="num-cell">{{ row.sem }}</td><td class="num-cell">{{ row.min }}</td><td class="num-cell">{{ row.max }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state">No descriptive summary could be derived from the available result payload.</div>{% endif %}</section>
+<section id="sec-descriptive" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Descriptive Statistics</div><h2 id="hd-descriptive">{{ context.descriptive.title or "Group-level summary" }}<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-descriptive">&#9432;</button></h2><div class="info-panel" id="info-descriptive" role="region" aria-labelledby="hd-descriptive"><div class="info-panel-inner">{{ context.info_texts.descriptive }}</div></div></div></div>{% if context.descriptive.rows %}<div class="table-shell"><table><thead><tr><th>{{ context.descriptive.group_col_label or "Group" }}</th><th>n</th><th>Mean</th><th>Median</th><th>SD</th><th>SEM</th><th>Min</th><th>Max</th></tr></thead><tbody>{% for row in context.descriptive.rows %}<tr><td>{{ row.group }}</td><td class="num-cell">{{ row.n }}</td><td class="num-cell">{{ row.mean }}</td><td class="num-cell">{{ row.median }}</td><td class="num-cell">{{ row.sd }}</td><td class="num-cell">{{ row.sem }}</td><td class="num-cell">{{ row.min }}</td><td class="num-cell">{{ row.max }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state">No descriptive summary could be derived from the available result payload.</div>{% endif %}</section>
 {% if context.pairwise_rows %}<section id="sec-pairwise" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Pairwise Comparisons</div><h2 id="hd-pairwise">Post-hoc findings<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-pairwise">&#9432;</button></h2><div class="info-panel" id="info-pairwise" role="region" aria-labelledby="hd-pairwise"><div class="info-panel-inner">{{ context.info_texts.pairwise }}</div></div></div></div><div class="table-shell"><table><thead><tr>{% if context.group_chart_div_id %}<th title="Show bracket in chart">Chart</th>{% endif %}<th>Comparison</th><th>Procedure</th><th>Statistic</th><th>p-value</th><th>Effect size</th><th>Interpretation</th></tr></thead><tbody>{% for row in context.pairwise_rows %}<tr class="{{ row.row_class }}">{% if context.group_chart_div_id %}<td style="text-align:center"><input type="checkbox" class="bracket-toggle" data-pair-id="{{ row.pair_id }}" {% if row.significant and row.stars %}checked{% endif %} aria-label="Show bracket for {{ row.comparison }}"></td>{% endif %}<td>{{ row.comparison }}</td><td>{{ row.test }}</td><td class="num-cell">{{ row.statistic }}</td><td class="num-cell" style="{{ row.p_value_style }}">{{ row.p_value }}</td><td class="num-cell">{{ row.effect_size }}</td><td>{{ "Significant" if row.significant else "Not significant" }}</td></tr>{% endfor %}</tbody></table></div></section>{% endif %}
 <section id="sec-charts" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Interactive Charts</div><h2 id="hd-charts">Visual evidence<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-charts">&#9432;</button></h2><div class="info-panel" id="info-charts" role="region" aria-labelledby="hd-charts"><div class="info-panel-inner">{{ context.info_texts.charts }}</div></div></div></div>{% if context.chart_blocks %}{% for chart in context.chart_blocks %}<div class="chart-card"><div class="section-kicker">{{ chart.title }}</div><h3>{{ chart.subtitle }}</h3>{{ chart.html | safe }}</div>{% endfor %}{% else %}<div class="empty-state">No interactive chart could be created from the current result structure.</div>{% endif %}</section>
-<section id="sec-raw" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Raw Data Vault</div><h2 id="hd-raw">Searchable raw values<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-raw">&#9432;</button></h2><div class="info-panel" id="info-raw" role="region" aria-labelledby="hd-raw"><div class="info-panel-inner">{{ context.info_texts.raw }}</div></div></div></div><div class="toolbar"><input id="raw-search" type="search" placeholder="Filter raw data"><button type="button" onclick="copyTable('raw-data-table')">Copy table</button><button type="button" onclick="downloadTableCSV('raw-data-table','biomedstatx_raw_data.csv')">Download CSV</button></div>{% if context.raw_data_table.rows %}<div class="table-shell"><table id="raw-data-table"><thead><tr><th>Group</th><th>Index</th><th>Raw value</th>{% if context.raw_data_table.has_transformed %}<th>Transformed value</th>{% endif %}</tr></thead><tbody>{% for row in context.raw_data_table.rows %}<tr><td>{{ row.group }}</td><td>{{ row.index }}</td><td>{{ row.raw_value }}</td>{% if context.raw_data_table.has_transformed %}<td>{{ row.transformed_value }}</td>{% endif %}</tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state">No raw data were embedded in this result structure.</div>{% endif %}</section>
+<section id="sec-raw" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Raw Data Vault</div><h2 id="hd-raw">Searchable raw values<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-raw">&#9432;</button></h2><div class="info-panel" id="info-raw" role="region" aria-labelledby="hd-raw"><div class="info-panel-inner">{{ context.info_texts.raw }}</div></div></div></div><div class="toolbar"><input id="raw-search" type="search" placeholder="Filter raw data"><button type="button" onclick="copyTable('raw-data-table')">Copy table</button><button type="button" onclick="downloadTableCSV('raw-data-table','biomedstatx_raw_data.csv')">Download CSV</button></div>{% if context.raw_data_table.rows %}<div class="table-shell"><table id="raw-data-table"><thead><tr>{% if context.raw_data_table.column_mode %}<th>#</th>{% for col in context.raw_data_table.columns %}<th>{{ col }}</th>{% endfor %}{% else %}<th>Group</th><th>Index</th><th>Raw value</th>{% if context.raw_data_table.has_transformed %}<th>Transformed value</th>{% endif %}{% endif %}</tr></thead><tbody>{% for row in context.raw_data_table.rows %}<tr>{% if context.raw_data_table.column_mode %}<td>{{ row.index }}</td>{% for col in context.raw_data_table.columns %}<td>{{ row[col] }}</td>{% endfor %}{% else %}<td>{{ row.group }}</td><td>{{ row.index }}</td><td>{{ row.raw_value }}</td>{% if context.raw_data_table.has_transformed %}<td>{{ row.transformed_value }}</td>{% endif %}{% endif %}</tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state">No raw data were embedded in this result structure.</div>{% endif %}</section>
 <section id="sec-methods" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Methods Snippet</div><h2 id="hd-methods">Reusable narrative text<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-methods">&#9432;</button></h2><div class="info-panel" id="info-methods" role="region" aria-labelledby="hd-methods"><div class="info-panel-inner">{{ context.info_texts.methods }}</div></div></div></div><div class="toolbar"><button type="button" onclick="copyText('methods-text')">Copy methods text</button></div><div id="methods-text" class="methods">{{ context.methods_text }}</div></section>
 {% else %}
-<section class="section is-visible"><div class="section-head"><div><div class="section-kicker">Dataset Overview</div><h2>Summary across exported analyses</h2></div></div><div class="dataset-grid">{% for card in context.dataset_cards %}<article class="dataset-card"><div class="section-kicker">{{ card.dataset_name }}</div><h3>{{ card.test_name }}</h3><p class="small muted">{{ card.summary_note }}</p><div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0 14px;"><span class="badge {{ card.significance_class }}">{{ card.significance_label }}</span><span class="badge is-neutral">{{ card.p_value_display }}</span></div><p class="small">Transformation: {{ card.transformation }}</p><p class="small">Pairwise comparisons: {{ card.pairwise_count }}</p>{% if card.assumptions.rows %}<div class="table-shell" style="margin-top:14px;"><table><thead><tr><th>Check</th><th>p-value</th><th>Status</th></tr></thead><tbody>{% for row in card.assumptions.rows[:4] %}<tr class="{{ row.status_class }}"><td>{{ row.name }}</td><td>{{ row.p_value }}</td><td>{{ row.status_label }}</td></tr>{% endfor %}</tbody></table></div>{% endif %}</article>{% endfor %}</div></section>
+<style>
+.multi-accordion{display:flex;flex-direction:column;gap:14px;margin-top:4px}
+.acc-card{border:1px solid var(--line);border-radius:20px;background:var(--surface);box-shadow:var(--shadow);overflow:hidden;transition:box-shadow .2s}
+.acc-card:hover{box-shadow:0 22px 48px rgba(22,49,58,.12)}
+.acc-header{display:grid;grid-template-columns:1fr auto;align-items:center;gap:16px;padding:18px 20px;cursor:pointer;user-select:none}
+.acc-header:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.acc-left{display:flex;flex-direction:column;gap:6px;min-width:0}
+.acc-name{font-size:.78rem;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
+.acc-test{font-size:1.05rem;font-family:Georgia,"Times New Roman",serif;font-weight:600;color:var(--ink);margin:0}
+.acc-badges{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.acc-right{display:flex;align-items:center;gap:12px;flex-shrink:0}
+.acc-pval{font-family:"Cascadia Mono",Consolas,monospace;font-size:.95rem;color:var(--ink);white-space:nowrap}
+.acc-chevron{width:28px;height:28px;border-radius:50%;border:1px solid var(--line);background:var(--surface-2);display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:transform .28s ease,background .18s}
+.acc-chevron svg{width:14px;height:14px;stroke:var(--muted);fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;transition:stroke .18s}
+.acc-card.is-open .acc-chevron{transform:rotate(180deg);background:var(--accent)}
+.acc-card.is-open .acc-chevron svg{stroke:#fff}
+.acc-body{display:none;border-top:1px solid var(--line);padding:20px}
+.acc-card.is-open .acc-body{display:block}
+.acc-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+@media(max-width:820px){.acc-grid{grid-template-columns:1fr}}
+.acc-section-label{font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin-bottom:6px}
+.acc-stat-table{width:100%;border-collapse:collapse;font-size:.9rem}
+.acc-stat-table td{padding:5px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+.acc-stat-table td:first-child{color:var(--muted);white-space:nowrap;padding-right:16px}
+.acc-stat-table td:last-child{font-family:"Cascadia Mono",Consolas,monospace;font-variant-numeric:tabular-nums}
+.acc-path{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:4px}
+.acc-path-step{display:flex;align-items:center;gap:5px;padding:.28rem .65rem;border-radius:999px;border:1px solid var(--line);background:var(--surface-2);font-size:.78rem;color:var(--muted)}
+.acc-path-step.is-active{border-color:var(--accent);color:var(--accent);background:rgba(15,118,110,.07)}
+.acc-path-step .dot{width:7px;height:7px;border-radius:50%;background:currentColor;flex-shrink:0}
+.acc-methods{font-family:"Cascadia Mono",Consolas,monospace;font-size:.8rem;white-space:pre-wrap;line-height:1.55;padding:10px 12px;background:rgba(22,49,58,.03);border:1px solid var(--line);border-radius:10px;color:var(--ink);max-height:180px;overflow-y:auto}
+.acc-assumption-row.is-danger td:last-child{color:var(--danger)}
+.acc-assumption-row.is-success td:last-child{color:var(--success)}
+.multi-summary-bar{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:6px}
+.multi-summary-pill{padding:.3rem .75rem;border-radius:999px;font-size:.82rem;font-weight:600;border:1px solid var(--line)}
+.pill-sig{background:rgba(31,122,90,.1);color:var(--success);border-color:rgba(31,122,90,.25)}
+.pill-ns{background:rgba(22,49,58,.06);color:var(--muted)}
+</style>
+<section class="section is-visible">
+  <div class="section-head" style="margin-bottom:20px">
+    <div>
+      <div class="section-kicker">Dataset Overview</div>
+      <h2>{{ context.subtitle }}</h2>
+    </div>
+    <div class="multi-summary-bar">
+      {% set sig_count = context.dataset_cards | selectattr("significance_class","eq","is-significant") | list | length %}
+      <span class="multi-summary-pill pill-sig">{{ sig_count }} significant</span>
+      <span class="multi-summary-pill pill-ns">{{ context.dataset_cards | length - sig_count }} n.s.</span>
+    </div>
+  </div>
+
+  <div class="multi-accordion">
+  {% for card in context.dataset_cards %}
+  <div class="acc-card" id="{{ card.card_id }}">
+
+    {# ── Summary header (always visible) ──────────────────────── #}
+    <div class="acc-header" role="button" tabindex="0" aria-expanded="false" aria-controls="body-{{ card.card_id }}" onclick="toggleAcc('{{ card.card_id }}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleAcc('{{ card.card_id }}')}">
+      <div class="acc-left">
+        <span class="acc-name">{{ card.dataset_name }}</span>
+        <div class="acc-badges">
+          <span class="badge {{ card.significance_class }}" style="font-size:.8rem;padding:.25rem .65rem">{{ card.significance_label }}</span>
+          {% if card.effect_magnitude %}<span class="badge magnitude-{{ card.effect_magnitude }}" style="font-size:.78rem;padding:.2rem .55rem;text-transform:capitalize">{{ card.effect_magnitude }} effect</span>{% endif %}
+          {% if card.p_fdr_display %}<span class="badge is-info" style="font-size:.76rem;padding:.18rem .5rem">FDR {{ card.p_fdr_display }}</span>{% endif %}
+        </div>
+      </div>
+      <div class="acc-right">
+        <span class="acc-pval">p = {{ card.p_value_display }}</span>
+        <div class="acc-chevron" aria-hidden="true"><svg viewBox="0 0 16 16"><polyline points="3,5 8,11 13,5"/></svg></div>
+      </div>
+    </div>
+
+    {# ── Detail panel (collapsed by default) ─────────────────── #}
+    <div class="acc-body" id="body-{{ card.card_id }}" role="region">
+
+      {# Decision path chips #}
+      {% if card.decision_path %}
+      <div style="margin-bottom:16px">
+        <div class="acc-section-label">Analysis path</div>
+        <div class="acc-path">
+          {% for step in card.decision_path %}<div class="acc-path-step{% if step.active %} is-active{% endif %}"><span class="dot"></span><span>{{ step.title }}</span></div>{% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      <div class="acc-grid">
+
+        {# Left: Scatter plot — lazy-loaded on first accordion open #}
+        <div>
+          <div class="acc-section-label">Scatter plot</div>
+          {% if card.scatter_html %}
+          {# Store chart markup in <template>; injected into DOM only when panel is first opened #}
+          <template id="ctpl-{{ card.card_id }}">{{ card.scatter_html | safe }}</template>
+          <div class="plot-lazy chart-card" data-tpl="ctpl-{{ card.card_id }}" style="padding:8px;margin-bottom:0;min-height:280px;display:flex;align-items:center;justify-content:center">
+            <span style="color:var(--muted);font-size:.82rem">Loading chart…</span>
+          </div>
+          {% else %}
+          <div class="empty-state" style="font-size:.88rem">No scatter plot available for this result.</div>
+          {% endif %}
+        </div>
+
+        {# Right: Stats table + Assumptions #}
+        <div style="display:flex;flex-direction:column;gap:16px">
+          {% if card.stat_rows %}
+          <div>
+            <div class="acc-section-label">Statistical results</div>
+            <table class="acc-stat-table">
+              {% for row in card.stat_rows %}<tr><td>{{ row.label }}</td><td>{{ row.value }}</td></tr>{% endfor %}
+            </table>
+          </div>
+          {% endif %}
+
+          {% if card.assumptions.rows %}
+          <div>
+            <div class="acc-section-label">Assumption checks</div>
+            <table class="acc-stat-table">
+              {% for row in card.assumptions.rows %}<tr class="acc-assumption-row {{ row.status_class }}"><td>{{ row.name }}</td><td>{{ row.p_value }}</td><td>{{ row.status_label }}</td></tr>{% endfor %}
+            </table>
+          </div>
+          {% endif %}
+        </div>
+
+      </div>{# /acc-grid #}
+
+      {# Methods text #}
+      {% if card.methods_text %}
+      <div style="margin-top:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div class="acc-section-label">Methods snippet</div>
+          <button type="button" style="font:inherit;font-size:.78rem;padding:.25rem .6rem;border-radius:8px;border:1px solid var(--line);background:var(--surface-2);cursor:pointer" onclick="copyText('methods-{{ card.card_id }}')">Copy</button>
+        </div>
+        <div id="methods-{{ card.card_id }}" class="acc-methods">{{ card.methods_text }}</div>
+      </div>
+      {% endif %}
+
+    </div>{# /acc-body #}
+  </div>{# /acc-card #}
+  {% endfor %}
+  </div>{# /multi-accordion #}
+</section>
 {% endif %}
 <div class="footer-note">{% if context.generated_warning %}{{ context.generated_warning }}{% else %}Generated by BioMedStatX as a fully offline HTML scientific report.{% endif %}</div></div>{% if mode == "single" and context.decision_tree_image %}<div class="modal-backdrop" id="tree-modal" aria-hidden="true"><div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="tree-modal-title"><div class="modal-toolbar"><div><div class="section-kicker">Decision Tree</div><h3 id="tree-modal-title">Expanded analysis routing view</h3></div><button type="button" class="modal-close" id="close-tree-modal">Close</button></div><img src="{{ context.decision_tree_image }}" alt="Expanded decision tree visualization"></div></div>{% endif %}
 <script>
@@ -251,6 +388,30 @@ if(zo)zo.addEventListener('click',function(){zoomC(0.8);});
 if(rst)rst.addEventListener('click',function(){var vw2=viewport.clientWidth||800,vh2=viewport.clientHeight||500;var d=getDefaultView(vw2,vh2);sc=d.sc;tx=d.tx;ty=d.ty;applyT();});
 if(rpl)rpl.addEventListener('click',function(){playAnimation();});
 })();{% endif %}
+function toggleAcc(cardId){
+  const card=document.getElementById(cardId);
+  if(!card)return;
+  const isOpen=card.classList.toggle('is-open');
+  const header=card.querySelector('.acc-header');
+  if(header)header.setAttribute('aria-expanded',String(isOpen));
+  if(isOpen){
+    // Lazy-inject: move <template> content into DOM on first open
+    card.querySelectorAll('.plot-lazy[data-tpl]').forEach(function(placeholder){
+      const tplId=placeholder.getAttribute('data-tpl');
+      const tpl=document.getElementById(tplId);
+      if(!tpl)return;
+      const clone=document.importNode(tpl.content,true);
+      placeholder.replaceWith(clone);
+      tpl.remove();
+    });
+    // Relayout any already-initialised Plotly charts (e.g. second open)
+    setTimeout(function(){
+      card.querySelectorAll('.js-plotly-plot').forEach(function(el){
+        if(window.Plotly&&el._fullLayout)Plotly.relayout(el,{autosize:true});
+      });
+    },50);
+  }
+}
 function copyText(elementId){const node=document.getElementById(elementId);if(!node)return;const text=node.innerText||node.textContent||'';navigator.clipboard.writeText(text).catch(()=>{});}
 function tableToTSV(tableId){const table=document.getElementById(tableId);if(!table)return'';return Array.from(table.querySelectorAll('tr')).map((row)=>Array.from(row.querySelectorAll('th,td')).map((cell)=>(cell.innerText||'').replace(/\n/g,' ').trim()).join('\t')).join('\n');}
 function copyTable(tableId){const text=tableToTSV(tableId);if(text){navigator.clipboard.writeText(text).catch(()=>{});}}
