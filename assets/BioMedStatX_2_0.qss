@@ -775,3 +775,43 @@ QLabel#helpCopyFeedback {
     font-weight: 600;
     min-height: 18px;
 }
+
+/* --- SheetSelectionDialog --- */
+QTableWidget#sheetTable {
+    background: #ffffff;
+    font-family: "Cascadia Mono", "Consolas", monospace;
+    font-size: 12px;
+    gridline-color: #ecf3f9;
+    border: 1px solid #c4daea;
+    border-radius: 6px;
+}
+
+QTableWidget#sheetTable QHeaderView::section {
+    background: #e5f5f3;
+    color: #16313a;
+    border: none;
+    border-bottom: 1px solid #c4daea;
+    padding: 3px 6px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+QFrame#groupColorSwatch {
+    border-radius: 3px;
+    min-width: 12px;
+    min-height: 12px;
+    max-width: 12px;
+    max-height: 12px;
+}
+
+QToolButton#hintDismiss {
+    background: transparent;
+    border: none;
+    color: #6b7c84;
+    font-size: 14px;
+    padding: 0px 2px;
+}
+
+QToolButton#hintDismiss:hover {
+    color: #16313a;
+}

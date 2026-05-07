@@ -23,6 +23,7 @@ from PyQt5.QtWidgets import (
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -39,12 +40,14 @@ from statistical_analyzer_autopilot_ui import (
     MappingBucketWidget,
     PipelineTrackerWidget,
     ResultCockpitWidget,
+    SheetSelectionDialog,
     _detect_wide_format,
     _infer_column_kind,
     _looks_like_subject,
     _pivot_wide_to_long,
     _safe_file_slug,
     _sorted_unique,
+    extract_from_coordinates,
 )
 from statisticaltester import StatisticalTester
 from stats_functions import AnalysisManager
@@ -160,6 +163,40 @@ def _ap_init_ui(self):
     self.auto_sheet_combo.currentIndexChanged.connect(self.load_sheet)
     left_layout.addWidget(self.auto_sheet_combo)
     self.sheet_combo = self.auto_sheet_combo
+
+    self.range_select_btn = QPushButton("Select Data Ranges...")
+    self.range_select_btn.setObjectName("secondaryButton")
+    self.range_select_btn.setToolTip(
+        "Open the raw sheet viewer to select cell ranges and assign them to groups.\n"
+        "Single-factor only — for multi-factor designs use a pre-formatted long-format file."
+    )
+    self.range_select_btn.setVisible(False)
+    self.range_select_btn.clicked.connect(self._ap_open_range_selector)
+    left_layout.addWidget(self.range_select_btn)
+
+    hint_row = QHBoxLayout()
+    self._raw_data_hint_label = QLabel(
+        "Multiple measurement columns detected — "
+        "<a href='#'>Select Data Ranges</a> to define groups visually."
+    )
+    self._raw_data_hint_label.setObjectName("hintLabel")
+    self._raw_data_hint_label.setWordWrap(True)
+    self._raw_data_hint_label.linkActivated.connect(lambda _url: self._ap_open_range_selector())
+    self._raw_data_hint_label.setVisible(False)
+    _hint_dismiss = QToolButton()
+    _hint_dismiss.setText("×")
+    _hint_dismiss.setObjectName("hintDismiss")
+    _hint_dismiss.clicked.connect(self._ap_raw_data_hint_dismissed)
+    hint_row.addWidget(self._raw_data_hint_label, 1)
+    hint_row.addWidget(_hint_dismiss)
+    left_layout.addLayout(hint_row)
+    self._hint_dismissed = False
+
+    self._range_groups_label = QLabel("")
+    self._range_groups_label.setObjectName("hintLabel")
+    self._range_groups_label.setWordWrap(True)
+    self._range_groups_label.setVisible(False)
+    left_layout.addWidget(self._range_groups_label)
 
     preview_label = QLabel("Table Preview")
     preview_label.setObjectName("sectionLabel")
@@ -821,8 +858,8 @@ def _ap_on_mapping_changed(self):
 
 def _ap_browse_file(self):
     file_path, _ = QFileDialog.getOpenFileName(
-        self, "Open Excel or CSV file", "",
-        "Excel files (*.xlsx *.xls);;CSV files (*.csv);;All files (*.*)"
+        self, "Open Excel, CSV or HTML report", "",
+        "Excel files (*.xlsx *.xls);;CSV files (*.csv);;HTML reports (*.html);;All files (*.*)"
     )
     if file_path:
         self.file_path = file_path
@@ -833,7 +870,32 @@ def _ap_load_file(self):
     if not self.file_path:
         return
     try:
-        if self.file_path.endswith('.csv'):
+        path_lower = self.file_path.lower()
+
+        # HTML report reload: extract embedded tidy data
+        if path_lower.endswith(".html"):
+            import base64
+            import io
+            import re as _re
+            with open(self.file_path, "r", encoding="utf-8") as _fh:
+                html_src = _fh.read()
+            match = _re.search(
+                r'<script[^>]+id="biomedstatx-tidy-data"[^>]*>(.*?)</script>',
+                html_src, _re.DOTALL
+            )
+            if not match:
+                QMessageBox.warning(
+                    self, "No tidy data",
+                    "This HTML file does not contain embedded BioMedStatX tidy data."
+                )
+                return
+            csv_str = base64.b64decode(match.group(1).strip()).decode("utf-8")
+            self.df = pd.read_csv(io.StringIO(csv_str))
+            self.sheet_names = ["HTML"]
+            self.auto_sheet_combo.clear()
+            self.auto_sheet_combo.addItem("HTML")
+            self.auto_sheet_combo.setEnabled(False)
+        elif path_lower.endswith(".csv"):
             self.df = pd.read_csv(self.file_path)
             self.sheet_names = ["CSV"]
             self.auto_sheet_combo.clear()
@@ -854,14 +916,39 @@ def _ap_load_file(self):
         self.selected_columns = []
         self.combine_columns = False
         self.analysis_selected_groups = []
+        self._range_selection_metadata = None
+        self._hint_dismissed = False
         self._maybe_pivot()
-        self.numeric_columns = [column for column in self.df.columns if pd.api.types.is_numeric_dtype(self.df[column])]
+        self.numeric_columns = [
+            column for column in self.df.columns
+            if pd.api.types.is_numeric_dtype(self.df[column])
+        ]
+
+        # Show the range-selector button once a file is loaded
+        if hasattr(self, "range_select_btn"):
+            self.range_select_btn.setVisible(True)
+
+        # Show dismissible hint when ≥3 numeric cols and no obvious group column
+        if (
+            hasattr(self, "_raw_data_hint_label")
+            and not getattr(self, "_hint_dismissed", False)
+        ):
+            group_like = any(
+                str(col).lower() in ("group", "condition", "treatment", "category", "gruppe")
+                or self.df[col].nunique() <= 8
+                for col in self.df.select_dtypes(exclude="number").columns
+            )
+            show_hint = len(self.numeric_columns) >= 3 and not group_like
+            self._raw_data_hint_label.setVisible(show_hint)
+
         self._refresh_preview_table()
         self._rebuild_column_cards()
         self._apply_mapping_heuristics()
         self._set_workflow_state("map", "Dataset loaded")
         self.result_cockpit.clear()
-        self.decision_tree_panel.show_placeholder("Map the columns, then run the auto-pilot analysis.")
+        self.decision_tree_panel.show_placeholder(
+            "Map the columns, then run the auto-pilot analysis."
+        )
         self.current_analysis_context = None
         self.current_analysis_result = None
         self.current_multi_results = {}
@@ -1174,6 +1261,9 @@ def _ap_execute_single_analysis(self, context, dv_column, output_dir, skip_plots
     single_context["current_dv"] = dv_column
     if getattr(self, '_wide_format_info', None) is not None:
         single_context["injected_df"] = self.df
+    elif getattr(self, '_range_selection_metadata', None) is not None:
+        # Range-selector data: tidy df lives in self.df, not in the original file
+        single_context["injected_df"] = self.df
 
     result = AnalysisManager.analyze(
         file_path=self.file_path,
@@ -1197,6 +1287,36 @@ def _ap_execute_single_analysis(self, context, dv_column, output_dir, skip_plots
         subject_column=context.get("subject_column"),
         test=single_context.get("inferred_test", ""),
     )
+
+    # Inject provenance metadata into the HTML report if range selection was used
+    if (
+        not skip_excel
+        and getattr(self, "_range_selection_metadata", None) is not None
+        and self.df is not None
+    ):
+        html_path = file_base + ".html"
+        if os.path.isfile(html_path):
+            try:
+                import base64
+                import json
+                with open(html_path, "r", encoding="utf-8") as _fh:
+                    html_content = _fh.read()
+                meta_json = json.dumps(self._range_selection_metadata)
+                tidy_b64 = base64.b64encode(
+                    self.df.to_csv(index=False).encode()
+                ).decode()
+                inject = (
+                    f'\n<script id="biomedstatx-provenance" type="application/json">'
+                    f'{meta_json}</script>\n'
+                    f'<script id="biomedstatx-tidy-data" type="text/plain">'
+                    f'{tidy_b64}</script>\n'
+                )
+                html_content = html_content.replace("</body>", inject + "</body>")
+                with open(html_path, "w", encoding="utf-8") as _fh:
+                    _fh.write(html_content)
+            except Exception as _exc:
+                print(f"WARNING: Could not inject provenance into HTML: {_exc}")
+
     return result
 
 
@@ -1697,6 +1817,12 @@ def _ap_reset_application_state(self):
     self.analysis_selected_groups = []
     self.temp_plot_appearance_settings = None
     self._wide_format_info = None
+    self._range_selection_metadata = None
+    self._hint_dismissed = False
+    if hasattr(self, "_raw_data_hint_label"):
+        self._raw_data_hint_label.setVisible(False)
+    if hasattr(self, "_range_groups_label"):
+        self._range_groups_label.setVisible(False)
     self.result_cockpit.clear()
     self.decision_tree_panel.show_placeholder("Map the columns, then run the auto-pilot analysis.")
     self._set_workflow_state("map" if self.df is not None else "load", "Ready for the next analysis")
@@ -1732,6 +1858,100 @@ def _ap_open_exploratory_matrix_dialog(self):
     dlg.exec_()
 
 
+
+
+def _ap_raw_data_hint_dismissed(self):
+    self._hint_dismissed = True
+    if hasattr(self, "_raw_data_hint_label"):
+        self._raw_data_hint_label.setVisible(False)
+
+
+def _ap_open_range_selector(self):
+    if getattr(self, "current_analysis_result", None) is not None:
+        reply = QMessageBox.question(
+            self, "Redefine Data Selection",
+            "Redefining selection will clear existing results. Continue?",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        self._ap_reset_result_area()
+
+    path = getattr(self, "file_path", None)
+    if not path:
+        QMessageBox.warning(self, "No file", "Load a file first.")
+        return
+
+    if path.lower().endswith(".csv"):
+        df_raw = pd.read_csv(path, header=None, dtype=str)
+        available_sheets, initial_sheet = None, None
+    else:
+        xf = pd.ExcelFile(path)
+        available_sheets = xf.sheet_names
+        initial_sheet = (
+            self.auto_sheet_combo.currentText()
+            if self.auto_sheet_combo.isEnabled()
+            else (available_sheets[0] if available_sheets else None)
+        )
+        df_raw = pd.read_excel(path, sheet_name=initial_sheet, header=None, dtype=str)
+
+    dlg = SheetSelectionDialog(
+        df_raw,
+        initial_sheet=initial_sheet,
+        available_sheets=available_sheets,
+        source_path=path,
+        parent=self,
+    )
+    if dlg.exec_() != QDialog.Accepted:
+        return
+    selection_map, replicate_type, sheet_name = dlg.get_result()
+    if not selection_map:
+        return
+
+    if sheet_name and sheet_name != initial_sheet and not path.lower().endswith(".csv"):
+        df_raw = pd.read_excel(path, sheet_name=sheet_name, header=None, dtype=str)
+
+    result_df, nan_report = extract_from_coordinates(
+        df_raw, selection_map, replicate_type=replicate_type
+    )
+    # Drop metadata cols — prevent auto-mapping Source_Range as Factor 2
+    self.df = result_df.drop(columns=["Source_Range", "n_replicates"], errors="ignore")
+    self._range_selection_metadata = {
+        "source_file": path,
+        "sheet": sheet_name,
+        "selections": [
+            {"group": g, "ranges": r, "replicate_type": replicate_type}
+            for g, r in selection_map.items()
+        ],
+    }
+    total_nan = sum(nan_report.values())
+    if total_nan > 0:
+        self.statusBar().showMessage(
+            f"{total_nan} non-numeric value(s) dropped during import.", 8000
+        )
+    group_col = "Group"
+    group_counts = []
+    for g in selection_map:
+        n = int((self.df[group_col] == g).sum()) if group_col in self.df.columns else 0
+        group_counts.append(f"{g}: n={n}")
+    summary = "  |  ".join(group_counts)
+    if hasattr(self, "_range_groups_label"):
+        self._range_groups_label.setText(f"Imported groups — {summary}")
+        self._range_groups_label.setVisible(True)
+    self._wide_format_info = None
+    self._ap_reset_result_area()
+    self._rebuild_column_cards()
+    self._apply_mapping_heuristics()
+
+
+def _ap_reset_result_area(self):
+    self.current_analysis_context = None
+    self.current_analysis_result = None
+    self.current_multi_results = {}
+    self.result_cockpit.clear()
+    self.decision_tree_panel.show_placeholder(
+        "Map the columns, then run the auto-pilot analysis."
+    )
 
 
 def attach_autopilot_methods(app_cls):
@@ -1772,3 +1992,6 @@ def attach_autopilot_methods(app_cls):
     app_cls.reset_application_state = _ap_reset_application_state
     app_cls._maybe_pivot = _ap_maybe_pivot
     app_cls.open_exploratory_matrix_dialog = _ap_open_exploratory_matrix_dialog
+    app_cls._ap_open_range_selector = _ap_open_range_selector
+    app_cls._ap_raw_data_hint_dismissed = _ap_raw_data_hint_dismissed
+    app_cls._ap_reset_result_area = _ap_reset_result_area

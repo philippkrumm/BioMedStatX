@@ -22,17 +22,22 @@ from PyQt5.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFrame,
     QGraphicsDropShadowEffect,
     QGraphicsOpacityEffect,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
+    QMenu,
     QMessageBox,
     QPushButton,
     QRadioButton,
     QScrollArea,
     QSizePolicy,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QToolButton,
@@ -163,6 +168,75 @@ def _pivot_wide_to_long(df, subject_col, value_cols):
         var_name=var_name,
         value_name="Value",
     )
+
+
+def _to_display_coords(r, c):
+    col_letter = chr(ord("A") + c) if c < 26 else f"A{chr(ord('A') + c - 26)}"
+    return f"Row {r + 1}, Col {col_letter}"
+
+
+def _selected_indexes_to_ranges(indexes):
+    """
+    Convert QTableWidget.selectedIndexes() to a single bounding-box range dict.
+    Gaps within the bounding box are fine — blanks coerce to NaN and are dropped later.
+    For non-contiguous blocks call this per selection and accumulate into the group list.
+    """
+    if not indexes:
+        return []
+    rows = [idx.row() for idx in indexes]
+    cols = [idx.column() for idx in indexes]
+    return [{"rows": (min(rows), max(rows)), "cols": (min(cols), max(cols))}]
+
+
+def extract_from_coordinates(df_raw, selection_map, replicate_type="biological",
+                              value_col="Value", group_col="Group"):
+    """
+    df_raw: raw DataFrame loaded with header=None, dtype=str.
+            All row/col coordinates are 0-based iloc indices.
+    selection_map: {
+        "Group_A": [{"rows": (3, 10), "cols": (1, 3)}],
+        "Group_B": [{"rows": (3, 10), "cols": (5, 7)}],
+    }
+    replicate_type: "biological" → each cell = 1 N; "technical" → mean per block.
+    Returns (result_df, nan_report).
+    nan_report: {group_name: total NaN count across all its ranges}.
+    n_replicates column is float64 throughout (NaN for biological rows).
+    """
+    frames = []
+    nan_report = {}
+
+    for group_name, ranges in selection_map.items():
+        nan_report.setdefault(group_name, 0)
+        for rng in ranges:
+            r1, r2 = rng["rows"]
+            c1, c2 = rng["cols"]
+            block = df_raw.iloc[r1 : r2 + 1, c1 : c2 + 1]
+            vals_raw = block.values.flatten()
+            vals = pd.to_numeric(vals_raw, errors="coerce")
+            n_nan = int(np.isnan(vals).sum())
+            nan_report[group_name] += n_nan
+            range_label = f"r{r1}:{r2}|c{c1}:{c2}"
+            n_valid = int(np.sum(~np.isnan(vals)))
+
+            if replicate_type == "technical":
+                mean_val = float(np.nanmean(vals)) if n_valid > 0 else np.nan
+                frames.append(pd.DataFrame({
+                    group_col: [group_name],
+                    value_col: [mean_val],
+                    "Source_Range": [range_label],
+                    "n_replicates": [float(n_valid)],
+                }))
+            else:
+                n = len(vals)
+                frames.append(pd.DataFrame({
+                    group_col: [group_name] * n,
+                    value_col: vals,
+                    "Source_Range": [range_label] * n,
+                    "n_replicates": [np.nan] * n,
+                }))
+
+    result = pd.concat(frames, ignore_index=True)
+    return result.dropna(subset=[value_col]), nan_report
 
 
 def _sorted_unique(values):
@@ -1198,3 +1272,434 @@ class ResultCockpitWidget(QFrame):
                     card.setGraphicsEffect(None)
 
 
+_GROUP_COLORS = [
+    "#2563eb",
+    "#ea580c",
+    "#7c3aed",
+    "#16a34a",
+    "#dc2626",
+    "#ca8a04",
+    "#0891b2",
+    "#be185d",
+]
+
+
+class SheetSelectionDialog(QDialog):
+    def __init__(self, df_raw, initial_sheet=None, available_sheets=None,
+                 source_path=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Data Ranges")
+        self.resize(1050, 680)
+
+        self._df_raw = df_raw
+        self._current_sheet = initial_sheet
+        self._available_sheets = available_sheets
+        self._source_path = source_path
+        self._selection_map = {}   # {group_name: [{"rows": (r1,r2), "cols": (c1,c2)}]}
+        self._group_colors = {}    # {group_name: color_hex}
+        self._color_index = 0
+        self._replicate_type = "biological"
+        self._last_indexes = []    # cached table selection (survives focus loss on button click)
+
+        self._build_ui()
+        self._add_group_internal("Group_A")
+        self._add_group_internal("Group_B")
+        self._populate_table(df_raw)
+
+    # ------------------------------------------------------------------
+    # UI construction
+    # ------------------------------------------------------------------
+
+    def _build_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(16, 16, 16, 16)
+        main_layout.setSpacing(10)
+
+        hint = QLabel(
+            "Select cells in the sheet, then right-click (or use Assign) to assign them to "
+            "a group.  Single-factor only — for multi-factor designs use a pre-formatted "
+            "long-format file."
+        )
+        hint.setObjectName("hintLabel")
+        hint.setWordWrap(True)
+        main_layout.addWidget(hint)
+
+        if self._available_sheets and len(self._available_sheets) > 1:
+            sheet_row = QHBoxLayout()
+            sheet_row.addWidget(QLabel("Sheet:"))
+            self._sheet_combo = QComboBox()
+            self._sheet_combo.addItems(self._available_sheets)
+            if self._current_sheet and self._current_sheet in self._available_sheets:
+                self._sheet_combo.setCurrentText(self._current_sheet)
+            self._sheet_combo.currentTextChanged.connect(self._on_sheet_changed)
+            self._apply_combo_arrow_style(self._sheet_combo)
+            sheet_row.addWidget(self._sheet_combo, 1)
+            sheet_row.addStretch()
+            main_layout.addLayout(sheet_row)
+        else:
+            self._sheet_combo = None
+
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.setChildrenCollapsible(False)
+
+        # Left: raw table
+        self._table = QTableWidget()
+        self._table.setObjectName("sheetTable")
+        self._table.setSelectionMode(QTableWidget.ExtendedSelection)
+        self._table.setSelectionBehavior(QTableWidget.SelectItems)
+        self._table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._table.customContextMenuRequested.connect(self._on_context_menu)
+        self._table.itemSelectionChanged.connect(self._on_selection_changed)
+        splitter.addWidget(self._table)
+
+        # Right: group panel — #objectName selector styles only this widget, not children
+        right_panel = QWidget()
+        right_panel.setObjectName("rangeDialogPanel")
+        right_panel.setStyleSheet(
+            "#rangeDialogPanel { background: #ffffff; border: 1px solid #c4daea; border-radius: 8px; }"
+        )
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(12, 12, 12, 12)
+        right_layout.setSpacing(8)
+
+        groups_title = QLabel("Groups")
+        groups_title.setObjectName("columnCardTitle")
+        right_layout.addWidget(groups_title)
+
+        self._groups_container = QVBoxLayout()
+        self._groups_container.setSpacing(4)
+        right_layout.addLayout(self._groups_container)
+
+        add_group_btn = QPushButton("+ Add Group")
+        add_group_btn.setObjectName("secondaryButton")
+        add_group_btn.clicked.connect(self._on_add_group)
+        right_layout.addWidget(add_group_btn)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        right_layout.addWidget(sep)
+
+        rep_title = QLabel("Replicate type")
+        rep_title.setObjectName("columnCardTitle")
+        right_layout.addWidget(rep_title)
+
+        self._bio_radio = QRadioButton("Biological  (each cell = 1 N)")
+        self._bio_radio.setChecked(True)
+        self._bio_radio.toggled.connect(self._on_replicate_changed)
+        right_layout.addWidget(self._bio_radio)
+
+        self._tech_radio = QRadioButton("Technical  (mean per block)")
+        right_layout.addWidget(self._tech_radio)
+
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.HLine)
+        right_layout.addWidget(sep2)
+
+        self._status_label = QLabel("No cells selected")
+        self._status_label.setObjectName("columnCardMeta")
+        self._status_label.setWordWrap(True)
+        right_layout.addWidget(self._status_label)
+
+        assign_row = QHBoxLayout()
+        self._assign_btn = QPushButton("Assign to:")
+        self._assign_btn.setObjectName("secondaryButton")
+        self._assign_btn.clicked.connect(self._on_assign_clicked)
+        self._assign_combo = QComboBox()
+        self._apply_combo_arrow_style(self._assign_combo)
+        assign_row.addWidget(self._assign_btn)
+        assign_row.addWidget(self._assign_combo, 1)
+        right_layout.addLayout(assign_row)
+
+        right_layout.addStretch()
+
+        splitter.addWidget(right_panel)
+        splitter.setSizes([700, 330])
+        main_layout.addWidget(splitter, 1)
+
+        self._nan_warning = QLabel("")
+        self._nan_warning.setObjectName("hintLabel")
+        self._nan_warning.setVisible(False)
+        main_layout.addWidget(self._nan_warning)
+
+        self._preview_label = QLabel("")
+        self._preview_label.setObjectName("columnCardMeta")
+        main_layout.addWidget(self._preview_label)
+
+        btn_box = QDialogButtonBox(QDialogButtonBox.Cancel | QDialogButtonBox.Apply)
+        btn_box.button(QDialogButtonBox.Apply).setObjectName("primaryButton")
+        btn_box.button(QDialogButtonBox.Cancel).setObjectName("secondaryButton")
+        btn_box.button(QDialogButtonBox.Apply).clicked.connect(self._on_apply)
+        btn_box.rejected.connect(self.reject)
+        main_layout.addWidget(btn_box)
+
+    def _apply_combo_arrow_style(self, combo):
+        try:
+            base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            arrow = os.path.join(base, "assets", "icons", "chevron-down.svg").replace("\\", "/")
+            combo.setStyleSheet(
+                f"QComboBox::drop-down {{ border-left: 1px solid #c4daea; width: 22px; "
+                f"background: #eef8f6; border-top-right-radius: 7px; "
+                f"border-bottom-right-radius: 7px; }}"
+                f"QComboBox::down-arrow {{ image: url('{arrow}'); width: 10px; height: 6px; }}"
+            )
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # Table population
+    # ------------------------------------------------------------------
+
+    def _populate_table(self, df_raw):
+        self._df_raw = df_raw
+        self._table.blockSignals(True)
+        self._table.clear()
+        self._table.setRowCount(len(df_raw))
+        self._table.setColumnCount(len(df_raw.columns))
+
+        flat = pd.to_numeric(df_raw.values.flatten(), errors="coerce")
+        is_nonnumeric = np.isnan(flat).reshape(df_raw.shape)
+
+        muted = QColor("#6b7c84")
+        for r in range(len(df_raw)):
+            for c in range(len(df_raw.columns)):
+                raw_val = df_raw.iloc[r, c]
+                text = "" if pd.isna(raw_val) else str(raw_val)
+                item = QTableWidgetItem(text)
+                if is_nonnumeric[r, c] and text:
+                    item.setForeground(muted)
+                    font = item.font()
+                    font.setItalic(True)
+                    item.setFont(font)
+                self._table.setItem(r, c, item)
+
+        self._table.blockSignals(False)
+        self._table.resizeColumnsToContents()
+        for c in range(self._table.columnCount()):
+            if self._table.columnWidth(c) > 150:
+                self._table.setColumnWidth(c, 150)
+
+        self._recolor_table()
+
+    def _recolor_table(self):
+        transparent = QColor(0, 0, 0, 0)
+        for r in range(self._table.rowCount()):
+            for c in range(self._table.columnCount()):
+                item = self._table.item(r, c)
+                if item:
+                    item.setBackground(transparent)
+
+        for group_name, ranges in self._selection_map.items():
+            hex_color = self._group_colors.get(group_name, "#2563eb")
+            color = QColor(hex_color)
+            color.setAlpha(55)
+            for rng in ranges:
+                r1, r2 = rng["rows"]
+                c1, c2 = rng["cols"]
+                for r in range(r1, min(r2 + 1, self._table.rowCount())):
+                    for c in range(c1, min(c2 + 1, self._table.columnCount())):
+                        item = self._table.item(r, c)
+                        if item:
+                            item.setBackground(color)
+
+    # ------------------------------------------------------------------
+    # Group management
+    # ------------------------------------------------------------------
+
+    def _add_group_internal(self, name):
+        if name in self._group_colors:
+            return
+        color = _GROUP_COLORS[self._color_index % len(_GROUP_COLORS)]
+        self._color_index += 1
+        self._group_colors[name] = color
+        self._selection_map[name] = []
+        self._assign_combo.addItem(name)
+        self._rebuild_group_list()
+
+    def _rebuild_group_list(self):
+        while self._groups_container.count():
+            item = self._groups_container.takeAt(0)
+            w = item.widget()
+            if w:
+                w.setParent(None)  # immediate detach+hide; deleteLater alone is async
+                w.deleteLater()
+
+        for group_name in list(self._group_colors.keys()):
+            row_w = QWidget()
+            row_layout = QHBoxLayout(row_w)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(6)
+
+            swatch = QFrame()
+            swatch.setObjectName("groupColorSwatch")
+            swatch.setFixedSize(12, 12)
+            swatch.setStyleSheet(
+                f"background: {self._group_colors[group_name]}; border-radius: 3px;"
+            )
+            row_layout.addWidget(swatch)
+
+            name_lbl = QLabel(group_name)
+            name_lbl.setObjectName("columnCardMeta")
+            row_layout.addWidget(name_lbl, 1)
+
+            n_ranges = len(self._selection_map.get(group_name, []))
+            count_lbl = QLabel(f"({n_ranges})")
+            count_lbl.setObjectName("columnCardMeta")
+            row_layout.addWidget(count_lbl)
+
+            rm_btn = QToolButton()
+            rm_btn.setText("×")
+            rm_btn.setObjectName("hintDismiss")
+            rm_btn.clicked.connect(lambda _checked, g=group_name: self._on_remove_group(g))
+            row_layout.addWidget(rm_btn)
+
+            self._groups_container.addWidget(row_w)
+
+    def _on_add_group(self):
+        name, ok = QInputDialog.getText(self, "Add Group", "Group name:")
+        if ok and name.strip():
+            name = name.strip()
+            if name in self._group_colors:
+                QMessageBox.warning(self, "Duplicate", f"Group '{name}' already exists.")
+                return
+            self._add_group_internal(name)
+
+    def _on_remove_group(self, group_name):
+        del self._group_colors[group_name]
+        del self._selection_map[group_name]
+        idx = self._assign_combo.findText(group_name)
+        if idx >= 0:
+            self._assign_combo.removeItem(idx)
+        self._rebuild_group_list()
+        self._recolor_table()
+        self._update_preview()
+
+    # ------------------------------------------------------------------
+    # Selection + assignment
+    # ------------------------------------------------------------------
+
+    def _on_context_menu(self, pos):
+        indexes = self._table.selectedIndexes()
+        if not indexes:
+            return
+        menu = QMenu(self)
+        for group_name in self._group_colors:
+            action = menu.addAction(f"Assign to: {group_name}")
+            action.triggered.connect(
+                lambda _checked, g=group_name: self._assign_selection(g)
+            )
+        menu.addSeparator()
+        clear_act = menu.addAction("Clear assignment")
+        clear_act.triggered.connect(self._clear_selection_assignment)
+        menu.exec_(self._table.viewport().mapToGlobal(pos))
+
+    def _on_assign_clicked(self):
+        group_name = self._assign_combo.currentText()
+        if group_name:
+            self._assign_selection(group_name)
+
+    def _assign_selection(self, group_name):
+        indexes = self._last_indexes or self._table.selectedIndexes()
+        if not indexes:
+            return
+        new_ranges = _selected_indexes_to_ranges(indexes)
+        self._selection_map[group_name].extend(new_ranges)
+        self._rebuild_group_list()
+        self._recolor_table()
+        self._update_preview()
+
+    def _clear_selection_assignment(self):
+        indexes = self._last_indexes or self._table.selectedIndexes()
+        if not indexes:
+            return
+        sel_rows = {idx.row() for idx in indexes}
+        sel_cols = {idx.column() for idx in indexes}
+        for group_name in self._selection_map:
+            kept = []
+            for rng in self._selection_map[group_name]:
+                r1, r2 = rng["rows"]
+                c1, c2 = rng["cols"]
+                rng_rows = set(range(r1, r2 + 1))
+                rng_cols = set(range(c1, c2 + 1))
+                if not (rng_rows & sel_rows and rng_cols & sel_cols):
+                    kept.append(rng)
+            self._selection_map[group_name] = kept
+        self._rebuild_group_list()
+        self._recolor_table()
+        self._update_preview()
+
+    def _on_selection_changed(self):
+        indexes = self._table.selectedIndexes()
+        self._last_indexes = indexes   # cache so Assign button works after focus loss
+        if not indexes:
+            self._status_label.setText("No cells selected")
+            return
+        rows = [idx.row() for idx in indexes]
+        cols = [idx.column() for idx in indexes]
+        r1, r2 = min(rows), max(rows)
+        c1, c2 = min(cols), max(cols)
+        n = len(indexes)
+        self._status_label.setText(
+            f"{_to_display_coords(r1, c1)} – {_to_display_coords(r2, c2)}\n{n} cells"
+        )
+
+    # ------------------------------------------------------------------
+    # Sheet switching
+    # ------------------------------------------------------------------
+
+    def _on_sheet_changed(self, sheet_name):
+        has_assignments = any(len(v) > 0 for v in self._selection_map.values())
+        if has_assignments:
+            reply = QMessageBox.question(
+                self, "Switch Sheet",
+                "Switching sheets will clear current selections. Continue?",
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                if self._sheet_combo:
+                    self._sheet_combo.blockSignals(True)
+                    self._sheet_combo.setCurrentText(self._current_sheet or "")
+                    self._sheet_combo.blockSignals(False)
+                return
+        self._current_sheet = sheet_name
+        for g in self._selection_map:
+            self._selection_map[g] = []
+        if self._source_path:
+            df_raw = pd.read_excel(
+                self._source_path, sheet_name=sheet_name, header=None, dtype=str
+            )
+            self._populate_table(df_raw)
+        self._rebuild_group_list()
+        self._update_preview()
+
+    # ------------------------------------------------------------------
+    # Misc
+    # ------------------------------------------------------------------
+
+    def _on_replicate_changed(self, _checked):
+        self._replicate_type = "biological" if self._bio_radio.isChecked() else "technical"
+
+    def _update_preview(self):
+        parts = []
+        total = 0
+        for group_name, ranges in self._selection_map.items():
+            n = sum(
+                (r["rows"][1] - r["rows"][0] + 1) * (r["cols"][1] - r["cols"][0] + 1)
+                for r in ranges
+            )
+            total += n
+            parts.append(f"{group_name}: ~{n}")
+        if total:
+            self._preview_label.setText("→ ~" + str(total) + " cells | " + ", ".join(parts))
+        else:
+            self._preview_label.setText("")
+
+    def _on_apply(self):
+        if not any(len(v) > 0 for v in self._selection_map.values()):
+            QMessageBox.warning(
+                self, "No Selection", "Assign at least one group before applying."
+            )
+            return
+        self.accept()
+
+    def get_result(self):
+        return self._selection_map, self._replicate_type, self._current_sheet
