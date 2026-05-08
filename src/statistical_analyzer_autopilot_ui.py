@@ -363,6 +363,11 @@ class DraggableColumnCard(QFrame):
             self._drag_start_position = event.pos()
         super().mousePressEvent(event)
 
+    def set_assigned(self, assigned: bool):
+        self.setProperty("assigned", assigned)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
     def mouseMoveEvent(self, event):
         if not (event.buttons() & Qt.LeftButton):
             return
@@ -1187,10 +1192,13 @@ class ResultCockpitWidget(QFrame):
         layout.addWidget(self.context_grid_widget)
 
         buttons_row = QHBoxLayout()
-        self.configure_plot_button = QPushButton("Configure Plot...")
-        self.configure_plot_button.clicked.connect(self.configure_plot_requested.emit)
-        self.configure_plot_button.setEnabled(False)
-        buttons_row.addWidget(self.configure_plot_button)
+        # Configure Plot button disabled — plot config lives in HTML report (plot designer)
+        # self.configure_plot_button = QPushButton("Configure Plot...")
+        # self.configure_plot_button.clicked.connect(self.configure_plot_requested.emit)
+        # self.configure_plot_button.setEnabled(False)
+        # buttons_row.addWidget(self.configure_plot_button)
+        self.configure_plot_button = QPushButton()  # stub — keeps signal wiring intact
+        self.configure_plot_button.setVisible(False)
 
         self.open_output_button = QPushButton("Open Output Folder")
         self.open_output_button.clicked.connect(self.open_output_requested.emit)
@@ -1288,6 +1296,7 @@ class SheetSelectionDialog(QDialog):
     def __init__(self, df_raw, initial_sheet=None, available_sheets=None,
                  source_path=None, parent=None):
         super().__init__(parent)
+        self.setObjectName("rangeSelectionDialog")
         self.setWindowTitle("Select Data Ranges")
         self.resize(1050, 680)
 
@@ -1352,12 +1361,9 @@ class SheetSelectionDialog(QDialog):
         self._table.itemSelectionChanged.connect(self._on_selection_changed)
         splitter.addWidget(self._table)
 
-        # Right: group panel — #objectName selector styles only this widget, not children
+        # Right: group panel
         right_panel = QWidget()
         right_panel.setObjectName("rangeDialogPanel")
-        right_panel.setStyleSheet(
-            "#rangeDialogPanel { background: #ffffff; border: 1px solid #c4daea; border-radius: 8px; }"
-        )
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(12, 12, 12, 12)
         right_layout.setSpacing(8)
@@ -1435,12 +1441,13 @@ class SheetSelectionDialog(QDialog):
     def _apply_combo_arrow_style(self, combo):
         try:
             base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            arrow = os.path.join(base, "assets", "icons", "chevron-down.svg").replace("\\", "/")
+            arrow = os.path.join(base, "assets", "icons", "chevron-down.png").replace("\\", "/")
+            # Quotes around the path are required for paths containing spaces
             combo.setStyleSheet(
-                f"QComboBox::drop-down {{ border-left: 1px solid #c4daea; width: 22px; "
-                f"background: #eef8f6; border-top-right-radius: 7px; "
-                f"border-bottom-right-radius: 7px; }}"
-                f"QComboBox::down-arrow {{ image: url('{arrow}'); width: 10px; height: 6px; }}"
+                f'QComboBox::drop-down {{ border-left: 1px solid #c4daea; width: 22px; '
+                f'background: #eef8f6; border-top-right-radius: 7px; '
+                f'border-bottom-right-radius: 7px; }}'
+                f'QComboBox::down-arrow {{ image: url("{arrow}"); width: 10px; height: 6px; }}'
             )
         except Exception:
             pass

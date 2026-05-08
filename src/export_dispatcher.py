@@ -21,9 +21,10 @@ class ExportDispatcher:
         html_result = None
         warning = None
         try:
-            ResultsExporter.export_results_to_excel(
-                results, str(excel_path), analysis_log, pre_generated_tree=tree_path
-            )
+            # Excel export temporarily disabled — HTML-only mode
+            # ResultsExporter.export_results_to_excel(
+            #     results, str(excel_path), analysis_log, pre_generated_tree=tree_path
+            # )
 
             html_path = excel_path.with_suffix(".html")
             try:
@@ -55,7 +56,8 @@ class ExportDispatcher:
         workbook_path = Path(excel_path).resolve()
         workbook_path.parent.mkdir(parents=True, exist_ok=True)
 
-        ResultsExporter.export_multi_dataset_results(all_results, str(workbook_path))
+        # Excel export temporarily disabled — HTML-only mode
+        # ResultsExporter.export_multi_dataset_results(all_results, str(workbook_path))
 
         html_path = workbook_path.with_name(f"{workbook_path.stem}_report.html")
         warning = None

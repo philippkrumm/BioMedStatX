@@ -272,6 +272,15 @@ QFrame#columnCard:hover {
     background: #e5f5f3;
 }
 
+QFrame#columnCard[assigned="true"] {
+    background: #e8f4f2;
+    border: 1px dashed #7eb8ae;
+}
+
+QFrame#columnCard[assigned="true"] QLabel {
+    color: #8aabA4;
+}
+
 QLabel#columnCardTitle {
     color: #16313a;
     font-weight: 700;
@@ -695,7 +704,8 @@ QDialog#columnSelectionDialog,
 QDialog#pairwiseComparisonDialog,
 QDialog#twoWayAnovaDialog,
 QDialog#outlierDetectionDialog,
-QDialog#exploratoryMatrixDialog {
+QDialog#exploratoryMatrixDialog,
+QDialog#rangeSelectionDialog {
     background: #f0f4f8;
 }
 
@@ -814,4 +824,61 @@ QToolButton#hintDismiss {
 
 QToolButton#hintDismiss:hover {
     color: #16313a;
+}
+
+QPushButton#secondaryButton {
+    background: transparent;
+    border: 1px solid #c4daea;
+    border-radius: 8px;
+    padding: 7px 14px;
+    color: #0f766e;
+    font-weight: 600;
+    font-size: 13px;
+}
+
+QPushButton#secondaryButton:hover {
+    background: #e5f5f3;
+    border-color: #5bbdb5;
+}
+
+QPushButton#secondaryButton:pressed {
+    background: #d4efec;
+}
+
+QLabel#hintLabel {
+    color: #5a7c8a;
+    font-size: 12px;
+    background: #e8f4f8;
+    border: 1px solid #c4daea;
+    border-radius: 6px;
+    padding: 6px 10px;
+}
+
+QWidget#rangeDialogPanel {
+    background: #ffffff;
+    border: 1px solid #c4daea;
+    border-radius: 8px;
+}
+
+QDialog#rangeSelectionDialog QRadioButton {
+    color: #16313a;
+    spacing: 8px;
+    font-size: 13px;
+}
+
+QDialog#rangeSelectionDialog QRadioButton::indicator {
+    width: 14px;
+    height: 14px;
+    border: 2px solid #9eb8cb;
+    border-radius: 7px;
+    background: #ffffff;
+}
+
+QDialog#rangeSelectionDialog QRadioButton::indicator:checked {
+    border-color: #0f766e;
+    background: #0f766e;
+}
+
+QDialog#rangeSelectionDialog QRadioButton::indicator:hover {
+    border-color: #4db5ac;
 }

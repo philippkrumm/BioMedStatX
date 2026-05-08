@@ -136,7 +136,7 @@ def _ap_init_ui(self):
     self.auto_file_label = QLabel("No file selected")
     self.auto_file_label.setObjectName("filePathLabel")
     file_row.addWidget(self.auto_file_label, 1)
-    browse_button = QPushButton("Load Excel / CSV")
+    browse_button = QPushButton("Load Data File")
     browse_button.clicked.connect(self.browse_file)
     file_row.addWidget(browse_button)
     left_layout.addLayout(file_row)
@@ -174,22 +174,6 @@ def _ap_init_ui(self):
     self.range_select_btn.clicked.connect(self._ap_open_range_selector)
     left_layout.addWidget(self.range_select_btn)
 
-    hint_row = QHBoxLayout()
-    self._raw_data_hint_label = QLabel(
-        "Multiple measurement columns detected — "
-        "<a href='#'>Select Data Ranges</a> to define groups visually."
-    )
-    self._raw_data_hint_label.setObjectName("hintLabel")
-    self._raw_data_hint_label.setWordWrap(True)
-    self._raw_data_hint_label.linkActivated.connect(lambda _url: self._ap_open_range_selector())
-    self._raw_data_hint_label.setVisible(False)
-    _hint_dismiss = QToolButton()
-    _hint_dismiss.setText("×")
-    _hint_dismiss.setObjectName("hintDismiss")
-    _hint_dismiss.clicked.connect(self._ap_raw_data_hint_dismissed)
-    hint_row.addWidget(self._raw_data_hint_label, 1)
-    hint_row.addWidget(_hint_dismiss)
-    left_layout.addLayout(hint_row)
     self._hint_dismissed = False
 
     self._range_groups_label = QLabel("")
@@ -207,7 +191,7 @@ def _ap_init_ui(self):
     self.preview_table.setAlternatingRowColors(True)
     left_layout.addWidget(self.preview_table, 1)
 
-    cards_label = QLabel("Excel Headers")
+    cards_label = QLabel("Columns")
     cards_label.setObjectName("sectionLabel")
     left_layout.addWidget(cards_label)
     cards_scroll = QScrollArea()
@@ -470,6 +454,8 @@ def _ap_rebuild_column_cards(self):
         if widget is not None:
             widget.deleteLater()
 
+    self._column_cards = {}
+
     if self.df is None:
         self.header_cards_layout.addStretch()
         return
@@ -480,6 +466,7 @@ def _ap_rebuild_column_cards(self):
         preview_values = [str(value) for value in series.dropna().head(3).tolist()]
         preview_text = "Preview: " + (", ".join(preview_values) if preview_values else "No preview values")
         card = DraggableColumnCard(column_name, column_kind, preview_text)
+        self._column_cards[column_name] = card
         self.header_cards_layout.addWidget(card)
     self.header_cards_layout.addStretch()
 
@@ -737,6 +724,17 @@ def _ap_resolve_help_recipe_for_bucket(self, bucket_widget, fallback_recipe_id=N
 
 
 def _ap_on_mapping_changed(self):
+    # Sync column-card "assigned" highlight with current bucket state
+    if hasattr(self, '_column_cards') and self._column_cards:
+        assigned = set(
+            col
+            for bucket in (self.dv_bucket, self.factor1_bucket, self.factor2_bucket,
+                           self.subject_bucket, self.covariates_bucket)
+            for col in bucket.get_assigned_columns()
+        )
+        for col_name, card in self._column_cards.items():
+            card.set_assigned(col_name in assigned)
+
     # Hide the corr/regression widget on every mapping change;
     # it will be re-shown below if is_corr_family is detected.
     if hasattr(self, 'corr_transform_widget'):
@@ -790,6 +788,18 @@ def _ap_on_mapping_changed(self):
         self.mapping_feedback_label.setText(
             f"Wide format detected \u2192 pivoted to long format. "
             f"Conditions: {cond_labels}. Mapped as paired t-test design."
+        )
+        self.start_analysis_button.setEnabled(True)
+        return
+
+    range_meta = getattr(self, '_range_selection_metadata', None)
+    if range_meta:
+        selections = range_meta.get('selections', [])
+        group_labels = ', '.join(f'"{s["group"]}"' for s in selections)
+        n_groups = len(selections)
+        self.mapping_feedback_label.setText(
+            f"Range selection \u2192 {n_groups} group{'s' if n_groups != 1 else ''} "
+            f"({group_labels}). Ready to analyze."
         )
         self.start_analysis_button.setEnabled(True)
         return
@@ -927,19 +937,6 @@ def _ap_load_file(self):
         # Show the range-selector button once a file is loaded
         if hasattr(self, "range_select_btn"):
             self.range_select_btn.setVisible(True)
-
-        # Show dismissible hint when ≥3 numeric cols and no obvious group column
-        if (
-            hasattr(self, "_raw_data_hint_label")
-            and not getattr(self, "_hint_dismissed", False)
-        ):
-            group_like = any(
-                str(col).lower() in ("group", "condition", "treatment", "category", "gruppe")
-                or self.df[col].nunique() <= 8
-                for col in self.df.select_dtypes(exclude="number").columns
-            )
-            show_hint = len(self.numeric_columns) >= 3 and not group_like
-            self._raw_data_hint_label.setVisible(show_hint)
 
         self._refresh_preview_table()
         self._rebuild_column_cards()
@@ -1621,7 +1618,7 @@ def _ap_render_result_summary(self, context, results, output_dir, subtitle):
         "context_sample_overview": self._format_context_sample_overview(context, results),
         "context_analysis_scope": self._format_context_analysis_scope(context, results),
     }
-    self.result_cockpit.set_summary(summary, enable_plot=True, enable_output=bool(output_dir))
+    self.result_cockpit.set_summary(summary, enable_plot=False, enable_output=bool(output_dir))
     ConfettiOverlay(self)
     self.decision_tree_panel.update_results(results)
     self._set_workflow_state("results", "Results ready")
@@ -1646,18 +1643,18 @@ def _ap_determine_and_run_test(self):
 
     _ap_base_name = _safe_file_slug(os.path.splitext(os.path.basename(self.file_path))[0])
     if context["mode"] == "single":
-        _ap_suggested = f"{_ap_base_name}_{_safe_file_slug(context['dv_columns'][0])}.xlsx"
+        _ap_suggested = f"{_ap_base_name}_{_safe_file_slug(context['dv_columns'][0])}.html"
     else:
-        _ap_suggested = f"{_ap_base_name}_multi_dataset_results.xlsx"
+        _ap_suggested = f"{_ap_base_name}_multi_dataset_results.html"
 
     ap_file_path, _ = QFileDialog.getSaveFileName(
-        self, "Save Analysis Results", _ap_suggested,
-        "Excel Files (*.xlsx);;All Files (*)"
+        self, "Save Analysis Report", _ap_suggested,
+        "HTML Report (*.html);;All Files (*)"
     )
     if not ap_file_path:
         return
-    if not ap_file_path.lower().endswith('.xlsx'):
-        ap_file_path += '.xlsx'
+    if not ap_file_path.lower().endswith('.html'):
+        ap_file_path += '.html'
     output_dir = os.path.dirname(ap_file_path) or os.getcwd()
 
     self._set_workflow_state("analyze", "Running analysis", running=True)
@@ -1819,8 +1816,6 @@ def _ap_reset_application_state(self):
     self._wide_format_info = None
     self._range_selection_metadata = None
     self._hint_dismissed = False
-    if hasattr(self, "_raw_data_hint_label"):
-        self._raw_data_hint_label.setVisible(False)
     if hasattr(self, "_range_groups_label"):
         self._range_groups_label.setVisible(False)
     self.result_cockpit.clear()
@@ -1858,12 +1853,6 @@ def _ap_open_exploratory_matrix_dialog(self):
     dlg.exec_()
 
 
-
-
-def _ap_raw_data_hint_dismissed(self):
-    self._hint_dismissed = True
-    if hasattr(self, "_raw_data_hint_label"):
-        self._raw_data_hint_label.setVisible(False)
 
 
 def _ap_open_range_selector(self):
@@ -1940,8 +1929,11 @@ def _ap_open_range_selector(self):
         self._range_groups_label.setVisible(True)
     self._wide_format_info = None
     self._ap_reset_result_area()
+    self._refresh_preview_table()
     self._rebuild_column_cards()
     self._apply_mapping_heuristics()
+    self._set_workflow_state("map", "Range selection imported — assign columns and run the analysis.")
+    self.on_mapping_changed()
 
 
 def _ap_reset_result_area(self):
@@ -1993,5 +1985,4 @@ def attach_autopilot_methods(app_cls):
     app_cls._maybe_pivot = _ap_maybe_pivot
     app_cls.open_exploratory_matrix_dialog = _ap_open_exploratory_matrix_dialog
     app_cls._ap_open_range_selector = _ap_open_range_selector
-    app_cls._ap_raw_data_hint_dismissed = _ap_raw_data_hint_dismissed
     app_cls._ap_reset_result_area = _ap_reset_result_area
