@@ -463,8 +463,16 @@ def _ap_rebuild_column_cards(self):
     for column_name in self.df.columns:
         series = self.df[column_name]
         column_kind = _infer_column_kind(series)
-        preview_values = [str(value) for value in series.dropna().head(3).tolist()]
-        preview_text = "Preview: " + (", ".join(preview_values) if preview_values else "No preview values")
+        # For categorical/text columns: show unique distinct values instead of
+        # first 3 rows (which are often duplicates like "WT, WT, WT").
+        if column_kind != "numeric":
+            uniques = series.dropna().astype(str).unique().tolist()
+            preview_values = uniques[:5]
+            suffix = "" if len(uniques) <= 5 else f"  (+{len(uniques)-5} more)"
+            preview_text = "Levels: " + (", ".join(preview_values) if preview_values else "—") + suffix
+        else:
+            preview_values = [str(value) for value in series.dropna().head(3).tolist()]
+            preview_text = "Preview: " + (", ".join(preview_values) if preview_values else "No preview values")
         card = DraggableColumnCard(column_name, column_kind, preview_text)
         self._column_cards[column_name] = card
         self.header_cards_layout.addWidget(card)
@@ -1256,10 +1264,10 @@ def _ap_execute_single_analysis(self, context, dv_column, output_dir, skip_plots
     single_context = dict(context)
     single_context["dv_columns"] = [dv_column]
     single_context["current_dv"] = dv_column
-    if getattr(self, '_wide_format_info', None) is not None:
-        single_context["injected_df"] = self.df
-    elif getattr(self, '_range_selection_metadata', None) is not None:
-        # Range-selector data: tidy df lives in self.df, not in the original file
+    # Single source of truth: always inject the in-memory df. UI may have
+    # applied pivot, range-selection, or outlier removal — re-reading the
+    # file would silently diverge from what the user sees on screen.
+    if getattr(self, "df", None) is not None:
         single_context["injected_df"] = self.df
 
     result = AnalysisManager.analyze(
@@ -1755,6 +1763,9 @@ def _ap_configure_plot_from_result(self):
             context["dv_columns"] = [self.current_rendered_dataset]
             context["current_dv"] = self.current_rendered_dataset
         context["group_labels"] = plot_config["groups"]
+        # Single source of truth: re-inject current in-memory df (see _execute_single_analysis).
+        if getattr(self, "df", None) is not None and context.get("injected_df") is None:
+            context["injected_df"] = self.df
 
         file_base = os.path.join(
             output_dir,
@@ -1884,12 +1895,31 @@ def _ap_open_range_selector(self):
         )
         df_raw = pd.read_excel(path, sheet_name=initial_sheet, header=None, dtype=str)
 
+    # Restore previous range selection (if any) so reopening the dialog
+    # keeps prior group assignments instead of starting from scratch.
+    prior = getattr(self, "_range_selection_metadata", None) or {}
+    prior_selection_map = None
+    prior_replicate_type = None
+    if prior:
+        sels = prior.get("selections") or []
+        if sels:
+            prior_selection_map = {s["group"]: s.get("ranges", []) for s in sels}
+            prior_replicate_type = sels[0].get("replicate_type")
+        # If prior selection was made on a different sheet, reopen that sheet
+        prior_sheet = prior.get("sheet")
+        if prior_sheet and available_sheets and prior_sheet in available_sheets \
+                and prior_sheet != initial_sheet:
+            initial_sheet = prior_sheet
+            df_raw = pd.read_excel(path, sheet_name=initial_sheet, header=None, dtype=str)
+
     dlg = SheetSelectionDialog(
         df_raw,
         initial_sheet=initial_sheet,
         available_sheets=available_sheets,
         source_path=path,
         parent=self,
+        initial_selection_map=prior_selection_map,
+        initial_replicate_type=prior_replicate_type,
     )
     if dlg.exec_() != QDialog.Accepted:
         return
@@ -1946,43 +1976,66 @@ def _ap_reset_result_area(self):
     )
 
 
-def attach_autopilot_methods(app_cls):
-    app_cls.init_ui = _ap_init_ui
-    app_cls.browse_file = _ap_browse_file
-    app_cls.load_file = _ap_load_file
-    app_cls.load_sheet = _ap_load_sheet
-    app_cls._refresh_preview_table = _ap_refresh_preview_table
-    app_cls._rebuild_column_cards = _ap_rebuild_column_cards
-    app_cls._apply_mapping_heuristics = _ap_apply_mapping_heuristics
-    app_cls.update_mode_constraints = _ap_update_mode_constraints
-    app_cls.on_mapping_changed = _ap_on_mapping_changed
-    app_cls._set_workflow_state = _ap_set_workflow_state
-    app_cls._is_binary_outcome_for_help = _ap_is_binary_outcome_for_help
-    app_cls._is_continuous_factor1_for_help = _ap_is_continuous_factor1_for_help
-    app_cls._resolve_help_recipe_for_bucket = _ap_resolve_help_recipe_for_bucket
-    app_cls._ap_get_available_analysis_groups = _ap_get_available_analysis_groups
-    app_cls._ap_update_analysis_group_selection_ui = _ap_update_analysis_group_selection_ui
-    app_cls.open_analysis_group_selector = _ap_open_analysis_group_selector
-    app_cls._build_analysis_context = _ap_build_analysis_context
-    app_cls._detected_test_label = _ap_detected_test_label
-    app_cls._execute_single_analysis = _ap_execute_single_analysis
-    app_cls._format_assumptions = _ap_format_assumptions
-    app_cls._extract_normality_metric = _ap_extract_normality_metric
-    app_cls._extract_variance_metric = _ap_extract_variance_metric
-    app_cls._format_main_test_metric = _ap_format_main_test_metric
-    app_cls._format_effect_size_metric = _ap_format_effect_size_metric
-    app_cls._is_ttest_result = _ap_is_ttest_result
-    app_cls._format_rationale = _ap_format_rationale
-    app_cls._format_posthoc_status = _ap_format_posthoc_status
-    app_cls._format_context_design = _ap_format_context_design
-    app_cls._format_context_sample_overview = _ap_format_context_sample_overview
-    app_cls._format_context_analysis_scope = _ap_format_context_analysis_scope
-    app_cls._render_result_summary = _ap_render_result_summary
-    app_cls.determine_and_run_test = _ap_determine_and_run_test
-    app_cls.configure_plot_from_result = _ap_configure_plot_from_result
-    app_cls.open_current_output_folder = _ap_open_current_output_folder
-    app_cls.reset_application_state = _ap_reset_application_state
-    app_cls._maybe_pivot = _ap_maybe_pivot
-    app_cls.open_exploratory_matrix_dialog = _ap_open_exploratory_matrix_dialog
-    app_cls._ap_open_range_selector = _ap_open_range_selector
-    app_cls._ap_reset_result_area = _ap_reset_result_area
+class AutopilotMixin:
+    """Bundles the autopilot pipeline methods for ``StatisticalAnalyzerApp``.
+
+    Replaces the legacy ``attach_autopilot_methods`` runtime monkey-patch:
+    binding methods at class-definition time restores MRO discoverability,
+    static analysis (mypy/pyright), and ``super()`` chains. Module-level
+    ``_ap_*`` functions are assigned as class attributes — Python treats them
+    as unbound methods identically to the previous ``setattr`` path.
+    """
+
+    init_ui = _ap_init_ui
+    browse_file = _ap_browse_file
+    load_file = _ap_load_file
+    load_sheet = _ap_load_sheet
+    _refresh_preview_table = _ap_refresh_preview_table
+    _rebuild_column_cards = _ap_rebuild_column_cards
+    _apply_mapping_heuristics = _ap_apply_mapping_heuristics
+    update_mode_constraints = _ap_update_mode_constraints
+    on_mapping_changed = _ap_on_mapping_changed
+    _set_workflow_state = _ap_set_workflow_state
+    _is_binary_outcome_for_help = _ap_is_binary_outcome_for_help
+    _is_continuous_factor1_for_help = _ap_is_continuous_factor1_for_help
+    _resolve_help_recipe_for_bucket = _ap_resolve_help_recipe_for_bucket
+    _ap_get_available_analysis_groups = _ap_get_available_analysis_groups
+    _ap_update_analysis_group_selection_ui = _ap_update_analysis_group_selection_ui
+    open_analysis_group_selector = _ap_open_analysis_group_selector
+    _build_analysis_context = _ap_build_analysis_context
+    _detected_test_label = _ap_detected_test_label
+    _execute_single_analysis = _ap_execute_single_analysis
+    _format_assumptions = _ap_format_assumptions
+    _extract_normality_metric = _ap_extract_normality_metric
+    _extract_variance_metric = _ap_extract_variance_metric
+    _format_main_test_metric = _ap_format_main_test_metric
+    _format_effect_size_metric = _ap_format_effect_size_metric
+    _is_ttest_result = _ap_is_ttest_result
+    _format_rationale = _ap_format_rationale
+    _format_posthoc_status = _ap_format_posthoc_status
+    _format_context_design = _ap_format_context_design
+    _format_context_sample_overview = _ap_format_context_sample_overview
+    _format_context_analysis_scope = _ap_format_context_analysis_scope
+    _render_result_summary = _ap_render_result_summary
+    determine_and_run_test = _ap_determine_and_run_test
+    configure_plot_from_result = _ap_configure_plot_from_result
+    open_current_output_folder = _ap_open_current_output_folder
+    reset_application_state = _ap_reset_application_state
+    _maybe_pivot = _ap_maybe_pivot
+    open_exploratory_matrix_dialog = _ap_open_exploratory_matrix_dialog
+    _ap_open_range_selector = _ap_open_range_selector
+    _ap_reset_result_area = _ap_reset_result_area
+
+
+def attach_autopilot_methods(app_cls):  # pragma: no cover — legacy shim
+    """Deprecated. Use ``class App(AutopilotMixin, QMainWindow)`` instead."""
+    import warnings
+    warnings.warn(
+        "attach_autopilot_methods() is deprecated; inherit from AutopilotMixin.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    for name, attr in vars(AutopilotMixin).items():
+        if name.startswith("__"):
+            continue
+        setattr(app_cls, name, attr)

@@ -19,6 +19,10 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QFileDialog, QWidget, QV
 from PyQt5.QtGui import QColor, QIcon, QPixmap, QDrag, QDesktopServices
 from PyQt5.QtCore import Qt, QMimeData, QPoint, pyqtSignal, QObject, QPropertyAnimation, QEasingCurve, QSequentialAnimationGroup, QTimer, QUrl
 
+# Initialize central logging before anything else may emit messages.
+from logger_config import configure_logging
+configure_logging()
+
 # Initialize lazy loading system
 from lazy_imports import preload_critical_modules, get_matplotlib_pyplot as get_matplotlib
 preload_critical_modules()
@@ -79,7 +83,13 @@ from statistical_analyzer_dialogs import (
     OutlierDetectionDialog,
 )
 
-class StatisticalAnalyzerApp(QMainWindow):
+from statistical_analyzer_autopilot_pipeline import (
+    AutopilotMixin,
+    _load_auto_pilot_stylesheet,
+)
+
+
+class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
     """Main application for statistical analysis of data from Excel/CSV files."""
 
     def __init__(self):
@@ -668,13 +678,6 @@ class StatisticalAnalyzerApp(QMainWindow):
             )
 
 
-
-from statistical_analyzer_autopilot_pipeline import (
-    _load_auto_pilot_stylesheet,
-    attach_autopilot_methods,
-)
-
-attach_autopilot_methods(StatisticalAnalyzerApp)
 
 class _CrashSafeApp(QApplication):
     """QApplication subclass that catches exceptions in Qt event handlers."""

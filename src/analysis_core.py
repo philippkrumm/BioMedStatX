@@ -1422,8 +1422,8 @@ class AnalysisManager:
                 if 'sheet_name' in params:
                     log.append(f"Worksheet: {params['sheet_name']}")
 
-                _test_t = params.get('test_type', '') or _ctx.get('inferred_test', '') or results.get('test', '')
                 _ctx = params.get('analysis_context') or {}
+                _test_t = params.get('test_type', '') or _ctx.get('inferred_test', '') or results.get('test', '')
                 _continuous_tests = ('correlation', 'linear_regression', 'logistic_regression',
                                      'beta_regression', 'ancova', 'two_way_ancova', 'lmm')
                 _is_continuous = _test_t in _continuous_tests

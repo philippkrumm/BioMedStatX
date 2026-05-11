@@ -155,7 +155,8 @@ class ComparisonEngine:
             results["p_value"] = float(row_between[p_col])
             np2_col = "np2" if "np2" in row_between.index else "n2"
             results["effect_size"] = float(row_between[np2_col]) if np2_col in row_between.index else None
-            results["effect_size_type"] = "partial_eta_squared"
+            # For one-way ANOVA, partial η² == η² (single factor). Label accordingly.
+            results["effect_size_type"] = "eta_squared"
             results["confidence_interval"] = (None, None)
             results["power"] = None
             return results

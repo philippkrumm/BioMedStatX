@@ -29,41 +29,50 @@ from correlation_models import CorrelationModel, _apply_transform
 
 def test_apply_transform_none_returns_unchanged():
     vals = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
-    result = _apply_transform(vals, 'none')
+    result, lam, shift = _apply_transform(vals, 'none')
     np.testing.assert_array_equal(result, vals)
+    assert lam is None
+    assert shift == 0.0
 
 
 def test_apply_transform_log10():
     vals = np.array([1.0, 10.0, 100.0, 1000.0, 10000.0])
-    result = _apply_transform(vals, 'log10')
+    result, lam, shift = _apply_transform(vals, 'log10')
     np.testing.assert_allclose(result, [0.0, 1.0, 2.0, 3.0, 4.0])
+    assert lam is None
+    assert shift == 0.0
 
 
 def test_apply_transform_log10_handles_nonpositive():
     # Values <= 0 must be shifted so min becomes 1
     vals = np.array([-2.0, 0.0, 3.0, 10.0, 20.0])
-    result = _apply_transform(vals, 'log10')
+    result, _lam, shift = _apply_transform(vals, 'log10')
     assert np.all(np.isfinite(result))
+    assert shift > 0.0
 
 
 def test_apply_transform_sqrt():
     vals = np.array([0.0, 1.0, 4.0, 9.0, 16.0])
-    result = _apply_transform(vals, 'sqrt')
+    result, lam, shift = _apply_transform(vals, 'sqrt')
     np.testing.assert_allclose(result, [0.0, 1.0, 2.0, 3.0, 4.0])
+    assert lam is None
+    assert shift == 0.0
 
 
 def test_apply_transform_sqrt_handles_negative():
     vals = np.array([-4.0, 0.0, 4.0, 9.0, 16.0])
-    result = _apply_transform(vals, 'sqrt')
+    result, _lam, shift = _apply_transform(vals, 'sqrt')
     assert np.all(np.isfinite(result))
+    assert shift > 0.0
 
 
 def test_apply_transform_boxcox():
     rng = np.random.default_rng(42)
     vals = rng.lognormal(mean=0, sigma=0.5, size=50)  # strictly positive, right-skewed
-    result = _apply_transform(vals, 'boxcox')
+    result, lam, _shift = _apply_transform(vals, 'boxcox')
     assert result.shape == vals.shape
     assert np.all(np.isfinite(result))
+    assert lam is None or isinstance(lam, float)
 
 
 def test_apply_transform_unknown_raises():
@@ -104,7 +113,10 @@ def test_log10_transform_switches_to_pearson():
 
 
 def test_results_dict_has_transformation_key():
-    df = _make_lognormal_df()
+    # seed=7 → post-log10 normality holds → Pearson path → transform metadata kept.
+    # (Spearman path deliberately resets transformation to 'none' since
+    # Spearman is rank-invariant — see fit().)
+    df = _make_lognormal_df(n=80, seed=7)
     m = CorrelationModel()
     m.fit(df, 'x', 'y', method='auto', x_transform='log10', y_transform='log10')
     res = m.as_results_dict()

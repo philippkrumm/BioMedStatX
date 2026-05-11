@@ -28,24 +28,33 @@ Write, Delete have no lean-ctx equivalent — use them normally.
 
 # BioMedStatX Architecture (read before editing UI / analysis flow)
 
-## Entry point + monkey-patch
+## Entry point + AutopilotMixin
 
-`src/statistical_analyzer.py` is the runtime entry (`__main__`). It defines
-`StatisticalAnalyzerApp(QMainWindow)`, but **most of its methods are replaced at
-runtime** by `attach_autopilot_methods()` in
-`src/statistical_analyzer_autopilot_pipeline.py:1737`.
+`src/statistical_analyzer.py` is the runtime entry (`__main__`). The main
+class is declared as:
 
-The patch overrides ~36 methods on the class object before `StatisticalAnalyzerApp()`
-is instantiated. So `self.init_ui()`, `self.browse_file()`, `self.load_file()`,
-`self.load_sheet()`, `self.reset_application_state()`, `self.determine_and_run_test()`,
-`self.configure_plot_from_result()`, etc. resolve to the `_ap_*` functions in the
-autopilot pipeline file, **not** to anything defined in `statistical_analyzer.py`.
+```python
+class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
+```
+
+`AutopilotMixin` lives in `src/statistical_analyzer_autopilot_pipeline.py` and
+binds ~40 module-level `_ap_*` functions as class attributes. Methods like
+`init_ui`, `browse_file`, `load_file`, `load_sheet`,
+`reset_application_state`, `determine_and_run_test`,
+`configure_plot_from_result` resolve through the mixin to the corresponding
+`_ap_*` implementations.
+
+**Legacy note.** Earlier versions used a runtime `attach_autopilot_methods()`
+monkey-patch instead of a mixin. The shim still exists for backwards
+compatibility but is deprecated and emits a `DeprecationWarning`. New code
+should rely on the mixin.
 
 **Rule:** when looking for UI / mapping / analysis behavior, search
-`statistical_analyzer_autopilot_pipeline.py` first. The methods that remain in
-`statistical_analyzer.py` are: `__init__`, `create_menu`, the `show_*_help`
-dialogs, `show_analysis_success_dialog`, `closeEvent`, `run_outlier_detection`,
-`setup_updater`, `check_for_updates`. Everything else lives in the pipeline.
+`statistical_analyzer_autopilot_pipeline.py` first. The methods that live
+directly in `statistical_analyzer.py` are: `__init__`,
+`_position_debug_console`, `create_menu`, the `show_*_help` dialogs,
+`show_analysis_success_dialog`, `closeEvent`, `run_outlier_detection`,
+`setup_updater`, `check_for_updates`. Everything else comes from the mixin.
 
 ## Excel / CSV loading
 
@@ -58,11 +67,15 @@ User clicks "Browse..." → `_ap_browse_file` (pipeline:822) → `_ap_load_file`
 
 ## Analysis pipeline
 
-`_ap_determine_and_run_test` (pipeline:1516) builds context via
+`_ap_determine_and_run_test` builds context via
 `_ap_build_analysis_context` and calls `_ap_execute_single_analysis` →
-`AnalysisManager.analyze()` in `src/analysis_core.py`. `AnalysisManager` re-reads
-the file via `DataImporter.import_data()` in `src/stats_functions.py`. That is
-the only live caller of `DataImporter`.
+`AnalysisManager.analyze()` in `src/analysis_core.py`.
+
+**Single source of truth:** the autopilot pipeline always injects the
+in-memory DataFrame as `analysis_context["injected_df"] = self.df`, so
+`AnalysisManager` does not re-read the file from disk. `DataImporter` in
+`stats_functions.py` is dead code in the autopilot path (kept only as a
+CLI-style entry point).
 
 For advanced designs (RM ANOVA, Mixed ANOVA, Two-Way), control flows through
 `src/statistical_testing/advanced_pipeline.py` →
@@ -72,6 +85,8 @@ branch reaches `src/comparison_selection_dialog.py` via a UI dialog.
 ## Don't add legacy fallbacks
 
 The classic plot workflow, multi-dataset button, and old `init_ui` body have
-already been removed. Don't reintroduce them. If a method exists in
-`statistical_analyzer.py` AND in `attach_autopilot_methods`'s assignment list
-(pipeline:1737), the original is dead by definition — don't edit it.
+already been removed. Don't reintroduce them. Method bindings now live on
+`AutopilotMixin` — if you want to change UI / mapping / analysis behavior,
+edit the corresponding `_ap_*` function in
+`statistical_analyzer_autopilot_pipeline.py`, NOT a redeclaration in
+`statistical_analyzer.py`.

@@ -1,4 +1,4 @@
-import base64
+﻿import base64
 import copy
 import json
 import math
@@ -6,7 +6,6 @@ import os
 import random
 import re
 import sys
-import traceback
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +13,15 @@ import numpy as np
 import pandas as pd
 from jinja2 import Environment, FileSystemLoader, TemplateNotFound
 from scipy import stats
+
+try:
+    from logger_config import get_logger
+except ImportError:  # pragma: no cover — fallback when logger_config missing
+    import logging as _logging
+    def get_logger(name):
+        return _logging.getLogger(name)
+
+logger = get_logger(__name__)
 
 
 class _ResultsEncoder(json.JSONEncoder):
@@ -39,7 +47,7 @@ class HTMLExporter:
                 handle.write(html)
             return str(output_path)
         except Exception as exc:
-            print(f"WARNING HTML EXPORT: Failed to write single report to '{output_file}': {exc}")
+            logger.error("failed to write single report to %r: %s", output_file, exc, exc_info=True)
             return None
 
     @staticmethod
@@ -53,8 +61,7 @@ class HTMLExporter:
                 handle.write(html)
             return str(output_path)
         except Exception as exc:
-            print(f"WARNING HTML EXPORT: Failed to write multi report to '{output_file}': {exc}")
-            traceback.print_exc()
+            logger.error("failed to write multi report to %r: %s", output_file, exc, exc_info=True)
             return None
 
     @staticmethod
@@ -96,8 +103,8 @@ class HTMLExporter:
         try:
             if pd.isna(value):
                 return None
-        except Exception:
-            pass
+        except (TypeError, ValueError) as exc:
+            logger.debug("_normalize_for_json: pd.isna rejected %r (%s)", type(value).__name__, exc)
         return str(value)
 
     @staticmethod
@@ -107,6 +114,14 @@ class HTMLExporter:
         analysis_log_text = analysis_log if analysis_log is not None else results_copy.get("analysis_log", "")
         hero = HTMLExporter._build_hero_context(results_copy)
         metrics = HTMLExporter._build_statistical_rows(results_copy)
+        _es_type_top = str(results_copy.get("effect_size_type") or "")
+        _es_value_top = results_copy.get("effect_size")
+        _es_magnitude_top = HTMLExporter._effect_size_magnitude(_es_value_top, _es_type_top)
+        for _r in metrics:
+            if "info" not in _r:
+                _r["info"] = HTMLExporter._stat_row_info(_r.get("label", ""))
+            if _r.get("label") == "Effect size" and _es_magnitude_top:
+                _r["magnitude"] = _es_magnitude_top
         assumptions = HTMLExporter._build_assumption_summary(results_copy)
         descriptive = HTMLExporter._build_descriptive_summary(results_copy)
         pairwise = HTMLExporter._build_pairwise_rows(results_copy)
@@ -205,6 +220,14 @@ class HTMLExporter:
 
             # --- detail context (accordion panel) ---
             stat_rows = HTMLExporter._build_statistical_rows(r)
+            _es_type_top = str(r.get("effect_size_type") or "")
+            _es_value_top = r.get("effect_size")
+            _es_magnitude_top = HTMLExporter._effect_size_magnitude(_es_value_top, _es_type_top)
+            for _r in stat_rows:
+                if "info" not in _r:
+                    _r["info"] = HTMLExporter._stat_row_info(_r.get("label", ""))
+                if _r.get("label") == "Effect size" and _es_magnitude_top:
+                    _r["magnitude"] = _es_magnitude_top
             decision_path = HTMLExporter._build_decision_path_model(r)
             methods_text = HTMLExporter._build_methods_text(r, r.get("analysis_log", ""))
 
@@ -216,7 +239,7 @@ class HTMLExporter:
                 if chart and chart.get("html"):
                     scatter_html = chart["html"]
             except Exception:
-                pass
+                logger.error("correlation chart build failed for card %s", idx, exc_info=True)
 
             # FDR-adjusted p if available
             p_fdr = r.get("p_value_fdr")
@@ -719,6 +742,12 @@ class HTMLExporter:
         return rows
 
     @staticmethod
+    def _stat_row_info(label: str) -> str:
+        """Tooltip copy for a stat-row label. See :mod:`report_tooltips`."""
+        from report_tooltips import stat_row_info
+        return stat_row_info(label)
+
+    @staticmethod
     def _build_statistical_rows(results: dict) -> list[dict]:
         rows = []
         model_type = results.get("model_type", "")
@@ -819,8 +848,8 @@ class HTMLExporter:
                 try:
                     if isinstance(rte, pd.DataFrame):
                         rte_rows = rte.to_dict(orient="records")
-                except Exception:
-                    pass
+                except (ValueError, TypeError):
+                    logger.error("RTE DataFrame → dict conversion failed", exc_info=True)
                 if not rte_rows and isinstance(rte, dict) and "data" in rte:
                     cols = rte.get("columns", [])
                     rte_rows = [dict(zip(cols, row)) for row in (rte.get("data") or [])]
@@ -1301,8 +1330,11 @@ class HTMLExporter:
             "interpretation": HTMLExporter._build_assumption_interpretation(results, rows),
             "sphericity_correction_note": sphericity_correction_note,
             "qq_plot_html": HTMLExporter._build_assumption_visuals(results),
+            "qq_plot_transformed_html": HTMLExporter._build_assumption_visuals(results, source="transformed"),
             "distribution_plot_html": HTMLExporter._build_distribution_dashboard_chart(results),
+            "distribution_plot_transformed_html": HTMLExporter._build_distribution_dashboard_chart(results, source="transformed"),
             "residual_plot_html": HTMLExporter._build_residuals_vs_fitted_chart(results),
+            "transformation_label": str(results.get("transformation") or "").strip(),
         }
 
     @staticmethod
@@ -1489,6 +1521,10 @@ class HTMLExporter:
                 "**" if p_numeric is not None and p_numeric < 0.01 else
                 "*" if p_numeric is not None and p_numeric < 0.05 else ""
             )
+            es_type = comp.get("effect_size_type") or results.get("effect_size_type") or ""
+            magnitude = HTMLExporter._effect_size_magnitude(
+                comp.get("effect_size"), str(es_type)
+            )
             rows.append({
                 "pair_id": i,
                 "group1": str(comp.get("group1", "")),
@@ -1499,6 +1535,8 @@ class HTMLExporter:
                 "p_value": HTMLExporter._format_p_value(p_val),
                 "p_value_style": HTMLExporter._p_heat_style(p_val),
                 "effect_size": HTMLExporter._format_metric(comp.get("effect_size")),
+                "effect_size_type": str(es_type) if es_type else "",
+                "effect_magnitude": magnitude or "",
                 "significant": is_sig,
                 "stars": stars,
                 "p_value_raw": p_numeric,
@@ -1635,7 +1673,7 @@ class HTMLExporter:
                 "div_id": "biomedstatx-lmm-chart",
             }
         except Exception as exc:
-            print(f"WARNING HTML EXPORT: LMM chart generation failed: {exc}")
+            logger.warning("LMM chart generation failed: %s", exc, exc_info=True)
             return None
 
     @staticmethod
@@ -1729,7 +1767,7 @@ class HTMLExporter:
                 "div_id": "biomedstatx-trajectory-chart",
             }
         except Exception as exc:
-            print(f"WARNING HTML EXPORT: trajectory chart generation failed: {exc}")
+            logger.warning("trajectory chart generation failed: %s", exc, exc_info=True)
             return None
 
     @staticmethod
@@ -1868,7 +1906,7 @@ class HTMLExporter:
                 ),
             }
         except Exception as exc:
-            print(f"WARNING HTML EXPORT: interaction plot failed: {exc}")
+            logger.warning("interaction plot failed: %s", exc, exc_info=True)
             return None
 
     @staticmethod
@@ -1988,7 +2026,7 @@ class HTMLExporter:
                 ),
             }
         except Exception as exc:
-            print(f"WARNING HTML EXPORT: profile plot failed: {exc}")
+            logger.warning("profile plot failed: %s", exc, exc_info=True)
             return None
 
     @staticmethod
@@ -2100,7 +2138,7 @@ class HTMLExporter:
                 ),
             }
         except Exception as exc:
-            print(f"WARNING HTML EXPORT: mixed profile plot failed: {exc}")
+            logger.warning("mixed profile plot failed: %s", exc, exc_info=True)
             return None
 
     @staticmethod
@@ -2284,7 +2322,7 @@ class HTMLExporter:
                 return None
             return {"html": html, "group_order": group_order}
         except Exception as exc:
-            print(f"WARNING HTML EXPORT: group chart generation failed: {exc}")
+            logger.warning("group chart generation failed: %s", exc, exc_info=True)
             return None
 
     @staticmethod
@@ -2442,7 +2480,7 @@ class HTMLExporter:
                 "div_id": "biomedstatx-roc-chart",
             }
         except Exception as exc:
-            print(f"WARNING HTML EXPORT: ROC chart generation failed: {exc}")
+            logger.warning("ROC chart generation failed: %s", exc, exc_info=True)
             return None
 
     @staticmethod
@@ -2504,7 +2542,7 @@ class HTMLExporter:
                 "div_id": "biomedstatx-beta-chart",
             }
         except Exception as exc:
-            print(f"WARNING HTML EXPORT: Beta regression chart failed: {exc}")
+            logger.warning("Beta regression chart failed: %s", exc, exc_info=True)
             return None
 
     @staticmethod
@@ -2704,7 +2742,7 @@ class HTMLExporter:
             pc_mat = results.get("p_corrected_matrix") or {}
             charts.extend(_make_heatmap_pair(r_mat, pc_mat, ""))
         except Exception as exc:
-            print(f"WARNING HTML EXPORT: CorrelationMatrix overall heatmap failed: {exc}")
+            logger.warning("CorrelationMatrix overall heatmap failed: %s", exc, exc_info=True)
 
         # Stratified matrices
         strata = results.get("strata") or {}
@@ -2714,7 +2752,7 @@ class HTMLExporter:
                 pc_s = stratum_data.get("p_corrected_matrix") or {}
                 charts.extend(_make_heatmap_pair(r_s, pc_s, str(stratum_name)))
             except Exception as exc:
-                print(f"WARNING HTML EXPORT: CorrelationMatrix stratum '{stratum_name}' heatmap failed: {exc}")
+                logger.warning("CorrelationMatrix stratum %r heatmap failed: %s", stratum_name, exc, exc_info=True)
 
         return charts
 
@@ -2827,7 +2865,7 @@ class HTMLExporter:
                 "div_id": "biomedstatx-assoc-chart",
             }
         except Exception as exc:
-            print(f"WARNING HTML EXPORT: association chart generation failed: {exc}")
+            logger.warning("association chart generation failed: %s", exc, exc_info=True)
             return None
 
     @staticmethod
@@ -2896,7 +2934,7 @@ class HTMLExporter:
                 "div_id": "biomedstatx-ancova-chart",
             }
         except Exception as exc:
-            print(f"WARNING HTML EXPORT: ANCOVA chart generation failed: {exc}")
+            logger.warning("ANCOVA chart generation failed: %s", exc, exc_info=True)
             return None
 
     @staticmethod
@@ -3038,9 +3076,23 @@ class HTMLExporter:
             return None
 
     @staticmethod
-    def _build_assumption_visuals(results: dict) -> str | None:
+    def _build_assumption_visuals(results: dict, *, source: str = "raw") -> str | None:
+        """Build a Q-Q plot.
+
+        source='raw'         → residuals/raw data on the original scale
+        source='transformed' → values from results['raw_data_transformed']
+                               (group-combined). Returns None if no transform.
+        """
         values = None
-        if "model_residuals" in results:
+        if source == "transformed":
+            transformed = results.get("raw_data_transformed") or results.get("transformed_data") or {}
+            if not isinstance(transformed, dict) or not transformed:
+                return None
+            combined = []
+            for group_values in transformed.values():
+                combined.extend(HTMLExporter._coerce_numeric_sequence(group_values))
+            values = combined
+        elif "model_residuals" in results:
             values = HTMLExporter._coerce_numeric_sequence(results.get("model_residuals"))
         elif "residuals" in results:
             values = HTMLExporter._coerce_numeric_sequence(results.get("residuals"))
@@ -3090,14 +3142,18 @@ class HTMLExporter:
                 yaxis=dict(title=dict(text="Observed quantiles", font=dict(size=11), standoff=8)),
                 legend=dict(orientation="h", y=1.08, x=0),
             )
-            return HTMLExporter._figure_to_html(figure, div_id="biomedstatx-qq-chart")
+            div_id = "biomedstatx-qq-chart" if source == "raw" else "biomedstatx-qq-chart-transformed"
+            return HTMLExporter._figure_to_html(figure, div_id=div_id)
         except Exception as exc:
-            print(f"WARNING HTML EXPORT: QQ plot generation failed: {exc}")
+            logger.warning("QQ plot generation failed: %s", exc, exc_info=True)
             return None
 
     @staticmethod
-    def _build_distribution_dashboard_chart(results: dict) -> str | None:
-        raw_data = results.get("raw_data") or results.get("samples") or {}
+    def _build_distribution_dashboard_chart(results: dict, *, source: str = "raw") -> str | None:
+        if source == "transformed":
+            raw_data = results.get("raw_data_transformed") or results.get("transformed_data") or {}
+        else:
+            raw_data = results.get("raw_data") or results.get("samples") or {}
         if not isinstance(raw_data, dict) or not raw_data:
             return None
         try:
@@ -3140,7 +3196,7 @@ class HTMLExporter:
             figure.update_yaxes(title_text="Observed values", zeroline=False)
             return HTMLExporter._figure_to_html(figure)
         except Exception as exc:
-            print(f"WARNING HTML EXPORT: group distribution chart generation failed: {exc}")
+            logger.warning("group distribution chart generation failed: %s", exc, exc_info=True)
             return None
 
     @staticmethod
@@ -3176,7 +3232,7 @@ class HTMLExporter:
             )
             return HTMLExporter._figure_to_html(figure)
         except Exception as exc:
-            print(f"WARNING HTML EXPORT: residual-vs-fitted chart generation failed: {exc}")
+            logger.warning("residual-vs-fitted chart generation failed: %s", exc, exc_info=True)
             return None
 
     @staticmethod
@@ -3205,53 +3261,13 @@ class HTMLExporter:
 
     @staticmethod
     def _build_decision_path_model(results: dict) -> list[dict]:
-        test_info = results.get("test_info", {}) or {}
-        steps = [{
-            "title": "Data screening",
-            "detail": "BioMedStatX evaluated assumptions and available structure before selecting the analysis path.",
-            "active": True,
-        }]
-        pre = test_info.get("pre_transformation", {}) if isinstance(test_info, dict) else {}
-        if pre:
-            detail_parts = []
-            residuals = pre.get("residuals_normality", {})
-            variance = pre.get("variance", {})
-            if residuals.get("p_value") is not None:
-                detail_parts.append(f"Residual normality {HTMLExporter._format_p_value(residuals.get('p_value'))}")
-            if variance.get("p_value") is not None:
-                detail_parts.append(f"Variance homogeneity {HTMLExporter._format_p_value(variance.get('p_value'))}")
-            steps.append({
-                "title": "Assumption checks",
-                "detail": ", ".join(detail_parts) if detail_parts else "Assumption checks executed.",
-                "active": True,
-            })
-        transformation = results.get("transformation") or test_info.get("transformation")
-        steps.append({
-            "title": "Transformation",
-            "detail": f"Applied transformation: {transformation or 'None'}",
-            "active": bool(transformation and str(transformation).lower() != "none"),
-        })
-        steps.append({
-            "title": "Test selection",
-            "detail": str(results.get("final_test_label") or results.get("test") or "Selected statistical model"),
-            "active": True,
-        })
-        if results.get("posthoc_test") or results.get("pairwise_comparisons"):
-            steps.append({
-                "title": "Post-hoc layer",
-                "detail": str(results.get("posthoc_test") or f"{len(results.get('pairwise_comparisons') or [])} pairwise comparisons"),
-                "active": True,
-            })
-        steps.append({
-            "title": "Inference",
-            "detail": HTMLExporter._build_summary_note(
-                results,
-                str(results.get("final_test_label") or results.get("test") or "Analysis"),
-                results.get("p_value"),
-            ),
-            "active": True,
-        })
-        return steps
+        """Decision-path breadcrumb. See :mod:`report_methods`."""
+        from report_methods import build_decision_path_model
+        return build_decision_path_model(
+            results,
+            format_p_value=HTMLExporter._format_p_value,
+            build_summary_note=HTMLExporter._build_summary_note,
+        )
 
     @staticmethod
     def _build_decision_tree_json(results: dict) -> dict | None:
@@ -3259,7 +3275,7 @@ class HTMLExporter:
             from decisiontreevisualizer import DecisionTreeVisualizer
             return DecisionTreeVisualizer.get_tree_json(results)
         except Exception as exc:
-            print(f"WARNING HTML EXPORT: decision tree JSON failed: {exc}")
+            logger.warning("decision tree JSON failed: %s", exc, exc_info=True)
             return None
 
     @staticmethod
@@ -3271,7 +3287,7 @@ class HTMLExporter:
                     encoded = base64.b64encode(handle.read()).decode("ascii")
                 return f"data:image/png;base64,{encoded}"
             except Exception as exc:
-                print(f"WARNING HTML EXPORT: decision tree embedding (pre-generated) failed: {exc}")
+                logger.warning("decision tree embedding (pre-generated) failed: %s", exc, exc_info=True)
                 return None
 
         temp_path = None
@@ -3285,63 +3301,24 @@ class HTMLExporter:
                 encoded = base64.b64encode(handle.read()).decode("ascii")
             return f"data:image/png;base64,{encoded}"
         except Exception as exc:
-            print(f"WARNING HTML EXPORT: decision tree embedding failed: {exc}")
+            logger.warning("decision tree embedding failed: %s", exc, exc_info=True)
             return None
         finally:
             if temp_path and os.path.exists(temp_path):
                 try:
                     os.remove(temp_path)
-                except Exception:
-                    pass
+                except OSError as exc:
+                    logger.warning("decision tree temp cleanup failed for %s: %s", temp_path, exc)
 
     @staticmethod
     def _build_methods_text(results: dict, analysis_log: Any) -> str:
-        trace = results.get("methodology_trace")
-        if trace and hasattr(trace, "to_methods_paragraph"):
-            return trace.to_methods_paragraph()
-        if isinstance(analysis_log, list):
-            return "\n".join(str(line) for line in analysis_log)
-        if isinstance(analysis_log, str) and analysis_log.strip():
-            return analysis_log
-        lines = [
-            f"Test performed: {results.get('final_test_label') or results.get('test') or 'Not specified'}",
-            f"Alpha level: {HTMLExporter._format_metric(results.get('alpha'), digits=3)}",
-            f"Transformation: {results.get('transformation') or 'None'}",
-        ]
-        if results.get("posthoc_test"):
-            lines.append(f"Post-hoc procedure: {results.get('posthoc_test')}")
-        if results.get("effect_size_type"):
-            lines.append(f"Effect size metric: {results.get('effect_size_type')}")
-
-        # For Correlation: add benchmark reference and document any automatic shift.
-        if results.get("model_type") == "Correlation":
-            es_type = str(results.get("effect_size_type") or "").lower()
-            if any(k in es_type for k in ["rho", "pearson", "spearman", "correlation"]) or es_type.strip() in ("r", "ρ"):
-                lines.append(
-                    "Effect size interpretation (Cohen 1988 conventions for r): "
-                    "negligible\u202f<\u202f0.1,\u2002small\u202f\u2265\u202f0.1,"
-                    "\u2002medium\u202f\u2265\u202f0.3,\u2002large\u202f\u2265\u202f0.5 (|\u03c1| or |r|)."
-                )
-        # Reviewers need the shift constant c to reproduce transformed values (y = f(x + c)).
-        if results.get("model_type") == "Correlation":
-            x_shift = results.get("x_transform_shift") or 0.0
-            y_shift = results.get("y_transform_shift") or 0.0
-            x_tr = results.get("x_transform") or "none"
-            y_tr = results.get("y_transform") or "none"
-            for axis, tr_name, shift in [("X", x_tr, x_shift), ("Y", y_tr, y_shift)]:
-                if tr_name != "none" and shift != 0.0:
-                    # Reconstruct the minimum raw value that triggered the shift.
-                    # log10/boxcox: shift = -min_val + 1.0  → min_val = 1.0 - shift
-                    # sqrt:         shift = -min_val         → min_val = -shift
-                    min_raw = (1.0 - shift) if tr_name in ('log10', 'boxcox') else (-shift)
-                    lines.append(
-                        f"Note ({axis}-axis): a constant c={shift:.4f} was automatically added "
-                        f"to all {axis.lower()}-values prior to {tr_name} transformation to satisfy "
-                        f"the positivity requirement (minimum raw value was {min_raw:.4f}). "
-                        f"This constant was determined from the data, not set by the researcher."
-                    )
-
-        return "\n".join(lines)
+        """Methods-section paragraph. See :mod:`report_methods`."""
+        from report_methods import build_methods_text
+        return build_methods_text(
+            results,
+            analysis_log,
+            format_metric=HTMLExporter._format_metric,
+        )
 
     @staticmethod
     def _render_template(context: dict, mode: str) -> str:
@@ -3505,7 +3482,7 @@ class HTMLExporter:
                 )
                 return bootstrap + runtime + finalize, "loaded-katex"
             except Exception as exc:
-                print(f"WARNING HTML EXPORT: failed to load KaTeX runtime '{candidate_root}': {exc}")
+                logger.warning("failed to load KaTeX runtime %r: %s", candidate_root, exc, exc_info=True)
         return "", "missing-katex-runtime"
 
     @staticmethod
@@ -3577,7 +3554,7 @@ class HTMLExporter:
 
             return f"<script>{get_plotlyjs()}</script>"
         except Exception as exc:
-            print(f"WARNING HTML EXPORT: plotly bundle unavailable: {exc}")
+            logger.warning("plotly bundle unavailable: %s", exc, exc_info=True)
             return ""
 
     @staticmethod
@@ -3641,7 +3618,7 @@ class HTMLExporter:
                 )
                 return bootstrap + runtime_script + finalize, "loaded-mathjax"
             except Exception as exc:
-                print(f"WARNING HTML EXPORT: failed to load MathJax runtime '{candidate}': {exc}")
+                logger.warning("failed to load MathJax runtime %r: %s", candidate, exc, exc_info=True)
         return "", "missing-mathjax-runtime"
 
     @staticmethod
@@ -3659,7 +3636,7 @@ class HTMLExporter:
                 **kwargs,
             )
         except Exception as exc:
-            print(f"WARNING HTML EXPORT: figure HTML generation failed: {exc}")
+            logger.warning("figure HTML generation failed: %s", exc, exc_info=True)
             return None
 
     @staticmethod
@@ -3733,8 +3710,8 @@ class HTMLExporter:
     def _template() -> str:
         try:
             return HTMLExporter._read_template("report_single.html.j2")
-        except Exception:
-            pass
+        except (FileNotFoundError, OSError, TemplateNotFound) as exc:
+            logger.error("report_single.html.j2 unreadable, using inline fallback: %s", exc, exc_info=True)
         return r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{ context.report_title }}</title>
 <style>
@@ -4131,8 +4108,8 @@ const treeModal=document.getElementById('tree-modal');const openTreeButton=docum
                     width_candidate = float(raw_width)
                     if np.isfinite(width_candidate):
                         width = max(0.6, min(4.0, width_candidate))
-                except Exception:
-                    pass
+                except (TypeError, ValueError):
+                    logger.debug("line-overlay width=%r not numeric; keeping default", raw_width)
             else:
                 continue
 
@@ -4175,7 +4152,14 @@ const treeModal=document.getElementById('tree-modal');const openTreeButton=docum
         if math.isnan(numeric):
             return "N/A"
         stars = " ***" if numeric < 0.001 else " **" if numeric < 0.01 else " *" if numeric < 0.05 else " ns"
-        p_str = "p < 0.001" if numeric < 0.001 else f"p = {numeric:.3f}"
+        if numeric < 0.001:
+            # Show actual value alongside the conventional threshold marker
+            if numeric > 0:
+                p_str = f"p < 0.001 (p = {numeric:.2e})"
+            else:
+                p_str = "p < 0.001"
+        else:
+            p_str = f"p = {numeric:.3f}"
         return f"{p_str}{stars}"
 
     @staticmethod
@@ -4221,33 +4205,16 @@ const treeModal=document.getElementById('tree-modal');const openTreeButton=docum
         return ""
 
     @staticmethod
-    def _effect_size_magnitude(effect_size: Any, effect_type: str) -> str | None:
-        """Cohen (1988) magnitude labels for common effect size metrics."""
-        if not isinstance(effect_size, (int, float)) or math.isnan(float(effect_size)):
-            return None
-        es = abs(float(effect_size))
-        et = str(effect_type or "").lower()
-        if any(k in et for k in ["cohen", "hedge", " d", "'d"]):
-            if es >= 0.8: return "large"
-            if es >= 0.5: return "medium"
-            if es >= 0.2: return "small"
-            return "negligible"
-        if any(k in et for k in ["eta", "omega", "epsilon", "η", "ω"]):
-            if es >= 0.14: return "large"
-            if es >= 0.06: return "medium"
-            if es >= 0.01: return "small"
-            return "negligible"
-        if any(k in et for k in ["rho", "pearson", "spearman", "correlation"]) or et.strip() in ("r", "ρ"):
-            if es >= 0.5: return "large"
-            if es >= 0.3: return "medium"
-            if es >= 0.1: return "small"
-            return "negligible"
-        if "cramer" in et or et.strip() == "v":
-            if es >= 0.5: return "large"
-            if es >= 0.3: return "medium"
-            if es >= 0.1: return "small"
-            return "negligible"
-        return None
+    def _effect_size_magnitude(effect_size: Any, effect_type: str,
+                               *, df_star: int | None = None) -> str | None:
+        """Cohen-style magnitude label for an effect size.
+
+        Thin delegate to :func:`effect_sizes.classify` — see that module for
+        threshold sources (Cohen 1988, Koo & Li 2016, Hosmer-Lemeshow,
+        McFadden 1979) and the canonicalization rules.
+        """
+        from effect_sizes import classify
+        return classify(effect_size, effect_type, df_star=df_star)
 
     @staticmethod
     def _build_significance_brackets(figure, results: dict, group_order: list) -> None:
@@ -4296,7 +4263,7 @@ const treeModal=document.getElementById('tree-modal');const openTreeButton=docum
                 )
             figure.update_yaxes(range=[y_min - y_range * 0.05, y_max + step * (len(brackets) + 1.8)])
         except Exception as exc:
-            print(f"WARNING HTML EXPORT: significance brackets failed: {exc}")
+            logger.warning("significance brackets failed: %s", exc, exc_info=True)
 
     @staticmethod
     def _has_display_value(value: Any) -> bool:

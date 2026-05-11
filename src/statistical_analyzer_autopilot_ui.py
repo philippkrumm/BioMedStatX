@@ -3,6 +3,7 @@ import re
 import string
 import tempfile
 import time
+from collections import deque
 
 import numpy as np
 import pandas as pd
@@ -177,15 +178,69 @@ def _to_display_coords(r, c):
 
 def _selected_indexes_to_ranges(indexes):
     """
-    Convert QTableWidget.selectedIndexes() to a single bounding-box range dict.
-    Gaps within the bounding box are fine — blanks coerce to NaN and are dropped later.
-    For non-contiguous blocks call this per selection and accumulate into the group list.
+    Convert QTableWidget.selectedIndexes() to list of bounding-box range dicts,
+    one per connected component (4-connectivity BFS).
+
+    Single rectangular selection → 1 dict (same as legacy behavior).
+    Ctrl+Click separate blocks → N dicts (one per disconnected block).
+    Diagonal-only adjacency does NOT merge components — by design, since
+    typical plate-reader/biological layouts are row/column-organized.
+
+    Within each component, gaps inside the bounding box are tolerated:
+    blanks coerce to NaN downstream in extract_from_coordinates.
     """
     if not indexes:
         return []
-    rows = [idx.row() for idx in indexes]
-    cols = [idx.column() for idx in indexes]
-    return [{"rows": (min(rows), max(rows)), "cols": (min(cols), max(cols))}]
+    cells = {(idx.row(), idx.column()) for idx in indexes}
+    visited = set()
+    ranges = []
+    for start in sorted(cells):
+        if start in visited:
+            continue
+        queue = deque([start])
+        visited.add(start)
+        component = [start]
+        while queue:
+            r, c = queue.popleft()
+            for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                nbr = (r + dr, c + dc)
+                if nbr in cells and nbr not in visited:
+                    visited.add(nbr)
+                    queue.append(nbr)
+                    component.append(nbr)
+        rows = [r for r, _ in component]
+        cols = [c for _, c in component]
+        ranges.append({
+            "rows": (min(rows), max(rows)),
+            "cols": (min(cols), max(cols)),
+        })
+    return ranges
+
+
+def _cells_in_ranges(ranges):
+    """Return set of (row, col) tuples covered by all ranges."""
+    cells = set()
+    for rng in ranges:
+        r1, r2 = rng["rows"]
+        c1, c2 = rng["cols"]
+        for r in range(r1, r2 + 1):
+            for c in range(c1, c2 + 1):
+                cells.add((r, c))
+    return cells
+
+
+class _FakeIdx:
+    """Minimal QModelIndex surrogate for _selected_indexes_to_ranges()."""
+    __slots__ = ("_r", "_c")
+
+    def __init__(self, r, c):
+        self._r, self._c = r, c
+
+    def row(self):
+        return self._r
+
+    def column(self):
+        return self._c
 
 
 def extract_from_coordinates(df_raw, selection_map, replicate_type="biological",
@@ -1119,8 +1174,26 @@ class ResultCockpitWidget(QFrame):
         layout.addWidget(metrics_title)
 
         self.metric_cards = {
-            "metric_normality": ResultCardWidget("Normality"),
-            "metric_variance": ResultCardWidget("Variance Homogeneity"),
+            "metric_normality": ResultCardWidget(
+                "Normality",
+                info_text=(
+                    "Tests whether the residuals follow a normal distribution.\n\n"
+                    "Shapiro-Wilk for n < 50, D'Agostino for larger samples.\n"
+                    "p > 0.05 → normality assumed → parametric tests (t-test, ANOVA).\n"
+                    "p ≤ 0.05 → violation → switch to non-parametric (Mann-Whitney, "
+                    "Kruskal-Wallis) or apply a transformation (log, sqrt)."
+                ),
+            ),
+            "metric_variance": ResultCardWidget(
+                "Variance Homogeneity",
+                info_text=(
+                    "Tests whether groups have equal variance (homoscedasticity).\n\n"
+                    "Levene's test is robust to non-normality.\n"
+                    "p > 0.05 → equal variances → standard ANOVA / t-test.\n"
+                    "p ≤ 0.05 → unequal variances → Welch's correction or "
+                    "non-parametric test."
+                ),
+            ),
         }
         self.metric_grid_widget = QWidget()
         self.metric_grid = QGridLayout(self.metric_grid_widget)
@@ -1142,8 +1215,30 @@ class ResultCockpitWidget(QFrame):
         layout.addWidget(inference_title)
 
         self.inference_cards = {
-            "inference_main_test": ResultCardWidget("Main Test + p-value"),
-            "inference_effect_size": ResultCardWidget("Effect Size"),
+            "inference_main_test": ResultCardWidget(
+                "Main Test + p-value",
+                info_text=(
+                    "The primary statistical test selected based on the data design "
+                    "and assumption checks (Normality, Variance).\n\n"
+                    "The p-value indicates the probability of observing the data "
+                    "under the null hypothesis (no effect).\n"
+                    "p < 0.05 → statistically significant (conventional threshold).\n"
+                    "Smaller p → stronger evidence against the null.\n\n"
+                    "Effect direction and magnitude — see Effect Size card."
+                ),
+            ),
+            "inference_effect_size": ResultCardWidget(
+                "Effect Size",
+                info_text=(
+                    "Quantifies the magnitude of the effect — independent of sample "
+                    "size.\n\n"
+                    "Cohen's d (t-tests): 0.2 small, 0.5 medium, 0.8 large.\n"
+                    "η² / partial η² (ANOVA): 0.01 small, 0.06 medium, 0.14 large.\n"
+                    "r (correlation): 0.1 small, 0.3 medium, 0.5 large.\n\n"
+                    "Always report alongside p-value — a small p with a tiny effect "
+                    "size has limited practical relevance."
+                ),
+            ),
         }
         self.inference_grid_widget = QWidget()
         self.inference_grid = QGridLayout(self.inference_grid_widget)
@@ -1172,8 +1267,28 @@ class ResultCockpitWidget(QFrame):
                     "selected design family, mapped factors, and repeated-measures context."
                 ),
             ),
-            "context_sample_overview": ResultCardWidget("Sample Overview"),
-            "context_analysis_scope": ResultCardWidget("Analysis Scope"),
+            "context_sample_overview": ResultCardWidget(
+                "Sample Overview",
+                info_text=(
+                    "Number of observations per group after filtering and missing-data "
+                    "removal.\n\n"
+                    "Unbalanced designs (very different n per group) reduce statistical "
+                    "power and can violate assumptions.\n"
+                    "Very small groups (n < 5) make assumption checks unreliable — "
+                    "interpret results cautiously."
+                ),
+            ),
+            "context_analysis_scope": ResultCardWidget(
+                "Analysis Scope",
+                info_text=(
+                    "Summary of which subset of the data was actually included.\n\n"
+                    "Reflects filters applied (e.g. exclude time = 0), selected groups, "
+                    "and rows dropped due to missing values in the outcome or any "
+                    "mapped role.\n\n"
+                    "If sample size looks unexpectedly small, check filter settings "
+                    "and missing data here first."
+                ),
+            ),
         }
         self.context_grid_widget = QWidget()
         self.context_grid = QGridLayout(self.context_grid_widget)
@@ -1280,25 +1395,41 @@ class ResultCockpitWidget(QFrame):
                     card.setGraphicsEffect(None)
 
 
+# Categorical palette aligned with app teal-themed UI (#0f766e primary).
+# Selected for: (1) harmonized saturation/value to match calm professional look,
+# (2) perceptually distinct hues, (3) colorblind-considered (Okabe-Ito derived).
 _GROUP_COLORS = [
-    "#2563eb",
-    "#ea580c",
-    "#7c3aed",
-    "#16a34a",
-    "#dc2626",
-    "#ca8a04",
-    "#0891b2",
-    "#be185d",
+    "#0f766e",  # teal — app primary
+    "#d97706",  # amber — split-complement
+    "#0369a1",  # deep blue — analog (cool)
+    "#be123c",  # rose — warm accent
+    "#7e22ce",  # purple — secondary cool
+    "#65a30d",  # olive — earth tone
+    "#0891b2",  # cyan — teal-adjacent
+    "#475569",  # slate — neutral
 ]
 
 
 class SheetSelectionDialog(QDialog):
     def __init__(self, df_raw, initial_sheet=None, available_sheets=None,
-                 source_path=None, parent=None):
+                 source_path=None, parent=None,
+                 initial_selection_map=None, initial_replicate_type=None):
         super().__init__(parent)
         self.setObjectName("rangeSelectionDialog")
         self.setWindowTitle("Select Data Ranges")
-        self.resize(1050, 680)
+        # Remove the unhelpful default Qt "?" context-help button from title bar
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        # Restore previous selection if provided
+        self._initial_selection_map = initial_selection_map or None
+        self._initial_replicate_type = initial_replicate_type or None
+        # Size dynamically based on screen (80% of available area, capped sensibly)
+        try:
+            screen = QApplication.primaryScreen().availableGeometry()
+            w = min(1600, int(screen.width() * 0.85))
+            h = min(1000, int(screen.height() * 0.85))
+            self.resize(w, h)
+        except Exception:
+            self.resize(1400, 850)
 
         self._df_raw = df_raw
         self._current_sheet = initial_sheet
@@ -1309,11 +1440,29 @@ class SheetSelectionDialog(QDialog):
         self._color_index = 0
         self._replicate_type = "biological"
         self._last_indexes = []    # cached table selection (survives focus loss on button click)
+        self._focused_group = None # currently focused group (None = no focus)
+        self._colored_cells = set()  # cache of (r,c) cells currently colored — incremental recolor
 
         self._build_ui()
-        self._add_group_internal("Group_A")
-        self._add_group_internal("Group_B")
+        if self._initial_selection_map:
+            # Restore prior groups in original order
+            for g in self._initial_selection_map.keys():
+                self._add_group_internal(g)
+        else:
+            self._add_group_internal("Group_A")
+            self._add_group_internal("Group_B")
         self._populate_table(df_raw)
+        if self._initial_selection_map:
+            # Restore range assignments + replicate type
+            for g, ranges in self._initial_selection_map.items():
+                # Copy to avoid aliasing the caller's metadata structure
+                self._selection_map[g] = [dict(r) for r in ranges]
+            if self._initial_replicate_type == "technical":
+                self._tech_radio.setChecked(True)
+                self._replicate_type = "technical"
+            self._rebuild_group_list()
+            self._recolor_table()
+            self._update_preview()
 
     # ------------------------------------------------------------------
     # UI construction
@@ -1488,17 +1637,45 @@ class SheetSelectionDialog(QDialog):
         self._recolor_table()
 
     def _recolor_table(self):
-        transparent = QColor(0, 0, 0, 0)
-        for r in range(self._table.rowCount()):
-            for c in range(self._table.columnCount()):
-                item = self._table.item(r, c)
-                if item:
-                    item.setBackground(transparent)
+        """
+        Incremental recolor:
+        1. Clear previously colored cells only (using _colored_cells cache).
+        2. Apply group colors with focus-aware alpha + bold font for focused group.
+        3. Update _colored_cells cache.
 
+        Avoids O(rows*cols) full-table scan — important for large sheets.
+        """
+        transparent = QColor(0, 0, 0, 0)
+
+        # 1. Clear previous coloring (only previously touched cells)
+        for r, c in self._colored_cells:
+            if r >= self._table.rowCount() or c >= self._table.columnCount():
+                continue
+            item = self._table.item(r, c)
+            if item:
+                item.setBackground(transparent)
+                font = item.font()
+                if font.bold():
+                    font.setBold(False)
+                    item.setFont(font)
+
+        new_colored = set()
+        focused = self._focused_group
+
+        # 2. Apply colors per group
         for group_name, ranges in self._selection_map.items():
             hex_color = self._group_colors.get(group_name, "#2563eb")
             color = QColor(hex_color)
-            color.setAlpha(55)
+            if focused is None:
+                color.setAlpha(55)
+                bold = False
+            elif group_name == focused:
+                color.setAlpha(140)
+                bold = True
+            else:
+                color.setAlpha(25)
+                bold = False
+
             for rng in ranges:
                 r1, r2 = rng["rows"]
                 c1, c2 = rng["cols"]
@@ -1507,6 +1684,14 @@ class SheetSelectionDialog(QDialog):
                         item = self._table.item(r, c)
                         if item:
                             item.setBackground(color)
+                            if bold:
+                                font = item.font()
+                                font.setBold(True)
+                                item.setFont(font)
+                            new_colored.add((r, c))
+
+        # 3. Update cache
+        self._colored_cells = new_colored
 
     # ------------------------------------------------------------------
     # Group management
@@ -1532,8 +1717,24 @@ class SheetSelectionDialog(QDialog):
 
         for group_name in list(self._group_colors.keys()):
             row_w = QWidget()
+            row_w.setCursor(Qt.PointingHandCursor)
+            row_w.setToolTip("Click to focus this group · double-click to rename")
+            # Capture group_name via default-arg trick to avoid late-binding
+            row_w.mousePressEvent = lambda e, g=group_name: self._on_group_clicked(g)
+            row_w.mouseDoubleClickEvent = lambda e, g=group_name: self._on_group_rename(g)
+
+            if group_name == self._focused_group:
+                border_color = self._group_colors.get(group_name, "#0f766e")
+                row_w.setStyleSheet(
+                    "QWidget { "
+                    "background: #eef8f6; "
+                    "border-radius: 6px; "
+                    f"border: 1px solid {border_color}; "
+                    "}"
+                )
+
             row_layout = QHBoxLayout(row_w)
-            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setContentsMargins(4, 2, 4, 2)
             row_layout.setSpacing(6)
 
             swatch = QFrame()
@@ -1561,6 +1762,71 @@ class SheetSelectionDialog(QDialog):
 
             self._groups_container.addWidget(row_w)
 
+    def _on_group_rename(self, group_name):
+        """Prompt user for a new name; rename group across all internal maps."""
+        new_name, ok = QInputDialog.getText(
+            self, "Rename Group", "New name:", text=group_name
+        )
+        if not ok:
+            return
+        new_name = new_name.strip()
+        if not new_name or new_name == group_name:
+            return
+        if new_name in self._group_colors:
+            QMessageBox.warning(
+                self, "Duplicate", f"Group '{new_name}' already exists."
+            )
+            return
+
+        # Preserve insertion order — rebuild dicts with key swap
+        self._group_colors = {
+            (new_name if k == group_name else k): v
+            for k, v in self._group_colors.items()
+        }
+        self._selection_map = {
+            (new_name if k == group_name else k): v
+            for k, v in self._selection_map.items()
+        }
+        # Update assign combo
+        idx = self._assign_combo.findText(group_name)
+        if idx >= 0:
+            self._assign_combo.setItemText(idx, new_name)
+        # Update focus reference
+        if self._focused_group == group_name:
+            self._focused_group = new_name
+        self._rebuild_group_list()
+        self._update_preview()
+
+    def _on_group_clicked(self, group_name):
+        """Toggle focus on group row; scroll table to largest range of that group."""
+        if self._focused_group == group_name:
+            self._focused_group = None
+        else:
+            self._focused_group = group_name
+        self._rebuild_group_list()
+        self._recolor_table()
+        self._scroll_to_focused_group()
+
+    def _scroll_to_focused_group(self):
+        """Scroll table to first cell of the largest range of the focused group."""
+        if self._focused_group is None:
+            return
+        ranges = self._selection_map.get(self._focused_group, [])
+        if not ranges:
+            return
+
+        def _area(rng):
+            r1, r2 = rng["rows"]
+            c1, c2 = rng["cols"]
+            return (r2 - r1 + 1) * (c2 - c1 + 1)
+
+        largest = max(ranges, key=_area)
+        r = largest["rows"][0]
+        c = largest["cols"][0]
+        item = self._table.item(r, c)
+        if item:
+            self._table.scrollToItem(item)
+
     def _on_add_group(self):
         name, ok = QInputDialog.getText(self, "Add Group", "Group name:")
         if ok and name.strip():
@@ -1576,6 +1842,8 @@ class SheetSelectionDialog(QDialog):
         idx = self._assign_combo.findText(group_name)
         if idx >= 0:
             self._assign_combo.removeItem(idx)
+        if self._focused_group == group_name:
+            self._focused_group = None
         self._rebuild_group_list()
         self._recolor_table()
         self._update_preview()
@@ -1609,10 +1877,57 @@ class SheetSelectionDialog(QDialog):
         if not indexes:
             return
         new_ranges = _selected_indexes_to_ranges(indexes)
+        new_cells = _cells_in_ranges(new_ranges)
+
+        # Check overlap with OTHER groups — re-assignment within same group is OK.
+        overlaps = {}  # other_group -> set of conflicting (r, c) cells
+        for other_group, other_ranges in self._selection_map.items():
+            if other_group == group_name:
+                continue
+            conflict = _cells_in_ranges(other_ranges) & new_cells
+            if conflict:
+                overlaps[other_group] = conflict
+
+        if overlaps:
+            names = ", ".join(overlaps.keys())
+            n_total = sum(len(c) for c in overlaps.values())
+            reply = QMessageBox.question(
+                self, "Cells Already Assigned",
+                f"{n_total} cell(s) are already assigned to: {names}.\n\n"
+                f"Reassign them to '{group_name}'?\n"
+                f"(They will be removed from their previous group.)",
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return
+            self._remove_cells_from_groups(overlaps)
+
         self._selection_map[group_name].extend(new_ranges)
         self._rebuild_group_list()
         self._recolor_table()
         self._update_preview()
+
+    def _remove_cells_from_groups(self, conflicts):
+        """
+        For each (group → conflicting_cells) pair: rebuild that group's ranges
+        excluding the conflicting cells. Range list becomes empty if all its
+        cells were removed (group stays in _selection_map as empty list).
+        """
+        for other_group, conflict_cells in conflicts.items():
+            old_ranges = self._selection_map.get(other_group, [])
+            kept_cells = set()
+            for rng in old_ranges:
+                r1, r2 = rng["rows"]
+                c1, c2 = rng["cols"]
+                for r in range(r1, r2 + 1):
+                    for c in range(c1, c2 + 1):
+                        if (r, c) not in conflict_cells:
+                            kept_cells.add((r, c))
+            if kept_cells:
+                fake_indexes = [_FakeIdx(r, c) for r, c in kept_cells]
+                self._selection_map[other_group] = _selected_indexes_to_ranges(fake_indexes)
+            else:
+                self._selection_map[other_group] = []
 
     def _clear_selection_assignment(self):
         indexes = self._last_indexes or self._table.selectedIndexes()
@@ -1670,6 +1985,8 @@ class SheetSelectionDialog(QDialog):
         self._current_sheet = sheet_name
         for g in self._selection_map:
             self._selection_map[g] = []
+        self._focused_group = None
+        self._colored_cells.clear()
         if self._source_path:
             df_raw = pd.read_excel(
                 self._source_path, sheet_name=sheet_name, header=None, dtype=str

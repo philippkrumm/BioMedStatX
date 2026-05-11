@@ -204,7 +204,11 @@ def test_multi_dataset_html_export(tmp_path):
     assert html_output.exists()
     text = _read_text(html_output)
     assert "Overview Report" in text
-    assert "Summary across exported analyses" in text
+    # Accordion card markup is the stable structural marker for the multi-report.
+    # The old human-readable subtitle ("Summary across exported analyses") was
+    # removed during the multi-dataset UX rework — assert on the card class
+    # instead, which is required for cards to render.
+    assert "multi-accordion" in text or "acc-card" in text
     for design in selected:
         assert design["name"] in text
 

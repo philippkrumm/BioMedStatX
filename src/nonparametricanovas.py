@@ -822,7 +822,11 @@ def perform_brunner_langer_ats(data, dv, between_factor, within_factor, subject_
             f"A Brunner-Langer ANOVA-Type Statistic (ATS) was computed using global mid-ranks "
             f"(F1-LD-F1 design: {a} groups \u00d7 {t} time points, N = {N} total observations). "
             f"Between-effect df2 ({df2_between:.1f}) uses Satterthwaite marginal-covariance approximation "
-            f"(Brunner et al. 2002)."
+            f"(Brunner et al. 2002).\n\n"
+            f"Effect-size note: ATS evaluates effects via Relative Treatment Effects (RTE). "
+            f"RTE values range from 0 to 1, where 0.5 indicates the global null effect. "
+            f"No standardized Cohen-style magnitude thresholds apply to rank-based longitudinal designs; "
+            f"the RTE table below is the appropriate effect metric."
         )
         # Append RTE table so it appears in the Excel Summary sheet
         rte_lines = ["Relative Treatment Effects (RTE, range 0–1; 0.5 = no effect):"]
