@@ -30,3 +30,7 @@ htmlcov/
 *.log
 *.tmp
 *.bak
+
+# PyInstaller build log
+build_log.txt
+

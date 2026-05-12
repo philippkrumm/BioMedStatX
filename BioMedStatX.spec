@@ -49,6 +49,18 @@ for pkg in _pkgs:
     all_binaries      += b
     all_hiddenimports += h
 
+# Drop test-fixture data files. They are large, never used at runtime, and
+# on Windows the deeply-nested statsmodels test names blow past the 260-char
+# MAX_PATH limit when the project lives under a long path (e.g. OneDrive).
+# Each entry is (src_path, dst_path_in_bundle) — filter on the destination.
+import os as _os
+def _is_test_data(entry):
+    dst = entry[1].replace("\\", "/")
+    parts = dst.split("/")
+    return ("tests" in parts) or ("test" in parts)
+all_datas = [e for e in all_datas if not _is_test_data(e)]
+all_binaries = [e for e in all_binaries if not _is_test_data(e)]
+
 a = Analysis(
     ["src/statistical_analyzer.py"],
     pathex=["."],
@@ -64,7 +76,21 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["tkinter"],
+    # PySide6/PySide2/PyQt6 may be installed in the dev environment as deps of
+    # other tools (plotly, jupyter widgets, etc.). The app uses PyQt5 only, so
+    # exclude the alternative Qt bindings explicitly — PyInstaller refuses to
+    # ship multiple Qt bindings in one frozen app.
+    # IPython/jupyter/jedi pull deeply-nested typeshed paths that break the
+    # Windows MAX_PATH limit and are never used at runtime in a frozen GUI.
+    excludes=[
+        "tkinter",
+        "PySide6", "PySide2", "PyQt6", "shiboken6", "shiboken2",
+        "IPython", "jupyter", "jupyter_client", "jupyter_core",
+        "ipykernel", "ipywidgets", "notebook", "nbformat", "nbconvert",
+        "jedi", "parso",
+        "pytest", "_pytest",
+        "sphinx", "docutils",
+    ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
