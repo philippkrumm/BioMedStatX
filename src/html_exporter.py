@@ -1324,17 +1324,19 @@ class HTMLExporter:
         _icons = {"is-significant": "✓ ", "is-danger": "✗ ", "is-neutral": "~ "}
         for row in rows:
             row["status_label"] = _icons.get(row["status_class"], "") + row["status_label"]
+        _trafo_label = str(results.get("transformation") or "").strip()
+        _has_transform = _trafo_label.lower() not in ("", "none", "identity", "no transformation")
         return {
             "rows": rows,
-            "transformation": str(results.get("transformation") or "None"),
+            "transformation": _trafo_label or "None",
             "interpretation": HTMLExporter._build_assumption_interpretation(results, rows),
             "sphericity_correction_note": sphericity_correction_note,
             "qq_plot_html": HTMLExporter._build_assumption_visuals(results),
-            "qq_plot_transformed_html": HTMLExporter._build_assumption_visuals(results, source="transformed"),
+            "qq_plot_transformed_html": HTMLExporter._build_assumption_visuals(results, source="transformed") if _has_transform else None,
             "distribution_plot_html": HTMLExporter._build_distribution_dashboard_chart(results),
-            "distribution_plot_transformed_html": HTMLExporter._build_distribution_dashboard_chart(results, source="transformed"),
+            "distribution_plot_transformed_html": HTMLExporter._build_distribution_dashboard_chart(results, source="transformed") if _has_transform else None,
             "residual_plot_html": HTMLExporter._build_residuals_vs_fitted_chart(results),
-            "transformation_label": str(results.get("transformation") or "").strip(),
+            "transformation_label": _trafo_label,
         }
 
     @staticmethod
@@ -4145,6 +4147,16 @@ const treeModal=document.getElementById('tree-modal');const openTreeButton=docum
         return str(value)
 
     @staticmethod
+    def _sci_notation(value: float) -> str:
+        """Format as e.g. '1.89 × 10⁻⁶' using Unicode superscripts."""
+        s = f"{value:.2e}"
+        mantissa, exp = s.split("e")
+        exp_int = int(exp)
+        digits = str(abs(exp_int)).translate(str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹"))
+        sign = "⁻" if exp_int < 0 else ""
+        return f"{mantissa} × 10{sign}{digits}"
+
+    @staticmethod
     def _format_p_value(value: Any) -> str:
         if not isinstance(value, (int, float, np.generic)):
             return "N/A" if value in (None, "", "N/A") else str(value)
@@ -4153,9 +4165,8 @@ const treeModal=document.getElementById('tree-modal');const openTreeButton=docum
             return "N/A"
         stars = " ***" if numeric < 0.001 else " **" if numeric < 0.01 else " *" if numeric < 0.05 else " ns"
         if numeric < 0.001:
-            # Show actual value alongside the conventional threshold marker
             if numeric > 0:
-                p_str = f"p < 0.001 (p = {numeric:.2e})"
+                p_str = f"p < 0.001 (p = {HTMLExporter._sci_notation(numeric)})"
             else:
                 p_str = "p < 0.001"
         else:

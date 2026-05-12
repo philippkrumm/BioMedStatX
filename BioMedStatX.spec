@@ -112,7 +112,7 @@ exe = EXE(
     console=False,                   # no console window
     disable_windowed_traceback=False,
     argv_emulation=IS_MAC,           # macOS: support file drag-and-drop onto app icon
-    target_arch='universal2' if IS_MAC else None,  # universal2 = runs on Intel + Apple Silicon
+    target_arch='arm64' if IS_MAC else None,  # arm64 = Apple Silicon (M1+)
     codesign_identity=None,          # set to Apple Developer ID for signed distribution
     entitlements_file="assets/entitlements.plist" if IS_MAC else None,
     icon=icon,

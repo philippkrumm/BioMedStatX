@@ -17,6 +17,7 @@ packaging
 marginaleffects
 jinja2
 plotly
+scikit-learn
 
 # Optional / alternatives:
 # PySide2  # use instead of PyQt5 if preferred
