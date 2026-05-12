@@ -34,6 +34,27 @@ from conftest import DESIGNS
 from html_exporter import HTMLExporter
 
 
+def _excel_export_enabled() -> bool:
+    """True iff ExportDispatcher's Excel call is uncommented in source.
+
+    Excel export is HTML-only-mode-disabled in commit c1b26ef; this lets the
+    tests auto-restore their Excel assertions once the dispatcher is flipped
+    back. See validation/test_all_paths.py for the same helper.
+    """
+    dispatcher = SRC / "export_dispatcher.py"
+    try:
+        src = dispatcher.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    for raw in src.splitlines():
+        line = raw.lstrip()
+        if line.startswith("#"):
+            continue
+        if "ResultsExporter.export_results_to_excel" in line:
+            return True
+    return False
+
+
 def _temp_tree_files() -> set[str]:
     temp_dir = Path(tempfile.gettempdir())
     return {p.name for p in temp_dir.glob("decision_tree_*.png")}
@@ -197,7 +218,11 @@ def test_multi_dataset_html_export(tmp_path):
 
     combined_excel = tmp_path / "html_validation_multi.xlsx"
     export_result = ExportDispatcher.export_multi_dataset_results(all_results, str(combined_excel))
-    assert Path(export_result["excel_path"]).exists()
+    # Excel export currently disabled in ExportDispatcher (HTML-only mode,
+    # commit c1b26ef). The dispatcher still returns the requested xlsx path
+    # but never writes the file; only assert existence when the export is on.
+    if _excel_export_enabled():
+        assert Path(export_result["excel_path"]).exists()
     assert export_result["html_path"] is not None
 
     html_output = Path(export_result["html_path"])

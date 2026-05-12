@@ -120,8 +120,39 @@ def _find_p_value_in_results_sheet(ws) -> float | None:
     return None
 
 
+def _excel_export_enabled() -> bool:
+    """Return True iff ExportDispatcher still calls ResultsExporter.export_results_to_excel.
+
+    The function is intentionally cheap: it inspects the dispatcher source for
+    an *uncommented* call. Re-enabling Excel (toggle the leading ``# `` in
+    src/export_dispatcher.py) flips this back to True and unskips the suite —
+    no test edits required.
+    """
+    dispatcher = SRC / "export_dispatcher.py"
+    try:
+        src = dispatcher.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    for raw in src.splitlines():
+        line = raw.lstrip()
+        if line.startswith("#"):
+            continue
+        if "ResultsExporter.export_results_to_excel" in line:
+            return True
+    return False
+
+
 def assert_excel_output(result: dict, design: dict, out_dir: Path):
     """Validate the Excel output file produced by the analysis."""
+    # Excel export is currently disabled in ExportDispatcher (HTML-only mode,
+    # see commit c1b26ef). Skip this check until the export is re-enabled —
+    # toggling the comments in src/export_dispatcher.py auto-restores the test.
+    if not _excel_export_enabled():
+        pytest.skip(
+            f"[{design['name']}] Excel export disabled in ExportDispatcher "
+            "(HTML-only mode). Re-enable in src/export_dispatcher.py to run this check."
+        )
+
     # The output file is named *_output.xlsx to distinguish from the input fixture
     xlsx_files = list(out_dir.glob("*_output.xlsx"))
     if not xlsx_files:
