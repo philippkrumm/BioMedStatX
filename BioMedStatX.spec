@@ -54,12 +54,16 @@ for pkg in _pkgs:
 # MAX_PATH limit when the project lives under a long path (e.g. OneDrive).
 # Each entry is (src_path, dst_path_in_bundle) — filter on the destination.
 import os as _os
-def _is_test_data(entry):
+# Drop test fixtures (large, unused, blow Windows MAX_PATH) and panel (web
+# dashboard lib pulled in transitively — deeply nested JS assets also exceed
+# MAX_PATH and panel is never used at runtime).
+_EXCLUDED_ROOTS = {"tests", "test", "panel"}
+def _is_excluded_data(entry):
     dst = entry[1].replace("\\", "/")
     parts = dst.split("/")
-    return ("tests" in parts) or ("test" in parts)
-all_datas = [e for e in all_datas if not _is_test_data(e)]
-all_binaries = [e for e in all_binaries if not _is_test_data(e)]
+    return bool(_EXCLUDED_ROOTS.intersection(parts))
+all_datas = [e for e in all_datas if not _is_excluded_data(e)]
+all_binaries = [e for e in all_binaries if not _is_excluded_data(e)]
 
 a = Analysis(
     ["src/statistical_analyzer.py"],
@@ -90,6 +94,7 @@ a = Analysis(
         "jedi", "parso",
         "pytest", "_pytest",
         "sphinx", "docutils",
+        "panel", "bokeh", "param",
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,

@@ -84,6 +84,21 @@ rm -rf dist build
 
 ### 3. Run PyInstaller
 
+**Windows with Anaconda Python** — `Library\bin` must be on PATH so PyInstaller
+can resolve Anaconda-managed DLLs (`ffi-8.dll`, `libexpat.dll`, etc.).
+Build from a clean venv at a short path (`C:\bmx_venv`) to avoid MAX_PATH issues:
+
+```powershell
+# One-time venv setup (only needed once per machine)
+C:\Users\pkrumm\AppData\Local\anaconda3\python.exe -m venv C:\bmx_venv
+C:\bmx_venv\Scripts\pip install -r requirements.txt pyinstaller
+
+# Build
+$env:PATH = "C:\Users\pkrumm\AppData\Local\anaconda3\Library\bin;C:\Users\pkrumm\AppData\Local\anaconda3\DLLs;$env:PATH"
+C:\bmx_venv\Scripts\pyinstaller.exe BioMedStatX.spec --noconfirm
+```
+
+**macOS / Linux:**
 ```bash
 pyinstaller BioMedStatX.spec --noconfirm
 ```
