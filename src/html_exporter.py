@@ -1,4 +1,4 @@
-﻿import base64
+import base64
 import copy
 import json
 import math
@@ -374,7 +374,40 @@ class HTMLExporter:
                 )
                 rows.append({"label": cov, "value": value})
 
-        # --- Table 3: Model Fit ---
+        # --- Table 3: Simple Slopes & Johnson-Neyman ---
+        ssa = results.get("simple_slopes_analysis")
+        if ssa:
+            rows.append({"label": "── Simple Slopes & Johnson-Neyman ──", "value": ""})
+            rows.append({"label": "Moderator/Covariate", "value": str(ssa.get("covariate_name", ""))})
+            rows.append({"label": "Primary Factor", "value": str(ssa.get("factor_name", ""))})
+            for slope in ssa.get("simple_slopes", []):
+                lvl = slope.get("covariate_label", "")
+                val = slope.get("covariate_value")
+                beta = slope.get("coefficient")
+                se = slope.get("std_err")
+                t_val = slope.get("t_value")
+                p_val = slope.get("p_value")
+                ci_l = slope.get("ci_lower")
+                ci_u = slope.get("ci_upper")
+                lbl = f"Simple Slope at {lvl} ({HTMLExporter._format_metric(val)})"
+                value = (
+                    f"β={HTMLExporter._format_metric(beta)} | "
+                    f"SE={HTMLExporter._format_metric(se)} | "
+                    f"t={HTMLExporter._format_metric(t_val)} | "
+                    f"{HTMLExporter._format_p_value(p_val)} | "
+                    f"[{HTMLExporter._format_metric(ci_l)}, {HTMLExporter._format_metric(ci_u)}]"
+                )
+                rows.append({"label": lbl, "value": value})
+            
+            jn = ssa.get("johnson_neyman")
+            if jn:
+                roots = jn.get("roots", [])
+                if len(roots) >= 2:
+                    rows.append({"label": "J-N Critical Interval", "value": f"[{roots[0]:.4f}, {roots[1]:.4f}]"})
+                sig_regs = jn.get("significant_regions", [])
+                rows.append({"label": "J-N Significant Regions", "value": ", ".join(sig_regs) if sig_regs else "None in range"})
+
+        # --- Table 4: Model Fit ---
         rows.append({"label": "── Model Fit ──", "value": ""})
         rows.append({"label": "R²", "value": HTMLExporter._format_metric(results.get("r_squared"))})
         rows.append({"label": "Adjusted R²", "value": HTMLExporter._format_metric(results.get("r_squared_adj"))})
@@ -417,19 +450,22 @@ class HTMLExporter:
         # Table 1: Fixed Effects
         fe_table = results.get("fixed_effects_table") or []
         rows.append({"label": "── Fixed Effects ──", "value": ""})
-        rows.append({"label": "Parameter", "value": "Coefficient | SE | z | p-value | 95% CI"})
+        rows.append({"label": "Parameter", "value": "Coefficient | SE | df | t/z | p-value | 95% CI"})
         for fe in fe_table:
             param = str(fe.get("parameter", ""))
             coef = fe.get("coefficient")
             se = fe.get("std_err")
+            df_val = fe.get("df")
             z = fe.get("z_value")
             p_val = fe.get("p_value")
             ci_l = fe.get("ci_lower")
             ci_u = fe.get("ci_upper")
+            df_str = str(df_val) if df_val is not None else "N/A"
             value = (
                 f"β={HTMLExporter._format_metric(coef)} | "
                 f"SE={HTMLExporter._format_metric(se)} | "
-                f"z={HTMLExporter._format_metric(z)} | "
+                f"df={df_str} | "
+                f"t/z={HTMLExporter._format_metric(z)} | "
                 f"{HTMLExporter._format_p_value(p_val)} | "
                 f"[{HTMLExporter._format_metric(ci_l)}, {HTMLExporter._format_metric(ci_u)}]"
             )
@@ -456,6 +492,19 @@ class HTMLExporter:
         rows.append({"label": "Log-likelihood", "value": HTMLExporter._format_metric(results.get("log_likelihood"))})
         rows.append({"label": "N subjects", "value": HTMLExporter._format_metric(results.get("n_subjects"))})
         rows.append({"label": "N observations", "value": HTMLExporter._format_metric(results.get("n_observations"))})
+        rows.append({"label": "Degrees of freedom method", "value": str(results.get("df_method") or "N/A")})
+        rows.append({"label": "Random structure chosen", "value": str(results.get("random_structure_chosen") or "N/A")})
+        
+        lrt_perf = results.get("lrt_performed")
+        if lrt_perf:
+            lrt_stat = results.get("lrt_statistic")
+            lrt_p = results.get("lrt_p_value")
+            rows.append({
+                "label": "Random slope LRT",
+                "value": f"χ²(2) = {HTMLExporter._format_metric(lrt_stat)}, {HTMLExporter._format_p_value(lrt_p)}"
+            })
+        else:
+            rows.append({"label": "Random slope LRT", "value": "Not performed"})
 
         converged = results.get("converged")
         if converged is None:
@@ -587,6 +636,7 @@ class HTMLExporter:
         for label, key in [
             ("Test", "test"),
             ("Model type", "model_type"),
+            ("Model variant", "model_variant"),
             ("p-value (primary predictor)", "p_value"),
             ("Adjusted p-value", "p_value_fdr"),
         ]:
@@ -598,6 +648,18 @@ class HTMLExporter:
         auc = results.get("effect_size")
         if auc is not None:
             rows.append({"label": "AUC (ROC)", "value": HTMLExporter._format_metric(auc)})
+
+        brier = results.get("brier_score")
+        if brier is not None:
+            rows.append({"label": "Brier score", "value": HTMLExporter._format_metric(brier)})
+
+        cal_slope = results.get("calibration_slope")
+        if cal_slope is not None:
+            rows.append({"label": "Calibration slope", "value": HTMLExporter._format_metric(cal_slope)})
+
+        cal_intercept = results.get("calibration_intercept")
+        if cal_intercept is not None:
+            rows.append({"label": "Calibration intercept", "value": HTMLExporter._format_metric(cal_intercept)})
 
         pseudo_r2 = results.get("pseudo_r_squared")
         if pseudo_r2 is not None:

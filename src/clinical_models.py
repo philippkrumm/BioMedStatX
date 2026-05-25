@@ -156,12 +156,156 @@ class ANCOVAModel:
             means[factor] = adjusted
         return means
 
+    def run_simple_slopes_and_jn(self):
+        """Perform Simple Slopes (Pick-a-Point) and Johnson-Neyman analysis when slopes are heterogeneous."""
+        if self.result is None or not self._covariates or not self._between_factors:
+            return None
+
+        import statsmodels.formula.api as smf
+        from scipy.stats import t as scipy_t
+
+        factor = self._between_factors[0]
+        cov = self._covariates[0]
+
+        df_clean = self._df.copy()
+        
+        # 1. Simple Slopes (Pick-a-Point Approach)
+        cov_vals = df_clean[cov].dropna().values
+        cov_mean = float(np.mean(cov_vals))
+        cov_sd = float(np.std(cov_vals))
+        
+        points = {
+            "Mean - 1 SD": cov_mean - cov_sd,
+            "Mean": cov_mean,
+            "Mean + 1 SD": cov_mean + cov_sd
+        }
+        
+        simple_slopes = []
+        for label, val in points.items():
+            df_centered = df_clean.copy()
+            df_centered[f"{cov}_centered"] = df_centered[cov] - val
+            
+            factor_terms = " * ".join([f"C({f})" for f in self._between_factors])
+            other_covs = [c for c in self._covariates if c != cov]
+            terms = [f"{factor_terms}"]
+            terms.append(f"C({factor}):{cov}_centered")
+            terms.append(f"{cov}_centered")
+            if other_covs:
+                terms.extend(other_covs)
+            
+            formula = f"{self._dv} ~ {' + '.join(terms)}"
+            try:
+                fit_centered = smf.ols(formula, data=df_centered).fit()
+                for param in fit_centered.params.index:
+                    if f"C({factor})" in param and ":" not in param and param != "Intercept":
+                        simple_slopes.append({
+                            "covariate_value": val,
+                            "covariate_label": label,
+                            "parameter": param,
+                            "coefficient": float(fit_centered.params[param]),
+                            "std_err": float(fit_centered.bse[param]),
+                            "t_value": float(fit_centered.tvalues[param]),
+                            "p_value": float(fit_centered.pvalues[param]),
+                            "ci_lower": float(fit_centered.conf_int().loc[param, 0]),
+                            "ci_upper": float(fit_centered.conf_int().loc[param, 1]),
+                        })
+            except Exception as e:
+                print(f"Error in simple slopes at {label}: {e}")
+
+        # 2. Johnson-Neyman Interval
+        jn_result = None
+        levels = df_clean[factor].unique()
+        if len(levels) == 2:
+            try:
+                factor_terms = f"C({factor})"
+                other_between = [f for f in self._between_factors if f != factor]
+                other_covs = [c for c in self._covariates if c != cov]
+                
+                terms = [f"{factor_terms} * {cov}"]
+                if other_between:
+                    terms.append(" * ".join([f"C({f})" for f in other_between]))
+                if other_covs:
+                    terms.extend(other_covs)
+                    
+                formula = f"{self._dv} ~ {' + '.join(terms)}"
+                fit_int = smf.ols(formula, data=df_clean).fit()
+                
+                dummy_term = None
+                interaction_term = None
+                for param in fit_int.params.index:
+                    if f"C({factor})" in param and ":" not in param:
+                        dummy_term = param
+                    elif f"C({factor})" in param and cov in param:
+                        interaction_term = param
+                        
+                if dummy_term and interaction_term:
+                    beta1 = fit_int.params[dummy_term]
+                    beta3 = fit_int.params[interaction_term]
+                    
+                    var_beta1 = fit_int.cov_params().loc[dummy_term, dummy_term]
+                    var_beta3 = fit_int.cov_params().loc[interaction_term, interaction_term]
+                    cov_beta1_beta3 = fit_int.cov_params().loc[dummy_term, interaction_term]
+                    
+                    df_resid = fit_int.df_resid
+                    t_crit = scipy_t.ppf(1 - self._alpha / 2, df_resid)
+                    t_crit_sq = t_crit ** 2
+                    
+                    a = (beta3 ** 2) - (t_crit_sq * var_beta3)
+                    b = 2 * beta1 * beta3 - 2 * t_crit_sq * cov_beta1_beta3
+                    c = (beta1 ** 2) - (t_crit_sq * var_beta1)
+                    
+                    discriminant = b ** 2 - 4 * a * c
+                    if discriminant >= 0:
+                        root1 = (-b - np.sqrt(discriminant)) / (2 * a)
+                        root2 = (-b + np.sqrt(discriminant)) / (2 * a)
+                        roots = sorted([float(root1), float(root2)])
+                        
+                        cov_min = float(np.min(cov_vals))
+                        cov_max = float(np.max(cov_vals))
+                        
+                        test_vals = [roots[0] - 1.0, (roots[0] + roots[1]) / 2.0, roots[1] + 1.0]
+                        sig_regions = []
+                        for val in test_vals:
+                            se_val = np.sqrt(var_beta1 + (val ** 2) * var_beta3 + 2 * val * cov_beta1_beta3)
+                            t_val = (beta1 + beta3 * val) / se_val
+                            p_val = 2 * (1 - scipy_t.cdf(abs(t_val), df_resid))
+                            if p_val < self._alpha:
+                                if val < roots[0]:
+                                    sig_regions.append(f"{cov} < {roots[0]:.4f}")
+                                elif val > roots[1]:
+                                    sig_regions.append(f"{cov} > {roots[1]:.4f}")
+                                else:
+                                    sig_regions.append(f"{roots[0]:.4f} < {cov} < {roots[1]:.4f}")
+                                    
+                        jn_result = {
+                            "roots": roots,
+                            "significant_regions": sig_regions,
+                            "covariate_min": cov_min,
+                            "covariate_max": cov_max,
+                        }
+            except Exception as e:
+                print(f"Error calculating Johnson-Neyman: {e}")
+                
+        return {
+            "simple_slopes": simple_slopes,
+            "johnson_neyman": jn_result,
+            "covariate_name": cov,
+            "factor_name": factor
+        }
+
     def as_results_dict(self):
         if self.result is None:
             return {"error": "Model not fitted"}
 
         slope_homogeneity = self.check_regression_slope_homogeneity()
         adj_means = self.adjusted_means()
+
+        # Determine if slopes are heterogeneous (any interaction p < alpha)
+        slopes_heterogeneous = any(v.get("p_value") is not None and v.get("p_value") < self._alpha for v in slope_homogeneity.values())
+        
+        simple_slopes_analysis = None
+        if slopes_heterogeneous:
+            simple_slopes_analysis = self.run_simple_slopes_and_jn()
 
         anova_rows = []
         if self.anova_table is not None:
@@ -215,6 +359,8 @@ class ANCOVAModel:
             "covariate_effects": covariate_effects,
             "adjusted_means": adj_means,
             "slope_homogeneity": slope_homogeneity,
+            "slopes_heterogeneous": slopes_heterogeneous,
+            "simple_slopes_analysis": simple_slopes_analysis,
             "r_squared": float(self.result.rsquared),
             "r_squared_adj": float(self.result.rsquared_adj),
             "aic": float(self.result.aic),
@@ -228,8 +374,8 @@ class ANCOVAModel:
 class LinearMixedModel:
     """LMM for longitudinal clinical data via statsmodels MixedLM.
 
-    Default: Random intercept per patient (the clinical standard).
-    Uses REML estimation and handles unbalanced/missing data natively.
+    Fits Random Intercept and compares with Random Intercept + Random Slope via LRT.
+    Applies Between-Within degrees of freedom correction for fixed effects if N < 100.
     """
 
     def __init__(self):
@@ -240,17 +386,14 @@ class LinearMixedModel:
         self._random_intercept = None
         self._random_slope = None
         self._covariates = None
+        self._lrt_performed = False
+        self._lrt_stat = None
+        self._lrt_p = None
+        self._random_structure_chosen = "Random Intercept Only"
 
     def fit(self, df, dv, fixed_effects, random_intercept, covariates=None, random_slope=None):
-        """Fit the Linear Mixed Model.
-
-        Args:
-            random_slope: Optional column name for a random slope effect.
-                          When provided, fits a correlated random intercept +
-                          random slope model (equivalent to lme4's (1 + x | Subject)).
-                          Default None = random intercept only.
-        """
         import statsmodels.formula.api as smf
+        from scipy import stats as scipy_stats
 
         all_cols = [dv, random_intercept] + fixed_effects + (covariates or [])
         if random_slope and random_slope not in all_cols:
@@ -264,7 +407,6 @@ class LinearMixedModel:
         self._random_slope = col_map[random_slope] if random_slope else None
         self._covariates = [col_map[c] for c in (covariates or [])]
 
-        # Build fixed-effects part: categorical factors wrapped in C(), continuous covariates added as-is
         terms = []
         if self._fixed_effects:
             terms.append(" * ".join([f"C({f})" for f in self._fixed_effects]))
@@ -273,20 +415,52 @@ class LinearMixedModel:
         fixed_terms = " + ".join(terms) if terms else "1"
         formula = f"{self._dv} ~ {fixed_terms}"
 
-        # re_formula="~x" adds a correlated random slope for x, matching
-        # lme4's (1 + x | Subject) syntax. Without it, only random intercept.
-        re_formula = f"~{self._random_slope}" if self._random_slope else None
-        model = smf.mixedlm(formula, data=self._df,
-                            groups=self._df[self._random_intercept],
-                            re_formula=re_formula)
-        self.result = model.fit(reml=True)
+        # 1. Fit Random Intercept model (baseline, REML)
+        model_ri = smf.mixedlm(formula, data=self._df, groups=self._df[self._random_intercept])
+        fit_ri = model_ri.fit(reml=True)
+
+        self._lrt_performed = False
+        self._lrt_stat = None
+        self._lrt_p = None
+        self._random_structure_chosen = "Random Intercept Only"
+        self.result = fit_ri
+
+        # 2. If random slope candidate is present, fit RI + RS and compare
+        if self._random_slope:
+            try:
+                re_formula = f"~{self._random_slope}"
+                model_ri_rs = smf.mixedlm(formula, data=self._df,
+                                          groups=self._df[self._random_intercept],
+                                          re_formula=re_formula)
+                fit_ri_rs = model_ri_rs.fit(reml=True)
+
+                if fit_ri_rs.converged:
+                    ll_ri = fit_ri.llf
+                    ll_ri_rs = fit_ri_rs.llf
+                    D = 2 * (ll_ri_rs - ll_ri)
+                    
+                    df_diff = 2
+                    p_val = float(scipy_stats.chi2.sf(D, df_diff))
+                    
+                    self._lrt_performed = True
+                    self._lrt_stat = float(D)
+                    self._lrt_p = p_val
+                    
+                    if p_val < 0.05 and D > 0:
+                        self.result = fit_ri_rs
+                        self._random_structure_chosen = "Random Intercept + Random Slope"
+                    else:
+                        self.result = fit_ri
+                        self._random_structure_chosen = "Random Intercept Only"
+            except Exception as e:
+                print(f"LMM fit with random slope failed/did not converge: {e}. Falling back to Random Intercept only.")
+                self.result = fit_ri
+                self._random_structure_chosen = "Random Intercept Only (Fallback)"
+
         return self
 
     def icc(self):
-        """Compute Intraclass Correlation Coefficient.
-
-        ICC = var(random intercept) / (var(random intercept) + var(residual))
-        """
+        """Compute Intraclass Correlation Coefficient."""
         if self.result is None:
             return None
         try:
@@ -303,17 +477,74 @@ class LinearMixedModel:
         if self.result is None:
             return {"error": "Model not fitted"}
 
-        # Fixed effects table
+        n_groups = self._df[self._random_intercept].nunique()
+        n_obs = len(self._df)
+
+        # Classify predictor columns as Between-Subject or Within-Subject
+        between_cols = set()
+        within_cols = set()
+        for col in self._fixed_effects + (self._covariates or []):
+            vals = self._df[col].values
+            is_constant = True
+            for g_id in self._df[self._random_intercept].unique():
+                mask = (self._df[self._random_intercept].values == g_id)
+                g_vals = vals[mask]
+                if len(g_vals) > 1 and not np.all(g_vals == g_vals[0]):
+                    is_constant = False
+                    break
+            if is_constant:
+                between_cols.add(col)
+            else:
+                within_cols.add(col)
+                
+        n_between_predictors = len(between_cols)
+        n_within_predictors = len(within_cols)
+        
+        apply_correction = (n_groups < 100)
+        df_method = "Between-Within (Kenward-Roger / Satterthwaite approximation)" if apply_correction else "Asymptotic (z-test)"
+
+        # Fixed effects table with BW degrees of freedom correction
         fixed_effects_table = []
         for param_name in self.result.fe_params.index:
+            coef = float(self.result.fe_params[param_name])
+            se = float(self.result.bse_fe[param_name])
+            z_val = float(self.result.tvalues[param_name])
+            
+            if apply_correction:
+                if param_name == "Intercept":
+                    df_param = n_groups - 1
+                else:
+                    is_within = False
+                    for col in within_cols:
+                        if col in param_name:
+                            is_within = True
+                            break
+                    if is_within:
+                        df_param = n_obs - n_groups - n_within_predictors
+                    else:
+                        df_param = n_groups - 1 - n_between_predictors
+                
+                df_param = max(1, df_param)
+                from scipy.stats import t as scipy_t
+                p_val = float(2 * (1 - scipy_t.cdf(abs(z_val), df_param)))
+                t_crit = scipy_t.ppf(0.975, df_param)
+                ci_lower = coef - t_crit * se
+                ci_upper = coef + t_crit * se
+            else:
+                df_param = None
+                p_val = float(self.result.pvalues[param_name])
+                ci_lower = float(self.result.conf_int().loc[param_name, 0])
+                ci_upper = float(self.result.conf_int().loc[param_name, 1])
+
             fixed_effects_table.append({
                 "parameter": str(param_name),
-                "coefficient": float(self.result.fe_params[param_name]),
-                "std_err": float(self.result.bse_fe[param_name]),
-                "z_value": float(self.result.tvalues[param_name]),
-                "p_value": float(self.result.pvalues[param_name]),
-                "ci_lower": float(self.result.conf_int().loc[param_name, 0]),
-                "ci_upper": float(self.result.conf_int().loc[param_name, 1]),
+                "coefficient": coef,
+                "std_err": se,
+                "z_value": z_val,
+                "df": df_param,
+                "p_value": p_val,
+                "ci_lower": float(ci_lower),
+                "ci_upper": float(ci_upper),
             })
 
         # Random effects variance
@@ -325,23 +556,20 @@ class LinearMixedModel:
         except Exception:
             pass
 
-        # Extract p-values for main fixed effects (factors, not interactions/intercept)
+        # Extract p-values for main fixed effects
         main_p = None
         main_z = None
         for fe in self._fixed_effects:
-            for param_name in self.result.fe_params.index:
+            for entry in fixed_effects_table:
+                param_name = entry["parameter"]
                 if f"C({fe})" in param_name and ":" not in param_name and param_name != "Intercept":
-                    main_p = float(self.result.pvalues[param_name])
-                    main_z = float(self.result.tvalues[param_name])
+                    main_p = entry["p_value"]
+                    main_z = entry["z_value"]
                     break
             if main_p is not None:
                 break
 
         icc_val = self.icc()
-
-        # Count subjects and observations
-        n_subjects = self._df[self._random_intercept].nunique()
-        n_observations = len(self._df)
 
         return {
             "test": "Linear Mixed Model",
@@ -359,20 +587,21 @@ class LinearMixedModel:
             "bic": float(self.result.bic) if hasattr(self.result, 'bic') else None,
             "log_likelihood": float(self.result.llf) if hasattr(self.result, 'llf') else None,
             "converged": getattr(self.result, 'converged', None),
-            "n_subjects": n_subjects,
-            "n_observations": n_observations,
+            "n_subjects": n_groups,
+            "n_observations": n_obs,
             "fixed_effects_used": self._fixed_effects,
             "random_intercept": self._random_intercept,
             "covariates_used": self._covariates,
+            "lrt_performed": self._lrt_performed,
+            "lrt_statistic": self._lrt_stat,
+            "lrt_p_value": self._lrt_p,
+            "random_structure_chosen": self._random_structure_chosen,
+            "df_method": df_method,
         }
 
 
 class LogisticRegressionModel:
-    """Logistic regression for binary outcomes via statsmodels GLM(Binomial).
-
-    Provides odds ratios with 95% CI, Hosmer-Lemeshow goodness-of-fit test,
-    pseudo-R², and ROC/AUC data.
-    """
+    """Logistic regression for binary outcomes via statsmodels GLM(Binomial) with Firth fallback."""
 
     def __init__(self):
         self.result = None
@@ -380,6 +609,10 @@ class LogisticRegressionModel:
         self._dv = None
         self._predictors = None
         self._covariates = None
+        self._model_variant = "Standard Maximum Likelihood"
+        self._firth_coefs = None
+        self._firth_bse = None
+        self._firth_cov = None
 
     def fit(self, df, dv, predictors, covariates=None):
         import statsmodels.formula.api as smf
@@ -407,48 +640,160 @@ class LogisticRegressionModel:
 
         model = smf.glm(formula, data=self._df, family=sm.families.Binomial())
         self.result = model.fit()
+
+        # Check standard errors of coefficients to detect separation
+        has_large_se = False
+        try:
+            for param in self.result.params.index:
+                if self.result.bse[param] > 5.0:
+                    has_large_se = True
+                    break
+        except Exception:
+            pass
+
+        self._model_variant = "Standard Maximum Likelihood"
+        self._firth_coefs = None
+        self._firth_bse = None
+        self._firth_cov = None
+
+        if not self.result.converged or has_large_se:
+            # Fallback to Firth Penalized Likelihood
+            try:
+                coefs, bse, cov = self._fit_firth_logistic(model.exog, model.endog)
+                self._model_variant = "Firth Penalized Likelihood"
+                self._firth_coefs = coefs
+                self._firth_bse = bse
+                self._firth_cov = cov
+            except Exception as e:
+                print(f"WARNING: Firth solver failed/did not converge: {e}. Keeping standard logit results.")
+
         return self
+
+    def _fit_firth_logistic(self, X, y, max_iter=100, tol=1e-6):
+        """Fit Firth Penalized Likelihood Logistic Regression using Newton-Raphson."""
+        n, p = X.shape
+        beta = np.zeros(p)
+        
+        for iteration in range(max_iter):
+            pi = 1.0 / (1.0 + np.exp(-np.dot(X, beta)))
+            pi = np.clip(pi, 1e-12, 1.0 - 1e-12)
+            
+            w = pi * (1.0 - pi)
+            xtwx = np.dot(X.T, w[:, None] * X)
+            try:
+                xtwx_inv = np.linalg.inv(xtwx)
+            except np.linalg.LinAlgError:
+                xtwx_inv = np.linalg.pinv(xtwx)
+                
+            # Hat matrix diagonal
+            h = np.zeros(n)
+            for i in range(n):
+                h[i] = w[i] * np.dot(X[i], np.dot(xtwx_inv, X[i]))
+                
+            score = np.zeros(p)
+            for j in range(p):
+                score[j] = np.sum((y - pi + h * (0.5 - pi)) * X[:, j])
+                
+            if np.all(np.abs(score) < tol):
+                break
+                
+            step = np.dot(xtwx_inv, score)
+            
+            # Step halving line search
+            step_len = 1.0
+            for _ in range(5):
+                beta_new = beta + step_len * step
+                pi_new = 1.0 / (1.0 + np.exp(-np.dot(X, beta_new)))
+                if not np.any(np.isnan(pi_new)):
+                    beta = beta_new
+                    break
+                step_len *= 0.5
+            else:
+                beta += step
+        else:
+            raise RuntimeError("Firth solver did not converge within max iterations.")
+            
+        # Recompute standard errors
+        pi = 1.0 / (1.0 + np.exp(-np.dot(X, beta)))
+        pi = np.clip(pi, 1e-12, 1.0 - 1e-12)
+        w = pi * (1.0 - pi)
+        xtwx = np.dot(X.T, w[:, None] * X)
+        try:
+            cov = np.linalg.inv(xtwx)
+        except np.linalg.LinAlgError:
+            cov = np.linalg.pinv(xtwx)
+            
+        bse = np.sqrt(np.diag(cov))
+        return beta, bse, cov
+
+    def predict(self):
+        """Get predicted probabilities from the model (handles Firth adjustment)."""
+        if self.result is None:
+            return None
+        if self._model_variant == "Firth Penalized Likelihood" and self._firth_coefs is not None:
+            exog = self.result.model.exog
+            logits = np.dot(exog, self._firth_coefs)
+            p = 1.0 / (1.0 + np.exp(-logits))
+            return np.clip(p, 1e-15, 1.0 - 1e-15)
+        else:
+            return self.result.predict()
 
     def odds_ratios(self):
         """Compute odds ratios with 95% CI."""
         if self.result is None:
             return []
 
-        conf = self.result.conf_int()
         rows = []
-        for param in self.result.params.index:
-            if param == "Intercept":
-                continue
-            rows.append({
-                "parameter": str(param),
-                "odds_ratio": float(np.exp(self.result.params[param])),
-                "ci_lower": float(np.exp(conf.loc[param, 0])),
-                "ci_upper": float(np.exp(conf.loc[param, 1])),
-                "coefficient": float(self.result.params[param]),
-                "std_err": float(self.result.bse[param]),
-                "z_value": float(self.result.tvalues[param]),
-                "p_value": float(self.result.pvalues[param]),
-            })
+        if self._model_variant == "Firth Penalized Likelihood" and self._firth_coefs is not None:
+            from scipy.stats import norm
+            for idx, param in enumerate(self.result.params.index):
+                if param == "Intercept":
+                    continue
+                coef = self._firth_coefs[idx]
+                se = self._firth_bse[idx]
+                z_val = coef / se if se > 0 else 0.0
+                p_val = 2 * (1 - norm.cdf(abs(z_val)))
+                ci_lower = coef - 1.96 * se
+                ci_upper = coef + 1.96 * se
+                rows.append({
+                    "parameter": str(param),
+                    "odds_ratio": float(np.exp(coef)),
+                    "ci_lower": float(np.exp(ci_lower)),
+                    "ci_upper": float(np.exp(ci_upper)),
+                    "coefficient": float(coef),
+                    "std_err": float(se),
+                    "z_value": float(z_val),
+                    "p_value": float(p_val),
+                })
+        else:
+            conf = self.result.conf_int()
+            for param in self.result.params.index:
+                if param == "Intercept":
+                    continue
+                rows.append({
+                    "parameter": str(param),
+                    "odds_ratio": float(np.exp(self.result.params[param])),
+                    "ci_lower": float(np.exp(conf.loc[param, 0])),
+                    "ci_upper": float(np.exp(conf.loc[param, 1])),
+                    "coefficient": float(self.result.params[param]),
+                    "std_err": float(self.result.bse[param]),
+                    "z_value": float(self.result.tvalues[param]),
+                    "p_value": float(self.result.pvalues[param]),
+                })
         return rows
 
     def hosmer_lemeshow(self, n_groups=10):
-        """Hosmer-Lemeshow goodness-of-fit test."""
+        """Hosmer-Lemeshow goodness-of-fit test (deprecated but kept for backward compatibility)."""
         from scipy import stats as scipy_stats
-
         if self.result is None:
             return {"chi2": None, "df": None, "p_value": None}
-
         try:
-            predicted = self.result.predict()
+            predicted = self.predict()
             observed = self._df[self._dv].values
-
-            # Sort by predicted probability and divide into groups
             order = np.argsort(predicted)
             predicted_sorted = predicted[order]
             observed_sorted = observed[order]
-
             groups = np.array_split(np.arange(len(predicted_sorted)), n_groups)
-
             chi2 = 0.0
             for group_indices in groups:
                 if len(group_indices) == 0:
@@ -460,27 +805,88 @@ class LogisticRegressionModel:
                 exp_events = pred.sum()
                 obs_non = n_g - obs_events
                 exp_non = n_g - exp_events
-
                 if exp_events > 0:
                     chi2 += (obs_events - exp_events) ** 2 / exp_events
                 if exp_non > 0:
                     chi2 += (obs_non - exp_non) ** 2 / exp_non
-
             df = n_groups - 2
             p_value = float(scipy_stats.chi2.sf(chi2, df))
             return {"chi2": float(chi2), "df": df, "p_value": p_value}
         except Exception:
             return {"chi2": None, "df": None, "p_value": None}
 
+    def calibration_analysis(self):
+        """Compute Brier score, calibration slope, and calibration intercept in log-odds space."""
+        if self.result is None:
+            return {
+                "brier_score": None,
+                "calibration_slope": None,
+                "calibration_intercept": None,
+                "calibration_curve": {"predicted": [], "observed": []}
+            }
+
+        try:
+            predicted = self.predict()
+            observed = self._df[self._dv].values.astype(float)
+
+            # 1. Brier score
+            brier = float(np.mean((predicted - observed) ** 2))
+
+            # 2. Calibration slope and intercept
+            p_hat = np.clip(predicted, 1e-15, 1.0 - 1e-15)
+            logit_p = np.log(p_hat / (1.0 - p_hat))
+
+            import statsmodels.api as sm
+            X_cal = sm.add_constant(logit_p)
+            try:
+                cal_model = sm.GLM(observed, X_cal, family=sm.families.Binomial()).fit()
+                cal_intercept = float(cal_model.params[0])
+                cal_slope = float(cal_model.params[1])
+            except Exception:
+                try:
+                    cal_model = sm.OLS(observed, X_cal).fit()
+                    cal_intercept = float(cal_model.params[0])
+                    cal_slope = float(cal_model.params[1])
+                except Exception:
+                    cal_intercept = 0.0
+                    cal_slope = 1.0
+
+            # 3. LOESS calibration curve
+            from statsmodels.nonparametric.smoothers_lowess import lowess
+            sort_idx = np.argsort(predicted)
+            pred_sorted = predicted[sort_idx]
+            obs_sorted = observed[sort_idx]
+
+            lowess_fit = lowess(obs_sorted, pred_sorted, frac=0.6, it=3, return_sorted=False)
+            
+            calibration_curve = {
+                "predicted": [float(p) for p in pred_sorted],
+                "observed_smoothed": [float(o) for o in lowess_fit],
+            }
+
+            return {
+                "brier_score": brier,
+                "calibration_slope": cal_slope,
+                "calibration_intercept": cal_intercept,
+                "calibration_curve": calibration_curve
+            }
+        except Exception as e:
+            print(f"Error in calibration_analysis: {e}")
+            return {
+                "brier_score": None,
+                "calibration_slope": None,
+                "calibration_intercept": None,
+                "calibration_curve": {"predicted": [], "observed": []}
+            }
+
     def roc_data(self):
         """Compute ROC curve data (FPR, TPR, thresholds) and AUC."""
         if self.result is None:
             return {"fpr": [], "tpr": [], "auc": None}
 
-        predicted = self.result.predict()
+        predicted = self.predict()
         observed = self._df[self._dv].values
 
-        # Manual ROC computation (no sklearn dependency)
         thresholds = np.sort(np.unique(predicted))[::-1]
         thresholds = np.concatenate([[thresholds[0] + 0.01], thresholds, [0.0]])
 
@@ -499,7 +905,6 @@ class LogisticRegressionModel:
             tpr_list.append(tp / total_pos)
             fpr_list.append(fp / total_neg)
 
-        # AUC via trapezoidal rule
         trapz_fn = getattr(np, 'trapezoid', None) or getattr(np, 'trapz', None)
         auc = float(np.abs(trapz_fn(tpr_list, fpr_list)))
 
@@ -517,27 +922,28 @@ class LogisticRegressionModel:
         or_table = self.odds_ratios()
         hl = self.hosmer_lemeshow()
         roc = self.roc_data()
+        cal = self.calibration_analysis()
 
-        # Primary predictor odds ratio and p-value
         main_p = None
         main_or = None
         if or_table:
             main_p = or_table[0]["p_value"]
             main_or = or_table[0]["odds_ratio"]
 
-        # Pseudo R-squared (McFadden)
         pseudo_r2 = None
-        try:
-            ll_model = self.result.llf
-            ll_null = self.result.llnull if hasattr(self.result, 'llnull') else None
-            if ll_null is not None and ll_null != 0:
-                pseudo_r2 = float(1 - ll_model / ll_null)
-        except Exception:
-            pass
+        if self._model_variant != "Firth Penalized Likelihood":
+            try:
+                ll_model = self.result.llf
+                ll_null = self.result.llnull if hasattr(self.result, 'llnull') else None
+                if ll_null is not None and ll_null != 0:
+                    pseudo_r2 = float(1 - ll_model / ll_null)
+            except Exception:
+                pass
 
         return {
             "test": "Logistic Regression",
             "model_type": "LogisticRegression",
+            "model_variant": self._model_variant,
             "p_value": main_p,
             "statistic": main_or,
             "statistic_type": "odds_ratio",
@@ -546,10 +952,14 @@ class LogisticRegressionModel:
             "odds_ratios": or_table,
             "hosmer_lemeshow": hl,
             "roc_data": roc,
+            "brier_score": cal["brier_score"],
+            "calibration_slope": cal["calibration_slope"],
+            "calibration_intercept": cal["calibration_intercept"],
+            "calibration_curve": cal["calibration_curve"],
             "pseudo_r_squared": pseudo_r2,
-            "aic": float(self.result.aic) if hasattr(self.result, 'aic') else None,
-            "bic": float(self.result.bic_llf) if hasattr(self.result, 'bic_llf') else None,
-            "log_likelihood": float(self.result.llf) if hasattr(self.result, 'llf') else None,
+            "aic": float(self.result.aic) if (hasattr(self.result, 'aic') and self._model_variant != "Firth Penalized Likelihood") else None,
+            "bic": float(self.result.bic_llf) if (hasattr(self.result, 'bic_llf') and self._model_variant != "Firth Penalized Likelihood") else None,
+            "log_likelihood": float(self.result.llf) if (hasattr(self.result, 'llf') and self._model_variant != "Firth Penalized Likelihood") else None,
             "n_observations": int(self.result.nobs),
             "predictors_used": self._predictors,
             "covariates_used": self._covariates,

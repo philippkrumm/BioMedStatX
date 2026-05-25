@@ -540,11 +540,14 @@ class AnalysisManager:
 
                 elif clinical_test == 'lmm':
                     model = LinearMixedModel()
-                    fixed_effects = analysis_context.get('within_factors', []) + analysis_context.get('between_factors', [])
+                    within_factors = analysis_context.get('within_factors', [])
+                    fixed_effects = within_factors + (analysis_context.get('between_factors', []) or [])
                     if not fixed_effects:
                         fixed_effects = analysis_context.get('factor_columns', [])
+                    random_slope_candidate = within_factors[0] if within_factors else None
                     model.fit(df, dv=value_cols[0], fixed_effects=fixed_effects,
-                              random_intercept=subject_column, covariates=covariates or None)
+                              random_intercept=subject_column, covariates=covariates or None,
+                              random_slope=random_slope_candidate)
                     test_results = model.as_results_dict()
 
                 elif clinical_test == 'logistic_regression':

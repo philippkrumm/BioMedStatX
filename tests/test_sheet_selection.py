@@ -22,6 +22,8 @@ from statistical_analyzer_autopilot_ui import (  # noqa: E402
     _FakeIdx,
     _cells_in_ranges,
     _selected_indexes_to_ranges,
+    _to_display_coords,
+    extract_from_coordinates,
 )
 
 
@@ -132,6 +134,75 @@ def test_remove_cells_via_bfs_resplits_ranges():
         {"rows": (0, 3), "cols": (1, 1)},
         {"rows": (6, 9), "cols": (1, 1)},
     ])
+
+
+# ---------------------------------------------------------------------------
+# _to_display_coords Beyond AZ
+# ---------------------------------------------------------------------------
+
+def test_to_display_coords_standard_and_large():
+    assert _to_display_coords(0, 0) == "Row 1, Col A"
+    assert _to_display_coords(0, 25) == "Row 1, Col Z"
+    assert _to_display_coords(0, 26) == "Row 1, Col AA"
+    assert _to_display_coords(0, 51) == "Row 1, Col AZ"
+    assert _to_display_coords(0, 52) == "Row 1, Col BA"
+    assert _to_display_coords(4, 701) == "Row 5, Col ZZ"
+    assert _to_display_coords(9, 702) == "Row 10, Col AAA"
+
+
+# ---------------------------------------------------------------------------
+# extract_from_coordinates Float Validation, NaN Handling, and Same-Group Merge
+# ---------------------------------------------------------------------------
+
+import pandas as pd
+import numpy as np
+
+def test_extract_from_coordinates_skips_empty_and_text_typos():
+    df_raw = pd.DataFrame([
+        ["1.2", "", "3.4"],
+        ["abc", "5.6", "N/A"],
+        [None, "7.8", "   "]
+    ])
+    selection_map = {
+        "Group_A": [{"rows": (0, 2), "cols": (0, 2)}]
+    }
+    
+    # Run extraction
+    result_df, nan_report = extract_from_coordinates(df_raw, selection_map, replicate_type="biological")
+    
+    # Out of 9 cells: 
+    # Valid numeric: 1.2, 3.4, 5.6, 7.8 (4 values)
+    # Empty: "", None, "   " (3 cells)
+    # Non-numeric: "abc", "N/A" (2 cells)
+    # Total NaN should be 5
+    assert nan_report["Group_A"] == 5
+    assert len(result_df) == 4
+    assert sorted(result_df["Value"].tolist()) == [1.2, 3.4, 5.6, 7.8]
+    assert all(result_df["Group"] == "Group_A")
+
+
+def test_touching_range_merging_simulation():
+    # Emulate the touching-range merging logic in _assign_selection
+    existing_ranges = [{"rows": (0, 1), "cols": (0, 1)}]
+    new_range = {"rows": (1, 2), "cols": (1, 2)}
+    
+    touching_ranges = []
+    non_touching_ranges = []
+    for r in existing_ranges:
+        touch = not (new_range["rows"][1] < r["rows"][0] - 1 or new_range["rows"][0] > r["rows"][1] + 1 or
+                     new_range["cols"][1] < r["cols"][0] - 1 or new_range["cols"][0] > r["cols"][1] + 1)
+        if touch:
+            touching_ranges.append(r)
+        else:
+            non_touching_ranges.append(r)
+            
+    assert len(touching_ranges) == 1
+    
+    combined_cells = _cells_in_ranges(touching_ranges + [new_range])
+    fake_indexes = [_FakeIdx(r, c) for r, c in combined_cells]
+    merged = _norm(_selected_indexes_to_ranges(fake_indexes))
+    
+    assert merged == [{"rows": (0, 2), "cols": (0, 2)}]
 
 
 if __name__ == "__main__":  # pragma: no cover

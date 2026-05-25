@@ -1464,6 +1464,7 @@ class StatisticalTester:
 
         between_factor = between[0]
         rm_factor = within[0]
+        results["n_within_levels"] = len(df[rm_factor].unique())
 
         try:
             pg = get_pingouin_module()
@@ -1819,6 +1820,8 @@ class StatisticalTester:
             "descriptive": {},
             "error": None
         }
+        if within and len(within) > 0 and within[0] in df.columns:
+            results["n_within_levels"] = len(df[within[0]].unique())
 
         try:
             pg = get_pingouin_module()

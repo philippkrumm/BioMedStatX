@@ -168,37 +168,50 @@ class AssumptionCheckEngine:
                       detail=f"{_w_str}, {_p_str}")
 
         # Levene test on raw data (Brown-Forsythe test using median)
-        try:
-            data_for_levene = [samples[g] for g in valid_groups]
-            logger.debug(f"DEBUG BROWN-FORSYTHE: Pre-transformation - Groups: {len(valid_groups)}, Data lengths: {[len(v) for v in data_for_levene]}")
+        if model_type in ("rm", "mixed"):
+            stat, pval, has_equal_variance = None, None, True
+            test_name = "N/A (Repeated Measures / Mixed)"
+            test_info.setdefault("validation_notes", []).append(
+                "Levene's test bypassed: sphericity check (Mauchly's test) is the appropriate variance check for repeated measures/mixed designs."
+            )
+        else:
+            test_name = "Brown-Forsythe"
             try:
-                validated_levene_data = validate_levene_inputs(
-                    data_for_levene,
-                    min_groups=2,
-                    min_n_per_group=3,
-                    label="pre_transformation_levene",
-                )
-                stat, pval = stats.levene(*validated_levene_data, center='median')
-                has_equal_variance = pval > 0.05
-                logger.debug(f"DEBUG BROWN-FORSYTHE: Pre-transformation - Statistic: {stat}, p-value: {pval}, Equal variance: {has_equal_variance}")
-            except ValidationError as exc:
+                data_for_levene = [samples[g] for g in valid_groups]
+                logger.debug(f"DEBUG BROWN-FORSYTHE: Pre-transformation - Groups: {len(valid_groups)}, Data lengths: {[len(v) for v in data_for_levene]}")
+                try:
+                    validated_levene_data = validate_levene_inputs(
+                        data_for_levene,
+                        min_groups=2,
+                        min_n_per_group=3,
+                        label="pre_transformation_levene",
+                    )
+                    stat, pval = stats.levene(*validated_levene_data, center='median')
+                    has_equal_variance = pval > 0.05
+                    logger.debug(f"DEBUG BROWN-FORSYTHE: Pre-transformation - Statistic: {stat}, p-value: {pval}, Equal variance: {has_equal_variance}")
+                except ValidationError as exc:
+                    stat, pval, has_equal_variance = None, None, False
+                    test_info.setdefault("validation_notes", []).append(str(exc))
+                    logger.warning(str(exc))
+                    logger.debug(f"DEBUG BROWN-FORSYTHE: Pre-transformation - Insufficient data for test")
+            except Exception as e:
+                logger.debug(f"DEBUG BROWN-FORSYTHE ERROR: Pre-transformation failed: {str(e)}")
                 stat, pval, has_equal_variance = None, None, False
-                test_info.setdefault("validation_notes", []).append(str(exc))
-                logger.warning(str(exc))
-                logger.debug(f"DEBUG BROWN-FORSYTHE: Pre-transformation - Insufficient data for test")
-        except Exception as e:
-            logger.debug(f"DEBUG BROWN-FORSYTHE ERROR: Pre-transformation failed: {str(e)}")
-            stat, pval, has_equal_variance = None, None, False
+        
         test_info["pre_transformation"]["variance"] = {
             "statistic": stat, "p_value": pval, "equal_variance": has_equal_variance,
-            "test_name": "Brown-Forsythe",
+            "test_name": test_name,
         }
         if trace:
-            _var_verdict = "equal variances" if has_equal_variance else "unequal variances"
-            _vp_str = f"p={pval:.4f}" if isinstance(pval, (float, int)) else "p=N/A"
-            trace.add(2, "Assumption",
-                      f"Brown-Forsythe test yielded {_vp_str} \u2014 {_var_verdict}.",
-                      detail=f"F={stat:.4f}, {_vp_str}" if isinstance(stat, (float, int)) else "")
+            if model_type in ("rm", "mixed"):
+                trace.add(2, "Assumption",
+                          "Homogeneity of variance (Levene's test) bypassed for dependent/repeated measures design; Sphericity is the relevant variance check.")
+            else:
+                _var_verdict = "equal variances" if has_equal_variance else "unequal variances"
+                _vp_str = f"p={pval:.4f}" if isinstance(pval, (float, int)) else "p=N/A"
+                trace.add(2, "Assumption",
+                          f"Brown-Forsythe test yielded {_vp_str} \u2014 {_var_verdict}.",
+                          detail=f"F={stat:.4f}, {_vp_str}" if isinstance(stat, (float, int)) else "")
 
         need_transform = not (
             test_info["pre_transformation"]["residuals_normality"]["is_normal"]
@@ -222,25 +235,30 @@ class AssumptionCheckEngine:
                 transformation_type = "log10"
             test_info["transformation"] = transformation_type
 
+            # Calculate a uniform global shift across the entire raw dependent variable column vector in df_raw
+            global_min = df_raw["Value"].min() if (not df_raw.empty and "Value" in df_raw.columns) else 0
+            global_shift = -global_min + 1 if global_min <= 0 else 0
+
+            # MEDIUM-3: record very large shifts via validation notes
+            if global_shift > 1e6:
+                shift_warning = GroupValidationError(
+                    f"Log10/Box-Cox transformation requires large global shift ({global_shift:.2e}); "
+                    "consider preprocessing."
+                )
+                test_info.setdefault("validation_notes", []).append(str(shift_warning))
+                logger.warning(str(shift_warning))
+
             # Apply transformation
             for group in valid_groups:
                 values = samples[group]
                 min_val = min(values)
-                shift = -min_val + 1 if min_val <= 0 else 0
-                # MEDIUM-3: record very large shifts via validation notes
-                if shift > 1e6:
-                    shift_warning = GroupValidationError(
-                        f"Group '{group}': log10 transformation requires large shift ({shift:.2e}); "
-                        "consider preprocessing."
-                    )
-                    test_info.setdefault("validation_notes", []).append(str(shift_warning))
-                    logger.warning(str(shift_warning))
+                
                 if transformation_type == "log10":
-                    transformed_samples[group] = [np.log10(v + shift) for v in values]
-                    if shift > 0:
-                        test_info.setdefault("log10_shifts", {})[group] = shift
+                    transformed_samples[group] = [np.log10(v + global_shift) for v in values]
+                    if global_shift > 0:
+                        test_info.setdefault("log10_shifts", {})[group] = global_shift
                 elif transformation_type == "boxcox":
-                    shifted = [v + shift for v in values]
+                    shifted = [v + global_shift for v in values]
                     # Pre-validate before attempting Box-Cox
                     if len(values) < 3:
                         _bc_reason = f"n={len(values)} < 3 required"
@@ -359,30 +377,35 @@ class AssumptionCheckEngine:
         }
 
         # Levene test on transformed data
-        try:
-            data_for_levene_tr = [transformed_samples[g] for g in valid_groups]
-            logger.debug(f"DEBUG BROWN-FORSYTHE: Post-transformation - Groups: {len(valid_groups)}, Data lengths: {[len(v) for v in data_for_levene_tr]}")
+        if model_type in ("rm", "mixed"):
+            stat_tr, pval_tr, has_equal_variance_tr = None, None, True
+            test_name_tr = "N/A (Repeated Measures / Mixed)"
+        else:
+            test_name_tr = "Brown-Forsythe"
             try:
-                validated_levene_data_tr = validate_levene_inputs(
-                    data_for_levene_tr,
-                    min_groups=2,
-                    min_n_per_group=3,
-                    label="post_transformation_levene",
-                )
-                stat_tr, pval_tr = stats.levene(*validated_levene_data_tr, center='median')
-                has_equal_variance_tr = pval_tr > 0.05
-                logger.debug(f"DEBUG BROWN-FORSYTHE: Post-transformation - Statistic: {stat_tr}, p-value: {pval_tr}, Equal variance: {has_equal_variance_tr}")
-            except ValidationError as exc:
+                data_for_levene_tr = [transformed_samples[g] for g in valid_groups]
+                logger.debug(f"DEBUG BROWN-FORSYTHE: Post-transformation - Groups: {len(valid_groups)}, Data lengths: {[len(v) for v in data_for_levene_tr]}")
+                try:
+                    validated_levene_data_tr = validate_levene_inputs(
+                        data_for_levene_tr,
+                        min_groups=2,
+                        min_n_per_group=3,
+                        label="post_transformation_levene",
+                    )
+                    stat_tr, pval_tr = stats.levene(*validated_levene_data_tr, center='median')
+                    has_equal_variance_tr = pval_tr > 0.05
+                    logger.debug(f"DEBUG BROWN-FORSYTHE: Post-transformation - Statistic: {stat_tr}, p-value: {pval_tr}, Equal variance: {has_equal_variance_tr}")
+                except ValidationError as exc:
+                    stat_tr, pval_tr, has_equal_variance_tr = None, None, False
+                    test_info.setdefault("validation_notes", []).append(str(exc))
+                    logger.warning(str(exc))
+                    logger.debug(f"DEBUG BROWN-FORSYTHE: Post-transformation - Insufficient data for test")
+            except Exception as e:
+                logger.debug(f"DEBUG BROWN-FORSYTHE ERROR: Post-transformation failed: {str(e)}")
                 stat_tr, pval_tr, has_equal_variance_tr = None, None, False
-                test_info.setdefault("validation_notes", []).append(str(exc))
-                logger.warning(str(exc))
-                logger.debug(f"DEBUG BROWN-FORSYTHE: Post-transformation - Insufficient data for test")
-        except Exception as e:
-            logger.debug(f"DEBUG BROWN-FORSYTHE ERROR: Post-transformation failed: {str(e)}")
-            stat_tr, pval_tr, has_equal_variance_tr = None, None, False
         test_info["post_transformation"]["variance"] = {
             "statistic": stat_tr, "p_value": pval_tr, "equal_variance": has_equal_variance_tr,
-            "test_name": "Brown-Forsythe",
+            "test_name": test_name_tr,
         }
 
         # Recommend test based on assumptions

@@ -3813,6 +3813,62 @@ class ResultsExporter:
                 row += 1
             row += 1
 
+        # Simple Slopes & Johnson-Neyman Analysis
+        ssa = results.get("simple_slopes_analysis")
+        if ssa:
+            ws.write(row, 0, "Simple Slopes & Johnson-Neyman Analysis (Pick-a-Point)", fmt["section_header"])
+            row += 1
+            ws.write(row, 0, f"Moderator/Covariate: {ssa.get('covariate_name')}", fmt["cell"])
+            row += 1
+            ws.write(row, 0, f"Primary Factor: {ssa.get('factor_name')}", fmt["cell"])
+            row += 2
+
+            ws.write(row, 0, "Simple Slopes (Pick-a-Point)", fmt["section_header"])
+            row += 1
+            ss_headers = ["Covariate Level", "Covariate Value", "Effect Size / Coef", "Std. Error", "t-value", "p-value", "CI Lower", "CI Upper"]
+            for c, h in enumerate(ss_headers):
+                ws.write(row, c, h, fmt["header"])
+            row += 1
+            for slope in ssa.get("simple_slopes", []):
+                ws.write(row, 0, str(slope.get("covariate_label", "")), fmt["cell"])
+                ws.write(row, 1, slope.get("covariate_value"), fmt["cell"])
+                ws.write(row, 2, slope.get("coefficient"), fmt["cell"])
+                ws.write(row, 3, slope.get("std_err"), fmt["cell"])
+                ws.write(row, 4, slope.get("t_value"), fmt["cell"])
+                p_val = slope.get("p_value")
+                if p_val is not None:
+                    cell_fmt = fmt["sig_highlight"] if p_val < 0.05 else fmt["cell"]
+                    ws.write(row, 5, p_val, cell_fmt)
+                else:
+                    ws.write(row, 5, "N/A", fmt["cell"])
+                ws.write(row, 6, slope.get("ci_lower"), fmt["cell"])
+                ws.write(row, 7, slope.get("ci_upper"), fmt["cell"])
+                row += 1
+            row += 2
+
+            jn = ssa.get("johnson_neyman")
+            if jn:
+                ws.write(row, 0, "Johnson-Neyman Significance Regions", fmt["section_header"])
+                row += 1
+                roots = jn.get("roots", [])
+                if len(roots) >= 2:
+                    ws.write(row, 0, f"Critical Roots / Intervals", fmt["cell"])
+                    ws.write(row, 1, f"[{roots[0]:.4f}, {roots[1]:.4f}]", fmt["cell"])
+                    row += 1
+                
+                sig_regs = jn.get("significant_regions", [])
+                if sig_regs:
+                    ws.write(row, 0, "Significant Regions", fmt["cell"])
+                    ws.write(row, 1, ", ".join(sig_regs), fmt["cell"])
+                    row += 1
+                else:
+                    ws.write(row, 0, "Significant Regions", fmt["cell"])
+                    ws.write(row, 1, "None in range", fmt["cell"])
+                    row += 1
+                ws.write(row, 0, "Covariate Range", fmt["cell"])
+                ws.write(row, 1, f"[{jn.get('covariate_min', 0.0):.4f}, {jn.get('covariate_max', 0.0):.4f}]", fmt["cell"])
+                row += 2
+
         # Model Fit
         ws.write(row, 0, "Model Fit", fmt["section_header"])
         row += 1
@@ -3899,7 +3955,7 @@ class ResultsExporter:
         # Fixed Effects Table
         ws.write(row, 0, "Fixed Effects", fmt["section_header"])
         row += 1
-        fe_headers = ["Parameter", "Coefficient", "Std. Error", "z-value", "p-value", "CI Lower", "CI Upper"]
+        fe_headers = ["Parameter", "Coefficient", "Std. Error", "df", "t/z-value", "p-value", "CI Lower", "CI Upper"]
         for c, h in enumerate(fe_headers):
             ws.write(row, c, h, fmt["header"])
         row += 1
@@ -3907,15 +3963,17 @@ class ResultsExporter:
             ws.write(row, 0, str(fe.get("parameter", "")), fmt["cell"])
             ws.write(row, 1, fe.get("coefficient"), fmt["cell"])
             ws.write(row, 2, fe.get("std_err"), fmt["cell"])
-            ws.write(row, 3, fe.get("z_value"), fmt["cell"])
+            df_val = fe.get("df")
+            ws.write(row, 3, df_val if df_val is not None else "N/A", fmt["cell"])
+            ws.write(row, 4, fe.get("z_value"), fmt["cell"])
             p_val = fe.get("p_value")
             if p_val is not None:
                 cell_fmt = fmt["sig_highlight"] if p_val < 0.05 else fmt["cell"]
-                ws.write(row, 4, p_val, cell_fmt)
+                ws.write(row, 5, p_val, cell_fmt)
             else:
-                ws.write(row, 4, "N/A", fmt["cell"])
-            ws.write(row, 5, fe.get("ci_lower"), fmt["cell"])
-            ws.write(row, 6, fe.get("ci_upper"), fmt["cell"])
+                ws.write(row, 5, "N/A", fmt["cell"])
+            ws.write(row, 6, fe.get("ci_lower"), fmt["cell"])
+            ws.write(row, 7, fe.get("ci_upper"), fmt["cell"])
             row += 1
         row += 1
 
@@ -3931,6 +3989,29 @@ class ResultsExporter:
         icc = results.get("icc")
         ws.write(row, 0, "ICC (Intraclass Correlation)", fmt["cell"])
         ws.write(row, 1, icc if icc is not None else "N/A", fmt["cell"])
+        row += 2
+
+        # Random Structure Selection & Degrees of Freedom
+        ws.write(row, 0, "Random Structure & Degrees of Freedom Selection", fmt["section_header"])
+        row += 1
+        ws.write(row, 0, "Degrees of Freedom Method", fmt["cell"])
+        ws.write(row, 1, results.get("df_method", "N/A"), fmt["cell"])
+        row += 1
+        ws.write(row, 0, "Random Structure Chosen", fmt["cell"])
+        ws.write(row, 1, results.get("random_structure_chosen", "N/A"), fmt["cell"])
+        row += 1
+        if results.get("lrt_performed"):
+            ws.write(row, 0, "Random Slope LRT Statistic", fmt["cell"])
+            ws.write(row, 1, results.get("lrt_statistic"), fmt["cell"])
+            row += 1
+            lrt_p = results.get("lrt_p_value")
+            ws.write(row, 0, "Random Slope LRT p-value", fmt["cell"])
+            if lrt_p is not None:
+                cell_fmt = fmt["sig_highlight"] if lrt_p < 0.05 else fmt["cell"]
+                ws.write(row, 1, lrt_p, cell_fmt)
+            else:
+                ws.write(row, 1, "N/A", fmt["cell"])
+            row += 1
         row += 2
 
         # Model Fit
@@ -4057,7 +4138,11 @@ class ResultsExporter:
         row += 1
         for key, label in [("pseudo_r_squared", "Pseudo R-squared (McFadden)"),
                            ("aic", "AIC"), ("bic", "BIC"),
-                           ("log_likelihood", "Log-Likelihood")]:
+                           ("log_likelihood", "Log-Likelihood"),
+                           ("brier_score", "Brier Score"),
+                           ("calibration_slope", "Calibration Slope"),
+                           ("calibration_intercept", "Calibration Intercept"),
+                           ("model_variant", "Model Variant")]:
             ws.write(row, 0, label, fmt["cell"])
             val = results.get(key)
             ws.write(row, 1, val if val is not None else "N/A", fmt["cell"])
@@ -4248,6 +4333,7 @@ class ResultsExporter:
             ("F p-value", results.get("f_p_value")),
             ("AIC", results.get("aic")),
             ("BIC", results.get("bic")),
+            ("Covariance Type", results.get("cov_type", "nonrobust")),
             ("N Observations", results.get("n_observations")),
         ]
         for label, val in summary_fields:

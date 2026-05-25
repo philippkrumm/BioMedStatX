@@ -18,7 +18,7 @@ from PyQt5.QtCore import (
     QUrl,
     pyqtSignal,
 )
-from PyQt5.QtGui import QColor, QDesktopServices, QDrag, QPixmap
+from PyQt5.QtGui import QColor, QDesktopServices, QDrag, QPixmap, QPen
 from PyQt5.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -44,9 +44,11 @@ from PyQt5.QtWidgets import (
     QToolButton,
     QVBoxLayout,
     QWidget,
+    QStyledItemDelegate,
 )
 
 from decisiontreevisualizer import DecisionTreeVisualizer
+from ui.components.decision_tree_view import InteractiveDecisionTreeWidget
 
 try:
     from help_content import HELP_RECIPES
@@ -172,7 +174,11 @@ def _pivot_wide_to_long(df, subject_col, value_cols):
 
 
 def _to_display_coords(r, c):
-    col_letter = chr(ord("A") + c) if c < 26 else f"A{chr(ord('A') + c - 26)}"
+    temp = c + 1
+    col_letter = ""
+    while temp > 0:
+        temp, remainder = divmod(temp - 1, 26)
+        col_letter = chr(65 + remainder) + col_letter
     return f"Row {r + 1}, Col {col_letter}"
 
 
@@ -267,9 +273,21 @@ def extract_from_coordinates(df_raw, selection_map, replicate_type="biological",
             c1, c2 = rng["cols"]
             block = df_raw.iloc[r1 : r2 + 1, c1 : c2 + 1]
             vals_raw = block.values.flatten()
-            vals = pd.to_numeric(vals_raw, errors="coerce")
-            n_nan = int(np.isnan(vals).sum())
-            nan_report[group_name] += n_nan
+            
+            vals = []
+            for val in vals_raw:
+                if pd.isna(val) or str(val).strip() == "":
+                    nan_report[group_name] += 1
+                    vals.append(np.nan)
+                else:
+                    try:
+                        f_val = float(str(val).strip())
+                        vals.append(f_val)
+                    except ValueError:
+                        nan_report[group_name] += 1
+                        vals.append(np.nan)
+            
+            vals = np.array(vals)
             range_label = f"r{r1}:{r2}|c{c1}:{c2}"
             n_valid = int(np.sum(~np.isnan(vals)))
 
@@ -289,6 +307,10 @@ def extract_from_coordinates(df_raw, selection_map, replicate_type="biological",
                     "Source_Range": [range_label] * n,
                     "n_replicates": [np.nan] * n,
                 }))
+
+    if not frames:
+        empty_df = pd.DataFrame(columns=[group_col, value_col, "Source_Range", "n_replicates"])
+        return empty_df, nan_report
 
     result = pd.concat(frames, ignore_index=True)
     return result.dropna(subset=[value_col]), nan_report
@@ -759,32 +781,9 @@ class DecisionTreeOverlayWidget(QFrame):
         self.overlay_status.setWordWrap(True)
         layout.addWidget(self.overlay_status)
 
-        self.scroll_area = QScrollArea()
-        self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setObjectName("decisionTreeOverlayScroll")
-        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-
-        self.overlay_image_label = QLabel("Decision tree preview")
-        self.overlay_image_label.setObjectName("decisionTreeOverlayImage")
-        self.overlay_image_label.setAlignment(Qt.AlignCenter)
-        self.overlay_image_label.setMinimumSize(1400, 900)
-        self.overlay_image_label.setWordWrap(True)
-        self.scroll_area.setWidget(self.overlay_image_label)
-        layout.addWidget(self.scroll_area, 1)
-
-        self._render_path = None
-        self._source_pixmap = QPixmap()
-
-    def _target_render_size(self):
-        parent = self.parentWidget()
-        parent_width = parent.width() if parent is not None else 1400
-        parent_height = parent.height() if parent is not None else 1000
-
-        # Keep margins and header space to avoid clipping while maximizing usable area.
-        target_width = max(1200, parent_width - 40)
-        target_height = max(760, parent_height - 170)
-        return target_width, target_height
+        self.tree_view = InteractiveDecisionTreeWidget()
+        self.tree_view.setObjectName("decisionTreeOverlayView")
+        layout.addWidget(self.tree_view, 1)
 
     def show_overlay(self):
         if self.parentWidget() is not None:
@@ -793,6 +792,7 @@ class DecisionTreeOverlayWidget(QFrame):
         self.raise_()
         self.activateWindow()
         self.setFocus(Qt.ActiveWindowFocusReason)
+        self.tree_view.refit_view()
 
     def hide_overlay(self):
         self.hide()
@@ -806,40 +806,15 @@ class DecisionTreeOverlayWidget(QFrame):
 
     def set_placeholder(self, text):
         self.overlay_status.setText(text)
-        self._render_path = None
-        self._source_pixmap = QPixmap()
-        self.overlay_image_label.setPixmap(QPixmap())
-        self.overlay_image_label.setText("Decision tree preview")
+        self.tree_view.show_placeholder(text)
 
-    def set_render_path(self, render_path, status_text=None):
-        if render_path != self._render_path:
-            pixmap = QPixmap(render_path)
-            if pixmap.isNull():
-                self.set_placeholder("Decision tree image could not be loaded.")
-                return
-            self._render_path = render_path
-            self._source_pixmap = pixmap
-
-        if self._source_pixmap.isNull():
-            self.set_placeholder("Decision tree image could not be loaded.")
-            return
-
+    def set_tree_data(self, tree_data, status_text=None):
         if status_text:
             self.overlay_status.setText(status_text)
-        self.overlay_image_label.setText("")
-        target_width, target_height = self._target_render_size()
-        scaled = self._source_pixmap.scaled(target_width, target_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        self.overlay_image_label.setMinimumSize(scaled.width(), scaled.height())
-        self.overlay_image_label.setPixmap(scaled)
+        self.tree_view.set_tree_data(tree_data)
 
     def refresh_scaled_render(self):
-        if self._source_pixmap.isNull():
-            return
-
-        target_width, target_height = self._target_render_size()
-        refreshed = self._source_pixmap.scaled(target_width, target_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        self.overlay_image_label.setMinimumSize(refreshed.width(), refreshed.height())
-        self.overlay_image_label.setPixmap(refreshed)
+        self.tree_view.refit_view()
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
@@ -850,9 +825,7 @@ class DecisionTreeOverlayWidget(QFrame):
 
     def cleanup(self):
         self.hide()
-        self._render_path = None
-        self._source_pixmap = QPixmap()
-        self.overlay_image_label.clear()
+        self.tree_view.show_placeholder("Run an analysis to render the decision tree.")
 
 
 class DecisionTreePanel(QFrame):
@@ -882,49 +855,21 @@ class DecisionTreePanel(QFrame):
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
 
-        self.image_label = QLabel("Decision tree preview")
-        self.image_label.setObjectName("decisionTreeImage")
-        self.image_label.setAlignment(Qt.AlignCenter)
-        self.image_label.setMinimumHeight(320)
-        # Prevent pixmap size-hint feedback loops that can make split layouts "wobble".
-        self.image_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
-        self.image_label.setWordWrap(True)
-        layout.addWidget(self.image_label, 1)
+        self.tree_view = InteractiveDecisionTreeWidget()
+        self.tree_view.setObjectName("decisionTreeView")
+        self.tree_view.setMinimumHeight(320)
+        self.tree_view.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        layout.addWidget(self.tree_view, 1)
 
-        self.last_render_path = None
+        self.last_tree_data = None
         self.overlay = None
-        self._source_pixmap = QPixmap()
-        self._last_scaled_size = None
-        self._resize_scale_timer = QTimer(self)
-        self._resize_scale_timer.setSingleShot(True)
-        self._resize_scale_timer.setInterval(60)
-        self._resize_scale_timer.timeout.connect(self._refresh_scaled_preview)
 
     def show_placeholder(self, text):
         self.status_label.setText(text)
-        self.last_render_path = None
-        self._source_pixmap = QPixmap()
-        self._last_scaled_size = None
-        self.image_label.setPixmap(QPixmap())
-        self.image_label.setText("Decision tree preview")
+        self.last_tree_data = None
+        self.tree_view.show_placeholder(text)
         self.maximize_button.setEnabled(False)
         self._sync_overlay_placeholder(text)
-
-    def _refresh_scaled_preview(self, force=False):
-        if self._source_pixmap.isNull():
-            return
-
-        target_size = self.image_label.size()
-        if target_size.width() < 10 or target_size.height() < 10:
-            return
-
-        size_tuple = (target_size.width(), target_size.height())
-        if not force and self._last_scaled_size == size_tuple:
-            return
-
-        scaled = self._source_pixmap.scaled(target_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        self.image_label.setPixmap(scaled)
-        self._last_scaled_size = size_tuple
 
     def _ensure_overlay(self):
         host_window = self.window()
@@ -944,8 +889,8 @@ class DecisionTreePanel(QFrame):
         if self.overlay is None:
             return
         overlay = self.overlay
-        if self.last_render_path and os.path.exists(self.last_render_path):
-            overlay.set_render_path(self.last_render_path, self.status_label.text())
+        if self.last_tree_data:
+            overlay.set_tree_data(self.last_tree_data, self.status_label.text())
         else:
             overlay.set_placeholder(self.status_label.text())
 
@@ -958,19 +903,11 @@ class DecisionTreePanel(QFrame):
 
     def update_results(self, results):
         try:
-            import tempfile
-
-            output_base = os.path.join(tempfile.gettempdir(), f"biomedstatx_tree_{int(time.time() * 1000)}")
-            rendered_path = DecisionTreeVisualizer.visualize(results, output_path=output_base)
-            pixmap = QPixmap(rendered_path)
-            if pixmap.isNull():
-                raise ValueError("Decision tree image could not be loaded.")
-            self.last_render_path = rendered_path
-            self._source_pixmap = pixmap
-            self._last_scaled_size = None
+            self.last_tree_data = DecisionTreeVisualizer.get_tree_json(results)
+            if self.last_tree_data is None:
+                raise ValueError("No decision tree structure was returned.")
             self.status_label.setText(results.get("tested_against", results.get("test", "Decision path ready.")))
-            self.image_label.setText("")
-            self._refresh_scaled_preview(force=True)
+            self.tree_view.set_tree_data(self.last_tree_data)
             self.maximize_button.setEnabled(True)
             self._sync_overlay_render()
         except Exception as exc:
@@ -980,17 +917,11 @@ class DecisionTreePanel(QFrame):
         if self.overlay is not None and self.overlay.isVisible():
             self.overlay.setGeometry(self.overlay.parentWidget().rect())
             self.overlay.refresh_scaled_render()
-
-        if not self._source_pixmap.isNull():
-            self._resize_scale_timer.start()
         super().resizeEvent(event)
 
     def cleanup(self):
-        self._resize_scale_timer.stop()
-        self._source_pixmap = QPixmap()
-        self.last_render_path = None
-        self._last_scaled_size = None
-        self.image_label.clear()
+        self.last_tree_data = None
+        self.tree_view.show_placeholder("The statistical decision path will appear here after the analysis.")
 
         if self.overlay is not None:
             try:
@@ -1410,6 +1341,42 @@ _GROUP_COLORS = [
 ]
 
 
+class RangeSelectionDelegate(QStyledItemDelegate):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.dialog = parent
+
+    def paint(self, painter, option, index):
+        super().paint(painter, option, index)
+        
+        r, c = index.row(), index.column()
+        focused_group = self.dialog._focused_group
+        if focused_group:
+            ranges = self.dialog._selection_map.get(focused_group, [])
+            for rng in ranges:
+                r1, r2 = rng["rows"]
+                c1, c2 = rng["cols"]
+                if r1 <= r <= r2 and c1 <= c <= c2:
+                    painter.save()
+                    hex_color = self.dialog._group_colors.get(focused_group, "#0f766e")
+                    color = QColor(hex_color)
+                    pen = QPen(color, 2)
+                    painter.setPen(pen)
+                    rect = option.rect
+                    
+                    if r == r1:
+                        painter.drawLine(rect.topLeft(), rect.topRight())
+                    if r == r2:
+                        painter.drawLine(rect.bottomLeft(), rect.bottomRight())
+                    if c == c1:
+                        painter.drawLine(rect.topLeft(), rect.bottomLeft())
+                    if c == c2:
+                        painter.drawLine(rect.topRight(), rect.bottomRight())
+                    
+                    painter.restore()
+                    break
+
+
 class SheetSelectionDialog(QDialog):
     def __init__(self, df_raw, initial_sheet=None, available_sheets=None,
                  source_path=None, parent=None,
@@ -1440,6 +1407,7 @@ class SheetSelectionDialog(QDialog):
         self._color_index = 0
         self._replicate_type = "biological"
         self._last_indexes = []    # cached table selection (survives focus loss on button click)
+        self._last_selected_ranges = []
         self._focused_group = None # currently focused group (None = no focus)
         self._colored_cells = set()  # cache of (r,c) cells currently colored — incremental recolor
 
@@ -1508,6 +1476,7 @@ class SheetSelectionDialog(QDialog):
         self._table.setContextMenuPolicy(Qt.CustomContextMenu)
         self._table.customContextMenuRequested.connect(self._on_context_menu)
         self._table.itemSelectionChanged.connect(self._on_selection_changed)
+        self._table.setItemDelegate(RangeSelectionDelegate(self))
         splitter.addWidget(self._table)
 
         # Right: group panel
@@ -1645,6 +1614,7 @@ class SheetSelectionDialog(QDialog):
 
         Avoids O(rows*cols) full-table scan — important for large sheets.
         """
+        self._table.blockSignals(True)
         transparent = QColor(0, 0, 0, 0)
 
         # 1. Clear previous coloring (only previously touched cells)
@@ -1667,13 +1637,13 @@ class SheetSelectionDialog(QDialog):
             hex_color = self._group_colors.get(group_name, "#2563eb")
             color = QColor(hex_color)
             if focused is None:
-                color.setAlpha(55)
+                color.setAlpha(56)  # Alpha ~0.22
                 bold = False
             elif group_name == focused:
-                color.setAlpha(140)
+                color.setAlpha(204) # Alpha ~0.8
                 bold = True
             else:
-                color.setAlpha(25)
+                color.setAlpha(25)  # Alpha ~0.1
                 bold = False
 
             for rng in ranges:
@@ -1692,6 +1662,8 @@ class SheetSelectionDialog(QDialog):
 
         # 3. Update cache
         self._colored_cells = new_colored
+        self._table.blockSignals(False)
+        self._table.viewport().update()
 
     # ------------------------------------------------------------------
     # Group management
@@ -1853,8 +1825,8 @@ class SheetSelectionDialog(QDialog):
     # ------------------------------------------------------------------
 
     def _on_context_menu(self, pos):
-        indexes = self._table.selectedIndexes()
-        if not indexes:
+        ranges = self._table.selectedRanges()
+        if not ranges:
             return
         menu = QMenu(self)
         for group_name in self._group_colors:
@@ -1873,20 +1845,30 @@ class SheetSelectionDialog(QDialog):
             self._assign_selection(group_name)
 
     def _assign_selection(self, group_name):
-        indexes = self._last_indexes or self._table.selectedIndexes()
-        if not indexes:
+        ranges = self._last_selected_ranges or self._table.selectedRanges()
+        if not ranges:
             return
-        new_ranges = _selected_indexes_to_ranges(indexes)
+        
+        new_ranges = []
+        for r in ranges:
+            new_ranges.append({
+                "rows": (r.topRow(), r.bottomRow()),
+                "cols": (r.leftColumn(), r.rightColumn()),
+            })
         new_cells = _cells_in_ranges(new_ranges)
 
-        # Check overlap with OTHER groups — re-assignment within same group is OK.
-        overlaps = {}  # other_group -> set of conflicting (r, c) cells
+        # Check overlap with OTHER groups
+        overlaps = {}
         for other_group, other_ranges in self._selection_map.items():
             if other_group == group_name:
                 continue
-            conflict = _cells_in_ranges(other_ranges) & new_cells
-            if conflict:
-                overlaps[other_group] = conflict
+            for nr in new_ranges:
+                for orng in other_ranges:
+                    if not (nr["rows"][1] < orng["rows"][0] or nr["rows"][0] > orng["rows"][1] or
+                            nr["cols"][1] < orng["cols"][0] or nr["cols"][0] > orng["cols"][1]):
+                        conflict = _cells_in_ranges([orng]) & _cells_in_ranges([nr])
+                        if conflict:
+                            overlaps.setdefault(other_group, set()).update(conflict)
 
         if overlaps:
             names = ", ".join(overlaps.keys())
@@ -1902,7 +1884,26 @@ class SheetSelectionDialog(QDialog):
                 return
             self._remove_cells_from_groups(overlaps)
 
-        self._selection_map[group_name].extend(new_ranges)
+        # Assign to group_name and merge with touching ranges (same group)
+        for nr in new_ranges:
+            touching_ranges = []
+            non_touching_ranges = []
+            for r in self._selection_map[group_name]:
+                touch = not (nr["rows"][1] < r["rows"][0] - 1 or nr["rows"][0] > r["rows"][1] + 1 or
+                             nr["cols"][1] < r["cols"][0] - 1 or nr["cols"][0] > r["cols"][1] + 1)
+                if touch:
+                    touching_ranges.append(r)
+                else:
+                    non_touching_ranges.append(r)
+            
+            if touching_ranges:
+                combined_cells = _cells_in_ranges(touching_ranges + [nr])
+                fake_indexes = [_FakeIdx(r, c) for r, c in combined_cells]
+                merged = _selected_indexes_to_ranges(fake_indexes)
+                self._selection_map[group_name] = non_touching_ranges + merged
+            else:
+                self._selection_map[group_name].append(nr)
+
         self._rebuild_group_list()
         self._recolor_table()
         self._update_preview()
@@ -1930,36 +1931,44 @@ class SheetSelectionDialog(QDialog):
                 self._selection_map[other_group] = []
 
     def _clear_selection_assignment(self):
-        indexes = self._last_indexes or self._table.selectedIndexes()
-        if not indexes:
+        ranges = self._last_selected_ranges or self._table.selectedRanges()
+        if not ranges:
             return
-        sel_rows = {idx.row() for idx in indexes}
-        sel_cols = {idx.column() for idx in indexes}
+        
+        new_ranges = []
+        for r in ranges:
+            new_ranges.append({
+                "rows": (r.topRow(), r.bottomRow()),
+                "cols": (r.leftColumn(), r.rightColumn()),
+            })
+        sel_cells = _cells_in_ranges(new_ranges)
+
         for group_name in self._selection_map:
-            kept = []
-            for rng in self._selection_map[group_name]:
-                r1, r2 = rng["rows"]
-                c1, c2 = rng["cols"]
-                rng_rows = set(range(r1, r2 + 1))
-                rng_cols = set(range(c1, c2 + 1))
-                if not (rng_rows & sel_rows and rng_cols & sel_cols):
-                    kept.append(rng)
-            self._selection_map[group_name] = kept
+            existing_cells = _cells_in_ranges(self._selection_map[group_name])
+            kept_cells = existing_cells - sel_cells
+            if kept_cells:
+                fake_indexes = [_FakeIdx(r, c) for r, c in kept_cells]
+                self._selection_map[group_name] = _selected_indexes_to_ranges(fake_indexes)
+            else:
+                self._selection_map[group_name] = []
         self._rebuild_group_list()
         self._recolor_table()
         self._update_preview()
 
     def _on_selection_changed(self):
-        indexes = self._table.selectedIndexes()
-        self._last_indexes = indexes   # cache so Assign button works after focus loss
-        if not indexes:
+        ranges = self._table.selectedRanges()
+        self._last_selected_ranges = ranges  # Cache the range objects!
+        self._last_indexes = self._table.selectedIndexes()  # Keep for compatibility
+        if not ranges:
             self._status_label.setText("No cells selected")
             return
-        rows = [idx.row() for idx in indexes]
-        cols = [idx.column() for idx in indexes]
-        r1, r2 = min(rows), max(rows)
-        c1, c2 = min(cols), max(cols)
-        n = len(indexes)
+        
+        r1 = min(r.topRow() for r in ranges)
+        r2 = max(r.bottomRow() for r in ranges)
+        c1 = min(r.leftColumn() for r in ranges)
+        c2 = max(r.rightColumn() for r in ranges)
+        n = sum((r.bottomRow() - r.topRow() + 1) * (r.rightColumn() - r.leftColumn() + 1) for r in ranges)
+        
         self._status_label.setText(
             f"{_to_display_coords(r1, c1)} – {_to_display_coords(r2, c2)}\n{n} cells"
         )
@@ -1987,6 +1996,8 @@ class SheetSelectionDialog(QDialog):
             self._selection_map[g] = []
         self._focused_group = None
         self._colored_cells.clear()
+        self._last_selected_ranges = []
+        self._last_indexes = []
         if self._source_path:
             df_raw = pd.read_excel(
                 self._source_path, sheet_name=sheet_name, header=None, dtype=str
@@ -2004,18 +2015,51 @@ class SheetSelectionDialog(QDialog):
 
     def _update_preview(self):
         parts = []
-        total = 0
+        total_cells = 0
+        empty_cells = 0
+        non_numeric_cells = 0
+
         for group_name, ranges in self._selection_map.items():
             n = sum(
                 (r["rows"][1] - r["rows"][0] + 1) * (r["cols"][1] - r["cols"][0] + 1)
                 for r in ranges
             )
-            total += n
+            total_cells += n
             parts.append(f"{group_name}: ~{n}")
-        if total:
-            self._preview_label.setText("→ ~" + str(total) + " cells | " + ", ".join(parts))
+
+            for rng in ranges:
+                r1, r2 = rng["rows"]
+                c1, c2 = rng["cols"]
+                for r in range(r1, r2 + 1):
+                    for c in range(c1, c2 + 1):
+                        val = self._df_raw.iloc[r, c]
+                        if pd.isna(val) or str(val).strip() == "":
+                            empty_cells += 1
+                        else:
+                            try:
+                                float(str(val).strip())
+                            except ValueError:
+                                non_numeric_cells += 1
+
+        if total_cells:
+            self._preview_label.setText("→ ~" + str(total_cells) + " cells | " + ", ".join(parts))
         else:
             self._preview_label.setText("")
+
+        warning_parts = []
+        if empty_cells > 0:
+            warning_parts.append(f"{empty_cells} empty cell(s) skipped")
+        if non_numeric_cells > 0:
+            warning_parts.append(f"{non_numeric_cells} non-numeric cell(s) skipped")
+
+        if warning_parts:
+            self._nan_warning.setText(
+                f"⚠️ Selection contains {total_cells} cells: {', '.join(warning_parts)}."
+            )
+            self._nan_warning.setStyleSheet("color: #d97706; font-weight: bold;")
+            self._nan_warning.setVisible(True)
+        else:
+            self._nan_warning.setVisible(False)
 
     def _on_apply(self):
         if not any(len(v) > 0 for v in self._selection_map.values()):

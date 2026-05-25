@@ -201,88 +201,84 @@ class CorrelationModel:
         # Store scatter points from raw (untransformed) values for plots
         self._points = [{"x": float(x), "y": float(y)} for x, y in zip(x_raw, y_raw)]
 
-        # --- Normality check on raw data (auto mode only) ---
-        # For correlation, the transform choice is data-driven: Shapiro-Wilk runs on the
-        # raw values first.  Only if normality is violated does a dialog appear asking the
-        # user to select log10 or Box-Cox.  The transform is then applied and Shapiro-Wilk
-        # is re-run to decide Pearson vs. Spearman.  This mirrors the ANOVA/t-test flow in
-        # assumption_checks.py and prevents blind pre-analysis transformation.
-        self._normality_check = None
-        if method == 'auto' and self._x_transform == 'none' and self._y_transform == 'none':
-            sw_stat_x_raw, px_raw = scipy_stats.shapiro(x_raw[:5000])
-            sw_stat_y_raw, py_raw = scipy_stats.shapiro(y_raw[:5000])
-            both_normal_raw = (px_raw > alpha and py_raw > alpha)
-
-            if not both_normal_raw:
-                # Normality violated — offer log10 / Box-Cox (no arcsin, which is for proportions)
-                _corr_transforms = [
-                    ("Log10 transformation (for positive, right-skewed data)", "log10"),
-                    ("Box-Cox transformation (automatic lambda optimization)", "boxcox"),
-                ]
-                try:
-                    from statistical_testing.assumption_checks import _get_ui_dialog_manager
-                    _ui = _get_ui_dialog_manager()
-                    chosen = _ui.select_transformation_dialog(
-                        parent=None,
-                        transforms=_corr_transforms,
-                        column_name=f"{x_col} / {y_col}",
-                    )
-                except Exception:
-                    chosen = "log10"
-                if chosen:
-                    self._x_transform = chosen
-                    self._y_transform = chosen
-
         # --- Apply transformations ---
         x_vals, self._x_boxcox_lambda, self._x_transform_shift = _apply_transform(x_raw, self._x_transform)
         y_vals, self._y_boxcox_lambda, self._y_transform_shift = _apply_transform(y_raw, self._y_transform)
 
-        # --- Final normality check (on possibly transformed values) ---
+        # --- Normality check (auto mode only) ---
+        self._normality_check = None
         if method == 'auto':
-            sw_stat_x_raw, px_raw = scipy_stats.shapiro(x_raw[:5000])
-            sw_stat_y_raw, py_raw = scipy_stats.shapiro(y_raw[:5000])
-
+            # Calculate N, skewness, excess kurtosis for the values being tested (x_vals, y_vals)
+            skew_x = float(scipy_stats.skew(x_vals))
+            skew_y = float(scipy_stats.skew(y_vals))
+            kurt_x = float(scipy_stats.kurtosis(x_vals))  # Excess kurtosis (Fisher: normal = 0)
+            kurt_y = float(scipy_stats.kurtosis(y_vals))
+            
             sw_stat_x, px = scipy_stats.shapiro(x_vals[:5000])
             sw_stat_y, py = scipy_stats.shapiro(y_vals[:5000])
-
-            self._method_used = 'pearson' if (px > alpha and py > alpha) else 'spearman'
-
+            both_normal_sw = bool(px > alpha and py > alpha)
+            
+            # Determine method based on N-tier:
+            if self.n < 20:
+                self._method_used = 'spearman'
+            elif 20 <= self.n < 100:
+                # Pearson if |skewness| <= 1.0 and |excess kurtosis| <= 2.0 for both
+                if (abs(skew_x) <= 1.0 and abs(skew_y) <= 1.0 and 
+                        abs(kurt_x) <= 2.0 and abs(kurt_y) <= 2.0):
+                    self._method_used = 'pearson'
+                else:
+                    self._method_used = 'spearman'
+            else: # N >= 100
+                # Pearson unless extreme asymmetry
+                if abs(skew_x) > 2.0 or abs(skew_y) > 2.0 or abs(kurt_x) > 4.0 or abs(kurt_y) > 4.0:
+                    self._method_used = 'spearman'
+                else:
+                    self._method_used = 'pearson'
+                    
             has_transform = (self._x_transform != 'none' or self._y_transform != 'none')
             if has_transform:
-                # Even if Spearman is chosen (transform reverted), keep the full
-                # normality chain so the report can explain the decision path.
+                sw_stat_x_raw, px_raw = scipy_stats.shapiro(x_raw[:5000])
+                sw_stat_y_raw, py_raw = scipy_stats.shapiro(y_raw[:5000])
+                skew_x_raw = float(scipy_stats.skew(x_raw))
+                skew_y_raw = float(scipy_stats.skew(y_raw))
+                kurt_x_raw = float(scipy_stats.kurtosis(x_raw))
+                kurt_y_raw = float(scipy_stats.kurtosis(y_raw))
+
                 self._normality_check = {
-                    "test": "Shapiro-Wilk (auto method selection)",
+                    "test": "Skewness/Kurtosis & Shapiro-Wilk check",
                     "transform_attempted": self._x_transform,
                     "transform_reverted": self._method_used == 'spearman',
                     "pre_transform": {
-                        x_col: {"statistic": float(sw_stat_x_raw), "p_value": float(px_raw), "normal": bool(px_raw > alpha)},
-                        y_col: {"statistic": float(sw_stat_y_raw), "p_value": float(py_raw), "normal": bool(py_raw > alpha)},
+                        x_col: {"statistic": float(sw_stat_x_raw), "p_value": float(px_raw), "normal": bool(px_raw > alpha), "skewness": skew_x_raw, "kurtosis": kurt_x_raw},
+                        y_col: {"statistic": float(sw_stat_y_raw), "p_value": float(py_raw), "normal": bool(py_raw > alpha), "skewness": skew_y_raw, "kurtosis": kurt_y_raw},
                         "both_normal": bool(px_raw > alpha and py_raw > alpha),
                     },
                     "post_transform": {
-                        x_col: {"statistic": float(sw_stat_x), "p_value": float(px), "normal": bool(px > alpha)},
-                        y_col: {"statistic": float(sw_stat_y), "p_value": float(py), "normal": bool(py > alpha)},
-                        "both_normal": bool(px > alpha and py > alpha),
+                        x_col: {"statistic": float(sw_stat_x), "p_value": float(px), "normal": bool(px > alpha), "skewness": skew_x, "kurtosis": kurt_x},
+                        y_col: {"statistic": float(sw_stat_y), "p_value": float(py), "normal": bool(py > alpha), "skewness": skew_y, "kurtosis": kurt_y},
+                        "both_normal": both_normal_sw,
                     },
-                    "both_normal": bool(px > alpha and py > alpha),
+                    "both_normal": both_normal_sw,
                 }
             else:
                 self._normality_check = {
-                    "test": "Shapiro-Wilk (auto method selection)",
+                    "test": "Skewness/Kurtosis & Shapiro-Wilk check",
+                    "skew_x": skew_x,
+                    "skew_y": skew_y,
+                    "kurtosis_x": kurt_x,
+                    "kurtosis_y": kurt_y,
+                    "shapiro_x_p": float(px),
+                    "shapiro_y_p": float(py),
+                    "shapiro_both_normal": both_normal_sw,
+                    "both_normal": self._method_used == 'pearson',
                     x_col: {"statistic": float(sw_stat_x), "p_value": float(px), "normal": bool(px > alpha)},
                     y_col: {"statistic": float(sw_stat_y), "p_value": float(py), "normal": bool(py > alpha)},
-                    "both_normal": bool(px > alpha and py > alpha),
+                    "both_normal": both_normal_sw,
                 }
         else:
             self._method_used = method
 
         # --- Compute r and p ---
-        # Pearson requires normally distributed data → run on transformed values.
-        # Spearman is rank-based and monotone-transformation-invariant, so running
-        # it on transformed data yields the same r but falsely implies the transform
-        # was necessary.  When Spearman is chosen we therefore revert to raw data
-        # and clear the transform metadata so the output is not misleading.
         if self._method_used == 'pearson':
             self.r, self.p = scipy_stats.pearsonr(x_vals, y_vals)
         else:
@@ -294,6 +290,14 @@ class CorrelationModel:
             self._y_boxcox_lambda = None
             self._x_transform_shift = 0.0
             self._y_transform_shift = 0.0
+            
+            # For 20 <= N < 100, calculate t-approximation for p-value
+            if 20 <= self.n < 100:
+                if np.isclose(abs(self.r), 1.0):
+                    self.p = 0.0
+                else:
+                    t_stat = self.r * np.sqrt((self.n - 2) / (1.0 - self.r**2))
+                    self.p = float(scipy_stats.t.sf(abs(t_stat), df=self.n - 2) * 2)
 
         self.r = float(self.r)
         self.p = float(self.p)
@@ -418,6 +422,7 @@ class SimpleLinearRegressionModel:
         self._y_transform_shift = 0.0
         self._x_raw_vals = None
         self._y_raw_vals = None
+        self._cov_type = "nonrobust"
 
     def fit(self, df, x_col, y_col, covariates=None, alpha=0.05,
             x_transform='none', y_transform='none'):
@@ -472,6 +477,20 @@ class SimpleLinearRegressionModel:
         formula = f"{self._y} ~ {' + '.join(terms)}"
 
         self.result = smf.ols(formula, data=self._df).fit()
+
+        # Run diagnostics on OLS to check homoscedasticity for HC3 switch
+        diag = self.diagnostics()
+        bp = diag.get("homoscedasticity", {})
+        bp_p = bp.get("p_value", None)
+
+        self._cov_type = "nonrobust"
+        if n >= 20 and bp_p is not None and bp_p < alpha:
+            try:
+                self.result = self.result.get_robustcov_results(cov_type='HC3')
+                self._cov_type = "HC3"
+            except Exception as exc:
+                print(f"WARNING: Failed to apply HC3 covariance: {exc}")
+
         return self
 
     def _build_coef_interpretation(self, beta):
@@ -737,6 +756,7 @@ class SimpleLinearRegressionModel:
                 else "none"
             ),
             "coef_interpretation": coef_interp,
+            "cov_type": self._cov_type,
         }
 
 
