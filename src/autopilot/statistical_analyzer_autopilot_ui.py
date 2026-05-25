@@ -47,11 +47,11 @@ from PyQt5.QtWidgets import (
     QStyledItemDelegate,
 )
 
-from decisiontreevisualizer import DecisionTreeVisualizer
+from visualization.decisiontreevisualizer import DecisionTreeVisualizer
 from ui.components.decision_tree_view import InteractiveDecisionTreeWidget
 
 try:
-    from help_content import HELP_RECIPES
+    from core.help_content import HELP_RECIPES
 except ImportError:
     HELP_RECIPES = []
 

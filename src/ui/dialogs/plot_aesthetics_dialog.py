@@ -34,7 +34,7 @@ SCIENTIFIC_FONT_FAMILIES = [
 
 # Import des Preview Widgets
 try:
-    from plot_preview import PlotPreviewWidget
+    from visualization.plot_preview import PlotPreviewWidget
 except ImportError:
     print("Warning: Could not import PlotPreviewWidget")
     PlotPreviewWidget = None

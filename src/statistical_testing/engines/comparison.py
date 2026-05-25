@@ -32,7 +32,7 @@ class ComparisonEngine:
 
         try:
             # Local import avoids module-cycle side effects at import time.
-            from statisticaltester import StatisticalTester
+            from analysis.statisticaltester import StatisticalTester
 
             two_group_strategies = {
                 "paired_ttest",
@@ -121,7 +121,7 @@ class ComparisonEngine:
 
     def _run_one_way_anova(self, *, StatisticalTester, groups: list[str], samples: dict[str, Any], alpha: float, results: dict[str, Any]) -> dict[str, Any]:
         try:
-            from stats_functions import get_pingouin_module
+            from analysis.stats_functions import get_pingouin_module
 
             data_for_anova = []
             for i, group in enumerate(groups):

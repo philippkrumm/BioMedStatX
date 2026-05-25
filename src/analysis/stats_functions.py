@@ -11,8 +11,8 @@ from datetime import datetime
 from matplotlib.ticker import ScalarFormatter
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QRadioButton, QDialogButtonBox
 from PyQt5.QtCore import Qt
-from decisiontreevisualizer import DecisionTreeVisualizer
-from lazy_imports import (
+from visualization.decisiontreevisualizer import DecisionTreeVisualizer
+from core.lazy_imports import (
     get_pingouin, get_scipy_stats, get_seaborn,
     get_statsmodels_multitest, get_pairwise_tukeyhsd, get_scikit_posthocs,
 )
@@ -20,22 +20,22 @@ from lazy_imports import (
 # Late import functions to avoid circular imports
 def get_results_exporter():
     """Get ResultsExporter class lazily"""
-    from resultsexporter import ResultsExporter
+    from export.resultsexporter import ResultsExporter
     return ResultsExporter
 
 def get_export_dispatcher():
     """Get ExportDispatcher class lazily"""
-    from export_dispatcher import ExportDispatcher
+    from export.export_dispatcher import ExportDispatcher
     return ExportDispatcher
 
 def get_data_visualizer():
     """Get DataVisualizer class lazily"""
-    from datavisualizer import DataVisualizer
+    from visualization.datavisualizer import DataVisualizer
     return DataVisualizer
 
 def get_statistical_tester():
     """Get StatisticalTester class lazily"""
-    from statisticaltester import StatisticalTester
+    from analysis.statisticaltester import StatisticalTester
     return StatisticalTester
 
 def get_stats_module():
@@ -398,7 +398,7 @@ class AssumptionVisualizer:
     
 
 # Extracted post-hoc framework (compatibility re-exports)
-from posthoc_core import (
+from analysis.posthoc_core import (
     PostHocAnalyzer,
     TwoWayPostHocAnalyzer,
     MixedAnovaPostHocAnalyzer,
@@ -776,8 +776,8 @@ class UIDialogManager:
         return None
        
 
-from analysis_core import DatasetSelector, AnalysisManager, get_output_path
-from outlier_core import OUTLIER_IMPORTS_AVAILABLE, OutlierDetector
+from analysis.analysis_core import DatasetSelector, AnalysisManager, get_output_path
+from analysis.outlier_core import OUTLIER_IMPORTS_AVAILABLE, OutlierDetector
 
 
 # Note: Classes are imported lazily to avoid circular imports.

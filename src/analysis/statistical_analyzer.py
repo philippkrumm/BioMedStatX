@@ -1,6 +1,7 @@
 import sys
-import time
 import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import time
 if sys.platform == "darwin":
     # Keep Qt environment clean so PyQt uses one runtime only.
     os.environ.pop("DYLD_FRAMEWORK_PATH", None)
@@ -20,25 +21,25 @@ from PyQt5.QtGui import QColor, QIcon, QPixmap, QDrag, QDesktopServices
 from PyQt5.QtCore import Qt, QMimeData, QPoint, pyqtSignal, QObject, QPropertyAnimation, QEasingCurve, QSequentialAnimationGroup, QTimer, QUrl
 
 # Initialize central logging before anything else may emit messages.
-from logger_config import configure_logging
+from core.logger_config import configure_logging
 configure_logging()
 
 # Initialize lazy loading system
-from lazy_imports import preload_critical_modules, get_matplotlib_pyplot as get_matplotlib
+from core.lazy_imports import preload_critical_modules, get_matplotlib_pyplot as get_matplotlib
 preload_critical_modules()
 
-from stats_functions import (
+from analysis.stats_functions import (
     OutlierDetector, OUTLIER_IMPORTS_AVAILABLE
 )
 # Import updater for auto-update functionality
 try:
-    from updater import AutoUpdater
+    from core.updater import AutoUpdater
     UPDATE_AVAILABLE = True
 except ImportError:
     UPDATE_AVAILABLE = False
     print("Warning: Updater module not available")
 try:
-    from help_content import HELP_RECIPES
+    from core.help_content import HELP_RECIPES
 except ImportError as e:
     HELP_RECIPES = []
     print(f"Warning: help content not available: {e}")
@@ -76,14 +77,14 @@ def _configure_dialog(dialog, object_name=None, remove_context_help=True):
         dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
 
 
-from statistical_analyzer_dialogs import (
+from ui.dialogs.statistical_analyzer_dialogs import (
     DebugConsoleWindow,
     ExploratoryMatrixDialog,
     HelpHubDialog,
     OutlierDetectionDialog,
 )
 
-from statistical_analyzer_autopilot_pipeline import (
+from autopilot.statistical_analyzer_autopilot_pipeline import (
     AutopilotMixin,
     _load_auto_pilot_stylesheet,
 )

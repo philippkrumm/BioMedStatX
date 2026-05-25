@@ -12,7 +12,7 @@ from statistical_testing.validators import (
     validate_residuals_for_shapiro,
     MIN_N_HARD,
 )
-from stats_functions import UIDialogManager
+from analysis.stats_functions import UIDialogManager
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 def _get_ui_dialog_manager():
     """Resolve dialog manager through statisticaltester to honor test-time monkeypatches."""
     try:
-        from statisticaltester import UIDialogManager as patched_dialog_manager
+        from analysis.statisticaltester import UIDialogManager as patched_dialog_manager
         return patched_dialog_manager
     except Exception:
         return UIDialogManager

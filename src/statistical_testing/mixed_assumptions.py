@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from stats_functions import get_pingouin_module
+from analysis.stats_functions import get_pingouin_module
 
 
 class MixedAnovaAssumptionEngine:

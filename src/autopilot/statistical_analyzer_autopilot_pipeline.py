@@ -28,11 +28,11 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from datavisualizer import DataVisualizer
-from export_dispatcher import ExportDispatcher
-from plot_aesthetics_dialog import PlotAestheticsDialog
-from statistical_analyzer_dialogs import ExploratoryMatrixDialog, GroupSelectionDialog
-from statistical_analyzer_autopilot_ui import (
+from visualization.datavisualizer import DataVisualizer
+from export.export_dispatcher import ExportDispatcher
+from ui.dialogs.plot_aesthetics_dialog import PlotAestheticsDialog
+from ui.dialogs.statistical_analyzer_dialogs import ExploratoryMatrixDialog, GroupSelectionDialog
+from autopilot.statistical_analyzer_autopilot_ui import (
     ConfettiOverlay,
     DecisionTreePanel,
     DraggableColumnCard,
@@ -49,8 +49,8 @@ from statistical_analyzer_autopilot_ui import (
     _sorted_unique,
     extract_from_coordinates,
 )
-from statisticaltester import StatisticalTester
-from stats_functions import AnalysisManager
+from analysis.statisticaltester import StatisticalTester
+from analysis.stats_functions import AnalysisManager
 
 DEFAULT_COLORS = ["#0f766e", "#1f7a5a", "#b7791f", "#9f3a38", "#1d4ed8", "#7c3aed"]
 DEFAULT_HATCHES = ["/", "\\", "|", "-", "+", "x", "o", ".", "*", ""]
@@ -688,7 +688,7 @@ def _ap_is_continuous_factor1_for_help(self):
         return False
 
     try:
-        from correlation_models import _is_continuous as _corr_is_continuous
+        from analysis.correlation_models import _is_continuous as _corr_is_continuous
         return bool(_corr_is_continuous(self.df, factor_col))
     except Exception:
         factor_kinds = self.factor1_bucket.get_assigned_kinds()
@@ -853,7 +853,7 @@ def _ap_on_mapping_changed(self):
             ] if c]
             subject_columns = self.subject_bucket.get_assigned_columns()
             if len(factor_columns) == 1 and not subject_columns and self.df is not None:
-                from correlation_models import _is_continuous as _corr_is_continuous
+                from analysis.correlation_models import _is_continuous as _corr_is_continuous
                 is_corr_family = _corr_is_continuous(self.df, factor_columns[0])
             else:
                 is_corr_family = False
@@ -1182,7 +1182,7 @@ def _ap_build_analysis_context(self):
     #    inferences when the factor is not a grouping variable.
     if len(factor_columns) == 1 and not subject_column:
         try:
-            from correlation_models import _is_continuous as _corr_is_continuous
+            from analysis.correlation_models import _is_continuous as _corr_is_continuous
             if _corr_is_continuous(analysis_df, factor_columns[0]):
                 if covariate_columns:
                     context["inferred_test"] = "linear_regression"

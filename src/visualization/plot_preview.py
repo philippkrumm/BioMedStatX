@@ -16,11 +16,11 @@ import pandas as pd
 
 # Import the DataVisualizer class
 try:
-    from datavisualizer import DataVisualizer
+    from visualization.datavisualizer import DataVisualizer
 except ImportError:
     try:
-        # Fallback: try to get it from stats_functions
-        from stats_functions import get_data_visualizer
+        # Fallback: try to get it from analysis.stats_functions
+        from analysis.stats_functions import get_data_visualizer
         DataVisualizer = get_data_visualizer()
     except ImportError:
         # Final fallback if import does not work

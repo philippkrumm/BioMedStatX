@@ -24,7 +24,7 @@ class PostHocEngine:
             )
 
         try:
-            from statisticaltester import StatisticalTester
+            from analysis.statisticaltester import StatisticalTester
 
             posthoc_results = StatisticalTester.perform_refactored_posthoc_testing(
                 groups,

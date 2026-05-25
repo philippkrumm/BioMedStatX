@@ -9,7 +9,7 @@ from scipy.stats import t
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 
-from lazy_imports import get_seaborn
+from core.lazy_imports import get_seaborn
 
 OUTLIER_IMPORTS_AVAILABLE = True
 try:

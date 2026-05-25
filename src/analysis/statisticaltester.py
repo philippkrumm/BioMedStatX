@@ -3,9 +3,9 @@ import pandas as pd
 import logging
 from datetime import datetime
 from scipy import stats
-from lazy_imports import get_pingouin, get_scipy_stats, get_statsmodels_multitest
-from stats_functions import UIDialogManager, PostHocFactory, get_pingouin_module, PostHocAnalyzer, PostHocStatistics
-from methodology_trace import MethodologyTrace
+from core.lazy_imports import get_pingouin, get_scipy_stats, get_statsmodels_multitest
+from analysis.stats_functions import UIDialogManager, PostHocFactory, get_pingouin_module, PostHocAnalyzer, PostHocStatistics
+from core.methodology_trace import MethodologyTrace
 from statistical_testing.decision_logic import (
     extract_assumption_state,
     select_comparison_test,
@@ -34,7 +34,7 @@ from statistical_testing.validators import (
     MIN_N_HARD,
     MIN_N_SMALL,
 )
-from nonparametricanovas import (
+from analysis.nonparametricanovas import (
     posthoc_marginaleffects,
 )
 
@@ -807,7 +807,7 @@ class StatisticalTester:
         dict
             Updated results dictionary with Welch ANOVA results
         """
-        from posthoc_core import GamesHowellTest
+        from analysis.posthoc_core import GamesHowellTest
         try:
             pg = get_pingouin_module()
             validate_group_count(valid_groups, min_groups=2, label="welch_anova_groups")
@@ -1870,7 +1870,7 @@ class StatisticalTester:
                 
                 logger.info(msg_redirect)
                 try:
-                    from clinical_models import LinearMixedModel
+                    from analysis.clinical_models import LinearMixedModel
                     lmm = LinearMixedModel().fit(df, dv=dv, fixed_effects=within, random_intercept=subject)
                     lmm_results = lmm.as_results_dict()
                     # Ensure standard output fields

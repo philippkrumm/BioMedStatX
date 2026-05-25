@@ -28,8 +28,8 @@ class FinalizationEngine:
 
         if not skip_excel:
             try:
-                from export_dispatcher import ExportDispatcher
-                from stats_functions import get_output_path
+                from export.export_dispatcher import ExportDispatcher
+                from analysis.stats_functions import get_output_path
 
                 excel_file = file_name if file_name else get_output_path(export_stem, "xlsx")
                 export_result = ExportDispatcher.export_analysis_results(res, excel_file, analysis_log)

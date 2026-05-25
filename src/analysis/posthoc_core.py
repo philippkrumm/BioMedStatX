@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from itertools import combinations
 
-from lazy_imports import (
+from core.lazy_imports import (
     get_pingouin,
     get_scipy_stats,
     get_statsmodels_multitest,

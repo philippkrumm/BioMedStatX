@@ -4,9 +4,9 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from lazy_imports import get_statsmodels_multitest
-from nonparametricanovas import posthoc_marginaleffects
-from stats_functions import UIDialogManager, PostHocFactory, PostHocAnalyzer, PostHocStatistics
+from core.lazy_imports import get_statsmodels_multitest
+from analysis.nonparametricanovas import posthoc_marginaleffects
+from analysis.stats_functions import UIDialogManager, PostHocFactory, PostHocAnalyzer, PostHocStatistics
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 def _get_ui_dialog_manager():
     """Resolve dialog manager through statisticaltester to honor test-time monkeypatches."""
     try:
-        from statisticaltester import UIDialogManager as patched_dialog_manager
+        from analysis.statisticaltester import UIDialogManager as patched_dialog_manager
         return patched_dialog_manager
     except Exception:
         return UIDialogManager

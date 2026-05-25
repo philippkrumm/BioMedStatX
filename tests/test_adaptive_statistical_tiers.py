@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import pytest
-from clinical_models import LinearMixedModel, LogisticRegressionModel
+from analysis.clinical_models import LinearMixedModel, LogisticRegressionModel
 
 def test_lmm_bw_degrees_of_freedom():
     # Verify df = 28 for group/between and df = 59 for time/within under N = 90
@@ -113,7 +113,7 @@ def test_logistic_firth_separation():
 def test_rm_anova_sphericity_corrected_p_value_overrides_main_p():
     import pandas as pd
     import numpy as np
-    from statisticaltester import StatisticalTester
+    from analysis.statisticaltester import StatisticalTester
     np.random.seed(42)
     n = 12
     df = pd.DataFrame({
@@ -133,7 +133,7 @@ def test_rm_anova_sphericity_corrected_p_value_overrides_main_p():
 def test_welch_anova_posthoc_is_games_howell():
     import pandas as pd
     import numpy as np
-    from statisticaltester import StatisticalTester
+    from analysis.statisticaltester import StatisticalTester
     np.random.seed(42)
     valid_groups = ["A", "B", "C"]
     samples_to_use = {
@@ -149,7 +149,7 @@ def test_welch_anova_posthoc_is_games_howell():
 def test_friedman_posthoc_is_conover_iman():
     import pandas as pd
     import numpy as np
-    from nonparametricanovas import perform_friedman_test
+    from analysis.nonparametricanovas import perform_friedman_test
     np.random.seed(42)
     n = 20
     df = pd.DataFrame({

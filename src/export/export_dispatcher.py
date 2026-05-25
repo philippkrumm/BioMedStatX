@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from resultsexporter import ResultsExporter
+from export.resultsexporter import ResultsExporter
 
 
 class ExportDispatcher:
@@ -13,7 +13,7 @@ class ExportDispatcher:
         # Generate decision tree once; reuse for both Excel and HTML exports
         tree_path = None
         try:
-            from decisiontreevisualizer import DecisionTreeVisualizer
+            from visualization.decisiontreevisualizer import DecisionTreeVisualizer
             tree_path = DecisionTreeVisualizer.generate_and_save_for_excel(results)
         except Exception as exc:
             print(f"WARNING EXPORT DISPATCHER: Decision tree pre-generation failed: {exc}")
@@ -28,7 +28,7 @@ class ExportDispatcher:
 
             html_path = excel_path.with_suffix(".html")
             try:
-                from html_exporter import HTMLExporter
+                from export.html_exporter import HTMLExporter
 
                 html_result = HTMLExporter.export_results_to_html(
                     results, str(html_path), analysis_log, pre_generated_tree=tree_path
@@ -63,7 +63,7 @@ class ExportDispatcher:
         warning = None
         html_result = None
         try:
-            from html_exporter import HTMLExporter
+            from export.html_exporter import HTMLExporter
 
             html_result = HTMLExporter.export_multi_dataset_results_to_html(all_results, str(html_path))
             if html_result is None:

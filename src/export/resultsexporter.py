@@ -6,7 +6,7 @@ import pandas as pd
 # Lazy import function to avoid circular imports
 def get_assumption_visualizer():
     """Get AssumptionVisualizer class lazily"""
-    from stats_functions import AssumptionVisualizer
+    from analysis.stats_functions import AssumptionVisualizer
     return AssumptionVisualizer
 class ResultsExporter:
     """
@@ -450,7 +450,7 @@ class ResultsExporter:
         # import os  # Already imported at top
         import time
         import xlsxwriter
-        from decisiontreevisualizer import DecisionTreeVisualizer
+        from visualization.decisiontreevisualizer import DecisionTreeVisualizer
         
         # Create a dictionary to track all decision tree images for this multi-dataset export
         dataset_tree_paths = {}
@@ -2266,7 +2266,7 @@ class ResultsExporter:
     @staticmethod
     def _write_decision_tree_sheet(workbook, results, fmt, sheet_name="Decision Tree", pre_generated_tree=None):
         """Write decision tree sheet with visualization."""
-        from decisiontreevisualizer import DecisionTreeVisualizer
+        from visualization.decisiontreevisualizer import DecisionTreeVisualizer
         
         sheet = workbook.add_worksheet(sheet_name)
         sheet.set_column('A:A', 120)  # Wide column for the image

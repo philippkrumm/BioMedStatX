@@ -32,10 +32,10 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from stats_functions import OUTLIER_IMPORTS_AVAILABLE
+from analysis.stats_functions import OUTLIER_IMPORTS_AVAILABLE
 
 try:
-    from help_content import HELP_RECIPES
+    from core.help_content import HELP_RECIPES
 except ImportError as e:
     HELP_RECIPES = []
     print(f"Warning: help content not available: {e}")
@@ -958,7 +958,7 @@ class ExploratoryMatrixDialog(QDialog):
         stratify_by = None if strat_raw == "— none —" else strat_raw
 
         try:
-            from correlation_models import ExploratoryCorrelationMatrix
+            from analysis.correlation_models import ExploratoryCorrelationMatrix
             matrix_model = ExploratoryCorrelationMatrix()
             matrix_model.fit(self.df, selected_items, method=method,
                              correction=correction, pairwise=pairwise,
@@ -967,7 +967,7 @@ class ExploratoryMatrixDialog(QDialog):
 
             # Export to Excel
             import os
-            from export_dispatcher import ExportDispatcher
+            from export.export_dispatcher import ExportDispatcher
             out_file = os.path.join(self.output_dir,
                                     "exploratory_correlation_matrix.xlsx")
             results["pairwise_comparisons"] = []

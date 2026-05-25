@@ -8,10 +8,10 @@ import string
 import os
 from scipy.stats import ttest_ind, mannwhitneyu
 from matplotlib.ticker import ScalarFormatter, FuncFormatter
-from resultsexporter import ResultsExporter
+from export.resultsexporter import ResultsExporter
 def _lazy_get_output_path():
     try:
-        from stats_functions import get_output_path
+        from analysis.stats_functions import get_output_path
         return get_output_path
     except Exception:
         # Fallback: simple path join if stats_functions not ready

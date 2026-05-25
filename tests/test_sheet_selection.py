@@ -18,7 +18,7 @@ for p in (str(ROOT), str(SRC)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from statistical_analyzer_autopilot_ui import (  # noqa: E402
+from autopilot.statistical_analyzer_autopilot_ui import (  # noqa: E402
     _FakeIdx,
     _cells_in_ranges,
     _selected_indexes_to_ranges,

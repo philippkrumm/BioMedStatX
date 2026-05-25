@@ -53,7 +53,7 @@ class AdvancedPostHocEngine:
             return {"error": "df_transformed is required for advanced parametric post-hoc."}
 
         try:
-            from stats_functions import UIDialogManager, PostHocFactory
+            from analysis.stats_functions import UIDialogManager, PostHocFactory
 
             if test == "two_way_anova":
                 group_names = []
@@ -96,7 +96,7 @@ class AdvancedPostHocEngine:
                 selected_comparisons = all_comparisons
             elif posthoc_method == "paired_custom":
                 try:
-                    from comparison_selection_dialog import ComparisonSelectionDialog
+                    from ui.dialogs.comparison_selection_dialog import ComparisonSelectionDialog
                     import sys
                     from PyQt5.QtWidgets import QApplication
 
@@ -178,7 +178,7 @@ class AdvancedPostHocEngine:
             }
 
         try:
-            from statisticaltester import StatisticalTester
+            from analysis.statisticaltester import StatisticalTester
 
             fallback_posthoc = None
             marginaleffects_error = None

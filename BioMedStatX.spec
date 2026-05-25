@@ -66,7 +66,7 @@ all_datas = [e for e in all_datas if not _is_excluded_data(e)]
 all_binaries = [e for e in all_binaries if not _is_excluded_data(e)]
 
 a = Analysis(
-    ["src/statistical_analyzer.py"],
+    ["src/analysis/statistical_analyzer.py"],
     pathex=["."],
     binaries=all_binaries,
     datas=[("assets/", "assets"), ("src/templates/", "templates")] + all_datas,

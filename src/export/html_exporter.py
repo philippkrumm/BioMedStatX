@@ -15,7 +15,7 @@ from jinja2 import Environment, FileSystemLoader, TemplateNotFound
 from scipy import stats
 
 try:
-    from logger_config import get_logger
+    from core.logger_config import get_logger
 except ImportError:  # pragma: no cover — fallback when logger_config missing
     import logging as _logging
     def get_logger(name):
@@ -806,7 +806,7 @@ class HTMLExporter:
     @staticmethod
     def _stat_row_info(label: str) -> str:
         """Tooltip copy for a stat-row label. See :mod:`report_tooltips`."""
-        from report_tooltips import stat_row_info
+        from export.report_tooltips import stat_row_info
         return stat_row_info(label)
 
     @staticmethod
@@ -3326,7 +3326,7 @@ class HTMLExporter:
     @staticmethod
     def _build_decision_path_model(results: dict) -> list[dict]:
         """Decision-path breadcrumb. See :mod:`report_methods`."""
-        from report_methods import build_decision_path_model
+        from export.report_methods import build_decision_path_model
         return build_decision_path_model(
             results,
             format_p_value=HTMLExporter._format_p_value,
@@ -3336,7 +3336,7 @@ class HTMLExporter:
     @staticmethod
     def _build_decision_tree_json(results: dict) -> dict | None:
         try:
-            from decisiontreevisualizer import DecisionTreeVisualizer
+            from visualization.decisiontreevisualizer import DecisionTreeVisualizer
             return DecisionTreeVisualizer.get_tree_json(results)
         except Exception as exc:
             logger.warning("decision tree JSON failed: %s", exc, exc_info=True)
@@ -3356,7 +3356,7 @@ class HTMLExporter:
 
         temp_path = None
         try:
-            from decisiontreevisualizer import DecisionTreeVisualizer
+            from visualization.decisiontreevisualizer import DecisionTreeVisualizer
 
             temp_path = DecisionTreeVisualizer.generate_and_save_for_excel(results)
             if not temp_path or not os.path.exists(temp_path):
@@ -3377,7 +3377,7 @@ class HTMLExporter:
     @staticmethod
     def _build_methods_text(results: dict, analysis_log: Any) -> str:
         """Methods-section paragraph. See :mod:`report_methods`."""
-        from report_methods import build_methods_text
+        from export.report_methods import build_methods_text
         return build_methods_text(
             results,
             analysis_log,
@@ -4286,7 +4286,7 @@ const treeModal=document.getElementById('tree-modal');const openTreeButton=docum
         threshold sources (Cohen 1988, Koo & Li 2016, Hosmer-Lemeshow,
         McFadden 1979) and the canonicalization rules.
         """
-        from effect_sizes import classify
+        from analysis.effect_sizes import classify
         return classify(effect_size, effect_type, df_star=df_star)
 
     @staticmethod

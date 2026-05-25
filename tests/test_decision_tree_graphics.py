@@ -98,7 +98,7 @@ def test_memory_leak_and_cleanup(qapp, mock_tree_data):
 
 
 def test_association_decision_trees(qapp):
-    from decisiontreevisualizer import DecisionTreeVisualizer
+    from visualization.decisiontreevisualizer import DecisionTreeVisualizer
     
     # Test cases for each association model type
     models_to_test = ["Correlation", "LinearRegression", "ANCOVA", "LMM", "LogisticRegression", "CorrelationMatrix"]

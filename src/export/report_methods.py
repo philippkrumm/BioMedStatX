@@ -1,4 +1,4 @@
-"""Narrative "methods" content for the report — extracted from html_exporter.
+"""Narrative "methods" content for the report — extracted from export.html_exporter.
 
 This module answers the *what was done* question: it builds the decision-path
 breadcrumbs and the methods-section paragraph that explains the analysis to a

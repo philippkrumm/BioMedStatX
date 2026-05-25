@@ -5,26 +5,26 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
-from lazy_imports import get_scipy_stats, get_statsmodels_multitest, get_matplotlib_pyplot
+from core.lazy_imports import get_scipy_stats, get_statsmodels_multitest, get_matplotlib_pyplot
 
 
 def get_results_exporter():
-    from resultsexporter import ResultsExporter
+    from export.resultsexporter import ResultsExporter
     return ResultsExporter
 
 
 def get_export_dispatcher():
-    from export_dispatcher import ExportDispatcher
+    from export.export_dispatcher import ExportDispatcher
     return ExportDispatcher
 
 
 def get_data_visualizer():
-    from datavisualizer import DataVisualizer
+    from visualization.datavisualizer import DataVisualizer
     return DataVisualizer
 
 
 def get_statistical_tester():
-    from statisticaltester import StatisticalTester
+    from analysis.statisticaltester import StatisticalTester
     return StatisticalTester
 
 
@@ -40,7 +40,7 @@ def safe_format(val, fmt="{:.4f}", none_text="N/A"):
 
 
 def _get_stats_functions_deps():
-    from stats_functions import DataImporter, UIDialogManager, PostHocAnalyzer, PostHocStatistics
+    from analysis.stats_functions import DataImporter, UIDialogManager, PostHocAnalyzer, PostHocStatistics
 
     return DataImporter, UIDialogManager, PostHocAnalyzer, PostHocStatistics
 
@@ -505,7 +505,7 @@ class AnalysisManager:
             # --- Clinical model dispatch (ANCOVA, LMM, Logistic Regression, Correlation, Linear Regression) ---
             if kwargs.get('test') in ('ancova', 'two_way_ancova', 'lmm', 'logistic_regression',
                                       'beta_regression', 'correlation', 'linear_regression'):
-                from clinical_models import (ANCOVAModel, LinearMixedModel,
+                from analysis.clinical_models import (ANCOVAModel, LinearMixedModel,
                                              LogisticRegressionModel, BetaRegressionModel,
                                              DataHealthScanner)
 
@@ -558,7 +558,7 @@ class AnalysisManager:
                     test_results = model.as_results_dict()
 
                 elif clinical_test == 'beta_regression':
-                    from methodology_trace import MethodologyTrace
+                    from core.methodology_trace import MethodologyTrace
                     _beta_trace = MethodologyTrace()
                     _beta_predictors = analysis_context.get('factor_columns', [])
                     _beta_n = int(df[value_cols[0]].dropna().count())
@@ -602,7 +602,7 @@ class AnalysisManager:
                     test_results["epv"] = round(_beta_epv, 2)
 
                 elif clinical_test in ('correlation', 'linear_regression'):
-                    from correlation_models import (CorrelationModel, SimpleLinearRegressionModel,
+                    from analysis.correlation_models import (CorrelationModel, SimpleLinearRegressionModel,
                                                     RegressionHealthScanner)
 
                     # Apply optional filter (e.g. only On-Pump patients)

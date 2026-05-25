@@ -282,7 +282,7 @@ def perform_friedman_test(data, dv, within_factor, subject_col, alpha=0.05):
         posthoc_name = None
         if p_value < alpha and k >= 2:
             try:
-                from lazy_imports import get_scikit_posthocs
+                from core.lazy_imports import get_scikit_posthocs
                 sp = get_scikit_posthocs()
                 conover_p = sp.posthoc_conover_friedman(wide[level_cols])
                 from itertools import combinations as _comb

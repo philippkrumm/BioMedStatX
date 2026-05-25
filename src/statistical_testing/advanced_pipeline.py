@@ -1,6 +1,6 @@
 import logging
 
-from nonparametricanovas import (
+from analysis.nonparametricanovas import (
     perform_brunner_langer_ats,
     perform_freedman_lane_test,
     perform_friedman_test,
@@ -38,7 +38,7 @@ def perform_advanced_test_pipeline(
     analysis_log=None,
 ):
     # Late import avoids module-cycle issues while keeping behavior unchanged.
-    from statisticaltester import StatisticalTester
+    from analysis.statisticaltester import StatisticalTester
     from datetime import datetime
 
     if analysis_log is None:

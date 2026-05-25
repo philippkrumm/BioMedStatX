@@ -1,7 +1,7 @@
 import pytest
 import pandas as pd
 import numpy as np
-from src.statisticaltester import StatisticalTester
+from src.analysis.statisticaltester import StatisticalTester
 
 def test_rm_anova_lmm_redirect():
     """
