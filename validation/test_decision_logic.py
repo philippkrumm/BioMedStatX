@@ -10,7 +10,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-_core = import_module("statistical_testing.core")
+_core = import_module("statistical_testing.tester_core")
 _decision_logic = import_module("statistical_testing.decision_logic")
 _comparison_engine = import_module("statistical_testing.engines.comparison")
 _advanced_posthoc_engine = import_module("statistical_testing.engines.advanced_posthoc")

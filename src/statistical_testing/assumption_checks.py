@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
@@ -56,7 +56,17 @@ class AssumptionCheckEngine:
         logger.debug(f"DEBUG check_normality_and_variance: Groups: {groups}")
         ui_dialog_manager = _get_ui_dialog_manager()
 
-        test_info = {"pre_transformation": {}, "post_transformation": {}, "transformation": None}
+        test_info: dict[str, Any] = {
+            "pre_transformation": {},
+            "post_transformation": {},
+            "transformation": None,
+            "validation_notes": []
+        }
+        def add_note(msg: str) -> None:
+            notes = test_info.get("validation_notes")
+            if isinstance(notes, list):
+                notes.append(msg)
+
         valid_groups = [g for g in groups if g in samples and len(samples[g]) > 0]
         transformed_samples = {g: samples[g].copy() for g in valid_groups}
         test_recommendation = "parametric"
@@ -146,20 +156,18 @@ class AssumptionCheckEngine:
         skip_shapiro = min_n >= 100
         
         try:
+            actual_columns = list(df_raw.columns)
             if skip_shapiro:
                 logger.info(f"CLT triggered: min_n={min_n} >= 100. Bypassing Shapiro-Wilk.")
                 stat, pval = None, 1.0  # Force is_normal = True
-                test_info.setdefault("validation_notes", []).append(
+                add_note(
                     f"Normality check bypassed: sample size is large enough (min n={min_n} >= 100) to rely on the Central Limit Theorem."
                 )
             else:
                 # ROBUST FORMULA CREATION: Use actual DataFrame columns, not assumptions
-                logger.debug(f"DEBUG SHAPIRO: Available columns in df_raw: {list(df_raw.columns)}")
+                logger.debug(f"DEBUG SHAPIRO: Available columns in df_raw: {actual_columns}")
                 logger.debug(f"DEBUG SHAPIRO: Original formula: {formula}")
                 logger.debug(f"DEBUG SHAPIRO: Adjusted formula: {adjusted_formula}")
-                
-                # Create formula based on ACTUAL columns present in DataFrame
-                actual_columns = list(df_raw.columns)
             
             if "Value" not in actual_columns:
                 logger.debug("DEBUG SHAPIRO ERROR: 'Value' column missing in DataFrame!")
@@ -173,11 +181,11 @@ class AssumptionCheckEngine:
                         stat, pval = stats.shapiro(diffs)
                     except ValidationError as exc:
                         stat, pval = None, None
-                        test_info.setdefault("validation_notes", []).append(str(exc))
+                        add_note(str(exc))
                         logger.warning(str(exc))
                 else:
                     stat, pval = None, None
-                    test_info.setdefault("validation_notes", []).append(
+                    add_note(
                         "Paired normality check skipped: groups not equal length or n<3."
                     )
             else:
@@ -216,7 +224,7 @@ class AssumptionCheckEngine:
                         stat, pval = stats.shapiro(resid_raw)
                     except ValidationError as exc:
                         stat, pval = None, None
-                        test_info.setdefault("validation_notes", []).append(str(exc))
+                        add_note(str(exc))
                         logger.warning(str(exc))
                     logger.debug(f"DEBUG SHAPIRO: Pre-transformation Shapiro-Wilk: W={stat}, p={pval}")
                 except Exception as e:
@@ -229,11 +237,11 @@ class AssumptionCheckEngine:
                                 stat, pval = stats.shapiro(diffs)
                             except ValidationError as exc:
                                 stat, pval = None, None
-                                test_info.setdefault("validation_notes", []).append(str(exc))
+                                add_note(str(exc))
                                 logger.warning(str(exc))
                         else:
                             stat, pval = None, None
-                            test_info.setdefault("validation_notes", []).append("RM normality check failed (fallback could not compute differences).")
+                            add_note("RM normality check failed (fallback could not compute differences).")
                     else:
                         raise e
                 
@@ -269,12 +277,12 @@ class AssumptionCheckEngine:
             stat, pval, has_equal_variance = None, None, True
             if is_paired:
                 test_name = "N/A (Paired)"
-                test_info.setdefault("validation_notes", []).append(
+                add_note(
                     "Levene's test bypassed: variance homogeneity is not an assumption of the paired t-test (it operates on within-pair differences)."
                 )
             else:
                 test_name = "N/A (Repeated Measures / Mixed)"
-                test_info.setdefault("validation_notes", []).append(
+                add_note(
                     "Levene's test bypassed: sphericity check (Mauchly's test) is the appropriate variance check for repeated measures/mixed designs."
                 )
         else:
@@ -294,7 +302,7 @@ class AssumptionCheckEngine:
                     logger.debug(f"DEBUG BROWN-FORSYTHE: Pre-transformation - Statistic: {stat}, p-value: {pval}, Equal variance: {has_equal_variance}")
                 except ValidationError as exc:
                     stat, pval, has_equal_variance = None, None, False
-                    test_info.setdefault("validation_notes", []).append(str(exc))
+                    add_note(str(exc))
                     logger.warning(str(exc))
                     logger.debug("DEBUG BROWN-FORSYTHE: Pre-transformation - Insufficient data for test")
             except Exception as e:
@@ -351,7 +359,7 @@ class AssumptionCheckEngine:
                     f"Log10/Box-Cox transformation requires large global shift ({global_shift:.2e}); "
                     "consider preprocessing."
                 )
-                test_info.setdefault("validation_notes", []).append(str(shift_warning))
+                add_note(str(shift_warning))
                 logger.warning(str(shift_warning))
 
             # Apply transformation
@@ -362,7 +370,9 @@ class AssumptionCheckEngine:
                 if transformation_type == "log10":
                     transformed_samples[group] = [np.log10(v + global_shift) for v in values]
                     if global_shift > 0:
-                        test_info.setdefault("log10_shifts", {})[group] = global_shift
+                        if "log10_shifts" not in test_info or not isinstance(test_info["log10_shifts"], dict):
+                            test_info["log10_shifts"] = {}
+                        test_info["log10_shifts"][group] = global_shift
                 elif transformation_type == "boxcox":
                     shifted = [v + global_shift for v in values]
                     # Pre-validate before attempting Box-Cox
@@ -382,7 +392,7 @@ class AssumptionCheckEngine:
                             "Normality will be re-evaluated on original data."
                         )
                         logger.warning(test_info["transformation_note"])
-                        test_info.setdefault("validation_notes", []).append(test_info["transformation_note"])
+                        add_note(test_info["transformation_note"])
                         transformed_samples[group] = list(values)
                     else:
                         try:
@@ -395,7 +405,7 @@ class AssumptionCheckEngine:
                                 "Normality will be re-evaluated on original data."
                             )
                             logger.warning(test_info["transformation_note"])
-                            test_info.setdefault("validation_notes", []).append(test_info["transformation_note"])
+                            add_note(test_info["transformation_note"])
                             transformed_samples[group] = list(values)
                 elif transformation_type == "arcsin_sqrt":
                     max_val = max(values)
@@ -406,7 +416,7 @@ class AssumptionCheckEngine:
                             variance_warning = GroupValidationError(
                                 f"Group '{group}': arcsin-sqrt transformation received zero variance data; using 0.5 fallback."
                             )
-                            test_info.setdefault("validation_notes", []).append(str(variance_warning))
+                            add_note(str(variance_warning))
                             logger.warning(str(variance_warning))
                             scaled = [0.5] * len(values)
                         else:
@@ -417,7 +427,7 @@ class AssumptionCheckEngine:
                             variance_warning = GroupValidationError(
                                 f"Group '{group}': arcsin-sqrt transformation received zero variance data; using 0.5 fallback."
                             )
-                            test_info.setdefault("validation_notes", []).append(str(variance_warning))
+                            add_note(str(variance_warning))
                             logger.warning(str(variance_warning))
                             scaled = [0.5] * len(values)
                         else:
@@ -447,7 +457,7 @@ class AssumptionCheckEngine:
                         stat2, pval2 = stats.shapiro(diffs_tr)
                     except ValidationError as exc:
                         stat2, pval2 = None, None
-                        test_info.setdefault("validation_notes", []).append(str(exc))
+                        add_note(str(exc))
                         logger.warning(str(exc))
                 else:
                     stat2, pval2 = None, None
@@ -486,7 +496,7 @@ class AssumptionCheckEngine:
                         stat2, pval2 = stats.shapiro(resid_tr)
                     except ValidationError as exc:
                         stat2, pval2 = None, None
-                        test_info.setdefault("validation_notes", []).append(str(exc))
+                        add_note(str(exc))
                         logger.warning(str(exc))
                     logger.debug(f"DEBUG SHAPIRO: Post-transformation Shapiro-Wilk: W={stat2}, p={pval2}")
                 except Exception as e:
@@ -499,11 +509,11 @@ class AssumptionCheckEngine:
                                 stat2, pval2 = stats.shapiro(diffs_tr)
                             except ValidationError as exc:
                                 stat2, pval2 = None, None
-                                test_info.setdefault("validation_notes", []).append(str(exc))
+                                add_note(str(exc))
                                 logger.warning(str(exc))
                         else:
                             stat2, pval2 = None, None
-                            test_info.setdefault("validation_notes", []).append("RM normality check failed (fallback could not compute differences).")
+                            add_note("RM normality check failed (fallback could not compute differences).")
                     else:
                         raise e
                 
@@ -537,7 +547,7 @@ class AssumptionCheckEngine:
                     logger.debug(f"DEBUG BROWN-FORSYTHE: Post-transformation - Statistic: {stat_tr}, p-value: {pval_tr}, Equal variance: {has_equal_variance_tr}")
                 except ValidationError as exc:
                     stat_tr, pval_tr, has_equal_variance_tr = None, None, False
-                    test_info.setdefault("validation_notes", []).append(str(exc))
+                    add_note(str(exc))
                     logger.warning(str(exc))
                     logger.debug("DEBUG BROWN-FORSYTHE: Post-transformation - Insufficient data for test")
             except Exception as e:

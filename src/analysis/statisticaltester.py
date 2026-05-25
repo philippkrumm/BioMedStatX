@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import logging
 from scipy import stats
-from analysis.stats_functions import get_pingouin_module, PostHocAnalyzer
+from analysis.stats_functions import get_pingouin_module, PostHocAnalyzer, UIDialogManager
 from core.methodology_trace import MethodologyTrace
 from statistical_testing.decision_logic import (
     extract_assumption_state,

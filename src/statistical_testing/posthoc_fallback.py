@@ -96,7 +96,7 @@ class PosthocFallbackEngine:
         excluded_columns = {
             "term", "contrast", "estimate", "statistic", "p.value", "p_value", "pvalue",
             "s.e.", "std.error", "std_error", "conf.low", "conf.high", "conf_low", "conf_high",
-            "z", "t", "df", "rowid", "predicted"
+            "z", "t", "d", "rowid", "predicted"
         }
 
         p_col = next((col for col in ["p.value", "p_value", "pvalue"] if col in comparisons_df.columns), None)
@@ -654,9 +654,14 @@ class PosthocFallbackEngine:
                     stat, p = mannwhitneyu(x, y, alternative='two-sided')
                     stats_list.append(stat)
                     pvals.append(p)
-                k = len(pvals)
-                sidak_ps = [1 - (1 - p)**k for p in pvals]
-                sidak_ps = [min(p, 1.0) for p in sidak_ps]
+                # C3b: Holm-Bonferroni controls FWER correctly for pairwise
+                # comparisons (Sidak assumed independence, which is violated
+                # for pairwise tests sharing groups).
+                from statsmodels.stats.multitest import multipletests as _mt
+                if pvals:
+                    _, holm_ps, _, _ = _mt(pvals, method='holm')
+                else:
+                    holm_ps = []
                 for i, (g1, g2) in enumerate(pairs):
                     n1, n2 = len(samples[g1]), len(samples[g2])
                     u = stats_list[i]
@@ -669,16 +674,16 @@ class PosthocFallbackEngine:
                         group1=g1,
                         group2=g2,
                         test="Mann-Whitney-U",
-                        p_value=sidak_ps[i],
+                        p_value=holm_ps[i],
                         statistic=stats_list[i],
                         corrected=True,
-                        correction_method="Sidak",
+                        correction_method="Holm-Bonferroni",
                         effect_size=r,
                         effect_size_type="r",
                         confidence_interval=(None, None),
                         alpha=alpha
                     )
-                result["posthoc_test"] = "Custom Mann-Whitney-U tests (Sidak)"
+                result["posthoc_test"] = "Custom Mann-Whitney-U tests (Holm-Bonferroni)"
                 return result
 
             elif posthoc_choice == "dunnett":

@@ -192,7 +192,7 @@ class AnalysisManager:
             )
             filtered_samples = {g: samples[g] for g in groups if g in samples}
             return {
-                "df": df,
+                "d": df,
                 "samples": samples,
                 "filtered_samples": filtered_samples,
                 "groups": groups,
@@ -202,7 +202,7 @@ class AnalysisManager:
                 "additional_factors": additional_factors,
             }
 
-        injected_df = analysis_context.get("injected_df")
+        injected_df = analysis_context.get("injected_d")
         if injected_df is not None:
             df = injected_df.copy()
         else:
@@ -275,7 +275,7 @@ class AnalysisManager:
         local_kwargs["analysis_context"] = analysis_context
 
         return {
-            "df": working_df,
+            "d": working_df,
             "samples": samples,
             "filtered_samples": samples,
             "groups": list(groups_to_use),
@@ -358,6 +358,22 @@ class AnalysisManager:
                     for rank, ds_idx in enumerate(valid_indices):
                         all_results[dataset_names_ordered[ds_idx]]["p_value_fdr"] = float(p_adj[rank])
                     print(f"FDR correction applied across {len(valid_indices)} datasets.")
+                    # Trace: FDR-Korrektur (2e) — write into first dataset's trace
+                    try:
+                        from core.methodology_trace import MethodologyTrace as _MT
+                        _first_ds = dataset_names_ordered[valid_indices[0]]
+                        _fdr_trace = all_results[_first_ds].get("methodology_trace") or _MT()
+                        _m = len(valid_indices)
+                        _fdr_trace.add(5, "Multiple Testing Correction",
+                                       f"Benjamini-Hochberg FDR correction applied (m = {_m} tests).",
+                                       detail=(f"To control the false discovery rate across {_m} simultaneously "
+                                               "tested dependent variables, Benjamini-Hochberg (BH) correction "
+                                               "was applied to all raw p-values. Adjusted p-values (q-values) "
+                                               "are reported alongside uncorrected values. The FDR family "
+                                               f"included all {_m} successfully analysed outcome variables."))
+                        all_results[_first_ds]["methodology_trace"] = _fdr_trace
+                    except Exception:
+                        pass  # FDR trace is non-critical
             except Exception as e:
                 print(f"Warning: FDR correction failed: {str(e)}")
 
@@ -417,7 +433,7 @@ class AnalysisManager:
         if error_type not in ["sd", "se"]:
             raise ValueError("Error bar type must be 'sd' or 'se'")
 
-        analysis_log = f"Analysis Report\n"
+        analysis_log = "Analysis Report\n"
         analysis_log += f"Date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
         analysis_log += f"File: {file_path}\n"
         analysis_log += f"Worksheet: {sheet_name}\n"
@@ -472,7 +488,7 @@ class AnalysisManager:
                 kwargs=kwargs
             )
             samples = prepared_inputs["samples"]
-            df = prepared_inputs["df"]
+            df = prepared_inputs["d"]
             filtered_samples = prepared_inputs["filtered_samples"]
             groups = prepared_inputs["groups"]
             group_col = prepared_inputs["group_col"]
@@ -489,7 +505,7 @@ class AnalysisManager:
                 if len(values) < 1:
                     raise ValueError(f"Group '{group}' contains no data.")
 
-            analysis_log += f"Data imported successfully.\n"
+            analysis_log += "Data imported successfully.\n"
             if not _is_continuous_analysis:
                 analysis_log += "Number of data points per group:\n"
                 for group, values in filtered_samples.items():
@@ -566,27 +582,27 @@ class AnalysisManager:
 
                     if _beta_sv:
                         _beta_trace.add(1, "Data Transformation",
-                            f"Boundary values (exact 0 or 1) were present in the outcome. "
-                            f"Smithson-Verkuilen transformation applied: y_adj = (y × (n−1) + 0.5) / n. "
-                            f"This pushes boundary values strictly inside (0,1) as required by Beta Regression.",
+                            "Boundary values (exact 0 or 1) were present in the outcome. "
+                            "Smithson-Verkuilen transformation applied: y_adj = (y × (n−1) + 0.5) / n. "
+                            "This pushes boundary values strictly inside (0,1) as required by Beta Regression.",
                             detail=f"n={_beta_n}")
 
                     if _beta_bias:
                         _beta_trace.add(2, "Test Selection",
-                            f"Outcome detected as proportion (all values strictly in (0,1), "
+                            "Outcome detected as proportion (all values strictly in (0,1), "
                             f"{_beta_n_unique} unique values). "
                             f"EPV = {_beta_n} / {_beta_n_pred} = {_beta_epv:.1f} < 10. "
-                            f"Bias-corrected Beta Regression applied to compensate for "
-                            f"small sample bias (Peduzzi et al., 1996, adapted). "
-                            f"Note: EPV rule was derived for logistic regression — "
-                            f"interpretation should be cautious.",
+                            "Bias-corrected Beta Regression applied to compensate for "
+                            "small sample bias (Peduzzi et al., 1996, adapted). "
+                            "Note: EPV rule was derived for logistic regression — "
+                            "interpretation should be cautious.",
                             detail=f"EPV={_beta_epv:.1f}, n={_beta_n}, predictors={_beta_n_pred}")
                     else:
                         _beta_trace.add(2, "Test Selection",
-                            f"Outcome detected as proportion (all values strictly in (0,1), "
+                            "Outcome detected as proportion (all values strictly in (0,1), "
                             f"{_beta_n_unique} unique values). "
                             f"EPV = {_beta_n} / {_beta_n_pred} = {_beta_epv:.1f} ≥ 10. "
-                            f"Standard Beta Regression applied.",
+                            "Standard Beta Regression applied.",
                             detail=f"EPV={_beta_epv:.1f}, n={_beta_n}, predictors={_beta_n_pred}")
 
                     model = BetaRegressionModel()
@@ -611,7 +627,7 @@ class AnalysisManager:
                         if len(analysis_df) < MIN_N_HARD:
                             logging.warning(f"Very small dataset (n={len(analysis_df)} < MIN_N_HARD).")
                             raise ValueError(
-                                f"Too few observations after filter "
+                                "Too few observations after filter "
                                 f"'{filter_col} = {filter_val}' (n={len(analysis_df)})."
                             )
 
@@ -983,15 +999,18 @@ class AnalysisManager:
                                         stats_list.append(tstat)
                                         pvals.append(p)
                                         # Holm–Šidák correction
-                                    reject, p_adj, _, _ = multipletests(pvals, alpha=0.05, method='holm-sidak')
-                                    
+                                    # C3b: Holm-Bonferroni controls FWER correctly for
+                                    # dependent pairwise comparisons (Holm-Šidák assumed
+                                    # independence, which is violated here).
+                                    reject, p_adj, _, _ = multipletests(pvals, alpha=0.05, method='holm')
+
                                     # Create results in the same format as other post-hoc tests
                                     posthoc_results = {
-                                        "posthoc_test": "Custom paired t-tests (Holm-Sidak)",
+                                        "posthoc_test": "Custom paired t-tests (Holm-Bonferroni)",
                                         "pairwise_comparisons": [],
                                         "error": None
                                     }
-                                    
+
                                     # Collect results
                                     for i, (g1, g2) in enumerate(pairs):
                                         ci = PostHocStatistics.calculate_ci_mean_diff(transformed_samples[g1], transformed_samples[g2], alpha=0.05, paired=True)
@@ -1000,11 +1019,11 @@ class AnalysisManager:
                                             posthoc_results,
                                             group1=g1,
                                             group2=g2,
-                                            test="Paired t-test (Holm-Sidak)",
+                                            test="Paired t-test (Holm-Bonferroni)",
                                             p_value=p_adj[i],
                                             statistic=stats_list[i],
                                             corrected=True,
-                                            correction_method="Holm-Sidak",
+                                            correction_method="Holm-Bonferroni",
                                             effect_size=d,
                                             effect_size_type="cohen_d",
                                             confidence_interval=ci,
@@ -1030,7 +1049,7 @@ class AnalysisManager:
                             import copy
                             test_results['pairwise_comparisons'] = copy.deepcopy(posthoc_results['pairwise_comparisons'])
       
-                            print(f"DEBUG: Copied pairwise_comparisons from posthoc_results to test_results")
+                            print("DEBUG: Copied pairwise_comparisons from posthoc_results to test_results")
                             print(f"DEBUG: Same object? {posthoc_results.get('pairwise_comparisons', None) is test_results.get('pairwise_comparisons', None)}")
 
                         test_results["posthoc_test"] = posthoc_results.get("posthoc_test")
@@ -1365,13 +1384,13 @@ class AnalysisManager:
                         title=title, save_plot=save_plot, error_type=error_type,
                         pairwise_results=pairwise_comparisons,
                         file_name=file_base, legend_colors=colors, **plot_kwargs)
-                analysis_log += f"\nPlots were saved as:\n"
+                analysis_log += "\nPlots were saved as:\n"
                 analysis_log += f"  {file_base}.pdf\n"
                 analysis_log += f"  {file_base}.png\n"
                 get_matplotlib_pyplot().close(fig)
                 results["_file_paths"] = {
                     "excel": os.path.abspath(excel_file),
-                    "pdf": os.path.abspath(f"{file_base}.pdf"),
+                    "pd": os.path.abspath(f"{file_base}.pd"),
                     "png": os.path.abspath(f"{file_base}.png")
                 }
             else:
@@ -1392,7 +1411,7 @@ class AnalysisManager:
                     line_plot_base = file_base+"_lines"
                     results["_file_paths"]["pdf_lines"] = os.path.abspath(f"{line_plot_base}.pdf")
                     results["_file_paths"]["png_lines"] = os.path.abspath(f"{line_plot_base}.png")
-                    analysis_log += f"\nAdditional line plot for dependent data created:\n"
+                    analysis_log += "\nAdditional line plot for dependent data created:\n"
                     analysis_log += f"  {line_plot_base}.pdf\n"
                     analysis_log += f"  {line_plot_base}.png\n"
                 except Exception as e:

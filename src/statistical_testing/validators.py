@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Mapping, Sequence
+from typing import Any, Dict, Iterable, List, Mapping, Sequence
 
 import numpy as np
 
@@ -147,7 +147,7 @@ def validate_group_count(groups: Iterable[str], *, min_groups: int = 2, label: s
     return normalized_groups
 
 
-def validate_residuals_for_shapiro(residuals: Sequence[float], *, label: str = "residuals") -> np.ndarray:
+def validate_residuals_for_shapiro(residuals: Sequence[float] | Any, *, label: str = "residuals") -> np.ndarray:
     array = validate_finite_values(residuals, label=label, allow_missing=False)
     if array.size < 3:
         raise SampleSizeError(f"{label}: Shapiro-Wilk requires n>=3 residuals.")
