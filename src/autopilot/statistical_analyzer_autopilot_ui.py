@@ -1,3 +1,5 @@
+# pyright: reportAttributeAccessIssue=false
+# pyright: reportOptionalMemberAccess=false
 import os
 import re
 import string

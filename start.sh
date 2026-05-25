@@ -21,9 +21,9 @@ run_python_entrypoint() {
 # Try common binary locations/names
 try_exec() {
   local path="$1"
-  if [ -x "$path" ]; then
-    echo "Starting binary: $path"
-    exec "$path" "$@"
+    if [ -f "$path" ] && [ -x "$path" ]; then
+        echo "Starting binary: $path"
+        exec "$path" "$@"
   fi
 }
 

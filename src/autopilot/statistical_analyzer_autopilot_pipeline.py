@@ -1,3 +1,5 @@
+# pyright: reportAttributeAccessIssue=false
+# pyright: reportOptionalMemberAccess=false
 import os
 import sys
 
@@ -62,7 +64,7 @@ def _resource_path(relative_path):
         base_path = sys._MEIPASS
     except Exception:
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        base_path = os.path.dirname(script_dir)
+        base_path = os.path.dirname(os.path.dirname(script_dir))
     return os.path.join(base_path, relative_path)
 
 

@@ -579,9 +579,15 @@ class AssumptionCheckEngine:
             )
             test_recommendation = strategy_to_recommendation(decision_strategy)
             if decision_strategy == "welch_ttest":
-                test_info["note"] = "Residuals are normal but variances are unequal - Welch's t-test will be used."
+                if post_var:
+                    test_info["note"] = "Residuals are normal and variances are equal - Welch's t-test will be used (robust default)."
+                else:
+                    test_info["note"] = "Residuals are normal but variances are unequal - Welch's t-test will be used."
             elif decision_strategy == "welch_anova":
-                test_info["note"] = "Residuals are normal but variances are unequal - Welch's ANOVA will be used."
+                if post_var:
+                    test_info["note"] = "Residuals are normal and variances are equal - Welch's ANOVA will be used (robust default)."
+                else:
+                    test_info["note"] = "Residuals are normal but variances are unequal - Welch's ANOVA will be used."
 
         test_info["decision"] = {
             "strategy": decision_strategy,

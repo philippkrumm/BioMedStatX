@@ -55,8 +55,8 @@ def resource_path(relative_path):
     except Exception:
         # When running from Python directly, get the script's directory
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        # Go up one level to project root
-        base_path = os.path.dirname(script_dir)
+        # Go up two levels to project root
+        base_path = os.path.dirname(os.path.dirname(script_dir))
 
     return os.path.join(base_path, relative_path)
 

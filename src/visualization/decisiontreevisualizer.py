@@ -954,7 +954,8 @@ class DecisionTreeVisualizer:
 
             # Add debug visualization info
             print(f"DEBUG VISUALIZATION: Test name: {test_name}")
-            print(f"DEBUG VISUALIZATION: Path type: {'parametric' if actual_test_type.lower() == 'parametric' else 'non-parametric'}")
+            _dbg_type = 'non-parametric' if is_nonparametric_test else 'parametric'
+            print(f"DEBUG VISUALIZATION: Path type: {_dbg_type}")
             print(f"DEBUG VISUALIZATION: Groups: {n_groups}")
             print(f"DEBUG VISUALIZATION: Dependence: {dependence_type}")
             print(f"DEBUG VISUALIZATION: Number of highlighted edges: {len(highlighted)}")
@@ -1027,7 +1028,7 @@ class DecisionTreeVisualizer:
 
             # Draw node labels with background boxes
             nx.draw_networkx_labels(G, pos, labels=node_labels, font_size=12.5,
-                    font_family='sans-seri', font_weight='bold',
+                    font_family='sans-serif', font_weight='bold',
                     bbox=dict(boxstyle='round,pad=0.28', facecolor='white',
                                 alpha=0.7, edgecolor='lightgray'))
 
@@ -2045,7 +2046,7 @@ class DecisionTreeVisualizer:
             nx.draw_networkx_edges(G, pos_dict, edgelist=regular_edges, width=1, edge_color='black')
 
             nx.draw_networkx_labels(G, pos_dict, labels=node_labels, font_size=11,
-                font_family='sans-seri', font_weight='bold',
+                font_family='sans-serif', font_weight='bold',
                 bbox=dict(boxstyle='round,pad=0.28', facecolor='white', alpha=0.7, edgecolor='lightgray'))
 
             plt.gcf().suptitle(f"Statistical Decision Path: {test_name}", fontsize=15, y=0.98)
