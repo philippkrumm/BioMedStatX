@@ -3,6 +3,8 @@ from typing import Dict, Iterable, List, Mapping, Sequence
 
 import numpy as np
 
+MIN_N_HARD = 5    # Absolute minimum before blocking or critical warnings
+MIN_N_SMALL = 20  # Threshold for forcing robust defaults (exact methods, non-parametric)
 
 class ValidationError(Exception):
     """Base class for statistical input validation failures."""
@@ -67,16 +69,21 @@ def validate_finite_values(
 def validate_minimum_n(
     data: Sequence[float],
     *,
-    min_n: int = 3,
+    min_n: int = MIN_N_HARD,
     label: str = "data",
     allow_missing: bool = False,
 ) -> np.ndarray:
+    import logging
+    logger = logging.getLogger(__name__)
+
     array = validate_finite_values(data, label=label, allow_missing=allow_missing)
     valid_n = int(np.count_nonzero(~np.isnan(array)))
-    if valid_n < min_n:
+    
+    if valid_n < 2:
         raise SampleSizeError(
-            f"{label}: sample size n={valid_n} is below required minimum n={min_n}."
+            f"{label}: sample size n={valid_n} is below absolute minimum n=2."
         )
+        
     return array
 
 

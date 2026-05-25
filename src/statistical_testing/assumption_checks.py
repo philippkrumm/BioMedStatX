@@ -10,6 +10,7 @@ from statistical_testing.validators import (
     ValidationError,
     validate_levene_inputs,
     validate_residuals_for_shapiro,
+    MIN_N_HARD,
 )
 from stats_functions import UIDialogManager
 
@@ -55,6 +56,34 @@ class AssumptionCheckEngine:
         transformed_samples = {g: samples[g].copy() for g in valid_groups}
         test_recommendation = "parametric"
 
+        # B1: For a paired t-test the relevant normality assumption is on the
+        # within-pair differences d = x1 - x2, NOT on the pooled OLS residuals
+        # of a Value ~ C(Group) model (which encodes the *unpaired* assumption).
+        is_paired = model_type == "paired"
+
+        def _paired_diffs(samps):
+            if len(valid_groups) != 2:
+                return None
+            g0, g1 = valid_groups[0], valid_groups[1]
+            a, b = list(samps[g0]), list(samps[g1])
+            if len(a) != len(b) or len(a) < 3:
+                return None
+            return np.asarray(a, dtype=float) - np.asarray(b, dtype=float)
+
+        def _rm_diffs(samps):
+            if len(valid_groups) < 2:
+                return None
+            baseline = valid_groups[0]
+            base_vals = np.asarray(list(samps[baseline]), dtype=float)
+            diffs = []
+            for g in valid_groups[1:]:
+                vals = np.asarray(list(samps[g]), dtype=float)
+                if len(vals) != len(base_vals) or len(vals) < 3:
+                    return None
+                diffs.extend(vals - base_vals)
+            return np.asarray(diffs)
+
+
         # Fit model and check residuals normality on raw data
         def make_df(samps):
             if model_type == "twoway":
@@ -91,9 +120,14 @@ class AssumptionCheckEngine:
                 return df
             else:
                 # For other models, use simple Group/Value structure
-                return pd.DataFrame([
-                    {"Group": g, "Value": v} for g in valid_groups for v in samps[g]
-                ])
+                data_rows = []
+                for g in valid_groups:
+                    for i, v in enumerate(samps[g]):
+                        row = {"Group": g, "Value": v}
+                        if model_type in ("rm", "paired"):
+                            row["Subject"] = f"S{i}"
+                        data_rows.append(row)
+                return pd.DataFrame(data_rows)
         df_raw = make_df(samples)
         
         # Adjust formula for Two-Way ANOVA if needed
@@ -102,21 +136,48 @@ class AssumptionCheckEngine:
             adjusted_formula = "Value ~ C(FactorA) * C(FactorB)"
             logger.debug(f"DEBUG SHAPIRO: Adjusted formula for Two-Way ANOVA: {adjusted_formula}")
         
+        # CLT-Stufe: Bypass normality check for large samples
+        min_n = min(len(v) for v in samples.values()) if samples else 0
+        skip_shapiro = min_n >= 100
+        
         try:
-            # ROBUST FORMULA CREATION: Use actual DataFrame columns, not assumptions
-            logger.debug(f"DEBUG SHAPIRO: Available columns in df_raw: {list(df_raw.columns)}")
-            logger.debug(f"DEBUG SHAPIRO: Original formula: {formula}")
-            logger.debug(f"DEBUG SHAPIRO: Adjusted formula: {adjusted_formula}")
-            
-            # Create formula based on ACTUAL columns present in DataFrame
-            actual_columns = list(df_raw.columns)
+            if skip_shapiro:
+                logger.info(f"CLT triggered: min_n={min_n} >= 100. Bypassing Shapiro-Wilk.")
+                stat, pval = None, 1.0  # Force is_normal = True
+                test_info.setdefault("validation_notes", []).append(
+                    f"Normality check bypassed: sample size is large enough (min n={min_n} >= 100) to rely on the Central Limit Theorem."
+                )
+            else:
+                # ROBUST FORMULA CREATION: Use actual DataFrame columns, not assumptions
+                logger.debug(f"DEBUG SHAPIRO: Available columns in df_raw: {list(df_raw.columns)}")
+                logger.debug(f"DEBUG SHAPIRO: Original formula: {formula}")
+                logger.debug(f"DEBUG SHAPIRO: Adjusted formula: {adjusted_formula}")
+                
+                # Create formula based on ACTUAL columns present in DataFrame
+                actual_columns = list(df_raw.columns)
             
             if "Value" not in actual_columns:
                 logger.debug(f"DEBUG SHAPIRO ERROR: 'Value' column missing in DataFrame!")
                 stat, pval = None, None
+            elif is_paired:
+                # B1: paired t-test → Shapiro-Wilk on within-pair differences.
+                diffs = _paired_diffs(samples)
+                if diffs is not None:
+                    try:
+                        validate_residuals_for_shapiro(diffs, label="pre_transformation_paired_diffs")
+                        stat, pval = stats.shapiro(diffs)
+                    except ValidationError as exc:
+                        stat, pval = None, None
+                        test_info.setdefault("validation_notes", []).append(str(exc))
+                        logger.warning(str(exc))
+                else:
+                    stat, pval = None, None
+                    test_info.setdefault("validation_notes", []).append(
+                        "Paired normality check skipped: groups not equal length or n<3."
+                    )
             else:
-                # Find factor columns (everything except 'Value')
-                factor_columns = [col for col in actual_columns if col != "Value"]
+                # Find factor columns (everything except 'Value' and 'Subject')
+                factor_columns = [col for col in actual_columns if col not in ("Value", "Subject")]
                 logger.debug(f"DEBUG SHAPIRO: Found factor columns: {factor_columns}")
                 
                 if not factor_columns:
@@ -125,7 +186,10 @@ class AssumptionCheckEngine:
                     logger.debug(f"DEBUG SHAPIRO: Using intercept-only model: {working_formula}")
                 elif len(factor_columns) == 1:
                     # Single factor
-                    working_formula = f"Value ~ C({factor_columns[0]})"
+                    if model_type == "rm" and "Subject" in actual_columns:
+                        working_formula = f"Value ~ C({factor_columns[0]}) + C(Subject)"
+                    else:
+                        working_formula = f"Value ~ C({factor_columns[0]})"
                     logger.debug(f"DEBUG SHAPIRO: Using single factor model: {working_formula}")
                 elif len(factor_columns) == 2 and model_type == "twoway":
                     # Two factors for two-way ANOVA
@@ -137,43 +201,77 @@ class AssumptionCheckEngine:
                     logger.debug(f"DEBUG SHAPIRO: Using first factor only: {working_formula}")
                 
                 # Try to fit the model with actual column names
-                model_raw = ols(working_formula, data=df_raw).fit()
-                resid_raw = model_raw.resid
-                logger.debug(f"DEBUG SHAPIRO: Raw residuals length: {len(resid_raw)}, unique values: {len(set(resid_raw))}")
-                # HIGH-3: centralized validation for Shapiro-Wilk applicability
                 try:
-                    validate_residuals_for_shapiro(resid_raw, label="pre_transformation_residuals")
-                    stat, pval = stats.shapiro(resid_raw)
-                except ValidationError as exc:
-                    stat, pval = None, None
-                    test_info.setdefault("validation_notes", []).append(str(exc))
-                    logger.warning(str(exc))
-                logger.debug(f"DEBUG SHAPIRO: Pre-transformation Shapiro-Wilk: W={stat}, p={pval}")
+                    model_raw = ols(working_formula, data=df_raw).fit()
+                    resid_raw = model_raw.resid
+                    logger.debug(f"DEBUG SHAPIRO: Raw residuals length: {len(resid_raw)}, unique values: {len(set(resid_raw))}")
+                    # HIGH-3: centralized validation for Shapiro-Wilk applicability
+                    try:
+                        validate_residuals_for_shapiro(resid_raw, label="pre_transformation_residuals")
+                        stat, pval = stats.shapiro(resid_raw)
+                    except ValidationError as exc:
+                        stat, pval = None, None
+                        test_info.setdefault("validation_notes", []).append(str(exc))
+                        logger.warning(str(exc))
+                    logger.debug(f"DEBUG SHAPIRO: Pre-transformation Shapiro-Wilk: W={stat}, p={pval}")
+                except Exception as e:
+                    if model_type == "rm" and "Subject" in working_formula:
+                        logger.warning(f"Failed to fit RM model with Subject effect: {e}. Falling back to baseline diffs.")
+                        diffs = _rm_diffs(samples)
+                        if diffs is not None:
+                            try:
+                                validate_residuals_for_shapiro(diffs, label="pre_transformation_rm_diffs")
+                                stat, pval = stats.shapiro(diffs)
+                            except ValidationError as exc:
+                                stat, pval = None, None
+                                test_info.setdefault("validation_notes", []).append(str(exc))
+                                logger.warning(str(exc))
+                        else:
+                            stat, pval = None, None
+                            test_info.setdefault("validation_notes", []).append("RM normality check failed (fallback could not compute differences).")
+                    else:
+                        raise e
                 
         except Exception as e:
             logger.debug(f"DEBUG SHAPIRO ERROR: Failed pre-transformation Shapiro-Wilk test: {str(e)}")
             logger.debug(f"DEBUG SHAPIRO ERROR: DataFrame info - Shape: {df_raw.shape}, Columns: {list(df_raw.columns)}")
             logger.debug(f"DEBUG SHAPIRO ERROR: DataFrame head:\n{df_raw.head()}")
             stat, pval = None, None
+            
         _pre_is_normal = (pval > 0.05 if pval is not None else False)
+        if skip_shapiro:
+            _pre_is_normal = True  # Enforce True if skipped via CLT
+
         test_info["pre_transformation"]["residuals_normality"] = {
-            "statistic": stat, "p_value": pval, "is_normal": _pre_is_normal
+            "statistic": stat, "p_value": pval if not skip_shapiro else None, "is_normal": _pre_is_normal
         }
         if trace:
-            _norm_verdict = "normality assumed" if _pre_is_normal else "normality violated"
-            _p_str = f"p={pval:.4f}" if isinstance(pval, (float, int)) else "p=N/A"
-            _w_str = f"W={stat:.4f}" if isinstance(stat, (float, int)) else "W=N/A"
-            trace.add(1, "Normality",
-                      f"Shapiro-Wilk on model residuals yielded {_p_str} \u2014 {_norm_verdict}.",
-                      detail=f"{_w_str}, {_p_str}")
+            if skip_shapiro:
+                trace.add(1, "Normality",
+                          f"Normality assumed via Central Limit Theorem (min group n={min_n} \u2265 100).",
+                          detail="Shapiro-Wilk test bypassed.")
+            else:
+                _norm_verdict = "normality assumed" if _pre_is_normal else "normality violated"
+                _p_str = f"p={pval:.4f}" if isinstance(pval, (float, int)) else "p=N/A"
+                _w_str = f"W={stat:.4f}" if isinstance(stat, (float, int)) else "W=N/A"
+                _norm_target = "within-pair differences" if is_paired else "model residuals"
+                trace.add(1, "Normality",
+                          f"Shapiro-Wilk on {_norm_target} yielded {_p_str} \u2014 {_norm_verdict}.",
+                          detail=f"{_w_str}, {_p_str}")
 
         # Levene test on raw data (Brown-Forsythe test using median)
-        if model_type in ("rm", "mixed"):
+        if model_type in ("rm", "mixed", "paired"):
             stat, pval, has_equal_variance = None, None, True
-            test_name = "N/A (Repeated Measures / Mixed)"
-            test_info.setdefault("validation_notes", []).append(
-                "Levene's test bypassed: sphericity check (Mauchly's test) is the appropriate variance check for repeated measures/mixed designs."
-            )
+            if is_paired:
+                test_name = "N/A (Paired)"
+                test_info.setdefault("validation_notes", []).append(
+                    "Levene's test bypassed: variance homogeneity is not an assumption of the paired t-test (it operates on within-pair differences)."
+                )
+            else:
+                test_name = "N/A (Repeated Measures / Mixed)"
+                test_info.setdefault("validation_notes", []).append(
+                    "Levene's test bypassed: sphericity check (Mauchly's test) is the appropriate variance check for repeated measures/mixed designs."
+                )
         else:
             test_name = "Brown-Forsythe"
             try:
@@ -203,9 +301,12 @@ class AssumptionCheckEngine:
             "test_name": test_name,
         }
         if trace:
-            if model_type in ("rm", "mixed"):
+            if model_type in ("rm", "mixed", "paired"):
+                _bypass_reason = ("variance homogeneity is not an assumption of the paired t-test"
+                                  if is_paired else
+                                  "Sphericity is the relevant variance check")
                 trace.add(2, "Assumption",
-                          "Homogeneity of variance (Levene's test) bypassed for dependent/repeated measures design; Sphericity is the relevant variance check.")
+                          f"Homogeneity of variance (Levene's test) bypassed for dependent design; {_bypass_reason}.")
             else:
                 _var_verdict = "equal variances" if has_equal_variance else "unequal variances"
                 _vp_str = f"p={pval:.4f}" if isinstance(pval, (float, int)) else "p=N/A"
@@ -332,9 +433,22 @@ class AssumptionCheckEngine:
             if "Value" not in actual_columns_tr:
                 logger.debug(f"DEBUG SHAPIRO ERROR: 'Value' column missing in transformed DataFrame!")
                 stat2, pval2 = None, None
+            elif is_paired:
+                # B1: paired t-test → Shapiro-Wilk on transformed within-pair differences.
+                diffs_tr = _paired_diffs(transformed_samples)
+                if diffs_tr is not None:
+                    try:
+                        validate_residuals_for_shapiro(diffs_tr, label="post_transformation_paired_diffs")
+                        stat2, pval2 = stats.shapiro(diffs_tr)
+                    except ValidationError as exc:
+                        stat2, pval2 = None, None
+                        test_info.setdefault("validation_notes", []).append(str(exc))
+                        logger.warning(str(exc))
+                else:
+                    stat2, pval2 = None, None
             else:
-                # Find factor columns (everything except 'Value')
-                factor_columns_tr = [col for col in actual_columns_tr if col != "Value"]
+                # Find factor columns (everything except 'Value' and 'Subject')
+                factor_columns_tr = [col for col in actual_columns_tr if col not in ("Value", "Subject")]
                 logger.debug(f"DEBUG SHAPIRO: Found factor columns in transformed data: {factor_columns_tr}")
                 
                 if not factor_columns_tr:
@@ -343,7 +457,10 @@ class AssumptionCheckEngine:
                     logger.debug(f"DEBUG SHAPIRO: Using intercept-only model for transformed: {working_formula_tr}")
                 elif len(factor_columns_tr) == 1:
                     # Single factor
-                    working_formula_tr = f"Value ~ C({factor_columns_tr[0]})"
+                    if model_type == "rm" and "Subject" in actual_columns_tr:
+                        working_formula_tr = f"Value ~ C({factor_columns_tr[0]}) + C(Subject)"
+                    else:
+                        working_formula_tr = f"Value ~ C({factor_columns_tr[0]})"
                     logger.debug(f"DEBUG SHAPIRO: Using single factor model for transformed: {working_formula_tr}")
                 elif len(factor_columns_tr) == 2 and model_type == "twoway":
                     # Two factors for two-way ANOVA
@@ -355,17 +472,35 @@ class AssumptionCheckEngine:
                     logger.debug(f"DEBUG SHAPIRO: Using first factor only for transformed: {working_formula_tr}")
                 
                 # Try to fit the model with actual column names
-                model_tr = ols(working_formula_tr, data=df_tr).fit()
-                resid_tr = model_tr.resid
-                logger.debug(f"DEBUG SHAPIRO: Transformed residuals length: {len(resid_tr)}, unique values: {len(set(resid_tr))}")
                 try:
-                    validate_residuals_for_shapiro(resid_tr, label="post_transformation_residuals")
-                    stat2, pval2 = stats.shapiro(resid_tr)
-                except ValidationError as exc:
-                    stat2, pval2 = None, None
-                    test_info.setdefault("validation_notes", []).append(str(exc))
-                    logger.warning(str(exc))
-                logger.debug(f"DEBUG SHAPIRO: Post-transformation Shapiro-Wilk: W={stat2}, p={pval2}")
+                    model_tr = ols(working_formula_tr, data=df_tr).fit()
+                    resid_tr = model_tr.resid
+                    logger.debug(f"DEBUG SHAPIRO: Transformed residuals length: {len(resid_tr)}, unique values: {len(set(resid_tr))}")
+                    try:
+                        validate_residuals_for_shapiro(resid_tr, label="post_transformation_residuals")
+                        stat2, pval2 = stats.shapiro(resid_tr)
+                    except ValidationError as exc:
+                        stat2, pval2 = None, None
+                        test_info.setdefault("validation_notes", []).append(str(exc))
+                        logger.warning(str(exc))
+                    logger.debug(f"DEBUG SHAPIRO: Post-transformation Shapiro-Wilk: W={stat2}, p={pval2}")
+                except Exception as e:
+                    if model_type == "rm" and "Subject" in working_formula_tr:
+                        logger.warning(f"Failed to fit RM model with Subject effect on transformed data: {e}. Falling back to baseline diffs.")
+                        diffs_tr = _rm_diffs(transformed_samples)
+                        if diffs_tr is not None:
+                            try:
+                                validate_residuals_for_shapiro(diffs_tr, label="post_transformation_rm_diffs")
+                                stat2, pval2 = stats.shapiro(diffs_tr)
+                            except ValidationError as exc:
+                                stat2, pval2 = None, None
+                                test_info.setdefault("validation_notes", []).append(str(exc))
+                                logger.warning(str(exc))
+                        else:
+                            stat2, pval2 = None, None
+                            test_info.setdefault("validation_notes", []).append("RM normality check failed (fallback could not compute differences).")
+                    else:
+                        raise e
                 
         except Exception as e:
             logger.debug(f"DEBUG SHAPIRO ERROR: Failed post-transformation Shapiro-Wilk test: {str(e)}")
@@ -377,9 +512,9 @@ class AssumptionCheckEngine:
         }
 
         # Levene test on transformed data
-        if model_type in ("rm", "mixed"):
+        if model_type in ("rm", "mixed", "paired"):
             stat_tr, pval_tr, has_equal_variance_tr = None, None, True
-            test_name_tr = "N/A (Repeated Measures / Mixed)"
+            test_name_tr = "N/A (Paired)" if is_paired else "N/A (Repeated Measures / Mixed)"
         else:
             test_name_tr = "Brown-Forsythe"
             try:

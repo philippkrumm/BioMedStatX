@@ -526,6 +526,18 @@ class ResultsExporter:
 
             row += 1
             
+        # G3-FDR: document m (number of tests in the FDR family)
+        n_valid_for_fdr = sum(
+            1 for r in all_results.values()
+            if isinstance(r.get("p_value"), (float, int))
+        )
+        overview_sheet.merge_range(
+            row, 0, row, 6,
+            f"Note: FDR correction (Benjamini-Hochberg) applied to m = {n_valid_for_fdr} tests.",
+            fmt.get("explanation", fmt["cell"])
+        )
+        row += 1
+
         # Add detailed information for each dataset
         row += 2  # Add some space
         for dataset_name, results in all_results.items():
@@ -1417,8 +1429,8 @@ class ResultsExporter:
             posthoc_explanations = {
                 "Tukey HSD": "Tukey's Honestly Significant Difference test compares all possible pairs of groups while controlling the family-wise error rate. It's the most commonly used post-hoc test for ANOVA.",
                 "Dunnett": "Dunnett's test compares all treatment groups against a single control group. It's more powerful than Tukey when you have a clear control condition.",
-                "Custom paired t-tests (Holm-Sidak)": "User-selected group pairs are compared using paired t-tests with Holm-Sidak correction for multiple comparisons. This allows for focused comparisons of specific group pairs.",
-                "Dunn": "Dunn's test is a non-parametric post-hoc test that compares all possible pairs after a significant Kruskal-Wallis test, using rank-based statistics with Holm-Sidak correction.",
+                "Custom paired t-tests (Holm-Bonferroni)": "User-selected group pairs are compared using paired t-tests with Holm-Bonferroni correction for multiple comparisons. This allows for focused comparisons of specific group pairs.",
+                "Dunn": "Dunn's test is a non-parametric post-hoc test that compares all possible pairs after a significant Kruskal-Wallis test, using rank-based statistics with Holm-Bonferroni correction.",
                 "Custom Mann-Whitney-U tests (Sidak)": "User-selected group pairs are compared using Mann-Whitney U tests with Sidak correction for multiple comparisons. This non-parametric approach is used when normality assumptions are violated.",
                 "Dependent Post-hoc": "Specialized post-hoc tests for repeated measures designs, using either paired t-tests or Wilcoxon signed-rank tests depending on normality assumptions."
             }
@@ -1941,9 +1953,9 @@ class ResultsExporter:
             "PARAMETRIC POST-HOC TESTS (when normality assumptions are met):\n"
             "• Tukey HSD: Compares all possible pairs while controlling family-wise error rate\n"
             "• Dunnett Test: Compares all groups against a single control group\n"
-            "• Custom Paired t-tests: User-selected pairs with Holm-Sidak correction\n\n"
+            "• Custom Paired t-tests: User-selected pairs with Holm-Bonferroni correction\n\n"
             "NON-PARAMETRIC POST-HOC TESTS (when normality assumptions are violated):\n"
-            "• Dunn Test: Rank-based comparisons of all pairs with Holm-Sidak correction\n"
+            "• Dunn Test: Rank-based comparisons of all pairs with Holm-Bonferroni correction\n"
             "• Custom Mann-Whitney-U Tests: User-selected pairs with Sidak correction\n\n"
             "REPEATED MEASURES POST-HOC TESTS (for dependent samples):\n"
             "• Dependent Post-hoc: Paired t-tests or Wilcoxon tests based on normality\n\n"
@@ -2150,8 +2162,8 @@ class ResultsExporter:
             "Available Post-hoc Tests:\n"
             "• Tukey HSD: Compares all pairs, controls family-wise error rate\n"
             "• Dunnett Test: Compares all groups to a control group\n"
-            "• Custom Paired t-tests (Holm-Sidak): User-selected pairs with Holm-Sidak correction\n"
-            "• Dunn Test: Non-parametric all pairwise comparisons with Holm-Sidak correction\n"
+            "• Custom Paired t-tests (Holm-Bonferroni): User-selected pairs with Holm-Bonferroni correction\n"
+            "• Dunn Test: Non-parametric all pairwise comparisons with Holm-Bonferroni correction\n"
             "• Custom Mann-Whitney-U (Sidak): User-selected pairs with Sidak correction\n"
             "• Dependent Post-hoc: For repeated measures designs (paired t-tests or Wilcoxon)"
         )
@@ -3646,8 +3658,6 @@ class ResultsExporter:
             row += 1
         
         return row
-
-        return cleaned_count
 
     # ========================================================================
     # Clinical Model Export Sheets

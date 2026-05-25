@@ -1,3 +1,4 @@
+from IPython.core.magics import logging
 import os
 from datetime import datetime
 
@@ -610,7 +611,9 @@ class AnalysisManager:
                     if filter_spec:
                         filter_col, filter_val = filter_spec
                         analysis_df = analysis_df[analysis_df[filter_col] == filter_val]
-                        if len(analysis_df) < 5:
+                        from statistical_testing.validators import MIN_N_HARD
+                        if len(analysis_df) < MIN_N_HARD:
+                            logging.warning(f"Very small dataset (n={len(analysis_df)} < MIN_N_HARD).")
                             raise ValueError(
                                 f"Too few observations after filter "
                                 f"'{filter_col} = {filter_val}' (n={len(analysis_df)})."
@@ -730,7 +733,9 @@ class AnalysisManager:
             else:
                 # Determine model type based on parameters
                 if len(groups) == 2:
-                    model_type = "ttest"
+                    # Paired t-test assumption is normality of within-pair
+                    # differences, not of pooled OLS residuals (B1).
+                    model_type = "paired" if dependent else "ttest"
                     formula = "Value ~ C(Group)"
                 elif len(groups) > 2:
                     model_type = "oneway"

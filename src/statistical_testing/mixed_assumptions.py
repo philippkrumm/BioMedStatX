@@ -132,8 +132,8 @@ class MixedAnovaAssumptionEngine:
         try:
             levene = stats.levene
 
-            # Perform Levene's test
-            statistic, p_value = levene(*group_data)
+            # Perform Levene's test (now using median to match Brown-Forsythe by default)
+            statistic, p_value = levene(*group_data, center='median')
             
             # Calculate group variances for descriptive info
             group_variances = [np.var(data, ddof=1) for data in group_data]
@@ -1003,8 +1003,8 @@ class MixedAnovaAssumptionEngine:
                     "cells_tested": len(cell_data)
                 }
             
-            # Perform Levene's test on all cells
-            levene_stat, levene_p = levene(*cell_data)
+            # Perform Levene's test on all cells (using median / Brown-Forsythe)
+            levene_stat, levene_p = levene(*cell_data, center='median')
             
             # Perform Bartlett's test on all cells
             bartlett_stat, bartlett_p = bartlett(*cell_data)

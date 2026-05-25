@@ -109,3 +109,81 @@ def test_logistic_firth_separation():
         assert np.isfinite(fe["coefficient"])
         assert np.isfinite(fe["odds_ratio"])
         assert np.isfinite(fe["std_err"])
+
+def test_rm_anova_sphericity_corrected_p_value_overrides_main_p():
+    import pandas as pd
+    import numpy as np
+    from statisticaltester import StatisticalTester
+    np.random.seed(42)
+    n = 12
+    df = pd.DataFrame({
+        "subject": list(range(n))*4,
+        "time": [0]*n + [1]*n + [2]*n + [3]*n,
+        "value": np.concatenate([
+            np.random.normal(10, 0.5, n),
+            np.random.normal(15, 3.0, n),
+            np.random.normal(11, 0.5, n),
+            np.random.normal(16, 3.0, n),
+        ])
+    })
+    results = StatisticalTester._run_repeated_measures_anova(df, dv="value", subject="subject", within=["time"])
+    assert results.get("p_value") == results.get("corrected_p_value"), "results[p_value] was not updated to corrected_p_value"
+    assert "Greenhouse-Geisser" in results.get("correction_used", ""), "Expected GG correction to be applied"
+
+def test_welch_anova_posthoc_is_games_howell():
+    import pandas as pd
+    import numpy as np
+    from statisticaltester import StatisticalTester
+    np.random.seed(42)
+    valid_groups = ["A", "B", "C"]
+    samples_to_use = {
+        "A": list(np.random.normal(10, 1, 15)),
+        "B": list(np.random.normal(15, 5, 15)),
+        "C": list(np.random.normal(20, 10, 15)),
+    }
+    results = {}
+    results = StatisticalTester._welch_anova_test(results, valid_groups, samples_to_use, alpha=0.05)
+    assert results.get("posthoc_test") == "Games-Howell Test", f"Expected Games-Howell Test, got {results.get("posthoc_test")}"
+    assert all(c["test"] == "Games-Howell" for c in results.get("pairwise_comparisons", [])), "Not all comparisons are Games-Howell"
+
+def test_friedman_posthoc_is_conover_iman():
+    import pandas as pd
+    import numpy as np
+    from nonparametricanovas import perform_friedman_test
+    np.random.seed(42)
+    n = 20
+    df = pd.DataFrame({
+        "subject": list(range(n))*3,
+        "time": ["t1"]*n + ["t2"]*n + ["t3"]*n,
+        "value": np.concatenate([
+            np.random.normal(10, 1, n),
+            np.random.normal(15, 1, n),
+            np.random.normal(12, 1, n),
+        ])
+    })
+    results = perform_friedman_test(df, dv="value", within_factor="time", subject_col="subject")
+    assert "Conover-Iman" in results.get("posthoc_test", ""), f"Expected Conover-Iman, got {results.get("posthoc_test")}"
+    assert all(c["test"] == "Conover-Iman" for c in results.get("pairwise_comparisons", [])), "Not all comparisons are Conover-Iman"
+
+def test_a1_welch_is_unconditional_default():
+    from statistical_testing.decision_logic import select_comparison_test
+    
+    # Synthesize a perfectly normal and perfectly homoscedastic scenario
+    # N=2 groups, independent
+    decision = select_comparison_test(
+        is_normal=True,
+        is_homoscedastic=True,  # Even with perfect variances
+        is_paired=False,
+        group_count=2
+    )
+    # A1 Fix guarantees Welch is the unconditional default for 2 groups
+    assert decision == "welch_ttest", f"Expected 'welch_ttest', got '{decision}'"
+
+    # Also for k>2 groups
+    decision_anova = select_comparison_test(
+        is_normal=True,
+        is_homoscedastic=True,
+        is_paired=False,
+        group_count=3
+    )
+    assert decision_anova == "welch_anova", f"Expected 'welch_anova', got '{decision_anova}'"

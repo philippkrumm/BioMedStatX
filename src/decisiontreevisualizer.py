@@ -443,7 +443,7 @@ class DecisionTreeVisualizer:
                 'IND_POSTHOC': {"label": "Independent\nPost-hoc Tests", "pos": (-8, 0)},    # MOVED LEFT
                 'IND_TUKEY': {"label": "Tukey HSD", "pos": (-9.5, -1)},                     # MORE SPACING: 1.5 apart
                 'IND_DUNNETT': {"label": "Dunnett Test", "pos": (-8, -1)},                  # MORE SPACING: 1.5 apart
-                'IND_HOLM_SIDAK': {"label": "Pairwise t-tests\n(Holm-Sidak)", "pos": (-6.5, -1)}, # MORE SPACING: 1.5 apart
+                'IND_HOLM_SIDAK': {"label": "Pairwise t-tests\n(Holm-Bonferroni)", "pos": (-6.5, -1)}, # MORE SPACING: 1.5 apart
 
                 # REPEATED MEASURES PATH - SAME INTERNAL SPACING
                 'RM_MAUCHLY': {"label": k1_m_sph_label, "pos": (-2, 1)},
@@ -456,7 +456,7 @@ class DecisionTreeVisualizer:
                 'RM_ANOVA_CORRECTED': {"label": "RM ANOVA\n(Corrected)", "pos": (-0.5, -3)},
                 'RM_POSTHOC': {"label": "RM Post-hoc Tests", "pos": (-2, -4)},
                 'RM_TUKEY': {"label": "Tukey HSD\n(RM)", "pos": (-3.5, -5)},
-                'RM_PAIRED_TESTS': {"label": "Pairwise Paired t-tests\n(Holm-Sidak)", "pos": (-0.5, -5)},
+                'RM_PAIRED_TESTS': {"label": "Pairwise Paired t-tests\n(Holm-Bonferroni)", "pos": (-0.5, -5)},
 
                 # MIXED DESIGN PATH - MOVED LEFT TO BE CLOSER, SAME INTERNAL SPACING
                 'MIXED_MAUCHLY': {"label": k1_m_sph_label, "pos": (4, 1)},
@@ -1326,7 +1326,7 @@ class DecisionTreeVisualizer:
                 'IND_POSTHOC':   {"label": "Independent\nPost-hoc Tests", "pos": (-8, 0)},
                 'IND_TUKEY':     {"label": "Tukey HSD", "pos": (-9.5, -1)},
                 'IND_DUNNETT':   {"label": "Dunnett Test", "pos": (-8, -1)},
-                'IND_HOLM_SIDAK':{"label": "Pairwise t-tests\n(Holm-Sidak)", "pos": (-6.5, -1)},
+                'IND_HOLM_SIDAK':{"label": "Pairwise t-tests\n(Holm-Bonferroni)", "pos": (-6.5, -1)},
                 'RM_MAUCHLY':            {"label": k1_m_sph_label, "pos": (-2, 1)},
                 'RM_SPHERICITY_OK':      {"label": "Sphericity\nAssumption Met", "pos": (-3.5, 0)},
                 'RM_SPHERICITY_VIOLATED':{"label": "Sphericity\nViolated", "pos": (-0.5, 0)},
@@ -1337,7 +1337,7 @@ class DecisionTreeVisualizer:
                 'RM_ANOVA_CORRECTED':    {"label": "RM ANOVA\n(Corrected)", "pos": (-0.5, -3)},
                 'RM_POSTHOC':            {"label": "RM Post-hoc Tests", "pos": (-2, -4)},
                 'RM_TUKEY':              {"label": "Tukey HSD\n(RM)", "pos": (-3.5, -5)},
-                'RM_PAIRED_TESTS':       {"label": "Pairwise Paired t-tests\n(Holm-Sidak)", "pos": (-0.5, -5)},
+                'RM_PAIRED_TESTS':       {"label": "Pairwise Paired t-tests\n(Holm-Bonferroni)", "pos": (-0.5, -5)},
                 'MIXED_MAUCHLY':             {"label": k1_m_sph_label, "pos": (4, 1)},
                 'MIXED_SPHERICITY_OK':       {"label": "Sphericity\nAssumption Met", "pos": (2.5, 0)},
                 'MIXED_SPHERICITY_VIOLATED': {"label": "Sphericity\nViolated", "pos": (5.5, 0)},
@@ -1650,8 +1650,9 @@ class DecisionTreeVisualizer:
         if model_type == "Correlation":
             n_samples = results.get("n", 50)
             
-        if n_samples < 20:
-            calculated_tier = "Micro-Sample Mode (N < 20)"
+        from statistical_testing.validators import MIN_N_SMALL
+        if n_samples < MIN_N_SMALL:
+            calculated_tier = f"Micro-Sample Mode (N < {MIN_N_SMALL})"
         elif n_samples < 100:
             calculated_tier = "Clinical Mode (20 <= N < 100)"
         else:
@@ -1676,7 +1677,7 @@ class DecisionTreeVisualizer:
 
             nodes_info = {
                 'START':           {"label": "Start\nCorrelation Analysis",                                "pos": (0, 10), "isSquare": True},
-                'TIER_MICRO':      {"label": "Micro-Sample Logic\n(N < 20)",                               "pos": (-4, 8), "isSquare": True},
+                'TIER_MICRO':      {"label": f"Micro-Sample Logic\n(N < {MIN_N_SMALL})",                               "pos": (-4, 8), "isSquare": True},
                 'TIER_CLINICAL':   {"label": "Clinical Adaptive Logic\n(20 <= N < 100)",                    "pos": (0, 8), "isSquare": True},
                 'TIER_ASYMPTOTIC': {"label": "Asymptotic Logic\n(N >= 100)",                                "pos": (4, 8), "isSquare": True},
                 'SKEW_KURT_CHECK': {"label": "Skewness/Kurtosis Check\n(Pearson assumptions)",              "pos": (2, 6), "isSquare": True},
@@ -1701,9 +1702,9 @@ class DecisionTreeVisualizer:
                 ('RESULT',     'EFFECT'),
             }
             
-            highlighted = {('START', 'TIER_MICRO') if n_samples < 20 else (('START', 'TIER_CLINICAL') if n_samples < 100 else ('START', 'TIER_ASYMPTOTIC'))}
+            highlighted = {('START', 'TIER_MICRO') if n_samples < MIN_N_SMALL else (('START', 'TIER_CLINICAL') if n_samples < 100 else ('START', 'TIER_ASYMPTOTIC'))}
             
-            if n_samples < 20:
+            if n_samples < MIN_N_SMALL:
                 highlighted.add(('TIER_MICRO', 'SPEARMAN'))
             else:
                 tier_node = 'TIER_CLINICAL' if n_samples < 100 else 'TIER_ASYMPTOTIC'
@@ -2141,13 +2142,13 @@ class DecisionTreeVisualizer:
             print(f"DEBUG TREE: One-Way ANOVA detected - showing all post-hoc options for user choice")
             highlighted.add(('O1_PH', 'P1_PH_TK'))  # Tukey
             highlighted.add(('O1_PH', 'P1_PH_DN'))  # Dunnett  
-            highlighted.add(('O1_PH', 'P1_PH_SD'))  # Holm-Sidak
+            highlighted.add(('O1_PH', 'P1_PH_SD'))  # Holm-Bonferroni
             return
         elif is_advanced_anova and not posthoc_test:
             # For Advanced ANOVAs with no specific post-hoc performed: show only Tukey and Pairwise (no Dunnett)
             print(f"DEBUG TREE: Advanced ANOVA detected - showing only Tukey and Pairwise post-hoc options")
             highlighted.add(('O1_PH', 'P1_PH_TK'))  # Tukey
-            highlighted.add(('O1_PH', 'P1_PH_SD'))  # Holm-Sidak (Pairwise t-tests)
+            highlighted.add(('O1_PH', 'P1_PH_SD'))  # Holm-Bonferroni (Pairwise t-tests)
             return
         
         # For specific tests or when a post-hoc was actually performed: show the specific path
@@ -2161,7 +2162,7 @@ class DecisionTreeVisualizer:
                 highlighted.add(('O1_PH', 'P1_PH_DN'))
             elif ("holm" in posthoc_test.lower() or "sidak" in posthoc_test.lower() or 
                   "pairwise t-test" in posthoc_test.lower() or "pairwise" in posthoc_test.lower()):
-                print(f"DEBUG TREE: Highlighting Holm-Sidak path for posthoc: '{posthoc_test}'")
+                print(f"DEBUG TREE: Highlighting Holm-Bonferroni path for posthoc: '{posthoc_test}'")
                 highlighted.add(('O1_PH', 'P1_PH_SD'))
             # Handle non-parametric post-hoc tests
             elif "mann-whitney" in posthoc_test.lower():
@@ -2174,7 +2175,7 @@ class DecisionTreeVisualizer:
                 print(f"DEBUG TREE: Highlighting Wilcoxon post-hoc path")
                 highlighted.add(('L2_PH', 'NP_PH_WILC'))
             else:
-                print(f"DEBUG TREE: Unknown post-hoc test '{posthoc_test}', defaulting to Holm-Sidak")
+                print(f"DEBUG TREE: Unknown post-hoc test '{posthoc_test}', defaulting to Holm-Bonferroni")
                 highlighted.add(('O1_PH', 'P1_PH_SD'))
         else:
             # Check for pairwise comparisons to infer post-hoc test type
@@ -2198,7 +2199,7 @@ class DecisionTreeVisualizer:
                     "holm" in corrected_method or "sidak" in corrected_method or 
                     "holm" in correction_method_str or "sidak" in correction_method_str or
                     "holm" in correction_field_str or "sidak" in correction_field_str):
-                    print(f"DEBUG TREE: Inferred Holm-Sidak from pairwise test")
+                    print(f"DEBUG TREE: Inferred Holm-Bonferroni from pairwise test")
                     highlighted.add(('O1_PH', 'P1_PH_SD'))
                 elif ("tukey" in test_name_in_comp or 
                       "tukey" in correction_field_str):
@@ -2209,7 +2210,7 @@ class DecisionTreeVisualizer:
                     highlighted.add(('O1_PH', 'P1_PH_DN'))
                 elif ("pairwise" in test_name_in_comp and ("holm" in corrected_method or "sidak" in corrected_method or 
                                                         "holm" in correction_method_str or "sidak" in correction_method_str)):
-                    print(f"DEBUG TREE: Inferred Holm-Sidak from pairwise test with correction method")
+                    print(f"DEBUG TREE: Inferred Holm-Bonferroni from pairwise test with correction method")
                     highlighted.add(('O1_PH', 'P1_PH_SD'))
                 else:
                     print(f"DEBUG TREE: Unknown pairwise test type, showing options for choice")
@@ -2230,11 +2231,11 @@ class DecisionTreeVisualizer:
                     print(f"DEBUG TREE: One-Way ANOVA - showing all post-hoc options for user choice")
                     highlighted.add(('O1_PH', 'P1_PH_TK'))  # Tukey
                     highlighted.add(('O1_PH', 'P1_PH_DN'))  # Dunnett
-                    highlighted.add(('O1_PH', 'P1_PH_SD'))  # Holm-Sidak
+                    highlighted.add(('O1_PH', 'P1_PH_SD'))  # Holm-Bonferroni
                 elif is_advanced_anova:
                     print(f"DEBUG TREE: Advanced ANOVA - showing only Tukey and Pairwise post-hoc options")
                     highlighted.add(('O1_PH', 'P1_PH_TK'))  # Tukey
-                    highlighted.add(('O1_PH', 'P1_PH_SD'))  # Holm-Sidak (Pairwise t-tests)
+                    highlighted.add(('O1_PH', 'P1_PH_SD'))  # Holm-Bonferroni (Pairwise t-tests)
                 else:
                     print(f"DEBUG TREE: Using default Tukey for other test types")
                     highlighted.add(('O1_PH', 'P1_PH_TK'))
@@ -2378,11 +2379,11 @@ def test_rm_anova_decision_tree():
         },
         "correction_used": "Greenhouse-Geisser (ε = 0.72 ≤ 0.75)",
         "corrected_p_value": 0.018,
-        "posthoc_test": "Paired t-tests (Holm-Sidak corrected)",
+        "posthoc_test": "Paired t-tests (Holm-Bonferroni corrected)",
         "pairwise_comparisons": [
-            {"groups": ("Time1", "Time2"), "p_value": 0.02, "test": "Paired t-test", "correction": "Holm-Sidak"},
-            {"groups": ("Time1", "Time3"), "p_value": 0.005, "test": "Paired t-test", "correction": "Holm-Sidak"},
-            {"groups": ("Time2", "Time3"), "p_value": 0.15, "test": "Paired t-test", "correction": "Holm-Sidak"}
+            {"groups": ("Time1", "Time2"), "p_value": 0.02, "test": "Paired t-test", "correction": "Holm-Bonferroni"},
+            {"groups": ("Time1", "Time3"), "p_value": 0.005, "test": "Paired t-test", "correction": "Holm-Bonferroni"},
+            {"groups": ("Time2", "Time3"), "p_value": 0.15, "test": "Paired t-test", "correction": "Holm-Bonferroni"}
         ]
     }
     # Generiere und speichere den Entscheidungsbaum

@@ -54,14 +54,14 @@ def select_comparison_test(
         if is_paired:
             return "paired_ttest" if is_normal else "wilcoxon"
         if is_normal:
-            return "student_ttest" if is_homoscedastic else "welch_ttest"
+            return "welch_ttest"  # Unconditional default (A1 Fix)
         return "mann_whitney_u"
 
     if is_paired:
         return "repeated_measures_required"
 
     if is_normal:
-        return "one_way_anova" if is_homoscedastic else "welch_anova"
+        return "welch_anova"  # Unconditional default (A1 Fix)
     return "kruskal_wallis"
 
 

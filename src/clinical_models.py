@@ -66,13 +66,14 @@ class ANCOVAModel:
         self._between_factors = [col_map[f] for f in between_factors]
         self._covariates = [col_map[c] for c in covariates]
 
-        factor_terms = " * ".join([f"C({f})" for f in self._between_factors])
+        # C1: Use Sum contrasts to ensure correct Type III SS in unbalanced designs
+        factor_terms = " * ".join([f"C({f}, Sum)" for f in self._between_factors])
         cov_terms = " + ".join(self._covariates)
         formula = f"{self._dv} ~ {factor_terms} + {cov_terms}"
 
         model = smf.ols(formula, data=self._df).fit()
         self.result = model
-        self.anova_table = anova_lm(model, typ=2)
+        self.anova_table = anova_lm(model, typ=3)
         return self
 
     def check_regression_slope_homogeneity(self):
@@ -89,29 +90,21 @@ class ANCOVAModel:
         # Columns were already sanitized in fit(), just use current df column names
         for cov in self._covariates:
             for factor in self._between_factors:
-                interaction_term = f"C({factor}):{cov}"
-                factor_terms = " * ".join([f"C({f})" for f in self._between_factors])
-                cov_terms = " + ".join(self._covariates)
-                formula_with_interaction = f"{self._dv} ~ {factor_terms} + {cov_terms} + {interaction_term}"
-
+                # C1: Use Sum contrasts for Type III SS
+                factor_term = f"C({factor}, Sum)"
+                formula = f"{self._dv} ~ {factor_term} * {cov}"
+                
                 try:
-                    model_interaction = smf.ols(formula_with_interaction, data=self._df).fit()
-                    table = anova_lm(model_interaction, typ=2)
+                    model_interaction = smf.ols(formula, data=self._df).fit()
+                    table = anova_lm(model_interaction, typ=3)
+                    
+                    interaction_term = f"{factor_term}:{cov}"
                     key = f"{factor}:{cov}"
-                    if key in table.index:
-                        row = table.loc[key]
-                        p_val = row["PR(>F)"]
-                        results[key] = {
-                            "F": row["F"],
-                            "p_value": p_val,
-                            "df": row["df"],
-                            "assumption_holds": p_val > self._alpha,
-                        }
-                    elif interaction_term in table.index:
+                    if interaction_term in table.index:
                         row = table.loc[interaction_term]
-                        p_val = row["PR(>F)"]
+                        p_val = float(row["PR(>F)"])
                         results[key] = {
-                            "F": row["F"],
+                            "F": float(row["F"]),
                             "p_value": p_val,
                             "df": row["df"],
                             "assumption_holds": p_val > self._alpha,
@@ -335,7 +328,8 @@ class ANCOVAModel:
         main_p = None
         main_f = None
         primary_factor = self._between_factors[0]
-        factor_key = f"C({primary_factor})"
+        # C1: match the factor key from the Sum contrast formula
+        factor_key = f"C({primary_factor}, Sum)"
         if self.anova_table is not None and factor_key in self.anova_table.index:
             main_p = float(self.anova_table.loc[factor_key, "PR(>F)"])
             main_f = float(self.anova_table.loc[factor_key, "F"])

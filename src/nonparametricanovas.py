@@ -109,7 +109,7 @@ def _holm_correct(p_values):
     return corrected.tolist()
 
 
-def _wilcoxon_posthoc_comp(arr1, arr2, label1, label2, alpha):
+def _wilcoxon_posthoc_comp(arr1, arr2, label1, label2, alpha, warnings_list=None):
     """Paired Wilcoxon signed-rank comparison dict (raw p; Holm applied by caller)."""
     diffs = np.asarray(arr1, float) - np.asarray(arr2, float)
     diffs = diffs[~np.isnan(diffs)]
@@ -117,7 +117,15 @@ def _wilcoxon_posthoc_comp(arr1, arr2, label1, label2, alpha):
     if n < 3 or np.all(diffs == 0):
         return None
     try:
-        stat, p_raw = sp_stats.wilcoxon(diffs, alternative='two-sided', zero_method='wilcox')
+        import warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            stat, p_raw = sp_stats.wilcoxon(diffs, alternative='two-sided', zero_method='pratt', exact=True if len(diffs) <= 25 else False)
+            if w and warnings_list is not None:
+                for warn in w:
+                    msg = f"Wilcoxon Warning ({label1} vs {label2}): {str(warn.message)}"
+                    if msg not in warnings_list:
+                        warnings_list.append(msg)
     except Exception:
         return None
     total = n * (n + 1) / 2.0
@@ -194,15 +202,16 @@ def perform_friedman_test(data, dv, within_factor, subject_col, alpha=0.05):
         k = len(level_cols)
         n_subjects = len(wide)
 
+        from statistical_testing.validators import MIN_N_HARD
         if k < 2:
             raise ValueError(f"Friedman test requires at least 2 within-levels, got {k}.")
-        if n_subjects < 3:
-            raise ValueError(f"Friedman test requires at least 3 subjects, got {n_subjects}.")
+        if n_subjects < 2:
+            raise ValueError(f"Friedman test requires at least 2 subjects, got {n_subjects}.")
 
         if k == 2:
             warnings_list.append("Only 2 time points: consider paired Wilcoxon instead of Friedman.")
-        if n_subjects < 5:
-            warnings_list.append(f"Very few subjects (n={n_subjects}). Friedman test may have low power.")
+        if n_subjects < MIN_N_HARD:
+            warnings_list.append(f"Very few subjects (n={n_subjects} < MIN_N_HARD). Friedman test may have near-zero power.")
 
         # --- Run Friedman test ---
         chi2_stat, p_value = sp_stats.friedmanchisquare(*[wide[col].values for col in level_cols])
@@ -268,22 +277,47 @@ def perform_friedman_test(data, dv, within_factor, subject_col, alpha=0.05):
             f"n = {n_subjects} subjects, k = {k} measurements)."
         )
 
-        # --- Post-hoc: pairwise Wilcoxon signed-rank (Holm-corrected), only if significant ---
+        # F2: Post-hoc: Conover-Iman (statistically correct post-hoc for Friedman)
         posthoc_comps = []
         posthoc_name = None
         if p_value < alpha and k >= 2:
-            from itertools import combinations as _comb
-            raw = []
-            for c1, c2 in _comb(level_cols, 2):
-                comp = _wilcoxon_posthoc_comp(
-                    wide[c1].values, wide[c2].values,
-                    f"{within_factor}={c1}", f"{within_factor}={c2}", alpha
-                )
-                if comp is not None:
-                    raw.append(comp)
-            posthoc_comps = _apply_holm(raw, alpha)
-            if posthoc_comps:
-                posthoc_name = f"Pairwise Wilcoxon Signed-Rank (Holm, n={n_subjects} subjects)"
+            try:
+                from lazy_imports import get_scikit_posthocs
+                sp = get_scikit_posthocs()
+                conover_p = sp.posthoc_conover_friedman(wide[level_cols])
+                from itertools import combinations as _comb
+                for c1, c2 in _comb(level_cols, 2):
+                    p_val = float(conover_p.loc[c1, c2])
+                    posthoc_comps.append({
+                        "group1": f"{within_factor}={c1}",
+                        "group2": f"{within_factor}={c2}",
+                        "test": "Conover-Iman",
+                        "p_value": p_val,
+                        "statistic": None,
+                        "significant": p_val < alpha,
+                        "corrected": False,
+                        "effect_size": None,
+                        "effect_size_type": None,
+                        "confidence_interval": (None, None),
+                        "power": None,
+                    })
+                if posthoc_comps:
+                    posthoc_name = f"Conover-Iman (n={n_subjects} subjects)"
+            except Exception as _ph_err:
+                import logging
+                logging.getLogger(__name__).warning(f"Conover-Iman post-hoc failed ({_ph_err}); falling back to pairwise Wilcoxon.")
+                from itertools import combinations as _comb
+                raw = []
+                for c1, c2 in _comb(level_cols, 2):
+                    comp = _wilcoxon_posthoc_comp(
+                        wide[c1].values, wide[c2].values,
+                        f"{within_factor}={c1}", f"{within_factor}={c2}", alpha, warnings_list
+                    )
+                    if comp is not None:
+                        raw.append(comp)
+                posthoc_comps = _apply_holm(raw, alpha)
+                if posthoc_comps:
+                    posthoc_name = f"Pairwise Wilcoxon Signed-Rank (Holm, fallback, n={n_subjects} subjects)"
 
         return {
             "test": "Friedman Test",
@@ -385,9 +419,10 @@ def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05, n_permu
         cell_counts = df.groupby([safe_a, safe_b]).size()
         min_cell_n  = int(cell_counts.min()) if len(cell_counts) > 0 else 0
 
-        if min_cell_n < 5:
+        from statistical_testing.validators import MIN_N_HARD
+        if min_cell_n < MIN_N_HARD:
             warnings_list.append(
-                f"Very small cell sizes (min n={min_cell_n}). "
+                f"Very small cell sizes (min n={min_cell_n} < MIN_N_HARD). "
                 "Permutation p-values have limited resolution."
             )
         if n_total < 12:

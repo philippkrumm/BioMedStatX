@@ -219,9 +219,10 @@ class CorrelationModel:
             both_normal_sw = bool(px > alpha and py > alpha)
             
             # Determine method based on N-tier:
-            if self.n < 20:
+            from statistical_testing.validators import MIN_N_SMALL
+            if self.n < MIN_N_SMALL:
                 self._method_used = 'spearman'
-            elif 20 <= self.n < 100:
+            elif MIN_N_SMALL <= self.n < 100:
                 # Pearson if |skewness| <= 1.0 and |excess kurtosis| <= 2.0 for both
                 if (abs(skew_x) <= 1.0 and abs(skew_y) <= 1.0 and 
                         abs(kurt_x) <= 2.0 and abs(kurt_y) <= 2.0):

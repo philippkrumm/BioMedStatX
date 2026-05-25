@@ -53,7 +53,7 @@ class PosthocFallbackEngine:
         return [str(group) for group in valid_groups], samples
 
     @staticmethod
-    def _apply_pairwise_multiplicity(pairwise_rows, alpha=0.05, correction_method="holm-sidak"):
+    def _apply_pairwise_multiplicity(pairwise_rows, alpha=0.05, correction_method="holm"):
         if not pairwise_rows:
             return pairwise_rows
 
@@ -89,7 +89,7 @@ class PosthocFallbackEngine:
         by_cols=None,
         test_label="Marginal Effects (Robust GLM)",
         apply_correction=True,
-        correction_method="holm-sidak",
+        correction_method="holm",
     ):
         mapped = []
         by_cols = by_cols or []
@@ -195,7 +195,7 @@ class PosthocFallbackEngine:
                 by_cols=[by_factor],
                 test_label="Marginal Effects (Robust GLM)",
                 apply_correction=True,
-                correction_method="holm-sidak",
+                correction_method="holm",
             )
             if not mapped:
                 return None
@@ -238,7 +238,7 @@ class PosthocFallbackEngine:
                 by_cols=[],
                 test_label="Marginal Effects (RM)",
                 apply_correction=True,
-                correction_method="holm-sidak",
+                correction_method="holm",
             )
             if not mapped:
                 return None
@@ -331,7 +331,7 @@ class PosthocFallbackEngine:
         pairwise_comparisons = PosthocFallbackEngine._apply_pairwise_multiplicity(
             pairwise_comparisons,
             alpha=alpha,
-            correction_method="holm-sidak",
+            correction_method="holm",
         )
 
         return {
@@ -343,7 +343,7 @@ class PosthocFallbackEngine:
     @staticmethod
     def _run_modern_fallback_posthoc(df, test, dv, subject=None, between=None, within=None, alpha=0.05):
         result = {
-            "posthoc_test": "Non-parametric pairwise tests (Holm-Sidak corrected)",
+            "posthoc_test": "Non-parametric pairwise tests (Holm-Bonferroni corrected)",
             "pairwise_comparisons": [],
             "error": None
         }
@@ -617,9 +617,9 @@ class PosthocFallbackEngine:
                     tstat, p = stats.ttest_rel(x, y)
                     stats_list.append(tstat)
                     pvals.append(p)
-                # Holm-Sidak-Korrektur
+                # Holm-Bonferroni-Korrektur
                 multipletests = get_statsmodels_multitest()
-                reject, p_adj, _, _ = multipletests(pvals, alpha=alpha, method='holm-sidak')
+                reject, p_adj, _, _ = multipletests(pvals, alpha=alpha, method='holm')
                 # Ergebnisse sammeln
                 for i, (g1, g2) in enumerate(pairs):
                     ci = PostHocStatistics.calculate_ci_mean_diff(samples[g1], samples[g2], alpha=alpha, paired=True)
@@ -632,13 +632,13 @@ class PosthocFallbackEngine:
                         p_value=p_adj[i],
                         statistic=stats_list[i],
                         corrected=True,
-                        correction_method="Holm-Sidak",
+                        correction_method="Holm-Bonferroni",
                         effect_size=d,
                         effect_size_type="cohen_d",
                         confidence_interval=ci,
                         alpha=alpha
                     )
-                result["posthoc_test"] = "Custom paired t-tests (Holm-Sidak)"
+                result["posthoc_test"] = "Custom paired t-tests (Holm-Bonferroni)"
                 return result
                 
             elif posthoc_choice == "mw_custom":

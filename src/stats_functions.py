@@ -578,7 +578,7 @@ class UIDialogManager:
         layout.addWidget(info)
 
         options = [
-            ("Dunn Test (all pairs, Holm-Sidak correction)", "dunn"),
+            ("Dunn Test (all pairs, Holm-Bonferroni correction)", "dunn"),
             ("Mann-Whitney-U Tests (custom pairs, Sidak correction)", "mw_custom"),
         ]
         radio_buttons = []
