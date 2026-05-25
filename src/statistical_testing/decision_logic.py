@@ -61,7 +61,7 @@ def select_comparison_test(
         return "repeated_measures_required"
 
     if is_normal:
-        return "welch_anova"  # Unconditional default (A1 Fix)
+        return "one_way_anova" if is_homoscedastic else "welch_anova"
     return "kruskal_wallis"
 
 

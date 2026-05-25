@@ -19,25 +19,13 @@ class FinalizationEngine:
             )
 
         res = dict(payload.get("res") or {})
-        skip_excel = bool(payload.get("skip_excel", False))
-        file_name = payload.get("file_name")
-        export_stem = str(payload.get("export_stem") or "analysis_results")
-        analysis_log = payload.get("analysis_log")
+        # Optional HTML generation logic was previously here, but it is now fully handled
+        # by the caller (like AdvancedStatisticalPipeline._execute_single_analysis)
+        # to properly handle both Single and Multi-dataset HTML reports uniformly.
+        
+        # No more Excel export within the engine.
 
         updates: dict[str, Any] = {}
-
-        if not skip_excel:
-            try:
-                from export.export_dispatcher import ExportDispatcher
-                from analysis.stats_functions import get_output_path
-
-                excel_file = file_name if file_name else get_output_path(export_stem, "xlsx")
-                export_result = ExportDispatcher.export_analysis_results(res, excel_file, analysis_log)
-                if export_result.get("warning"):
-                    updates["warning"] = export_result["warning"]
-                updates["excel_file"] = export_result.get("excel_path", excel_file)
-            except Exception as exc:
-                updates["warning"] = f"Excel export failed: {exc}"
 
         if res.get("test") and not res.get("final_test_label"):
             updates["final_test_label"] = res["test"]

@@ -2,7 +2,6 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-import xlsxwriter
 import os
 import warnings
 import string
@@ -17,11 +16,6 @@ from core.lazy_imports import (
     get_statsmodels_multitest, get_pairwise_tukeyhsd, get_scikit_posthocs,
 )
 
-# Late import functions to avoid circular imports
-def get_results_exporter():
-    """Get ResultsExporter class lazily"""
-    from export.resultsexporter import ResultsExporter
-    return ResultsExporter
 
 def get_export_dispatcher():
     """Get ExportDispatcher class lazily"""
@@ -382,11 +376,6 @@ class AssumptionVisualizer:
                     print(f"DEBUG: Q-Q plot AFTER path: {plot_paths['normality_after']}")
                     print(f"DEBUG: Boxplot AFTER path: {plot_paths['homoscedasticity_after']}")
             
-            # Track all generated files for cleanup
-            ResultsExporter = get_results_exporter()
-            for plot_path in plot_paths.values():
-                if plot_path:
-                    ResultsExporter.track_temp_file(plot_path)
             
             return plot_paths
             
@@ -781,6 +770,5 @@ from analysis.outlier_core import OUTLIER_IMPORTS_AVAILABLE, OutlierDetector
 
 
 # Note: Classes are imported lazily to avoid circular imports.
-# Use get_data_visualizer(), get_statistical_tester(), get_results_exporter() functions instead.
-ResultsExporter = get_results_exporter()
+# Use get_data_visualizer(), get_statistical_tester() functions instead.
 DataVisualizer = get_data_visualizer()

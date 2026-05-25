@@ -8,7 +8,7 @@ import string
 import os
 from scipy.stats import ttest_ind, mannwhitneyu
 from matplotlib.ticker import ScalarFormatter, FuncFormatter
-from export.resultsexporter import ResultsExporter
+
 def _lazy_get_output_path():
     try:
         from analysis.stats_functions import get_output_path

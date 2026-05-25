@@ -49,7 +49,7 @@ except ImportError:
     sys.exit(1)
 
 try:
-    from clinical_models import ANCOVAModel, LinearMixedModel, LogisticRegressionModel
+    from analysis.clinical_models import ANCOVAModel, LinearMixedModel, LogisticRegressionModel
 except ImportError as exc:
     print(f"ERROR: clinical_models konnte nicht importiert werden: {exc}")
     sys.exit(1)

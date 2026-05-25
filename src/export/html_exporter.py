@@ -275,10 +275,19 @@ class HTMLExporter:
             for dataset_name, results in (all_results or {}).items()
         )
 
+        n_valid_for_fdr = sum(
+            1 for res in (all_results or {}).values()
+            if not (res or {}).get("error") and (res or {}).get("p_value") is not None
+        )
+        fdr_note = None
+        if any((res or {}).get("p_value_fdr") is not None for res in (all_results or {}).values()):
+            fdr_note = f"FDR correction (Benjamini-Hochberg) applied to m = {n_valid_for_fdr} tests."
+
         return {
             "mode": "multi",
             "report_title": "BioMedStatX Multi-Dataset Scientific Report",
             "subtitle": f"{len(cards)} datasets summarized, {significant_count} significant main results.",
+            "fdr_note": fdr_note,
             "dataset_cards": cards,
             "generated_warning": None,
             "math_render_enabled": math_render_enabled,
@@ -3593,7 +3602,7 @@ class HTMLExporter:
 
     @staticmethod
     def _templates_dir() -> Path:
-        module_templates = Path(__file__).resolve().parent / "templates"
+        module_templates = Path(__file__).resolve().parent.parent / "templates"
         if module_templates.exists():
             return module_templates
         frozen_root = getattr(sys, "_MEIPASS", None)
@@ -3811,7 +3820,7 @@ body{margin:0;font-family:"Segoe UI","Helvetica Neue",Arial,sans-serif;line-heig
 <section id="sec-raw" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Raw Data Vault</div><h2 id="hd-raw">Searchable raw values<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-raw">i</button></h2><div class="info-panel" id="info-raw" role="region" aria-labelledby="hd-raw"><div class="info-panel-inner">{{ context.info_texts.raw }}</div></div></div></div><div class="toolbar"><input id="raw-search" type="search" placeholder="Filter raw data"><button type="button" onclick="copyTable('raw-data-table')">Copy table</button><button type="button" onclick="downloadTableCSV('raw-data-table','biomedstatx_raw_data.csv')">Download CSV</button></div>{% if context.raw_data_table.rows %}<div class="table-shell"><table id="raw-data-table"><thead><tr>{% if context.raw_data_table.column_mode %}<th>#</th>{% for col in context.raw_data_table.columns %}<th>{{ col }}</th>{% endfor %}{% else %}<th>Group</th><th>Index</th><th>Raw value</th>{% if context.raw_data_table.has_transformed %}<th>Transformed value</th>{% endif %}{% endif %}</tr></thead><tbody>{% for row in context.raw_data_table.rows %}<tr>{% if context.raw_data_table.column_mode %}<td>{{ row.index }}</td>{% for col in context.raw_data_table.columns %}<td>{{ row[col] }}</td>{% endfor %}{% else %}<td>{{ row.group }}</td><td>{{ row.index }}</td><td>{{ row.raw_value }}</td>{% if context.raw_data_table.has_transformed %}<td>{{ row.transformed_value }}</td>{% endif %}{% endif %}</tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state">No raw data were embedded in this result structure.</div>{% endif %}</section>
 <section id="sec-methods" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Methods Snippet</div><h2 id="hd-methods">Reusable narrative text<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-methods">i</button></h2><div class="info-panel" id="info-methods" role="region" aria-labelledby="hd-methods"><div class="info-panel-inner">{{ context.info_texts.methods }}</div></div></div></div><div class="toolbar"><button type="button" onclick="copyText('methods-text')">Copy methods text</button></div><div id="methods-text" class="methods">{{ context.methods_text }}</div></section>
 {% else %}
-<section class="section is-visible"><div class="section-head"><div><div class="section-kicker">Dataset Overview</div><h2>Summary across exported analyses</h2></div></div><div class="dataset-grid">{% for card in context.dataset_cards %}<article class="dataset-card"><div class="section-kicker">{{ card.dataset_name }}</div><h3>{{ card.test_name }}</h3><p class="small muted">{{ card.summary_note }}</p><div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0 14px;"><span class="badge {{ card.significance_class }}">{{ card.significance_label }}</span><span class="badge is-neutral">{{ card.p_value_display }}</span></div><p class="small">Transformation: {{ card.transformation }}</p><p class="small">Pairwise comparisons: {{ card.pairwise_count }}</p>{% if card.assumptions.rows %}<div class="table-shell" style="margin-top:14px;"><table><thead><tr><th>Check</th><th>p-value</th><th>Status</th></tr></thead><tbody>{% for row in card.assumptions.rows[:4] %}<tr class="{{ row.status_class }}"><td>{{ row.name }}</td><td>{{ row.p_value }}</td><td>{{ row.status_label }}</td></tr>{% endfor %}</tbody></table></div>{% endif %}</article>{% endfor %}</div></section>
+<section class="section is-visible"><div class="section-head"><div><div class="section-kicker">Dataset Overview</div><h2>Summary across exported analyses</h2>{% if context.fdr_note %}<p class="muted" style="margin-top:8px;font-size:0.9rem;">&#9432; {{ context.fdr_note }}</p>{% endif %}</div></div><div class="dataset-grid">{% for card in context.dataset_cards %}<article class="dataset-card"><div class="section-kicker">{{ card.dataset_name }}</div><h3>{{ card.test_name }}</h3><p class="small muted">{{ card.summary_note }}</p><div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0 14px;"><span class="badge {{ card.significance_class }}">{{ card.significance_label }}</span><span class="badge is-neutral">{{ card.p_value_display }}</span>{% if card.p_fdr_display %}<span class="badge is-neutral" title="FDR adjusted p-value">FDR: {{ card.p_fdr_display }}</span>{% endif %}</div><p class="small">Transformation: {{ card.transformation }}</p><p class="small">Pairwise comparisons: {{ card.pairwise_count }}</p>{% if card.assumptions.rows %}<div class="table-shell" style="margin-top:14px;"><table><thead><tr><th>Check</th><th>p-value</th><th>Status</th></tr></thead><tbody>{% for row in card.assumptions.rows[:4] %}<tr class="{{ row.status_class }}"><td>{{ row.name }}</td><td>{{ row.p_value }}</td><td>{{ row.status_label }}</td></tr>{% endfor %}</tbody></table></div>{% endif %}</article>{% endfor %}</div></section>
 {% endif %}
 <div class="footer-note">{% if context.generated_warning %}{{ context.generated_warning }}{% else %}Generated by BioMedStatX as a fully offline HTML scientific report.{% endif %}</div></div>{% if mode == "single" and context.decision_tree_image %}<div class="modal-backdrop" id="tree-modal" aria-hidden="true"><div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="tree-modal-title"><div class="modal-toolbar"><div><div class="section-kicker">Decision Tree</div><h3 id="tree-modal-title">Expanded analysis routing view</h3></div><button type="button" class="modal-close" id="close-tree-modal">Close</button></div><img src="{{ context.decision_tree_image }}" alt="Expanded decision tree visualization"></div></div>{% endif %}
 <script>

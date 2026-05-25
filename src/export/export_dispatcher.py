@@ -1,16 +1,14 @@
 import os
 from pathlib import Path
 
-from export.resultsexporter import ResultsExporter
-
 
 class ExportDispatcher:
     @staticmethod
     def export_analysis_results(results, output_file, analysis_log=None) -> dict:
-        excel_path = Path(output_file).resolve()
-        excel_path.parent.mkdir(parents=True, exist_ok=True)
+        base_path = Path(output_file).resolve()
+        base_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Generate decision tree once; reuse for both Excel and HTML exports
+        # Generate decision tree once; reuse for HTML export
         tree_path = None
         try:
             from visualization.decisiontreevisualizer import DecisionTreeVisualizer
@@ -21,12 +19,7 @@ class ExportDispatcher:
         html_result = None
         warning = None
         try:
-            # Excel export temporarily disabled — HTML-only mode
-            # ResultsExporter.export_results_to_excel(
-            #     results, str(excel_path), analysis_log, pre_generated_tree=tree_path
-            # )
-
-            html_path = excel_path.with_suffix(".html")
+            html_path = base_path.with_suffix(".html")
             try:
                 from export.html_exporter import HTMLExporter
 
@@ -46,20 +39,16 @@ class ExportDispatcher:
                     pass
 
         return {
-            "excel_path": str(excel_path),
             "html_path": html_result,
             "warning": warning,
         }
 
     @staticmethod
-    def export_multi_dataset_results(all_results, excel_path) -> dict:
-        workbook_path = Path(excel_path).resolve()
-        workbook_path.parent.mkdir(parents=True, exist_ok=True)
+    def export_multi_dataset_results(all_results, output_file) -> dict:
+        base_path = Path(output_file).resolve()
+        base_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Excel export temporarily disabled — HTML-only mode
-        # ResultsExporter.export_multi_dataset_results(all_results, str(workbook_path))
-
-        html_path = workbook_path.with_name(f"{workbook_path.stem}_report.html")
+        html_path = base_path.with_name(f"{base_path.stem}_report.html")
         warning = None
         html_result = None
         try:
@@ -73,7 +62,6 @@ class ExportDispatcher:
             print(f"WARNING EXPORT DISPATCHER: {warning}")
 
         return {
-            "excel_path": str(workbook_path),
             "html_path": html_result,
             "warning": warning,
         }

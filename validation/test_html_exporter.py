@@ -31,7 +31,7 @@ for _p in [str(ROOT), str(SRC)]:
         sys.path.insert(0, _p)
 
 from conftest import DESIGNS
-from html_exporter import HTMLExporter
+from export.html_exporter import HTMLExporter
 
 
 def _excel_export_enabled() -> bool:
@@ -88,7 +88,7 @@ def _assert_single_report(html_path: Path, result: dict):
 
 def _run_analysis(design: dict, excel_path: str, out_excel_base: str):
     from test_all_paths import build_analysis_context
-    from stats_functions import AnalysisManager
+    from analysis.stats_functions import AnalysisManager
 
     df = design["df_factory"]()
     group_labels = design["group_labels"] or []
@@ -103,7 +103,8 @@ def _run_analysis(design: dict, excel_path: str, out_excel_base: str):
         value_cols=design["dv_columns"],
         dependent=design["dependent"],
         skip_plots=True,
-        skip_excel=False,
+        save_plot=True,
+        error_type="sd",
         file_name=out_excel_base,
         analysis_context=context,
     )
@@ -168,7 +169,7 @@ def test_single_analysis_html_export_preserves_utf8_special_characters(tmp_path)
 
 def test_multi_dataset_html_export(tmp_path):
     from test_all_paths import build_analysis_context
-    from stats_functions import AnalysisManager
+    from analysis.stats_functions import AnalysisManager
 
     mock_ui = MagicMock()
     mock_ui.select_posthoc_test_dialog.return_value = "tukey"
@@ -189,7 +190,7 @@ def test_multi_dataset_html_export(tmp_path):
     ]
 
     all_results = {}
-    with patch("stats_functions.UIDialogManager", mock_ui), patch("statisticaltester.UIDialogManager", mock_ui):
+    with patch("analysis.stats_functions.UIDialogManager", mock_ui), patch("analysis.statisticaltester.UIDialogManager", mock_ui):
         for design in selected:
             fixture = tmp_path / f"{design['name']}.xlsx"
             design["df_factory"]().to_excel(fixture, index=False)
@@ -206,7 +207,7 @@ def test_multi_dataset_html_export(tmp_path):
                 value_cols=design["dv_columns"],
                 dependent=design["dependent"],
                 skip_plots=True,
-                skip_excel=True,
+                error_type="sd",
                 file_name=str(tmp_path / design["name"]),
                 analysis_context=context,
             )
@@ -214,7 +215,7 @@ def test_multi_dataset_html_export(tmp_path):
             assert not result.get("error"), result.get("error")
             all_results[design["name"]] = result
 
-    from export_dispatcher import ExportDispatcher
+    from export.export_dispatcher import ExportDispatcher
 
     combined_excel = tmp_path / "html_validation_multi.xlsx"
     export_result = ExportDispatcher.export_multi_dataset_results(all_results, str(combined_excel))

@@ -14,7 +14,7 @@ def test_stats_functions_import_is_headless_safe():
         "import sys; "
         f"sys.path.insert(0, {str(ROOT)!r}); "
         f"sys.path.insert(0, {str(SRC)!r}); "
-        "import stats_functions; "
+        "import analysis.stats_functions as stats_functions; "
         "from PyQt5.QtWidgets import QApplication; "
         "print('QAPP_EXISTS=' + str(QApplication.instance() is not None))"
     )

@@ -8,9 +8,6 @@ import pandas as pd
 from core.lazy_imports import get_scipy_stats, get_statsmodels_multitest, get_matplotlib_pyplot
 
 
-def get_results_exporter():
-    from export.resultsexporter import ResultsExporter
-    return ResultsExporter
 
 
 def get_export_dispatcher():
@@ -145,7 +142,7 @@ class AnalysisManager:
                 selected_datasets=None, combine_columns=False, width=12, height=10, 
                 dependent=False, compare=None, colors=None, hatches=None,
                 title=None, x_label=None, y_label=None, file_name=None, 
-                save_plot=True, skip_plots=False, error_type="sd", skip_excel=False, 
+                save_plot=True, skip_plots=False, error_type="sd", 
                 dataset_name=None, additional_factors=None, show_individual_lines=True, 
                 **kwargs):
         
@@ -153,7 +150,7 @@ class AnalysisManager:
         print(f"DEBUG ANALYZE: Current working directory: {os.getcwd()}")
         print(f"DEBUG ANALYZE: file_path = {file_path}")
         print(f"DEBUG ANALYZE: file_name = {file_name}")
-        print(f"DEBUG ANALYZE: save_plot = {save_plot}, skip_plots = {skip_plots}, skip_excel = {skip_excel}")
+        print(f"DEBUG ANALYZE: save_plot = {save_plot}, skip_plots = {skip_plots}")
         # Single dataset analysis (existing functionality)
         if selected_datasets is None or len(selected_datasets) <= 1:
             # Use existing single dataset logic
@@ -162,7 +159,7 @@ class AnalysisManager:
                 file_path, group_col, groups, actual_sheet, value_cols, 
                 combine_columns, width, height, dependent, compare, colors, hatches,
                 title, x_label, y_label, file_name, save_plot, skip_plots, 
-                error_type, skip_excel, dataset_name, additional_factors, 
+                error_type, dataset_name, additional_factors, 
                 show_individual_lines, **kwargs
             )
         
@@ -172,7 +169,7 @@ class AnalysisManager:
                 file_path, group_col, groups, selected_datasets, value_cols,
                 combine_columns, width, height, dependent, compare, colors, hatches,
                 title, x_label, y_label, file_name, save_plot, skip_plots,
-                error_type, skip_excel, additional_factors, show_individual_lines, **kwargs
+                error_type, additional_factors, show_individual_lines, **kwargs
             )
 
     @staticmethod
@@ -293,7 +290,7 @@ class AnalysisManager:
     def _analyze_multiple_datasets(file_path, group_col, groups, selected_datasets, value_cols,
                                   combine_columns, width, height, dependent, compare, colors, hatches,
                                   title, x_label, y_label, file_name, save_plot, skip_plots,
-                                  error_type, skip_excel, additional_factors, show_individual_lines, **kwargs):
+                                  error_type, additional_factors, show_individual_lines, **kwargs):
         """
         Multiple dataset analysis with unified Excel output
         """
@@ -328,7 +325,6 @@ class AnalysisManager:
                     save_plot=save_plot,
                     skip_plots=skip_plots,
                     error_type=error_type,
-                    skip_excel=True,  # Skip individual Excel files
                     dataset_name=dataset_name,
                     additional_factors=additional_factors,
                     show_individual_lines=show_individual_lines,
@@ -398,11 +394,11 @@ class AnalysisManager:
     def _analyze_single_dataset(file_path, group_col, groups, sheet_name, value_cols, 
                                combine_columns, width, height, dependent, compare, colors, hatches,
                                title, x_label, y_label, file_name, save_plot, skip_plots, 
-                               error_type, skip_excel, dataset_name, additional_factors, 
+                               error_type, dataset_name, additional_factors, 
                                show_individual_lines, **kwargs):
         
         # Get classes lazily to avoid circular imports
-        ResultsExporter = get_results_exporter()
+        # Get classes lazily to avoid circular imports
         StatisticalTester = get_statistical_tester()
         DataVisualizer = get_data_visualizer()
         
@@ -702,25 +698,25 @@ class AnalysisManager:
                     file_base = "_".join(map(str, groups))
                 excel_file = f"{file_base}_results.xlsx"
 
-                if not skip_excel:
-                    original_dir = os.getcwd()
-                    export_result = {}
-                    try:
-                        output_dir = os.path.dirname(os.path.abspath(excel_file))
-                        if output_dir:
-                            os.makedirs(output_dir, exist_ok=True)
-                        ExportDispatcher = get_export_dispatcher()
-                        export_result = ExportDispatcher.export_analysis_results(results, excel_file, analysis_log)
-                        if export_result.get("warning"):
-                            print(f"WARNING: {export_result['warning']}")
-                        print(f"Results exported to: {excel_file}")
-                    except Exception as export_error:
-                        print(f"Error exporting to Excel: {export_error}")
-                    finally:
-                        os.chdir(original_dir)
+                original_dir = os.getcwd()
+                export_result = {}
+                try:
+                    output_dir = os.path.dirname(os.path.abspath(excel_file))
+                    if output_dir:
+                        os.makedirs(output_dir, exist_ok=True)
+                    ExportDispatcher = get_export_dispatcher()
+                    export_result = ExportDispatcher.export_analysis_results(results, excel_file, analysis_log)
+                    if export_result.get("warning"):
+                        print(f"WARNING: {export_result['warning']}")
+                    
+                    # No excel path anymore, ignore excel path mapping
+                    analysis_log += f"\nResults were saved to {excel_file} (HTML instead of Excel).\n"
+                except Exception as export_error:
+                    print(f"Error exporting: {export_error}")
+                finally:
+                    os.chdir(original_dir)
 
                 results["analysis_log"] = analysis_log
-                results["excel_file"] = export_result.get("excel_path", excel_file) if not skip_excel else excel_file
                 return results
 
             # For advanced tests that use prepare_advanced_test, skip the normality check here
@@ -801,7 +797,6 @@ class AnalysisManager:
                     test_info=prep["test_info"],
                     transform_fn=None,
                     force_parametric=kwargs.get('force_parametric', False),
-                    skip_excel=True,
                     file_name=file_name
                 )
                 # Get the transformation type from the test_info
@@ -837,7 +832,6 @@ class AnalysisManager:
                     test_info=prep["test_info"],
                     transform_fn=None,
                     force_parametric=kwargs.get('force_parametric', False),
-                    skip_excel=True,
                     file_name=file_name
                 )
                 # Get the transformation type from the test_info
@@ -878,7 +872,6 @@ class AnalysisManager:
                     test_info=prep["test_info"],
                     transform_fn=None,
                     force_parametric=kwargs.get('force_parametric', False),
-                    skip_excel=True,
                     file_name=file_name
                 )
                 # Get the transformation type from the test_info
@@ -1258,24 +1251,25 @@ class AnalysisManager:
             print("  Test recommendation:", test_recommendation)
                 
             # Export to Excel
-            if not skip_excel:
-                original_dir = os.getcwd()
-                print(f"DEBUG: Directory before Excel export: {original_dir}")
-                
-                # Use absolute path for Excel file
-                excel_file = get_output_path(file_base, "xlsx") 
-                
-                ExportDispatcher = get_export_dispatcher()
-                export_result = ExportDispatcher.export_analysis_results(results, excel_file, analysis_log)
-                if export_result.get("warning"):
-                    print(f"WARNING: {export_result['warning']}")
-                excel_file = export_result.get("excel_path", excel_file)
-                analysis_log += f"\nResults were saved to {excel_file}.\n"
-                
-                # Ensure we're back in the original directory
-                if os.getcwd() != original_dir:
-                    os.chdir(original_dir)
-                    print(f"DEBUG: Restored original directory: {original_dir}")
+            original_dir = os.getcwd()
+            print(f"DEBUG: Directory before Excel export: {original_dir}")
+            
+            # Use absolute path for Excel file
+            from analysis.stats_functions import get_output_path
+            excel_file = get_output_path(file_base, "xlsx") 
+            
+            ExportDispatcher = get_export_dispatcher()
+            export_result = ExportDispatcher.export_analysis_results(results, excel_file, analysis_log)
+            if export_result.get("warning"):
+                print(f"WARNING: {export_result['warning']}")
+            
+            # No excel path anymore, ignore excel path mapping
+            analysis_log += f"\nResults were saved to {excel_file} (HTML instead of Excel).\n"
+            
+            # Ensure we're back in the original directory
+            if os.getcwd() != original_dir:
+                os.chdir(original_dir)
+                print(f"DEBUG: Restored original directory: {original_dir}")
 
             # Create the plot, if not skipped
             if not skip_plots:
@@ -1290,7 +1284,7 @@ class AnalysisManager:
                 # Only exclude parameters that definitely don't exist in plot methods
                 plot_kwargs = {k: v for k, v in kwargs.items() if k not in [
                     'plot_type', 'file_path', 'group_col', 'groups', 'sheet_name',
-                    'value_cols', 'combine_columns', 'skip_plots', 'skip_excel',
+                    'value_cols', 'combine_columns', 'skip_plots',
                     'dependent', 'show_individual_lines', 'compare', 'additional_factors',
                     'dataset_name', 'dialog_column', 'dialog_progress',
                     # Parameters that don't exist in plot_bar method

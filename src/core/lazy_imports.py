@@ -97,9 +97,6 @@ def get_statsmodels_multicomp():
     """Get statsmodels multicomp module"""
     return lazy_imports.get_module('statsmodels_multicomp', 'statsmodels.stats.multicomp')
 
-def get_xlsxwriter():
-    """Get xlsxwriter module"""
-    return lazy_imports.get_module('xlsxwriter', 'xlsxwriter')
 
 def get_matplotlib_pyplot():
     """Get matplotlib.pyplot"""

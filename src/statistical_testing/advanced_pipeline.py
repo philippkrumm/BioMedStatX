@@ -32,7 +32,6 @@ def perform_advanced_test_pipeline(
     test_info=None,
     transform_fn=None,
     force_parametric=False,
-    skip_excel=False,
     file_name=None,
     manual_transform=None,
     analysis_log=None,
@@ -243,7 +242,6 @@ def perform_advanced_test_pipeline(
                 {
                     "mode": "advanced_result",
                     "res": res,
-                    "skip_excel": skip_excel,
                     "file_name": file_name,
                     "export_stem": f"{test}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
                     "analysis_log": res.get("analysis_log", None),
@@ -380,7 +378,6 @@ def perform_advanced_test_pipeline(
                 {
                     "mode": "advanced_result",
                     "res": res,
-                    "skip_excel": skip_excel,
                     "file_name": file_name,
                     "export_stem": f"{test}_modern_model_fallback_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
                     "analysis_log": res.get("analysis_log", None),

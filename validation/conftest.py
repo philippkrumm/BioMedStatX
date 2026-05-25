@@ -52,8 +52,8 @@ def patch_dialogs():
     mock_manager.select_transformation_dialog.return_value = None  # no transformation
 
     # Patch before any stats_functions import loads UIDialogManager
-    with patch("stats_functions.UIDialogManager", mock_manager), \
-         patch("statisticaltester.UIDialogManager", mock_manager):
+    with patch("analysis.stats_functions.UIDialogManager", mock_manager), \
+         patch("analysis.statisticaltester.UIDialogManager", mock_manager):
         yield mock_manager
 
 
@@ -133,14 +133,11 @@ def _make_three_group_repeated(dist, n_subjects, seed=42):
             base = rng.normal(5.0, 1.0)
             vals = [base, base + rng.normal(2.0, 0.5), base + rng.normal(4.0, 0.5)]
         else:
-            # Bimodal: half subjects cluster near 1.0, half near 50.0 — resists all transformations
-            if i < n_subjects // 2:
-                base = rng.normal(1.0, 0.3)
-                delta = rng.normal(0.2, 0.1)
-            else:
-                base = rng.normal(50.0, 0.3)
-                delta = rng.normal(0.2, 0.1)
-            vals = [base, base + delta, base + 2 * delta]
+            # Massive outlier to destroy normality of residuals and force Friedman test
+            base = rng.normal(10.0, 2.0)
+            vals = [base, base + rng.normal(2.0, 0.5), base + rng.normal(4.0, 0.5)]
+            if i == 0:
+                vals[0] += 1000.0  # Extreme outlier
         for t, v in zip(["T1", "T2", "T3"], vals):
             rows.append({"Subject": s, "Group": t, "Value": v})
     return pd.DataFrame(rows)

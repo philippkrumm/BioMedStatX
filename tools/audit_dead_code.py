@@ -75,7 +75,7 @@ def check_tool(name: str, module_flag: str = None) -> bool:
 
 
 def py_files() -> list[Path]:
-    return sorted(SOURCE_DIR.glob("*.py"))
+    return sorted(SOURCE_DIR.rglob("*.py"))
 
 
 def line_count(path: Path) -> int:

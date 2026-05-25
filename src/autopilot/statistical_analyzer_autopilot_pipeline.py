@@ -1249,7 +1249,7 @@ def _ap_detected_test_label(self, context):
     return label
 
 
-def _ap_execute_single_analysis(self, context, dv_column, output_dir, skip_plots=True, title_suffix=None, file_base_override=None, skip_excel=False):
+def _ap_execute_single_analysis(self, context, dv_column, output_dir, skip_plots=True, title_suffix=None, file_base_override=None):
     if not self.file_path:
         raise ValueError("No input file selected.")
 
@@ -1287,7 +1287,6 @@ def _ap_execute_single_analysis(self, context, dv_column, output_dir, skip_plots
         save_plot=True,
         skip_plots=skip_plots,
         error_type="sd",
-        skip_excel=skip_excel,
         analysis_context=single_context,
         subject_column=context.get("subject_column"),
         test=single_context.get("inferred_test", ""),
@@ -1295,8 +1294,7 @@ def _ap_execute_single_analysis(self, context, dv_column, output_dir, skip_plots
 
     # Inject provenance metadata into the HTML report if range selection was used
     if (
-        not skip_excel
-        and getattr(self, "_range_selection_metadata", None) is not None
+        getattr(self, "_range_selection_metadata", None) is not None
         and self.df is not None
     ):
         html_path = file_base + ".html"
@@ -1688,7 +1686,7 @@ def _ap_determine_and_run_test(self):
                 per_dv_context["dv_columns"] = [dv_column]
                 per_dv_context["current_dv"] = dv_column
                 QApplication.processEvents()
-                all_results[dv_column] = self._execute_single_analysis(per_dv_context, dv_column, output_dir, skip_plots=True, skip_excel=True)
+                all_results[dv_column] = self._execute_single_analysis(per_dv_context, dv_column, output_dir, skip_plots=True)
 
             combined_excel = ap_file_path
             export_result = ExportDispatcher.export_multi_dataset_results(all_results, combined_excel)
@@ -1789,7 +1787,6 @@ def _ap_configure_plot_from_result(self):
             save_plot=True,
             skip_plots=not plot_config.get("create_plot", True),
             error_type=plot_config.get("error_type", "sd"),
-            skip_excel=False,
             analysis_context=context,
             subject_column=context.get("subject_column"),
             plot_type=appearance.get("plot_type", "Bar"),

@@ -20,7 +20,7 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from correlation_models import CorrelationModel, _apply_transform
+from analysis.correlation_models import CorrelationModel, _apply_transform
 
 
 # ---------------------------------------------------------------------------
@@ -185,7 +185,7 @@ def test_decision_tree_correlation_with_transform_renders():
     """DecisionTreeVisualizer must produce a figure when transformation != 'none'."""
     import matplotlib
     matplotlib.use("Agg")  # headless
-    from decisiontreevisualizer import DecisionTreeVisualizer
+    from visualization.decisiontreevisualizer import DecisionTreeVisualizer
 
     mock_results = {
         "model_type": "Correlation",
@@ -221,7 +221,7 @@ def test_decision_tree_correlation_without_transform_renders():
     """Original (no-transform) correlation tree still renders after refactor."""
     import matplotlib
     matplotlib.use("Agg")
-    from decisiontreevisualizer import DecisionTreeVisualizer
+    from visualization.decisiontreevisualizer import DecisionTreeVisualizer
 
     mock_results = {
         "model_type": "Correlation",
@@ -249,7 +249,7 @@ def test_decision_tree_correlation_without_transform_renders():
 # Integration — AnalysisManager end-to-end
 # ---------------------------------------------------------------------------
 
-from stats_functions import AnalysisManager
+from analysis.stats_functions import AnalysisManager
 
 
 def _corr_context(x_transform='none', y_transform='none'):
@@ -286,7 +286,6 @@ def test_analysis_manager_correlation_no_transform():
             sheet_name=0,
             value_cols=["y"],
             skip_plots=True,
-            skip_excel=True,
             analysis_context=ctx,
         )
         assert results.get("model_type") == "Correlation"
@@ -308,7 +307,6 @@ def test_analysis_manager_correlation_log10_transform():
             sheet_name=0,
             value_cols=["y"],
             skip_plots=True,
-            skip_excel=True,
             analysis_context=ctx,
         )
         assert results.get("model_type") == "Correlation"
@@ -333,7 +331,6 @@ def test_analysis_manager_correlation_results_has_transformation_key():
             sheet_name=0,
             value_cols=["y"],
             skip_plots=True,
-            skip_excel=True,
             analysis_context=ctx,
         )
         assert "transformation" in results

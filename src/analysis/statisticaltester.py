@@ -475,7 +475,7 @@ class StatisticalTester:
             statistic, p_value = stats.wilcoxon(
                 data1_arr, data2_arr, 
                 zero_method='pratt', 
-                exact=True if len(data1_arr) <= 25 else False
+                method='exact' if len(data1_arr) <= 25 else 'approx'
             )
             if w:
                 for warn in w:
@@ -1211,7 +1211,7 @@ class StatisticalTester:
     def perform_advanced_test(
         df, test, dv, subject, between=None, within=None, alpha=0.05,
         transformed_samples=None, recommendation=None, test_info=None,
-        transform_fn=None, force_parametric=False, skip_excel=False, file_name=None, manual_transform=None,
+        transform_fn=None, force_parametric=False, file_name=None, manual_transform=None,
         analysis_log=None  # Add this parameter
     ):
         return perform_advanced_test_pipeline(
@@ -1227,7 +1227,6 @@ class StatisticalTester:
             test_info=test_info,
             transform_fn=transform_fn,
             force_parametric=force_parametric,
-            skip_excel=skip_excel,
             file_name=file_name,
             manual_transform=manual_transform,
             analysis_log=analysis_log,

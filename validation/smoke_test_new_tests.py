@@ -25,7 +25,7 @@ for p in [str(ROOT), str(SRC)]:
 # Import
 # ──────────────────────────────────────────────
 print("Importiere nonparametricanovas …", end=" ", flush=True)
-from nonparametricanovas import (
+from analysis.nonparametricanovas import (
     perform_friedman_test,
     perform_freedman_lane_test,
     perform_brunner_langer_ats,

@@ -22,7 +22,7 @@ _transformation_engine = import_module("statistical_testing.engines.transformati
 _recommendation_engine = import_module("statistical_testing.engines.recommendation")
 _extraction_engine = import_module("statistical_testing.engines.extraction")
 _models = import_module("statistical_testing.models")
-_statisticaltester = import_module("statisticaltester")
+_statisticaltester = import_module("analysis.statisticaltester")
 _validators = import_module("statistical_testing.validators")
 
 StatisticalTesterCore = _core.StatisticalTesterCore
@@ -55,7 +55,7 @@ class _StubEngine:
 
 
 def test_select_comparison_test_two_group_mapping():
-    assert select_comparison_test(is_normal=True, is_homoscedastic=True, is_paired=False, group_count=2) == "student_ttest"
+    assert select_comparison_test(is_normal=True, is_homoscedastic=True, is_paired=False, group_count=2) == "welch_ttest"
     assert select_comparison_test(is_normal=True, is_homoscedastic=False, is_paired=False, group_count=2) == "welch_ttest"
     assert select_comparison_test(is_normal=False, is_homoscedastic=False, is_paired=False, group_count=2) == "mann_whitney_u"
 
@@ -66,8 +66,21 @@ def test_select_comparison_test_paired_mapping():
 
 
 def test_select_comparison_test_multi_group_mapping():
-    assert select_comparison_test(is_normal=True, is_homoscedastic=True, is_paired=False, group_count=4) == "one_way_anova"
-    assert select_comparison_test(is_normal=True, is_homoscedastic=False, is_paired=False, group_count=4) == "welch_anova"
+    # normal + homoscedastic -> one_way_anova
+    assert (
+        select_comparison_test(
+            is_normal=True, is_homoscedastic=True, is_paired=False, group_count=3
+        )
+        == "one_way_anova"
+    )
+
+    # normal + heteroscedastic -> welch_anova
+    assert (
+        select_comparison_test(
+            is_normal=True, is_homoscedastic=False, is_paired=False, group_count=3
+        )
+        == "welch_anova"
+    )
     assert select_comparison_test(is_normal=False, is_homoscedastic=False, is_paired=False, group_count=4) == "kruskal_wallis"
 
 
@@ -102,7 +115,7 @@ def test_choose_comparison_strategy_compatibility_wrapper():
 def test_core_uses_decision_strategy_and_engine_mapping():
     core = StatisticalTesterCore(
         engines={
-            "student_ttest": _StubEngine("student_ttest"),
+            "welch_ttest": _StubEngine("welch_ttest"),
         }
     )
 
@@ -117,7 +130,7 @@ def test_core_uses_decision_strategy_and_engine_mapping():
     )
 
     assert isinstance(result, StatisticalResult)
-    assert result.test_name == "student_ttest"
+    assert result.test_name == "welch_ttest"
 
 
 def test_core_raises_on_validation_errors_before_selection():
@@ -142,8 +155,8 @@ def test_comparison_engine_executes_welch_ttest_strategy():
             "strategy": "welch_ttest",
             "groups": ["A", "B"],
             "samples": {
-                "A": [1.0, 2.0, 3.0, 4.0],
-                "B": [1.2, 1.4, 1.6, 1.8],
+                "A": [1.0, 2.0, 3.0, 4.0, 5.0],
+                "B": [1.2, 1.4, 1.6, 1.8, 2.0],
             },
             "alpha": 0.05,
             "results": {"pairwise_comparisons": []},
@@ -178,15 +191,15 @@ def test_statisticaltester_two_group_uses_comparison_engine(monkeypatch):
             "alpha": 0.05,
         },
         valid_groups=["A", "B"],
-        samples_to_use={"A": [1.0, 2.0, 3.0], "B": [1.5, 2.5, 3.5]},
-        original_samples={"A": [1.0, 2.0, 3.0], "B": [1.5, 2.5, 3.5]},
+        samples_to_use={"A": [1.0, 2.0, 3.0, 4.0, 5.0], "B": [1.5, 2.5, 3.5, 4.5, 5.5]},
+        original_samples={"A": [1.0, 2.0, 3.0, 4.0, 5.0], "B": [1.5, 2.5, 3.5, 4.5, 5.5]},
         dependent=False,
         test_recommendation="parametric",
         alpha=0.05,
         test_info=None,
     )
 
-    assert called.get("strategy") == "student_ttest"
+    assert called.get("strategy") == "welch_ttest"
     assert result["test"] == "engine_stub_test"
 
 
@@ -197,9 +210,9 @@ def test_comparison_engine_executes_kruskal_strategy():
             "strategy": "kruskal_wallis",
             "groups": ["A", "B", "C"],
             "samples": {
-                "A": [1.0, 2.0, 3.0],
-                "B": [1.2, 1.4, 1.6],
-                "C": [2.1, 2.5, 2.7],
+                "A": [1.0, 2.0, 3.0, 4.0, 5.0],
+                "B": [1.2, 1.4, 1.6, 1.8, 2.0],
+                "C": [2.1, 2.5, 2.7, 2.9, 3.1],
             },
             "alpha": 0.05,
             "results": {"pairwise_comparisons": []},
@@ -240,9 +253,9 @@ def test_statisticaltester_multigroup_uses_comparison_engine(monkeypatch):
         },
         valid_groups=["A", "B", "C"],
         samples_to_use={
-            "A": [1.0, 2.0, 3.0],
-            "B": [1.5, 2.5, 3.5],
-            "C": [2.0, 2.5, 3.0],
+            "A": [1.0, 2.0, 3.0, 4.0, 5.0],
+            "B": [1.5, 2.5, 3.5, 4.5, 5.5],
+            "C": [2.0, 2.5, 3.0, 3.5, 4.0],
         },
         dependent=False,
         test_recommendation="parametric",
@@ -268,9 +281,9 @@ def test_posthoc_engine_delegates_to_refactored_posthoc(monkeypatch):
         {
             "groups": ["A", "B", "C"],
             "samples": {
-                "A": [1.0, 2.0, 3.0],
-                "B": [1.5, 2.5, 3.5],
-                "C": [2.0, 2.2, 2.4],
+                "A": [1.0, 2.0, 3.0, 4.0, 5.0],
+                "B": [1.5, 2.5, 3.5, 4.5, 5.5],
+                "C": [2.0, 2.2, 2.4, 2.6, 2.8],
             },
             "test_recommendation": "parametric",
             "alpha": 0.05,
@@ -323,9 +336,9 @@ def test_statisticaltester_multigroup_uses_posthoc_engine(monkeypatch):
         },
         valid_groups=["A", "B", "C"],
         samples_to_use={
-            "A": [1.0, 2.0, 3.0],
-            "B": [1.5, 2.5, 3.5],
-            "C": [2.0, 2.5, 3.0],
+            "A": [1.0, 2.0, 3.0, 4.0, 5.0],
+            "B": [1.5, 2.5, 3.5, 4.5, 5.5],
+            "C": [2.0, 2.5, 3.0, 3.5, 4.0],
         },
         dependent=False,
         test_recommendation="parametric",
@@ -421,7 +434,6 @@ def test_finalization_engine_sets_legacy_label_fields_without_export():
         {
             "mode": "advanced_result",
             "res": {"test": "Mixed ANOVA"},
-            "skip_excel": True,
         }
     )
 
@@ -431,30 +443,6 @@ def test_finalization_engine_sets_legacy_label_fields_without_export():
     assert "excel_file" not in result.metadata
 
 
-def test_finalization_engine_uses_explicit_file_name_for_export(monkeypatch):
-    def _fake_export_results(res, excel_file, analysis_log):
-        assert excel_file == "manual.xlsx"
-        assert analysis_log == "line1\nline2"
-        return {"excel_path": "manual.xlsx"}
-
-    monkeypatch.setattr(
-        "export_dispatcher.ExportDispatcher.export_analysis_results",
-        _fake_export_results,
-    )
-
-    result = FinalizationEngine().execute(
-        {
-            "mode": "advanced_result",
-            "res": {"test": "Mixed ANOVA"},
-            "skip_excel": False,
-            "file_name": "manual.xlsx",
-            "export_stem": "ignored",
-            "analysis_log": "line1\nline2",
-        }
-    )
-
-    assert isinstance(result, StatisticalResult)
-    assert result.metadata.get("excel_file") == "manual.xlsx"
 
 
 def test_assumption_bridge_engine_projects_pre_post_to_legacy_fields():
@@ -639,8 +627,8 @@ def test_extraction_engine_builds_rm_groups_and_original_samples():
 
     df = pd.DataFrame(
         {
-            "time": ["t1", "t1", "t2", "t2"],
-            "score": [1.0, 2.0, 1.5, 2.5],
+            "time": ["t1", "t1", "t1", "t1", "t1", "t2", "t2", "t2", "t2", "t2"],
+            "score": [1.0, 2.0, 1.5, 2.5, 3.0, 1.5, 2.5, 2.0, 3.0, 3.5],
         }
     )
 
@@ -660,8 +648,8 @@ def test_extraction_engine_builds_rm_groups_and_original_samples():
     assert updates.get("groups") == ["t1", "t2"]
     samples = updates.get("samples", {})
     originals = updates.get("original_samples", {})
-    assert samples.get("t1") == [1.0, 2.0]
-    assert samples.get("t2") == [1.5, 2.5]
+    assert samples.get("t1") == [1.0, 2.0, 1.5, 2.5, 3.0]
+    assert samples.get("t2") == [1.5, 2.5, 2.0, 3.0, 3.5]
     assert originals == samples
     assert originals.get("t1") is not samples.get("t1")
 

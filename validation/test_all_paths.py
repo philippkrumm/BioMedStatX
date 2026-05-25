@@ -41,7 +41,7 @@ from conftest import DESIGNS
 # Import BioMedStatX modules
 # ---------------------------------------------------------------------------
 
-from stats_functions import AnalysisManager
+from analysis.stats_functions import AnalysisManager
 
 
 # ---------------------------------------------------------------------------
@@ -458,7 +458,6 @@ def test_path(design, make_excel_fixture, tmp_path):
         value_cols=design["dv_columns"],
         dependent=design["dependent"],
         skip_plots=True,
-        skip_excel=False,
         file_name=out_excel_base,
         analysis_context=context,
     )
@@ -559,8 +558,9 @@ if __name__ == "__main__":
                         value_cols=design["dv_columns"],
                         dependent=design["dependent"],
                         skip_plots=True,
-                        skip_excel=False,
                         file_name=out_excel_base,
+                        error_type="sd",
+                        dataset_name="Mixed Dataset",
                         analysis_context=context,
                     )
 

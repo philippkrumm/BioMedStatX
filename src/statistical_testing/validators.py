@@ -79,9 +79,9 @@ def validate_minimum_n(
     array = validate_finite_values(data, label=label, allow_missing=allow_missing)
     valid_n = int(np.count_nonzero(~np.isnan(array)))
     
-    if valid_n < 2:
+    if valid_n < min_n:
         raise SampleSizeError(
-            f"{label}: sample size n={valid_n} is below absolute minimum n=2."
+            f"{label}: sample size n={valid_n} is below absolute minimum n={min_n}."
         )
         
     return array

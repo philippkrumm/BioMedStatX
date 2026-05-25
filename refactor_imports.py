@@ -63,7 +63,7 @@ def process_file(filepath):
         print(f"Updated {filepath}")
 
 def main():
-    search_dirs = ['src', 'tests']
+    search_dirs = ['src', 'tests', 'validation']
     for sdir in search_dirs:
         for root, _, files in os.walk(sdir):
             for file in files:

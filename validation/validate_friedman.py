@@ -20,7 +20,7 @@ for p in [str(ROOT), str(ROOT / "src")]:
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from nonparametricanovas import perform_friedman_test
+from analysis.nonparametricanovas import perform_friedman_test
 
 SEP = "-" * 60
 
