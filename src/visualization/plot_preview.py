@@ -3,16 +3,11 @@ Preview widget for plot display
 Shows live preview of plot settings
 """
 
-import sys
-import os
 import matplotlib
 matplotlib.use('Qt5Agg')
 
-from PyQt5.QtWidgets import QWidget, QVBoxLayout
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
-import numpy as np
-import pandas as pd
 
 # Import the DataVisualizer class
 try:

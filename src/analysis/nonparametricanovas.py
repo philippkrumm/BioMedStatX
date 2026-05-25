@@ -75,9 +75,6 @@ def posthoc_marginaleffects(
         if plt_obj is not None:
             plt_obj.show()
     return {"marginal_means": mm, "comparisons": cmp, "plot": plt_obj}
-# --- Assumption checks and automated decision logic ---
-from scipy.stats import shapiro, levene
-
 # --- marginaleffects: modern post hoc analysis for GLMM/GEE ---
 # To use the post hoc utility below, install marginaleffects:
 #   pip install marginaleffects
@@ -86,7 +83,6 @@ try:
 except ImportError:
     avg_predictions = comparisons = plot_predictions = plot_comparisons = None
     # The posthoc_marginaleffects function will raise an error if called without marginaleffects
-import warnings
 import numpy as np
 import pandas as pd
 from scipy import stats as sp_stats
@@ -191,7 +187,6 @@ def perform_friedman_test(data, dv, within_factor, subject_col, alpha=0.05):
     _run_modern_fallback_posthoc post-hoc infrastructure.
     """
     warnings_list = []
-    error = None
 
     try:
         # --- Wide pivot (subjects × within-levels) ---
@@ -271,8 +266,8 @@ def perform_friedman_test(data, dv, within_factor, subject_col, alpha=0.05):
         }
 
         analysis_note = (
-            f"Assumptions for parametric Repeated Measures ANOVA were violated. "
-            f"A Friedman test was applied as the nonparametric alternative "
+            "Assumptions for parametric Repeated Measures ANOVA were violated. "
+            "A Friedman test was applied as the nonparametric alternative "
             f"(Chi\u00b2({df1}) = {chi2_stat:.3f}, p = {p_value:.4f}, "
             f"n = {n_subjects} subjects, k = {k} measurements)."
         )
@@ -427,7 +422,7 @@ def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05, n_permu
             )
         if n_total < 12:
             warnings_list.append(
-                f"Total N < 12: very few unique permutations possible. Results are exploratory."
+                "Total N < 12: very few unique permutations possible. Results are exploratory."
             )
 
         formula_full    = f"{safe_dv} ~ C({safe_a}) + C({safe_b}) + C({safe_a}):C({safe_b})"
@@ -547,7 +542,7 @@ def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05, n_permu
         }
 
         analysis_note = (
-            f"Assumptions for parametric Two-Way ANOVA were violated. "
+            "Assumptions for parametric Two-Way ANOVA were violated. "
             f"A Freedman-Lane permutation test ({n_permutations} permutations, seed={seed}) "
             f"was used as nonparametric alternative for factors '{factor_a}' and '{factor_b}'."
         )
@@ -794,7 +789,6 @@ def perform_brunner_langer_ats(data, dv, between_factor, within_factor, subject_
         p_A  = float(1.0 - sp_stats.f.cdf(ATS_A, dfn=f_A, dfd=f_hat_2))
 
         df2_between = f_hat_2 if np.isfinite(f_hat_2) else None
-        df2_inf     = None  # Represent ∞ as None for JSON/Excel compatibility
 
         # --- Descriptive stats ---
         descriptive = {}
@@ -853,15 +847,15 @@ def perform_brunner_langer_ats(data, dv, between_factor, within_factor, subject_
         }
 
         analysis_note = (
-            f"Assumptions for parametric Mixed ANOVA were violated. "
-            f"A Brunner-Langer ANOVA-Type Statistic (ATS) was computed using global mid-ranks "
+            "Assumptions for parametric Mixed ANOVA were violated. "
+            "A Brunner-Langer ANOVA-Type Statistic (ATS) was computed using global mid-ranks "
             f"(F1-LD-F1 design: {a} groups \u00d7 {t} time points, N = {N} total observations). "
             f"Between-effect df2 ({df2_between:.1f}) uses Satterthwaite marginal-covariance approximation "
-            f"(Brunner et al. 2002).\n\n"
-            f"Effect-size note: ATS evaluates effects via Relative Treatment Effects (RTE). "
-            f"RTE values range from 0 to 1, where 0.5 indicates the global null effect. "
-            f"No standardized Cohen-style magnitude thresholds apply to rank-based longitudinal designs; "
-            f"the RTE table below is the appropriate effect metric."
+            "(Brunner et al. 2002).\n\n"
+            "Effect-size note: ATS evaluates effects via Relative Treatment Effects (RTE). "
+            "RTE values range from 0 to 1, where 0.5 indicates the global null effect. "
+            "No standardized Cohen-style magnitude thresholds apply to rank-based longitudinal designs; "
+            "the RTE table below is the appropriate effect metric."
         )
         # Append RTE table so it appears in the Excel Summary sheet
         rte_lines = ["Relative Treatment Effects (RTE, range 0–1; 0.5 = no effect):"]

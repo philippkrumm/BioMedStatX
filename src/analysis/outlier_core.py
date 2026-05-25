@@ -1,6 +1,4 @@
 import os
-import shutil
-import tempfile
 from datetime import datetime
 
 import numpy as np
@@ -13,9 +11,7 @@ from core.lazy_imports import get_seaborn
 
 OUTLIER_IMPORTS_AVAILABLE = True
 try:
-    import seaborn  # noqa: F401
     import matplotlib.pyplot as plt
-    from openpyxl import Workbook  # noqa: F811
 except ImportError:
     OUTLIER_IMPORTS_AVAILABLE = False
 
@@ -60,7 +56,7 @@ class OutlierDetector:
             raise ValueError(f"Columns '{group_col}' and '{value_col}' must be present in the DataFrame.")
 
         # Add initialization info to log
-        self.debug_log.append(f"*** OUTLIER DETECTION INITIALIZATION ***")
+        self.debug_log.append("*** OUTLIER DETECTION INITIALIZATION ***")
         self.debug_log.append(f"DataFrame shape: {df.shape}")
         self.debug_log.append(f"Group column: {group_col}")
         self.debug_log.append(f"Value column: {value_col}")
@@ -70,7 +66,7 @@ class OutlierDetector:
         self._convert_values_to_float()
         
         # Show group statistics after initialization
-        self.debug_log.append(f"\n=== GROUP STATISTICS ===")
+        self.debug_log.append("\n=== GROUP STATISTICS ===")
         self.debug_log.append(f"Number of groups in data: {self.df[group_col].nunique()}")
         
         for group_name, group_data in self.df.groupby(group_col):
@@ -83,7 +79,7 @@ class OutlierDetector:
         Handles German decimal separators (comma instead of period).
         """
         try:
-            self.debug_log.append(f"\n=== VALUE CONVERSION ===")
+            self.debug_log.append("\n=== VALUE CONVERSION ===")
             self.debug_log.append(f"Converting column '{self.value_col}' to float")
             
             # Check if the column exists
@@ -266,9 +262,9 @@ class OutlierDetector:
         iterate : bool
             Whether to iteratively remove outliers and recompute scores
         """
-        self.debug_log.append(f"\n=== MODIFIED Z-SCORE OUTLIER DETECTION EXECUTION ===")
+        self.debug_log.append("\n=== MODIFIED Z-SCORE OUTLIER DETECTION EXECUTION ===")
         self.debug_log.append(f"Test parameters: threshold={threshold}, iterate={iterate}")
-        self.debug_log.append(f"Test principle: Modified Z-Score uses median absolute deviation (MAD) for robustness against outliers")
+        self.debug_log.append("Test principle: Modified Z-Score uses median absolute deviation (MAD) for robustness against outliers")
         
         # Create the Modified Z-Score column and mark this test as active
         self.df['ModZ_Outlier'] = False
@@ -319,7 +315,7 @@ class OutlierDetector:
                 outlier_idx = [idx for mask, idx in zip(outlier_mask, indices_list) if mask]
                 
                 # Log this round
-                self.debug_log.append(f"  Modified Z-Score Analysis:")
+                self.debug_log.append("  Modified Z-Score Analysis:")
                 self.debug_log.append(f"    Median: {median:.4f}")
                 self.debug_log.append(f"    MAD: {mad:.4f}")
                 self.debug_log.append(f"    Threshold: {threshold} (absolute value)")
@@ -328,7 +324,7 @@ class OutlierDetector:
                     self.debug_log.append(f"    {len(outlier_idx)} outliers found in this round")
                     return outlier_idx, None
                 else:
-                    self.debug_log.append(f"    No outliers found in this round")
+                    self.debug_log.append("    No outliers found in this round")
                     return [], "No outliers found (all modified Z-scores within threshold)"
             
             # Iterative outlier detection
@@ -350,14 +346,14 @@ class OutlierDetector:
                         vals_copy = vals_copy[keep_mask]
                         idx_copy = [idx for keep, idx in zip(keep_mask, idx_copy) if keep]
                     else:
-                        self.debug_log.append(f"  No more iterations requested, terminating test")
+                        self.debug_log.append("  No more iterations requested, terminating test")
                         break
                 else:
                     self.debug_log.append(f"  {stop_message if stop_message else 'No more outliers found'}, terminating test")
                     break
                     
                 if len(vals_copy) <= 1:
-                    self.debug_log.append(f"  Too few values left for MAD calculation, terminating test")
+                    self.debug_log.append("  Too few values left for MAD calculation, terminating test")
                     break
             
             # Mark all found indices in main DataFrame
@@ -369,9 +365,9 @@ class OutlierDetector:
                 self.debug_log.append(f"  RESULT: No outliers found in group '{group_name}'")
         
         # Final summary
-        self.debug_log.append(f"\n=== MODIFIED Z-SCORE TEST SUMMARY ===")
+        self.debug_log.append("\n=== MODIFIED Z-SCORE TEST SUMMARY ===")
         self.debug_log.append(f"Total outliers detected across all groups: {total_outliers}")
-        self.debug_log.append(f"Test completed successfully")
+        self.debug_log.append("Test completed successfully")
 
 
     def save_results(self, output_path):
@@ -379,7 +375,7 @@ class OutlierDetector:
         Outputs the result to a new Excel file while preserving formulas.
         Only columns for actually performed tests are displayed.
         """
-        self.debug_log.append(f"\n=== SAVING RESULTS ===")
+        self.debug_log.append("\n=== SAVING RESULTS ===")
         self.debug_log.append(f"Output path: {output_path}")
         self.debug_log.append(f"Active test: {self.active_test}")
         
@@ -585,7 +581,7 @@ class OutlierDetector:
                     cell.font = Font(size=10)
 
             # Add visualization
-            temp_file = self._add_single_visualization_sheet(wb, self)
+            self._add_single_visualization_sheet(wb, self)
             
             # Save the new workbook - Make sure to use the absolute path
             wb.save(results_path)
@@ -608,7 +604,7 @@ class OutlierDetector:
         """
         Creates a summary of found outliers.
         """
-        self.debug_log.append(f"\n=== CREATING SUMMARY ===")
+        self.debug_log.append("\n=== CREATING SUMMARY ===")
         
         total_rows = len(self.df)
         grubbs_outliers = self.df['Grubbs_Outlier'].sum() if 'Grubbs_Outlier' in self.df.columns else 0
@@ -674,7 +670,7 @@ class OutlierDetector:
         Run outlier detection on multiple datasets (columns) and create a combined Excel output.
         """
         print(f"DEBUG: Current working directory before export: {os.getcwd()}")
-        print(f"DEBUG: Starting multi-dataset outlier detection")
+        print("DEBUG: Starting multi-dataset outlier detection")
         print(f"DEBUG: Datasets to analyze: {dataset_columns}")
         print(f"DEBUG: Group column: {group_col}")
         
@@ -1110,7 +1106,7 @@ class OutlierDetector:
                     elif lab == "True":
                         new_handles.append(h)
                         new_labels.append("Outlier")
-                legend = ax.legend(
+                ax.legend(
                     new_handles,
                     new_labels,
                     title="Status",
@@ -1305,7 +1301,7 @@ class OutlierDetector:
                 elif lab == "True":
                     new_handles.append(h)
                     new_labels.append("Outlier")
-            legend = ax.legend(
+            ax.legend(
                 new_handles,
                 new_labels,
                 title="Status",

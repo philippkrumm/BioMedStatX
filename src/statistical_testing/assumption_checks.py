@@ -1,8 +1,14 @@
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
 from scipy import stats
+
+if TYPE_CHECKING:
+    from core.methodology_trace import MethodologyTrace
 
 from statistical_testing.decision_logic import select_comparison_test, strategy_to_recommendation
 from statistical_testing.validators import (
@@ -10,7 +16,6 @@ from statistical_testing.validators import (
     ValidationError,
     validate_levene_inputs,
     validate_residuals_for_shapiro,
-    MIN_N_HARD,
 )
 from analysis.stats_functions import UIDialogManager
 
@@ -46,7 +51,7 @@ class AssumptionCheckEngine:
         boxcox_normmax = stats.boxcox_normmax
         from statsmodels.formula.api import ols
 
-        logger.debug(f"DEBUG check_normality_and_variance: Starting assumption tests")
+        logger.debug("DEBUG check_normality_and_variance: Starting assumption tests")
         logger.debug(f"DEBUG check_normality_and_variance: model_type={model_type}, formula={formula}")
         logger.debug(f"DEBUG check_normality_and_variance: Groups: {groups}")
         ui_dialog_manager = _get_ui_dialog_manager()
@@ -157,7 +162,7 @@ class AssumptionCheckEngine:
                 actual_columns = list(df_raw.columns)
             
             if "Value" not in actual_columns:
-                logger.debug(f"DEBUG SHAPIRO ERROR: 'Value' column missing in DataFrame!")
+                logger.debug("DEBUG SHAPIRO ERROR: 'Value' column missing in DataFrame!")
                 stat, pval = None, None
             elif is_paired:
                 # B1: paired t-test → Shapiro-Wilk on within-pair differences.
@@ -291,7 +296,7 @@ class AssumptionCheckEngine:
                     stat, pval, has_equal_variance = None, None, False
                     test_info.setdefault("validation_notes", []).append(str(exc))
                     logger.warning(str(exc))
-                    logger.debug(f"DEBUG BROWN-FORSYTHE: Pre-transformation - Insufficient data for test")
+                    logger.debug("DEBUG BROWN-FORSYTHE: Pre-transformation - Insufficient data for test")
             except Exception as e:
                 logger.debug(f"DEBUG BROWN-FORSYTHE ERROR: Pre-transformation failed: {str(e)}")
                 stat, pval, has_equal_variance = None, None, False
@@ -374,7 +379,7 @@ class AssumptionCheckEngine:
                     if _bc_reason:
                         test_info["transformation_note"] = (
                             f"Box-Cox not applicable for group '{group}': {_bc_reason}. "
-                            f"Normality will be re-evaluated on original data."
+                            "Normality will be re-evaluated on original data."
                         )
                         logger.warning(test_info["transformation_note"])
                         test_info.setdefault("validation_notes", []).append(test_info["transformation_note"])
@@ -387,7 +392,7 @@ class AssumptionCheckEngine:
                         except Exception as e:
                             test_info["transformation_note"] = (
                                 f"Box-Cox optimization failed for group '{group}' ({e}). "
-                                f"Normality will be re-evaluated on original data."
+                                "Normality will be re-evaluated on original data."
                             )
                             logger.warning(test_info["transformation_note"])
                             test_info.setdefault("validation_notes", []).append(test_info["transformation_note"])
@@ -431,7 +436,7 @@ class AssumptionCheckEngine:
             actual_columns_tr = list(df_tr.columns)
             
             if "Value" not in actual_columns_tr:
-                logger.debug(f"DEBUG SHAPIRO ERROR: 'Value' column missing in transformed DataFrame!")
+                logger.debug("DEBUG SHAPIRO ERROR: 'Value' column missing in transformed DataFrame!")
                 stat2, pval2 = None, None
             elif is_paired:
                 # B1: paired t-test → Shapiro-Wilk on transformed within-pair differences.
@@ -534,7 +539,7 @@ class AssumptionCheckEngine:
                     stat_tr, pval_tr, has_equal_variance_tr = None, None, False
                     test_info.setdefault("validation_notes", []).append(str(exc))
                     logger.warning(str(exc))
-                    logger.debug(f"DEBUG BROWN-FORSYTHE: Post-transformation - Insufficient data for test")
+                    logger.debug("DEBUG BROWN-FORSYTHE: Post-transformation - Insufficient data for test")
             except Exception as e:
                 logger.debug(f"DEBUG BROWN-FORSYTHE ERROR: Post-transformation failed: {str(e)}")
                 stat_tr, pval_tr, has_equal_variance_tr = None, None, False
@@ -553,7 +558,7 @@ class AssumptionCheckEngine:
             if not post_var:
                 test_info["note"] = (
                     f"Residuals are normal but variances are unequal - {model_type.upper()} ANOVA will still be used "
-                    f"(robust to variance heterogeneity)."
+                    "(robust to variance heterogeneity)."
                 )
         else:
             decision_strategy = select_comparison_test(
@@ -587,7 +592,7 @@ class AssumptionCheckEngine:
             else:
                 trace.add(3, "Test Selection", "Assumptions support parametric testing \u2014 standard parametric route selected.")
 
-        logger.debug(f"DEBUG check_normality_and_variance: Final test_info structure:")
+        logger.debug("DEBUG check_normality_and_variance: Final test_info structure:")
         logger.debug(f"  Pre-transformation normality: {test_info['pre_transformation'].get('residuals_normality', 'Missing')}")
         logger.debug(f"  Pre-transformation variance: {test_info['pre_transformation'].get('variance', 'Missing')}")
         logger.debug(f"  Post-transformation normality: {test_info['post_transformation'].get('residuals_normality', 'Missing')}")

@@ -58,10 +58,10 @@ class DecisionTreeVisualizer:
 
         stat_val = results.get("statistic", results.get("stat", None))
         p_val = results.get("p_value", results.get("p-val", results.get("p", None)))
-        df = results.get("df", None)
+        df = results.get("d", None)
         df1 = results.get("df1", results.get("df_num", None))
         df2 = results.get("df2", results.get("df_den", None))
-        eff_val = results.get("effect_size", results.get("eff", None))
+        eff_val = results.get("effect_size", results.get("ef", None))
         eff_name = results.get("effect_size_type", "")
 
         df_str = ""
@@ -320,7 +320,7 @@ class DecisionTreeVisualizer:
             
             # NO FALLBACK ASSUMPTIONS - If we can't find groups, something is wrong
             else:
-                print(f"DEBUG TREE: WARNING - No groups found in results structure!")
+                print("DEBUG TREE: WARNING - No groups found in results structure!")
                 print(f"DEBUG TREE: Available keys in results: {list(results.keys())}")
                 if "descriptive_stats" in results:
                     print(f"DEBUG TREE: Available keys in descriptive_stats: {list(results['descriptive_stats'].keys())}")
@@ -330,7 +330,7 @@ class DecisionTreeVisualizer:
             
             # Validation: Never assume, always use actual data
             if n_groups == 0:
-                print(f"DEBUG TREE: ERROR - Could not determine actual number of groups from data!")
+                print("DEBUG TREE: ERROR - Could not determine actual number of groups from data!")
                 n_groups = 2  # Minimal fallback only to prevent crashes
 
             n_within_levels = results.get("n_within_levels", None)
@@ -390,16 +390,6 @@ class DecisionTreeVisualizer:
                 elif sph_test.get("sphericity_assumed", True) is False:
                     sphericity_correction = "Correction needed"
 
-            # Get detailed correction information
-            correction_used = results.get("correction_used", "None")
-            within_correction = results.get("within_correction_used", "None")
-            
-            # Detect specific correction types
-            is_greenhouse_geisser = ("greenhouse" in str(correction_used).lower() or 
-                                   "gg" in str(correction_used).lower())
-            is_huynh_feldt = ("huynh" in str(correction_used).lower() or 
-                             "hf" in str(correction_used).lower())
-
             # Define nodes with positions and labels - LOGICAL GROUPING WITH PROPER SPACING
             nodes_info = {
                 # Common path
@@ -408,7 +398,7 @@ class DecisionTreeVisualizer:
                 'C': {"label": f"Assumptions{': ' + ('Met' if pre_is_normal and pre_has_equal_variance else 'Not Met')}", "pos": (0, 11)},
 
                 # Transformation branch point
-                'D1': {"label": f"No Transformation\nNeeded", "pos": (-2, 9.5)},
+                'D1': {"label": "No Transformation\nNeeded", "pos": (-2, 9.5)},
                 'D2': {"label": f"Apply Transformation\n{transformation}", "pos": (2, 9.5)},
                 'E': {"label": f"Re-check Assumptions\nShapiro-Wilk: {is_normal}\nBrown-Forsythe: {has_equal_variance}" if was_transformed else "Re-check Assumptions", "pos": (2, 8)},
 
@@ -664,14 +654,13 @@ class DecisionTreeVisualizer:
             print(f"DEBUG TREE: actual_test_type='{actual_test_type}'")
             
             # Better test type branching logic
-            print(f"DEBUG TREE: Determining test path...")
+            print("DEBUG TREE: Determining test path...")
             print(f"DEBUG TREE: test_type='{test_type}', actual_test_type='{actual_test_type}'")
             print(f"DEBUG TREE: test_name='{test_name}'")
             print(f"DEBUG TREE: auto_switched={auto_switched}")
 
             recommendation_text = str(results.get("recommendation", "")).lower()
             model_class_text = str(results.get("model_class", "")).lower()
-            model_type_text = str(results.get("model_type", "")).lower()
             analysis_log_text = str(results.get("analysis_log", "")).lower()
             test_name_text = str(test_name).lower()
 
@@ -728,7 +717,7 @@ class DecisionTreeVisualizer:
                 if welch_t_condition:
                     # Welch's t-test path - direct from test recommendation
                     highlighted.add(('F', 'WELCH_T_TEST'))
-                    print(f"DEBUG TREE: Highlighting Welch's t-test path")
+                    print("DEBUG TREE: Highlighting Welch's t-test path")
                 elif welch_anova_condition:
                     # Welch ANOVA path - direct from test recommendation
                     highlighted.add(('F', 'WELCH_ANOVA'))
@@ -737,10 +726,10 @@ class DecisionTreeVisualizer:
                     if p_value is not None and p_value < alpha:
                         if posthoc_test and "dunnett" in posthoc_test.lower() and "t3" in posthoc_test.lower():
                             highlighted.add(('WELCH_ANOVA', 'WELCH_DUNNETT_T3'))
-                    print(f"DEBUG TREE: Highlighting Welch ANOVA path")
+                    print("DEBUG TREE: Highlighting Welch ANOVA path")
                     
             elif is_nonparametric_test:
-                print(f"DEBUG TREE: Taking non-parametric path")
+                print("DEBUG TREE: Taking non-parametric path")
                 if not auto_switched:
                     highlighted.add(('F', 'G2'))  # Non-parametric path
                 highlighted.add(('G2', 'H2'))
@@ -804,7 +793,7 @@ class DecisionTreeVisualizer:
             elif (actual_test_type.lower() == "parametric" or 
                   (test_name.lower().find("anova") != -1 and test_name.lower().find("non") == -1)) and \
                  not welch_t_condition and not welch_anova_condition:
-                print(f"DEBUG TREE: Taking parametric path")
+                print("DEBUG TREE: Taking parametric path")
                 if not auto_switched:
                     highlighted.add(('F', 'G1'))  # Parametric path
                 highlighted.add(('G1', 'H1'))
@@ -821,7 +810,7 @@ class DecisionTreeVisualizer:
                         
                     # IMPORTANT: For 2-group tests, NEVER highlight post-hoc paths
                     # because post-hoc tests are only needed for 3+ groups
-                    print(f"DEBUG TREE: 2-group test detected, skipping ALL post-hoc path highlighting")
+                    print("DEBUG TREE: 2-group test detected, skipping ALL post-hoc path highlighting")
                 else:
                     highlighted.add(('H1', 'I1_M'))
                     
@@ -845,7 +834,7 @@ class DecisionTreeVisualizer:
                             highlighted.add(('RM_CHOOSE_CORRECTION', 'RM_GG_CORRECTION'))
                             highlighted.add(('RM_GG_CORRECTION', 'RM_ANOVA_CORRECTED'))
                         elif ("huynh" in str(sphericity_correction).lower() or 
-                              "hf" in str(sphericity_correction).lower() or
+                              "h" in str(sphericity_correction).lower() or
                               "huynh" in str(within_correction).lower()):
                             # Huynh-Feldt correction path
                             highlighted.add(('RM_MAUCHLY', 'RM_SPHERICITY_VIOLATED'))
@@ -894,7 +883,7 @@ class DecisionTreeVisualizer:
                             highlighted.add(('MIXED_CHOOSE_CORRECTION', 'MIXED_GG_CORRECTION'))
                             highlighted.add(('MIXED_GG_CORRECTION', 'MIXED_ANOVA_CORRECTED'))
                         elif ("huynh" in str(within_correction).lower() or 
-                              "hf" in str(within_correction).lower() or
+                              "h" in str(within_correction).lower() or
                               "huynh" in str(sphericity_correction).lower()):
                             # Huynh-Feldt correction for within-factor
                             highlighted.add(('MIXED_MAUCHLY', 'MIXED_SPHERICITY_VIOLATED'))
@@ -1038,7 +1027,7 @@ class DecisionTreeVisualizer:
 
             # Draw node labels with background boxes
             nx.draw_networkx_labels(G, pos, labels=node_labels, font_size=12.5,
-                    font_family='sans-serif', font_weight='bold',
+                    font_family='sans-seri', font_weight='bold',
                     bbox=dict(boxstyle='round,pad=0.28', facecolor='white',
                                 alpha=0.7, edgecolor='lightgray'))
 
@@ -1125,7 +1114,6 @@ class DecisionTreeVisualizer:
         """
         try:
             import os
-            import time
             import tempfile
             
             # Use system temp directory instead of Documents folder
@@ -1508,7 +1496,7 @@ class DecisionTreeVisualizer:
                         highlighted.update([('I1_M','REPEATED_MEASURES'),('REPEATED_MEASURES','RM_MAUCHLY')])
                         if any(kw in correction_used.lower() for kw in ("greenhouse","gg")) or "greenhouse" in within_correction.lower():
                             highlighted.update([('RM_MAUCHLY','RM_SPHERICITY_VIOLATED'),('RM_SPHERICITY_VIOLATED','RM_CHOOSE_CORRECTION'),('RM_CHOOSE_CORRECTION','RM_GG_CORRECTION'),('RM_GG_CORRECTION','RM_ANOVA_CORRECTED')])
-                        elif any(kw in correction_used.lower() for kw in ("huynh","hf")) or "huynh" in within_correction.lower():
+                        elif any(kw in correction_used.lower() for kw in ("huynh","h")) or "huynh" in within_correction.lower():
                             highlighted.update([('RM_MAUCHLY','RM_SPHERICITY_VIOLATED'),('RM_SPHERICITY_VIOLATED','RM_CHOOSE_CORRECTION'),('RM_CHOOSE_CORRECTION','RM_HF_CORRECTION'),('RM_HF_CORRECTION','RM_ANOVA_CORRECTED')])
                         else:
                             highlighted.update([('RM_MAUCHLY','RM_SPHERICITY_OK'),('RM_SPHERICITY_OK','RM_ANOVA_STANDARD')])
@@ -1522,7 +1510,7 @@ class DecisionTreeVisualizer:
                         highlighted.update([('I1_M','MIXED_DESIGN'),('MIXED_DESIGN','MIXED_MAUCHLY')])
                         if any(kw in within_correction.lower() for kw in ("greenhouse","gg")) or "greenhouse" in correction_used.lower():
                             highlighted.update([('MIXED_MAUCHLY','MIXED_SPHERICITY_VIOLATED'),('MIXED_SPHERICITY_VIOLATED','MIXED_CHOOSE_CORRECTION'),('MIXED_CHOOSE_CORRECTION','MIXED_GG_CORRECTION'),('MIXED_GG_CORRECTION','MIXED_ANOVA_CORRECTED')])
-                        elif any(kw in within_correction.lower() for kw in ("huynh","hf")) or "huynh" in correction_used.lower():
+                        elif any(kw in within_correction.lower() for kw in ("huynh","h")) or "huynh" in correction_used.lower():
                             highlighted.update([('MIXED_MAUCHLY','MIXED_SPHERICITY_VIOLATED'),('MIXED_SPHERICITY_VIOLATED','MIXED_CHOOSE_CORRECTION'),('MIXED_CHOOSE_CORRECTION','MIXED_HF_CORRECTION'),('MIXED_HF_CORRECTION','MIXED_ANOVA_CORRECTED')])
                         else:
                             highlighted.update([('MIXED_MAUCHLY','MIXED_SPHERICITY_OK'),('MIXED_SPHERICITY_OK','MIXED_ANOVA_STANDARD')])
@@ -1604,26 +1592,13 @@ class DecisionTreeVisualizer:
     def _build_tree_topology(results: dict, model_type: str, alpha: float = 0.05):
         p_value = results.get("p_value", None)
         method = results.get("method", "")
-        transformation = results.get("transformation", "none")
-
         # Extract assumption check results
         _nc = results.get("normality_check")
         normality_check = _nc if isinstance(_nc, dict) else {}
-        diagnostics = results.get("diagnostics") or {}
         slope_homogeneity = results.get("slope_homogeneity") or {}
 
         # Correlation: normality of both variables
-        _nc_keys = list(normality_check.keys()) if normality_check else []
-        _nc_v0 = normality_check.get(_nc_keys[0]) if len(_nc_keys) >= 1 else None
-        _nc_v1 = normality_check.get(_nc_keys[1]) if len(_nc_keys) >= 2 else None
-        norm_x_ok = _nc_v0.get("normal", None) if isinstance(_nc_v0, dict) else None
-        norm_y_ok = _nc_v1.get("normal", None) if isinstance(_nc_v1, dict) else None
         both_normal = normality_check.get("both_normal", None)
-
-        # Linear Regression diagnostics
-        norm_resid_ok = diagnostics.get("normality", {}).get("assumption_holds", None)
-        homosced_ok = diagnostics.get("homoscedasticity", {}).get("assumption_holds", None)
-        linearity_ok = diagnostics.get("linearity", {}).get("assumption_holds", None)
 
         # ANCOVA: slope homogeneity
         slopes_ok = all(v.get("assumption_holds", True) for v in slope_homogeneity.values()) if slope_homogeneity else None
@@ -1631,9 +1606,6 @@ class DecisionTreeVisualizer:
             slopes_ok = False
 
         # Logistic Regression: Hosmer-Lemeshow
-        hl = results.get("hosmer_lemeshow") or {}
-        hl_p = hl.get("p_value", None)
-        hl_ok = (hl_p is not None and hl_p > 0.05) if hl_p is not None else None
 
         sig = (p_value is not None and p_value < alpha)
 
@@ -1769,8 +1741,6 @@ class DecisionTreeVisualizer:
         elif model_type == "LogisticRegression":
             auc = results.get("effect_size", results.get("roc_data", {}).get("auc", None))
             auc_label = f"AUC = {auc:.3f}" if auc is not None else ""
-            pseudo_r2 = results.get("pseudo_r_squared", None)
-            pr2_label = f"McFadden R² = {pseudo_r2:.3f}" if pseudo_r2 is not None else ""
             p_label = f"p = {p_value:.4f}" if p_value is not None else ""
             
             is_firth = results.get("model_variant") == "Firth Penalized Likelihood"
@@ -2075,7 +2045,7 @@ class DecisionTreeVisualizer:
             nx.draw_networkx_edges(G, pos_dict, edgelist=regular_edges, width=1, edge_color='black')
 
             nx.draw_networkx_labels(G, pos_dict, labels=node_labels, font_size=11,
-                font_family='sans-serif', font_weight='bold',
+                font_family='sans-seri', font_weight='bold',
                 bbox=dict(boxstyle='round,pad=0.28', facecolor='white', alpha=0.7, edgecolor='lightgray'))
 
             plt.gcf().suptitle(f"Statistical Decision Path: {test_name}", fontsize=15, y=0.98)
@@ -2139,14 +2109,14 @@ class DecisionTreeVisualizer:
         
         if is_one_way_anova and not posthoc_test:
             # For One-Way ANOVA with no specific post-hoc performed: show all options (including Dunnett)
-            print(f"DEBUG TREE: One-Way ANOVA detected - showing all post-hoc options for user choice")
+            print("DEBUG TREE: One-Way ANOVA detected - showing all post-hoc options for user choice")
             highlighted.add(('O1_PH', 'P1_PH_TK'))  # Tukey
             highlighted.add(('O1_PH', 'P1_PH_DN'))  # Dunnett  
             highlighted.add(('O1_PH', 'P1_PH_SD'))  # Holm-Bonferroni
             return
         elif is_advanced_anova and not posthoc_test:
             # For Advanced ANOVAs with no specific post-hoc performed: show only Tukey and Pairwise (no Dunnett)
-            print(f"DEBUG TREE: Advanced ANOVA detected - showing only Tukey and Pairwise post-hoc options")
+            print("DEBUG TREE: Advanced ANOVA detected - showing only Tukey and Pairwise post-hoc options")
             highlighted.add(('O1_PH', 'P1_PH_TK'))  # Tukey
             highlighted.add(('O1_PH', 'P1_PH_SD'))  # Holm-Bonferroni (Pairwise t-tests)
             return
@@ -2155,10 +2125,10 @@ class DecisionTreeVisualizer:
         if posthoc_test:
             print(f"DEBUG TREE: Post-hoc test detected: '{posthoc_test}'")
             if "tukey" in posthoc_test.lower():
-                print(f"DEBUG TREE: Highlighting Tukey path")
+                print("DEBUG TREE: Highlighting Tukey path")
                 highlighted.add(('O1_PH', 'P1_PH_TK'))
             elif "dunnett" in posthoc_test.lower() and "t3" not in posthoc_test.lower():
-                print(f"DEBUG TREE: Highlighting Dunnett path")
+                print("DEBUG TREE: Highlighting Dunnett path")
                 highlighted.add(('O1_PH', 'P1_PH_DN'))
             elif ("holm" in posthoc_test.lower() or "sidak" in posthoc_test.lower() or 
                   "pairwise t-test" in posthoc_test.lower() or "pairwise" in posthoc_test.lower()):
@@ -2166,13 +2136,13 @@ class DecisionTreeVisualizer:
                 highlighted.add(('O1_PH', 'P1_PH_SD'))
             # Handle non-parametric post-hoc tests
             elif "mann-whitney" in posthoc_test.lower():
-                print(f"DEBUG TREE: Highlighting Pairwise Mann-Whitney-U path")
+                print("DEBUG TREE: Highlighting Pairwise Mann-Whitney-U path")
                 highlighted.add(('L2_PH', 'M2_PH_MWU'))
             elif "dunn" in posthoc_test.lower():
-                print(f"DEBUG TREE: Highlighting Dunn test path")
+                print("DEBUG TREE: Highlighting Dunn test path")
                 highlighted.add(('L2_PH', 'M2_PH_DU'))
             elif "wilcoxon" in posthoc_test.lower():
-                print(f"DEBUG TREE: Highlighting Wilcoxon post-hoc path")
+                print("DEBUG TREE: Highlighting Wilcoxon post-hoc path")
                 highlighted.add(('L2_PH', 'NP_PH_WILC'))
             else:
                 print(f"DEBUG TREE: Unknown post-hoc test '{posthoc_test}', defaulting to Holm-Bonferroni")
@@ -2199,21 +2169,21 @@ class DecisionTreeVisualizer:
                     "holm" in corrected_method or "sidak" in corrected_method or 
                     "holm" in correction_method_str or "sidak" in correction_method_str or
                     "holm" in correction_field_str or "sidak" in correction_field_str):
-                    print(f"DEBUG TREE: Inferred Holm-Bonferroni from pairwise test")
+                    print("DEBUG TREE: Inferred Holm-Bonferroni from pairwise test")
                     highlighted.add(('O1_PH', 'P1_PH_SD'))
                 elif ("tukey" in test_name_in_comp or 
                       "tukey" in correction_field_str):
-                    print(f"DEBUG TREE: Inferred Tukey from pairwise test")
+                    print("DEBUG TREE: Inferred Tukey from pairwise test")
                     highlighted.add(('O1_PH', 'P1_PH_TK'))
                 elif "dunnett" in test_name_in_comp:
-                    print(f"DEBUG TREE: Inferred Dunnett from pairwise test")
+                    print("DEBUG TREE: Inferred Dunnett from pairwise test")
                     highlighted.add(('O1_PH', 'P1_PH_DN'))
                 elif ("pairwise" in test_name_in_comp and ("holm" in corrected_method or "sidak" in corrected_method or 
                                                         "holm" in correction_method_str or "sidak" in correction_method_str)):
-                    print(f"DEBUG TREE: Inferred Holm-Bonferroni from pairwise test with correction method")
+                    print("DEBUG TREE: Inferred Holm-Bonferroni from pairwise test with correction method")
                     highlighted.add(('O1_PH', 'P1_PH_SD'))
                 else:
-                    print(f"DEBUG TREE: Unknown pairwise test type, showing options for choice")
+                    print("DEBUG TREE: Unknown pairwise test type, showing options for choice")
                     if is_one_way_anova:
                         # Show all options for One-Way ANOVA (including Dunnett)
                         highlighted.add(('O1_PH', 'P1_PH_TK'))
@@ -2226,18 +2196,18 @@ class DecisionTreeVisualizer:
                     else:
                         highlighted.add(('O1_PH', 'P1_PH_TK'))  # Default to Tukey
             else:
-                print(f"DEBUG TREE: No post-hoc info available")
+                print("DEBUG TREE: No post-hoc info available")
                 if is_one_way_anova:
-                    print(f"DEBUG TREE: One-Way ANOVA - showing all post-hoc options for user choice")
+                    print("DEBUG TREE: One-Way ANOVA - showing all post-hoc options for user choice")
                     highlighted.add(('O1_PH', 'P1_PH_TK'))  # Tukey
                     highlighted.add(('O1_PH', 'P1_PH_DN'))  # Dunnett
                     highlighted.add(('O1_PH', 'P1_PH_SD'))  # Holm-Bonferroni
                 elif is_advanced_anova:
-                    print(f"DEBUG TREE: Advanced ANOVA - showing only Tukey and Pairwise post-hoc options")
+                    print("DEBUG TREE: Advanced ANOVA - showing only Tukey and Pairwise post-hoc options")
                     highlighted.add(('O1_PH', 'P1_PH_TK'))  # Tukey
                     highlighted.add(('O1_PH', 'P1_PH_SD'))  # Holm-Bonferroni (Pairwise t-tests)
                 else:
-                    print(f"DEBUG TREE: Using default Tukey for other test types")
+                    print("DEBUG TREE: Using default Tukey for other test types")
                     highlighted.add(('O1_PH', 'P1_PH_TK'))
 
     @staticmethod
@@ -2250,15 +2220,15 @@ class DecisionTreeVisualizer:
         if posthoc_test:
             print(f"DEBUG TREE: RM ANOVA Post-hoc test detected: '{posthoc_test}'")
             if "tukey" in posthoc_test.lower() and "rm" in posthoc_test.lower():
-                print(f"DEBUG TREE: Highlighting RM Tukey path")
+                print("DEBUG TREE: Highlighting RM Tukey path")
                 highlighted.add(('O1_RM_PH', 'P1_RM_TK'))
             elif ("paired" in posthoc_test.lower() or 
                   "holm" in posthoc_test.lower() or 
                   "sidak" in posthoc_test.lower()):
-                print(f"DEBUG TREE: Highlighting RM Paired t-tests path")
+                print("DEBUG TREE: Highlighting RM Paired t-tests path")
                 highlighted.add(('O1_RM_PH', 'P1_RM_PAIRED'))
             else:
-                print(f"DEBUG TREE: Unknown RM post-hoc test, defaulting to Tukey RM")
+                print("DEBUG TREE: Unknown RM post-hoc test, defaulting to Tukey RM")
                 highlighted.add(('O1_RM_PH', 'P1_RM_TK'))
         else:
             # Check pairwise comparisons for RM-specific tests
@@ -2268,16 +2238,16 @@ class DecisionTreeVisualizer:
                 test_name_in_comp = first_comp.get("test", "").lower()
                 
                 if "paired" in test_name_in_comp or "dependent" in test_name_in_comp:
-                    print(f"DEBUG TREE: Inferred RM Paired t-tests from pairwise test")
+                    print("DEBUG TREE: Inferred RM Paired t-tests from pairwise test")
                     highlighted.add(('O1_RM_PH', 'P1_RM_PAIRED'))
                 elif "tukey" in test_name_in_comp:
-                    print(f"DEBUG TREE: Inferred RM Tukey from pairwise test")
+                    print("DEBUG TREE: Inferred RM Tukey from pairwise test")
                     highlighted.add(('O1_RM_PH', 'P1_RM_TK'))
                 else:
-                    print(f"DEBUG TREE: Default RM Tukey for unknown pairwise test")
+                    print("DEBUG TREE: Default RM Tukey for unknown pairwise test")
                     highlighted.add(('O1_RM_PH', 'P1_RM_TK'))
             else:
-                print(f"DEBUG TREE: No RM post-hoc info available, showing both options")
+                print("DEBUG TREE: No RM post-hoc info available, showing both options")
                 highlighted.add(('O1_RM_PH', 'P1_RM_TK'))
                 highlighted.add(('O1_RM_PH', 'P1_RM_PAIRED'))
 
@@ -2291,16 +2261,16 @@ class DecisionTreeVisualizer:
         if posthoc_test:
             print(f"DEBUG TREE: Mixed ANOVA Post-hoc test detected: '{posthoc_test}'")
             if "mixed" in posthoc_test.lower() and "tukey" in posthoc_test.lower():
-                print(f"DEBUG TREE: Highlighting Mixed Tukey path")
+                print("DEBUG TREE: Highlighting Mixed Tukey path")
                 highlighted.add(('O1_MIX_PH', 'P1_MIX_TK'))
             elif "between" in posthoc_test.lower():
-                print(f"DEBUG TREE: Highlighting Between-subjects comparisons path")
+                print("DEBUG TREE: Highlighting Between-subjects comparisons path")
                 highlighted.add(('O1_MIX_PH', 'P1_MIX_BETWEEN'))
             elif "within" in posthoc_test.lower():
-                print(f"DEBUG TREE: Highlighting Within-subjects comparisons path")
+                print("DEBUG TREE: Highlighting Within-subjects comparisons path")
                 highlighted.add(('O1_MIX_PH', 'P1_MIX_WITHIN'))
             else:
-                print(f"DEBUG TREE: Unknown Mixed post-hoc test, defaulting to Mixed Tukey")
+                print("DEBUG TREE: Unknown Mixed post-hoc test, defaulting to Mixed Tukey")
                 highlighted.add(('O1_MIX_PH', 'P1_MIX_TK'))
         else:
             # Check pairwise comparisons for Mixed-specific tests
@@ -2310,19 +2280,19 @@ class DecisionTreeVisualizer:
                 test_name_in_comp = first_comp.get("test", "").lower()
                 
                 if "between" in test_name_in_comp:
-                    print(f"DEBUG TREE: Inferred Between-subjects from pairwise test")
+                    print("DEBUG TREE: Inferred Between-subjects from pairwise test")
                     highlighted.add(('O1_MIX_PH', 'P1_MIX_BETWEEN'))
                 elif "within" in test_name_in_comp or "paired" in test_name_in_comp:
-                    print(f"DEBUG TREE: Inferred Within-subjects from pairwise test")
+                    print("DEBUG TREE: Inferred Within-subjects from pairwise test")
                     highlighted.add(('O1_MIX_PH', 'P1_MIX_WITHIN'))
                 elif "mixed" in test_name_in_comp and "tukey" in test_name_in_comp:
-                    print(f"DEBUG TREE: Inferred Mixed Tukey from pairwise test")
+                    print("DEBUG TREE: Inferred Mixed Tukey from pairwise test")
                     highlighted.add(('O1_MIX_PH', 'P1_MIX_TK'))
                 else:
-                    print(f"DEBUG TREE: Default Mixed Tukey for unknown pairwise test")
+                    print("DEBUG TREE: Default Mixed Tukey for unknown pairwise test")
                     highlighted.add(('O1_MIX_PH', 'P1_MIX_TK'))
             else:
-                print(f"DEBUG TREE: No Mixed post-hoc info available, showing all options")
+                print("DEBUG TREE: No Mixed post-hoc info available, showing all options")
                 highlighted.add(('O1_MIX_PH', 'P1_MIX_TK'))
                 highlighted.add(('O1_MIX_PH', 'P1_MIX_BETWEEN'))
                 highlighted.add(('O1_MIX_PH', 'P1_MIX_WITHIN'))

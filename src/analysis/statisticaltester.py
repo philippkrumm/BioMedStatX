@@ -1,10 +1,8 @@
 import numpy as np
 import pandas as pd
 import logging
-from datetime import datetime
 from scipy import stats
-from core.lazy_imports import get_pingouin, get_scipy_stats, get_statsmodels_multitest
-from analysis.stats_functions import UIDialogManager, PostHocFactory, get_pingouin_module, PostHocAnalyzer, PostHocStatistics
+from analysis.stats_functions import get_pingouin_module, PostHocAnalyzer
 from core.methodology_trace import MethodologyTrace
 from statistical_testing.decision_logic import (
     extract_assumption_state,
@@ -23,19 +21,12 @@ from statistical_testing.validators import (
     ModelDesignError,
     PairedDataError,
     ValidationError,
-    validate_balanced_design,
     validate_group_count,
-    validate_levene_inputs,
     ensure_equal_group_sizes,
     validate_minimum_n,
     validate_paired_data,
-    validate_residuals_for_shapiro,
     validate_test_design,
     MIN_N_HARD,
-    MIN_N_SMALL,
-)
-from analysis.nonparametricanovas import (
-    posthoc_marginaleffects,
 )
 
 # LOW-1: module-level logger (use logging.getLogger in each method for context)
@@ -131,12 +122,12 @@ class StatisticalTester:
         from statistical_testing.validators import MIN_N_HARD
         descriptives = standardized.get("descriptive", {})
         if isinstance(descriptives, dict):
-            for group, stats in descriptives.items():
-                n = stats.get("n", 0) if isinstance(stats, dict) else 0
+            for group, grp_stats in descriptives.items():
+                n = grp_stats.get("n", 0) if isinstance(grp_stats, dict) else 0
                 if 0 < n < MIN_N_HARD:
                     standardized.setdefault("warnings", []).append(
                         f"CRITICAL: N={n} for group '{group}' is below minimum (MIN_N_HARD={MIN_N_HARD}). "
-                        f"Results have near-zero statistical power and should not be interpreted."
+                        "Results have near-zero statistical power and should not be interpreted."
                     )
 
         return standardized
@@ -438,7 +429,7 @@ class StatisticalTester:
             effect_size = abs(cohen_d)
             power_analysis = TTestPower()
             results["power"] = float(power_analysis.power(effect_size=effect_size, nobs=n, alpha=alpha))
-        except Exception as e:
+        except Exception:
             results["power"] = None
         results["test"] = test_name
         results["statistic"] = statistic
@@ -497,7 +488,7 @@ class StatisticalTester:
             effect_size_corrected = r * 0.955
             power_analysis = TTestPower()
             results["power"] = float(power_analysis.power(effect_size=effect_size_corrected, nobs=n_eff, alpha=alpha))
-        except Exception as e:
+        except Exception:
             results["power"] = None
         results["test"] = test_name
         results["statistic"] = statistic
@@ -571,7 +562,7 @@ class StatisticalTester:
                 results["power"] = float(power_analysis.power(effect_size=effect_size, nobs1=n1, ratio=n2/n1, alpha=alpha))
             else:
                 results["power"] = None
-        except Exception as e:
+        except Exception:
             results["power"] = None
         results["test"] = test_name
         results["statistic"] = statistic
@@ -609,7 +600,7 @@ class StatisticalTester:
             effect_size_corrected = r * 0.955
             power_analysis = TTestIndPower()
             results["power"] = float(power_analysis.power(effect_size=effect_size_corrected, nobs1=n1, ratio=n2/n1, alpha=alpha))
-        except Exception as e:
+        except Exception:
             results["power"] = None
         results["test"] = test_name
         results["statistic"] = statistic
@@ -765,7 +756,7 @@ class StatisticalTester:
                 _p_str = f"{results['p_value']:.4f}"
                 results["posthoc_skipped"] = True
                 results["posthoc_skip_reason"] = (
-                    f"Post-hoc not performed: main test was not significant "
+                    "Post-hoc not performed: main test was not significant "
                     f"(p\u202f=\u202f{_p_str})"
                 )
 
@@ -881,7 +872,7 @@ class StatisticalTester:
             results["p_value"] = p_value
             results["statistic"] = F_value
             results["effect_size"] = cohens_f
-            results["effect_size_type"] = "Cohen's f"
+            results["effect_size_type"] = "Cohen's "
             results["df1"] = df1
             results["df2"] = df2
             results["anova_table"] = welch_results
@@ -1322,7 +1313,7 @@ class StatisticalTester:
         
         # Create a dictionary with the required parameters
         test_params = {}
-        if 'df' in valid_params: test_params['df'] = df
+        if 'd' in valid_params: test_params['d'] = df
         if 'dv' in valid_params: test_params['dv'] = dv
         if 'subject' in valid_params and subject is not None: test_params['subject'] = subject
         if 'between' in valid_params and between is not None: test_params['between'] = between
@@ -1577,7 +1568,7 @@ class StatisticalTester:
                             between=between_factor,
                             within=rm_factor,
                             subject=subject,
-                            padjust="holm"  # Changed from "bonf" to "holm"
+                            padjust="holm"  # Changed from "bon" to "holm"
                         )
                         results["posthoc_test"] = "Pairwise t-tests for interaction (Holm-Bonferroni)"  # Changed from "Bonferroni" to "Holm-Bonferroni"
                         for _, r in ph.iterrows():
@@ -1650,9 +1641,6 @@ class StatisticalTester:
                             from itertools import combinations
                             within_groups = df[rm_factor].unique()
                             results["within_posthoc_test"] = "Paired t-tests (Holm-Bonferroni)"  # Changed from "Bonferroni" to "Holm-Bonferroni"
-                            
-                            # Create comparison groups
-                            n_comparisons = len(list(combinations(within_groups, 2)))
                             
                             # Perform paired t-tests and store p-values for Holm-Bonferroni correction
                             p_values = []
@@ -1735,8 +1723,8 @@ class StatisticalTester:
                         "type": "within" if orig_factor == rm_factor else "between",
                         "F": float(row["F"]),
                         "p_value": float(row["PR(>F)"]),
-                        "df1": int(row["df"]),
-                        "df2": int(anova.loc["Residual", "df"]),
+                        "df1": int(row["d"]),
+                        "df2": int(anova.loc["Residual", "d"]),
                         "effect_size": None,
                         "effect_size_type": None
                     })
@@ -1747,8 +1735,8 @@ class StatisticalTester:
                     "factors": [rm_factor, between_factor],
                     "F": float(row["F"]),
                     "p_value": float(row["PR(>F)"]),
-                    "df1": int(row["df"]),
-                    "df2": int(anova.loc["Residual", "df"]),
+                    "df1": int(row["d"]),
+                    "df2": int(anova.loc["Residual", "d"]),
                     "effect_size": None,
                     "effect_size_type": None
                 }
@@ -1861,13 +1849,24 @@ class StatisticalTester:
             if n_total > 0 and (n_excluded / n_total) > 0.05:
                 # E2-LMM Redirect
                 msg_redirect = (
-                    f"Methodological Note: RM-ANOVA was automatically redirected to a Linear Mixed Model (LMM) "
+                    "Methodological Note: RM-ANOVA was automatically redirected to a Linear Mixed Model (LMM) "
                     f"because > 5% of subjects ({n_excluded} out of {n_total}) had missing data. "
-                    f"LMMs handle unbalanced longitudinal data without listwise deletion."
+                    "LMMs handle unbalanced longitudinal data without listwise deletion."
                 )
                 msg_posthoc = "LMM redirect: pairwise contrasts not automatically computed. Interpret fixed effects table directly or re-run with complete data for post-hoc tests."
                 
                 logger.info(msg_redirect)
+                # Trace: LMM-Redirect (2b)
+                _lmm_trace = results.get("methodology_trace") or MethodologyTrace()
+                _lmm_pct = f"{n_excluded / n_total * 100:.1f}%" if n_total > 0 else "N/A"
+                _lmm_trace.add(3, "LMM Redirect",
+                               f"RM-ANOVA redirected to LMM ({n_excluded}/{n_total} subjects incomplete, {_lmm_pct}).",
+                               detail=("Repeated Measures ANOVA replaced by Linear Mixed Model (REML) because "
+                                       f"{n_excluded} of {n_total} subjects ({_lmm_pct}) had incomplete data. "
+                                       "LMMs handle unbalanced longitudinal data without listwise deletion "
+                                       "and are valid under Missing At Random (MAR) assumptions. "
+                                       "Pairwise contrasts not auto-computed — interpret fixed effects table."))
+                results["methodology_trace"] = _lmm_trace
                 try:
                     from analysis.clinical_models import LinearMixedModel
                     lmm = LinearMixedModel().fit(df, dv=dv, fixed_effects=within, random_intercept=subject)
@@ -1877,8 +1876,9 @@ class StatisticalTester:
                         lmm_results["analysis_note"] = msg_redirect
                     else:
                         lmm_results["analysis_note"] = msg_redirect + "\n\n" + lmm_results["analysis_note"]
-                        
+
                     lmm_results.setdefault("warnings", []).extend([msg_redirect, msg_posthoc])
+                    lmm_results["methodology_trace"] = _lmm_trace
                     return StatisticalTester._standardize_results(lmm_results)
                 except Exception as e:
                     warn_msg = f"RM-ANOVA LMM redirect failed ({e}). Falling back to listwise deletion."
@@ -1888,11 +1888,21 @@ class StatisticalTester:
             if n_excluded > 0 and (n_total == 0 or (n_excluded / n_total) <= 0.05):
                 warn_msg = (
                     f"RM-ANOVA: {n_excluded} of {n_total} subjects excluded due to missing "
-                    f"observations (listwise deletion). Results reflect only complete cases. "
-                    f"Consider imputation if missingness is not random (MAR/MNAR)."
+                    "observations (listwise deletion). Results reflect only complete cases. "
+                    "Consider imputation if missingness is not random (MAR/MNAR)."
                 )
                 results.setdefault("warnings", []).append(warn_msg)
                 logger.warning(warn_msg)
+                # Trace: Listwise Deletion (2c)
+                _ld_trace = results.get("methodology_trace") or MethodologyTrace()
+                _ld_pct = f"{n_excluded / n_total * 100:.1f}%" if n_total > 0 else "N/A"
+                _ld_trace.add(3, "Missing Data",
+                              f"Listwise deletion: {n_excluded} of {n_total} subject(s) excluded ({_ld_pct}).",
+                              detail=(f"{n_excluded} of {n_total} subjects ({_ld_pct}) excluded from RM-ANOVA "
+                                      "due to missing data at ≥1 measurement occasion. Results reflect only "
+                                      f"{n_total - n_excluded} subjects with complete data. Consider imputation "
+                                      "if missingness is not completely at random (MCAR)."))
+                results["methodology_trace"] = _ld_trace
 
         try:
             pg = get_pingouin_module()
@@ -1949,7 +1959,26 @@ class StatisticalTester:
                     # E1: write the correction-selected p-value back to the canonical field
                     if sphericity_results.get("final_p_value") is not None:
                         results["p_value"] = sphericity_results["final_p_value"]
-                                
+
+                    # Trace: Sphericity + Epsilon-Korrektur (2a)
+                    _trace = results.get("methodology_trace") or MethodologyTrace()
+                    _spher_met = sphericity_results.get("sphericity_assumed", True)
+                    _mauchly_p = sphericity_results.get("mauchly_p")
+                    _epsilon = sphericity_results.get("epsilon")
+                    _correction = sphericity_results.get("correction_applied", "none")
+                    _mp_str = f"p = {_mauchly_p:.3f}" if isinstance(_mauchly_p, (float, int)) else "p = N/A"
+                    if _spher_met:
+                        _trace.add(3, "Sphericity",
+                                   f"Mauchly's test: sphericity assumed ({_mp_str}). No correction applied.",
+                                   detail=_mp_str)
+                    else:
+                        _corr_name = "Greenhouse-Geisser" if "GG" in str(_correction).upper() else "Huynh-Feldt"
+                        _eps_str = f"ε = {_epsilon:.3f}" if isinstance(_epsilon, (float, int)) else "ε = N/A"
+                        _trace.add(3, "Sphericity Correction",
+                                   f"Mauchly's test violated ({_mp_str}) — {_corr_name} correction applied ({_eps_str}).",
+                                   detail=f"{_mp_str}, {_eps_str}, correction = {_corr_name}")
+                    results["methodology_trace"] = _trace
+
                     # Automatic post-hoc tests for significant main effect
                     if results["p_value"] is not None and results["p_value"] < alpha:
                         try:
@@ -2049,7 +2078,7 @@ class StatisticalTester:
                     "type": "within",
                     "F": float(row["F"]),
                     "p_value": float(row["PR(>F)"]),
-                    "df1": int(row["df"]),
+                    "df1": int(row["d"]),
                     "df2": int(anova.loc['Residual', 'df']),
                     "effect_size": None,
                     "effect_size_type": None
@@ -2057,7 +2086,7 @@ class StatisticalTester:
                 results.update({
                     "p_value": float(row["PR(>F)"]),
                     "statistic": float(row["F"]),
-                    "df1": int(row["df"]),
+                    "df1": int(row["d"]),
                     "df2": int(anova.loc['Residual', 'df']),
                     "test": f"Repeated Measures ANOVA ({factor}) [statsmodels]"
                 })
@@ -2268,7 +2297,6 @@ class StatisticalTester:
                         results["effect_size"] = results["factors"][0]["effect_size"]
 
                 if actual_interaction_label and results["p_value"] is not None and results["p_value"] < alpha:
-                    pingouin_success = False
                     try:
                         posthoc_df = pg.pairwise_tests(data=df, dv=dv, between=between, padjust='holm', subject=None)
                         if not posthoc_df.empty:
@@ -2310,7 +2338,6 @@ class StatisticalTester:
                             if temp_comparisons:
                                 results["posthoc_test"] = "Tukey HSD Test (Pingouin)"
                                 results["pairwise_comparisons"].extend(temp_comparisons)
-                                pingouin_success = True
                         else:
                             results.setdefault("warnings", []).append("Pingouin pairwise_tests for interaction returned empty.")
                     except Exception as e_ph:
@@ -2340,7 +2367,7 @@ class StatisticalTester:
                 if "Residual" not in aov.index:
                     results["error"] = "Residuals not found in statsmodels ANOVA output."
                     return StatisticalTester._standardize_results(results)
-                residual_df = int(aov.loc["Residual", "df"])
+                residual_df = int(aov.loc["Residual", "d"])
 
                 # Main effects
                 for factor in [factor_a, factor_b]:
@@ -2355,7 +2382,7 @@ class StatisticalTester:
                         "type": "between",
                         "F": float(row["F"]),
                         "p_value": float(row["PR(>F)"]),
-                        "df1": int(row["df"]),
+                        "df1": int(row["d"]),
                         "df2": residual_df,
                         "effect_size": None,
                         "effect_size_type": None
@@ -2371,7 +2398,7 @@ class StatisticalTester:
                         "factors": [factor_a, factor_b],
                         "F": float(row["F"]),
                         "p_value": float(row["PR(>F)"]),
-                        "df1": int(row["df"]),
+                        "df1": int(row["d"]),
                         "df2": residual_df,
                         "effect_size": None,
                         "effect_size_type": None
@@ -2379,7 +2406,7 @@ class StatisticalTester:
                     results["interactions"].append(interaction_result)
                     results["p_value"] = float(row["PR(>F)"])
                     results["statistic"] = float(row["F"])
-                    results["df1"] = int(row["df"])
+                    results["df1"] = int(row["d"])
                     results["df2"] = residual_df
                     results["effect_size"] = None
                     results["test"] += " [statsmodels]"
@@ -2392,7 +2419,6 @@ class StatisticalTester:
                         results["df2"] = results["factors"][0]["df2"]
 
                 if (results["p_value"] is not None and results["p_value"] < alpha) or any(factor["p_value"] < alpha for factor in results["factors"]):
-                    statsmodels_success = False
                     try:
                         factor_a, factor_b = between[0], between[1]
                         df['interaction_group'] = df[factor_a].astype(str) + "_" + df[factor_b].astype(str)
@@ -2436,7 +2462,6 @@ class StatisticalTester:
                         if temp_comparisons:
                             results["posthoc_test"] = "Tukey HSD for interaction effect"
                             results["pairwise_comparisons"].extend(temp_comparisons)
-                            statsmodels_success = True
                     except Exception as e_ph:
                         results.setdefault("warnings", []).append(f"Post-hoc Tests failed: {str(e_ph)}")
 
@@ -2510,6 +2535,20 @@ class StatisticalTester:
             msg = "Methodological Warning: The interaction term is significant. Therefore, the main effects cannot be interpreted independently. Focus on the interaction effect and pairwise comparisons between individual cells."
             if msg not in results.setdefault("warnings", []):
                 results["warnings"].insert(0, msg) # Insert at beginning to emphasize methodological importance
+            # Trace: Interaktionsterm-Warnung (2d)
+            _inter = results["interactions"][0]
+            _inter_p = _inter.get("p_value")
+            _inter_factors = _inter.get("factors", between if between else ["A", "B"])
+            _fa = _inter_factors[0] if len(_inter_factors) > 0 else "Factor A"
+            _fb = _inter_factors[1] if len(_inter_factors) > 1 else "Factor B"
+            _ip_str = f"p = {_inter_p:.4f}" if isinstance(_inter_p, (float, int)) else "p = N/A"
+            _int_trace = results.get("methodology_trace") or MethodologyTrace()
+            _int_trace.add(4, "Interaction Effect",
+                           f"Significant interaction: {_fa} × {_fb} ({_ip_str}) — main effects not independently interpretable.",
+                           detail=(f"The interaction term {_fa} × {_fb} was statistically significant ({_ip_str}). "
+                                   f"Main effects of {_fa} and {_fb} cannot be interpreted in isolation. "
+                                   "A simple effects analysis is required for valid interpretation."))
+            results["methodology_trace"] = _int_trace
 
         return StatisticalTester._standardize_results(results)
 
@@ -2572,7 +2611,7 @@ class StatisticalTester:
                     "test_name": "Mauchly's Test for Sphericity",
                     "W": None,
                     "chi_square": None,
-                    "df": None,
+                    "d": None,
                     "p_value": None,
                     "sphericity_assumed": True,
                     "note": "Sphericity assumption is always met with 2 levels",
@@ -2603,7 +2642,7 @@ class StatisticalTester:
                         "W": float(W) if W is not None else None,
                         "p_value": float(pval) if pval is not None else None,
                         "sphericity_assumed": bool(spher) if spher is not None else None,
-                        "df": int(dof) if dof is not None else (int((k * (k - 1)) / 2 - 1) if k > 2 else None),
+                        "d": int(dof) if dof is not None else (int((k * (k - 1)) / 2 - 1) if k > 2 else None),
                         "interpretation": StatisticalTester._interpret_sphericity_test(pval, spher) if pval is not None else "Test failed"
                     }
                     sphericity_violated = not bool(spher) if spher is not None else True
@@ -2614,14 +2653,14 @@ class StatisticalTester:
                         "W": float(W) if W is not None else None,
                         "p_value": float(pval) if pval is not None else None,
                         "sphericity_assumed": bool(spher) if spher is not None else None,
-                        "df": int(dof) if dof is not None else (int((k * (k - 1)) / 2 - 1) if k > 2 else None),
+                        "d": int(dof) if dof is not None else (int((k * (k - 1)) / 2 - 1) if k > 2 else None),
                         "interpretation": StatisticalTester._interpret_sphericity_test(pval, spher) if pval is not None else "Test failed"
                     }
                     sphericity_violated = not bool(spher) if spher is not None else True
                 else:
                     raise ValueError("Unexpected sphericity test output format")
                     
-            except Exception as e:
+            except Exception:
                 # Fallback: Extract from ANOVA table if available
                 mauchly_results = StatisticalTester._extract_sphericity_from_anova_table(aov, k)
                 sphericity_violated = not mauchly_results.get("sphericity_assumed", True)
@@ -2703,7 +2742,7 @@ class StatisticalTester:
                     "W": float(first_row.get('W-spher', np.nan)) if 'W-spher' in aov.columns else None,
                     "p_value": float(first_row.get('p-spher', np.nan)) if 'p-spher' in aov.columns else None,
                     "sphericity_assumed": bool(first_row.get('sphericity', True)) if 'sphericity' in aov.columns else None,
-                    "df": int((k * (k - 1)) / 2 - 1) if k > 2 else None,
+                    "d": int((k * (k - 1)) / 2 - 1) if k > 2 else None,
                     "note": "Extracted from ANOVA table",
                     "interpretation": "See p-value for significance"
                 }
@@ -2713,7 +2752,7 @@ class StatisticalTester:
                     "W": None,
                     "p_value": None,
                     "sphericity_assumed": True,  # Conservative assumption
-                    "df": int((k * (k - 1)) / 2 - 1) if k > 2 else None,
+                    "d": int((k * (k - 1)) / 2 - 1) if k > 2 else None,
                     "note": "No sphericity information in ANOVA table",
                     "interpretation": "Assuming sphericity (could not test)"
                 }
