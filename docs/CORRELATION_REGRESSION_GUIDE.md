@@ -1,58 +1,64 @@
----
-title: "Correlation & Regression Guide"
-author: "BioMedStatX"
-lang: en
-geometry: "margin=1in"
-mainfont: "DejaVu Serif"
-fontsize: 11pt
----
+
 
 # Correlation & Regression Guide
 
-This guide explains how to configure and interpret **Correlation Analysis**, **Linear Regression (OLS)**, and the **Exploratory Correlation Matrix** in BioMedStatX. These analyses are triggered automatically by the Auto-pilot when a continuous variable is placed in the Factor 1 bucket.
-
-> Example Excel template: `docs/StatisticalAnalyzer_Excel_Template.xlsx`
+This guide covers Correlation, Linear Regression (OLS), ANCOVA, Linear Mixed Models, Logistic Regression, and the Exploratory Correlation Matrix. All analyses are selected based on the Smart Mapping configuration — not by manual test selection.
 
 ---
 
-## Overview
+## Which Analysis Runs?
 
-| Analysis | Triggered when |
+| Analysis | Trigger conditions |
 |---|---|
-| **Correlation (Pearson/Spearman)** | Factor 1 = continuous, no Covariates |
-| **Linear Regression (OLS)** | Factor 1 = continuous, Covariates bucket populated |
-| **Exploratory Matrix** | Dedicated button in Auto-pilot panel |
+| **Correlation (Pearson/Spearman)** | Factor 1 continuous; Covariates empty; Subject ID empty |
+| **Simple Linear Regression** | Factor 1 continuous; Covariates empty; Regression toggle active |
+| **Multiple Regression (OLS)** | Factor 1 continuous; Covariates populated |
+| **ANCOVA** | Factor 1 categorical; Covariates populated |
+| **Linear Mixed Model (LMM)** | Factor 1 continuous; Subject ID assigned |
+| **Logistic Regression** | Dependent Variable has exactly 2 distinct values |
+| **Exploratory Correlation Matrix** | Accessed via **Analysis → Exploratory Correlation Matrix** |
 
-**What makes a variable "continuous"?** BioMedStatX classifies a numeric column as continuous when it has more than 10 unique values. Columns with 10 or fewer unique values are treated as categorical (grouping factors).
-
----
-
-## 1. When Pearson vs. Spearman?
-
-BioMedStatX selects the correlation method automatically:
-
-1. Shapiro-Wilk normality test is run on both variables (using the valid pairs after pairwise deletion).
-2. If **both** pass normality (p > 0.05) → **Pearson r** (parametric, assumes bivariate normality).
-3. If **at least one** fails normality → **Spearman ρ** (rank-based, assumption-free).
-
-You can override this in the Exploratory Matrix dialog by selecting `Pearson` or `Spearman` explicitly.
-
-### When to override auto-selection
-
-- Small n (< 30): Shapiro-Wilk has low power. Prefer Spearman as a conservative choice.
-- Known non-linear monotonic relationship: Use Spearman regardless of normality.
-- Pre-registered analysis: Specify the method in advance and override auto-selection.
+**Continuous vs. categorical:** A numeric column is classified as continuous when it contains more than 10 unique values. Ten or fewer unique values → categorical. This threshold drives test selection silently — check the mapping status line if you see an unexpected design.
 
 ---
 
-## 2. Bucket Configuration for Correlation
+## 1. Correlation Analysis
 
-```
-Dependent Variable:  Outcome column (numeric, e.g., NK cell count post-OP)
-Factor 1:            Continuous predictor (e.g., miRNA-21 expression)
-Covariates:          (empty — adding anything here triggers Regression instead)
-Filter (optional):   Restrict to a subgroup (e.g., OP-Group = 1)
-```
+### Pearson vs. Spearman — the decision
+
+BioMedStatX runs Shapiro–Wilk on both variables using valid pairs after pairwise deletion:
+
+- Both pass ($p > 0.05$): **Pearson $r$** — parametric, assumes bivariate normality.
+- At least one fails: **Spearman $\rho$** — rank-based, no distributional assumption.
+
+Pearson $r$ is defined as:
+
+$$r = \frac{\sum_{i=1}^{n}(x_i - \bar{x})(y_i - \bar{y})}{\sqrt{\sum_{i=1}^{n}(x_i - \bar{x})^2 \sum_{i=1}^{n}(y_i - \bar{y})^2}}$$
+
+With $n < 30$, Shapiro–Wilk has low power — small samples rarely flag non-normality even when it is present. The conservative choice in that situation is Spearman $\rho$, and we recommend defaulting to it for small clinical datasets.
+
+You can override the auto-selection in the Exploratory Correlation Matrix dialog. The main analysis respects the auto-selection unless the Regression toggle is used (see below).
+
+### Smart Mapping configuration
+
+| Bucket | Assign |
+|---|---|
+| **Dependent Variable** | Numeric outcome (e.g. NK cell count) |
+| **Factor 1** | Continuous predictor (e.g. miRNA-21 expression) |
+| **Covariates** | Leave empty — any entry here triggers OLS Regression |
+| **Subject ID** | Leave empty — any entry here triggers LMM |
+| **Filter** | Optional subgroup restriction |
+
+### Correlation → Regression toggle
+
+When Factor 1 is continuous and Covariates is empty, a checkbox appears:
+
+**"Analyse as Linear Regression (Y = a + bX)"**
+
+Unchecked (default) → Correlation. Checked → Simple OLS Regression with one predictor. Use the toggle when you want:
+- The slope coefficient $\hat{\beta}_1$ and its 95% CI
+- The full residual diagnostic battery (Shapiro–Wilk, Breusch–Pagan, Ramsey RESET)
+- A scatter plot with the fitted regression line
 
 ### Data structure example
 
@@ -61,49 +67,68 @@ PatientID | miRNA_21 | NK_cells_post | OP_Group
 P001      | 2.34     | 1450          | 1
 P002      | 1.87     | 1820          | 1
 P003      | 3.12     | 1100          | 1
-...
 ```
 
-Drop `miRNA_21` → Factor 1, `NK_cells_post` → Dependent Variable.
-Optionally drop `OP_Group` → Filter, select value `1`.
+Assign `miRNA_21` → Factor 1; `NK_cells_post` → Dependent Variable. To restrict to On-Pump patients: assign `OP_Group` → Filter and select `1`.
 
-### Output (Correlation sheet in Excel)
+### HTML report output
 
-| Column | Description |
+| Statistic | Description |
 |---|---|
-| r / ρ | Correlation coefficient (−1 to +1) |
-| p-value | Two-tailed significance |
-| CI_lower / CI_upper | 95% confidence interval (Fisher z-transform) |
-| n | Valid pairs after pairwise deletion |
+| $r$ or $\rho$ | Correlation coefficient, range $[-1, 1]$ |
+| $p$ | Two-tailed; based on $t = r\sqrt{(n-2)/(1-r^2)}$ on $n-2$ degrees of freedom |
+| 95% CI | Fisher $z$-transformation: $z = \frac{1}{2}\ln\frac{1+r}{1-r}$; then back-transformed |
+| $n$ | Valid pairs after pairwise deletion |
 | Method | Pearson or Spearman |
-| Interpretation | Direction + strength label |
+| Interpretation | Strength label |
 
-**Interpreting r / ρ:**
+**Strength conventions** (Cohen, 1988):
 
-| |r| | Strength |
+| $|r|$ | Label |
 |---|---|
-| 0.00 – 0.19 | Negligible |
-| 0.20 – 0.39 | Weak |
-| 0.40 – 0.59 | Moderate |
-| 0.60 – 0.79 | Strong |
-| 0.80 – 1.00 | Very strong |
+| $0.00$–$0.19$ | Negligible |
+| $0.20$–$0.39$ | Weak |
+| $0.40$–$0.59$ | Moderate |
+| $0.60$–$0.79$ | Strong |
+| $0.80$–$1.00$ | Very strong |
 
 ---
 
-## 3. Bucket Configuration for Linear Regression
+## 2. Linear Regression (OLS)
 
-Adding variables to the **Covariates** bucket switches the analysis from Correlation to OLS Regression.
+The full OLS model:
 
-```
-Dependent Variable:  Outcome (e.g., NK cell count post-OP)
-Factor 1:            Primary predictor (e.g., Pump time [min])
-Covariates:          Confounders to control (e.g., Age, BMI, Baseline NK cells)
-Filter (optional):   Subgroup restriction
-```
+$$Y_i = \beta_0 + \beta_1 X_{1i} + \beta_2 X_{2i} + \ldots + \beta_k X_{ki} + \varepsilon_i, \quad \varepsilon_i \overset{iid}{\sim} \mathcal{N}(0, \sigma^2)$$
 
-**Simple regression** (Factor 1 only, no covariates): Set only Factor 1 — but note that the system will then choose Correlation, not Regression. To force Simple Regression, add at least one covariate.
+**Simple regression** (one predictor): use the Regression toggle with Covariates empty.
+**Multiple regression** (Factor 1 + covariates): all covariates enter the model simultaneously. Stepwise selection is not performed — all predictors are included.
 
-**Multiple regression** (Factor 1 + covariates): All covariates enter the OLS model simultaneously as additional predictors.
+### Smart Mapping configuration
+
+| Bucket | Assign |
+|---|---|
+| **Dependent Variable** | Numeric outcome |
+| **Factor 1** | Primary continuous predictor |
+| **Covariates** | Additional predictors (continuous) |
+| **Filter** | Optional subgroup restriction |
+
+### Variable transformations
+
+Available for X (Factor 1) and Y (Dependent Variable) in Regression mode:
+
+| Transform | Formula | Use case |
+|---|---|---|
+| **log₁₀** | $X' = \log_{10}(X)$ | Right-skewed positive variables |
+| **sqrt** | $X' = \sqrt{X}$ | Count data; moderate right skew |
+| **Box–Cox** | $X'(\lambda) = \frac{X^\lambda - 1}{\lambda}$, $\lambda \neq 0$ | Automatic $\lambda$ optimisation via profile log-likelihood |
+
+Transformations change the interpretation of $\hat{\beta}$. The HTML report states the correct interpretation when transforms are active. A few examples:
+
+- log₁₀(Y), untransformed X: $\hat{\beta}_1 = 0.3$ means a one-unit increase in X multiplies Y by $10^{0.3} \approx 2.0$.
+- log₁₀(X), untransformed Y: $\hat{\beta}_1 = 5.2$ means doubling X increases Y by $5.2 \cdot \log_{10}(2) \approx 1.57$ units.
+- log₁₀(X) and log₁₀(Y): $\hat{\beta}_1$ is the elasticity — a 1% increase in X corresponds to a $\hat{\beta}_1 \%$ change in Y.
+
+The warning label next to the transformation dropdowns activates when any transform is selected.
 
 ### Data structure example
 
@@ -111,175 +136,217 @@ Filter (optional):   Subgroup restriction
 PatientID | Pump_time | Age | Baseline_NK | NK_cells_post | OP_Group
 P001      | 87        | 62  | 1600        | 1450          | 1
 P002      | 120       | 71  | 1400        | 1100          | 1
-...
 ```
 
-Drop `Pump_time` → Factor 1, `NK_cells_post` → Dependent Variable,
-`Age` and `Baseline_NK` → Covariates, `OP_Group` → Filter (value = 1).
+Assign `Pump_time` → Factor 1; `NK_cells_post` → Dependent Variable; `Age`, `Baseline_NK` → Covariates; `OP_Group` → Filter (value = 1).
 
-### Output (LinearRegression sheet in Excel)
+### HTML report output
 
-**Model Summary:**
+**Model summary:**
 
-| Statistic | Description |
+| Statistic | Formula / Description |
 |---|---|
-| R² | Proportion of variance explained |
-| R² adjusted | R² penalised for number of predictors |
-| F-statistic | Overall model significance |
-| p(F) | p-value for F-test |
-| AIC / BIC | Information criteria (lower = better fit, for model comparison) |
-| n | Observations after listwise deletion |
+| $R^2$ | $1 - SS_{\text{res}} / SS_{\text{tot}}$ |
+| $R^2_{\text{adj}}$ | $1 - (1 - R^2)\frac{n-1}{n-k-1}$ — penalised for $k$ predictors |
+| $F(k, n-k-1)$ | Overall model test |
+| $p(F)$ | Two-tailed |
+| AIC | $2k - 2\ell$; BIC: $k\ln(n) - 2\ell$ — lower is better |
+| $n$ | Observations after listwise deletion |
 
-**Coefficient Table:**
+**Coefficient table:**
 
-| Column | Description |
+| Column | Content |
 |---|---|
-| Variable | Predictor name |
-| Beta | Unstandardised regression coefficient |
-| SE | Standard error of Beta |
-| t | t-statistic (Beta / SE) |
-| p | Two-tailed p-value |
-| CI_lower / CI_upper | 95% confidence interval for Beta |
+| $\hat{\beta}_j$ | Unstandardised coefficient |
+| SE$(\hat{\beta}_j)$ | Standard error |
+| $t$ | $\hat{\beta}_j / \text{SE}(\hat{\beta}_j)$, evaluated on $t_{n-k-1}$ |
+| $p$ | Two-tailed |
+| 95% CI | $\hat{\beta}_j \pm t_{0.975, n-k-1} \cdot \text{SE}(\hat{\beta}_j)$ |
 
-**Interpreting Beta:** A Beta of −2.5 for `Pump_time` means: for every additional minute of pump time, the outcome decreases by 2.5 units on average, holding all other predictors constant.
+**Interpreting $\hat{\beta}_j$:** In a model without transformations, $\hat{\beta}_j$ is the expected change in $Y$ per one-unit increase in $X_j$, holding all other predictors constant. A $\hat{\beta}_1 = -2.5$ for `Pump_time` means: each additional minute of pump time is associated with a 2.5-unit decrease in the outcome, adjusted for the other covariates in the model.
 
 ---
 
-## 4. Residual Diagnostics
+## 3. Residual Diagnostics
 
-BioMedStatX automatically runs three diagnostic tests after every regression:
+Three diagnostic tests run after every regression. All three must pass for standard inference to be fully reliable.
 
-### 4a. Shapiro-Wilk on residuals (Normality)
+### 3a. Shapiro–Wilk on residuals
 
-Checks whether the model residuals follow a normal distribution. OLS inference (t-tests on coefficients, confidence intervals) is most reliable when residuals are normal.
+Tests $H_0$: residuals $\hat{\varepsilon}_i$ are normally distributed. OLS coefficient tests and confidence intervals are exact only when residuals are normal.
 
-- **Pass (p > 0.05):** Residuals are consistent with normality. Standard CIs and p-values are valid.
-- **Fail (p ≤ 0.05):** Non-normal residuals. Consider: log-transforming the outcome, checking for outliers, or using bootstrapped CIs.
+- **Pass ($p > 0.05$):** Standard CIs and p-values are valid.
+- **Fail ($p \leq 0.05$):** Consider log-transforming the outcome, checking for outliers, or bootstrap-based CIs.
 
-### 4b. Breusch-Pagan Test (Homoscedasticity)
+With large $n$ ($> 100$), Shapiro–Wilk becomes sensitive to trivial departures. Inspect the Q–Q plot in the HTML report rather than relying on the p-value alone.
 
-Checks whether residual variance is constant across fitted values (homoscedasticity). Heteroscedasticity inflates or deflates standard errors.
+### 3b. Breusch–Pagan test
 
-- **Pass (p > 0.05):** Variance is homoscedastic. Standard errors are reliable.
-- **Fail (p ≤ 0.05):** Heteroscedasticity detected. Consider: robust (HC3) standard errors, or transforming the outcome.
+Tests $H_0$: residual variance is constant across fitted values (homoscedasticity). Regresses $\hat{\varepsilon}_i^2$ on the predictors.
 
-### 4c. Ramsey RESET Test (Linearity)
+- **Pass:** Standard errors are reliable.
+- **Fail:** Heteroscedasticity inflates or deflates SEs. Consider HC3 robust standard errors or a variance-stabilising outcome transformation.
 
-Checks whether the linear functional form is correctly specified, by testing whether higher-order terms (fitted²) improve the model.
+### 3c. Ramsey RESET test
 
-- **Pass (p > 0.05):** Linear model is well-specified.
-- **Fail (p ≤ 0.05):** Non-linearity detected. Consider: adding polynomial terms, log-transforming a predictor, or using a different model.
+Tests $H_0$: the linear functional form is correctly specified. Adds $\hat{Y}^2$ (and sometimes $\hat{Y}^3$) to the model and tests whether these terms are significant.
 
-### Overall diagnostic interpretation
+- **Pass:** Linear model well-specified.
+- **Fail:** Non-linearity present. Add polynomial terms, transform a predictor, or consider a non-linear model.
 
-| Normality | Homoscedasticity | Linearity | Recommendation |
+### Diagnostic summary
+
+| Normality | Homoscedasticity | Linearity | Action |
 |---|---|---|---|
-| Pass | Pass | Pass | Results reliable — interpret coefficients directly |
+| Pass | Pass | Pass | Interpret coefficients directly |
 | Fail | Pass | Pass | Check for outliers; consider outcome transformation |
-| Pass | Fail | Pass | Use robust standard errors (HC3) |
-| Pass | Pass | Fail | Add polynomial terms or transform predictors |
-| Multiple fail | — | — | Review model specification carefully before reporting |
+| Pass | Fail | Pass | Report HC3 robust SEs |
+| Pass | Pass | Fail | Add $X^2$ term or transform a predictor |
+| Multiple fail | — | — | Review model specification before reporting |
 
 ---
 
-## 5. Exploratory Correlation Matrix
+## 4. ANCOVA (Categorical Factor 1 + Covariates)
 
-The matrix dialog computes all pairwise correlations among a set of numeric variables and corrects for multiple testing.
+When Factor 1 is categorical and the Covariates bucket is populated, the analysis switches to ANCOVA. The covariate is included as a linear term; its effect is partialled out before testing group differences.
 
-### When to use
+For full ANCOVA documentation — adjusted means, slope homogeneity, Simple Slopes, Johnson–Neyman — see **Section 19 of [HowTo.md](./HowTo.md)**.
 
-- Hypothesis generation: find unexpected associations in a dataset before confirmatory testing.
-- Data quality checks: identify highly correlated predictors (multicollinearity) before regression.
-- Overview: quickly visualise the correlation structure of a multi-variable dataset.
+The key formula: the adjusted group mean for group $j$:
 
-### Options explained
+$$\hat{\mu}_j^* = \hat{\mu}_j - \hat{\beta}_{\text{cov}} \cdot (\bar{x}_{j,\text{cov}} - \bar{x}_{\text{cov}})$$
 
-**Pairwise vs. Listwise deletion:**
+This is what ANCOVA tests — not the raw means, but the means after accounting for covariate imbalance between groups.
 
-| Mode | Behaviour | When to prefer |
+---
+
+## 5. Linear Mixed Model (LMM)
+
+When Factor 1 is continuous and Subject ID is assigned, the application fits an LMM instead of Correlation. This is the right choice for longitudinal data where subjects are measured at multiple values of a continuous predictor (e.g. days, pump duration in minutes).
+
+The random-intercept model:
+
+$$Y_{ij} = \underbrace{(\beta_0 + u_{0i})}_{\text{subject-specific intercept}} + \beta_1 X_{ij} + \varepsilon_{ij}$$
+
+where $u_{0i} \sim \mathcal{N}(0, \sigma^2_u)$ and $\varepsilon_{ij} \sim \mathcal{N}(0, \sigma^2_\varepsilon)$ are assumed independent.
+
+A random-slope extension adds $u_{1i} \sim \mathcal{N}(0, \sigma^2_{u_1})$:
+
+$$Y_{ij} = (\beta_0 + u_{0i}) + (\beta_1 + u_{1i}) X_{ij} + \varepsilon_{ij}$$
+
+The random-slope model is accepted when the Likelihood Ratio Test confirms it fits better:
+
+$$\Lambda = -2\bigl(\ell_{\text{RI}} - \ell_{\text{RI+RS}}\bigr) \sim \chi^2(2)$$
+
+If $\Lambda > \chi^2_{0.95}(2) = 5.99$ (i.e. $p < 0.05$), the RI + RS model is used. The HTML report states which structure was chosen and the LRT result.
+
+### ICC
+
+The Intraclass Correlation Coefficient quantifies how much of the total variance is attributable to between-subject differences:
+
+$$\text{ICC} = \frac{\sigma^2_u}{\sigma^2_u + \sigma^2_\varepsilon}$$
+
+| ICC | Interpretation |
+|---|---|
+| $< 0.10$ | Negligible clustering — OLS regression may be adequate |
+| $0.10$–$0.30$ | Weak clustering |
+| $0.30$–$0.60$ | Moderate clustering — LMM recommended |
+| $> 0.60$ | Strong clustering — LMM indicated |
+
+For full LMM documentation — Smart Mapping configuration, fixed effects table, convergence — see **Section 20 of [HowTo.md](./HowTo.md)**.
+
+---
+
+## 6. Logistic Regression
+
+When the Dependent Variable contains exactly two distinct values, the application fits a logistic regression model:
+
+$$\log\frac{P(Y=1\mid\mathbf{X})}{1 - P(Y=1\mid\mathbf{X})} = \beta_0 + \sum_{j=1}^{k} \beta_j X_j$$
+
+The primary outputs are Odds Ratios $\text{OR}_j = \exp(\hat{\beta}_j)$ and the model discrimination via AUC.
+
+McFadden's pseudo-$R^2$ summarises overall fit:
+
+$$R^2_{\text{McFadden}} = 1 - \frac{\ell_{\text{full}}}{\ell_{\text{null}}}$$
+
+Values $> 0.10$ suggest a useful model; $> 0.20$ suggests good fit. Unlike OLS $R^2$, McFadden's $R^2$ rarely approaches 1.0 in practice and should not be interpreted on the same scale.
+
+When complete separation is detected (SE $> 5$ for any coefficient, or non-convergence), the application switches to Firth Penalized Likelihood. This regularisation method was developed specifically for small samples and rare events and produces finite, reliable estimates where standard ML fails.
+
+For full Logistic Regression documentation — AUC, Brier score, calibration slope, OR table — see **Section 21 of [HowTo.md](./HowTo.md)**.
+
+---
+
+## 7. Filter Bucket with Regression and Correlation
+
+The Filter restricts the dataset **before** any assumption check or model fitting. Shapiro–Wilk normality tests, reported $n$, and all model coefficients reflect only the filtered rows. The HTML report header identifies the active filter.
+
+**Typical subgroup workflow:**
+
+```
+Filter:              OP_Group = 1      → 93 On-Pump rows
+Factor 1:            Pump_time         → continuous → Regression
+Covariates:          Age, Baseline_NK  → multiple regression
+Dependent Variable:  NK_cells_post
+```
+
+With $n < 20$ and $k$ predictors, the model is underpowered and $R^2_{\text{adj}}$ will be unreliable. Check the filtered $n$ in the bucket label before running.
+
+---
+
+## 8. Common Errors
+
+| Error | Symptom | Fix |
 |---|---|---|
-| **Pairwise** | Each pair uses all rows where both columns are non-missing | More statistical power; n varies per pair |
-| **Listwise** | Only rows complete for all selected variables | Comparable n across all pairs; loses data |
+| Categorical column in Factor 1 | Application runs ANOVA instead of Correlation | Use a column with $> 10$ unique numeric values |
+| Covariates empty when Regression was expected | Application runs Correlation | Add at least one covariate, or activate the Regression toggle |
+| Filter reduces $n$ below 5 | Analysis aborts | Use a less restrictive filter value |
+| All-missing column in Covariates | Model fails | Remove the column or impute missing values first |
+| Factor 1 = same column as a Covariate | Perfect multicollinearity; model undefined | Remove the duplicate from one bucket |
+| Subject ID assigned with continuous Factor 1 | Triggers LMM instead of Correlation | Remove Subject ID if a simple correlation is the goal |
 
-For datasets with scattered missing values (e.g., multiple biomarkers with different assay failures), **Pairwise** is almost always preferred. The n-matrix in the output makes data loss transparent.
+---
+
+## 9. Exploratory Correlation Matrix
+
+**Analysis → Exploratory Correlation Matrix** computes all $\binom{m}{2}$ pairwise correlations for a user-selected set of $m$ numeric variables and corrects for multiple testing.
+
+### Use cases
+
+- Hypothesis generation: spot unexpected associations before confirmatory testing.
+- Multicollinearity screening: identify highly correlated predictors before entering them into a regression model.
+- Data quality: flag variables that are near-perfectly correlated (possible data entry errors or derived variables).
+
+### Options
+
+**Missing data handling:**
+
+| Mode | Behaviour | Prefer when |
+|---|---|---|
+| **Pairwise deletion** | Each pair uses all rows where both variables are non-missing; $n$ varies per pair | Scattered missing data across many variables |
+| **Listwise deletion** | Only rows complete for all selected variables; $n$ constant | Comparable sample sizes across all pairs are required |
 
 **Multiple testing correction:**
 
 | Method | Controls | When to use |
 |---|---|---|
-| **FDR (Benjamini-Hochberg)** | False Discovery Rate | Exploratory analyses — balanced power/specificity |
-| **Bonferroni** | Family-wise Error Rate | Few pre-specified tests — strict Type I error control |
+| **FDR (Benjamini–Hochberg)** | False Discovery Rate at level $q$ | Exploratory work — balances power and specificity |
+| **Bonferroni** | Family-wise Error Rate at $\alpha$ | Few pre-specified hypotheses |
 | **None** | — | Descriptive overview only; do not report as confirmatory |
 
-For an exploratory matrix with many variables (e.g., 20 × 20 = 190 pairs), always use FDR or Bonferroni. Uncorrected p-values will produce many false positives by chance.
+With $m = 20$ variables, 190 simultaneous tests run. The expected number of false positives under no-correction is $0.05 \times 190 = 9.5$. Use FDR or Bonferroni.
 
-**Stratification:**
+**Stratification:** Assigns a categorical column to split the matrix by group. Each group receives its own set of three output matrices. Useful for comparing correlation structures between subgroups.
 
-Dropping a categorical column into the Stratify-by field runs the full matrix separately per group. This doubles (or triples, etc.) the output sheets and makes group comparisons of the correlation structure possible.
+### HTML report output
 
-### Output sheets
-
-| Sheet | Content |
-|---|---|
-| `Corr_r` | Matrix of r / ρ values |
-| `Corr_p_corrected` | Matrix of corrected p-values |
-| `Corr_n` | Matrix of n (observations per pair) |
-
-For stratified analyses, each group gets its own set of three sheets.
-
----
-
-## 6. Filter Bucket in Combination with Regression / Correlation
-
-The Filter bucket restricts the DataFrame **before** any assumption check or model fitting. This means:
-
-- Shapiro-Wilk normality tests use only the filtered rows.
-- The reported n reflects the filtered subset.
-- The Excel sheet header notes the active filter (column + value).
-
-**Typical workflow for Q4-type analyses** (e.g., "Does pump time predict NK cells in On-Pump patients only?"):
-
-```
-Filter:              OP_Group = 1          → restricts to 93 On-Pump rows
-Factor 1:            Pump_time             → continuous → triggers Regression
-Covariates:          Age, Baseline_NK      → multiple regression
-Dependent Variable:  NK_cells_post
-```
-
-> **Warning:** Always check the filtered n in the bucket label. If n < 20 for a regression with multiple covariates, the model is underpowered and results should be interpreted cautiously.
-
----
-
-## 7. Common Configuration Errors
-
-| Error | Symptom | Fix |
-|---|---|---|
-| Categorical variable in Factor 1, expected continuous | Auto-pilot detects ANOVA instead of Correlation | Use a column with > 10 unique numeric values |
-| Covariates bucket empty but Regression expected | Auto-pilot selects Correlation | Add at least one covariate to trigger OLS |
-| Filter reduces n below 5 | Analysis aborts with warning | Choose a less restrictive filter value |
-| All-missing column in Covariates | Model fails | Remove the column or impute missing values |
-| Factor 1 = same column as Covariate | Perfect multicollinearity | Remove the duplicate from one of the buckets |
-
----
-
-## 8. Expected Excel Output Structure
-
-```
-WorkbookName_Results.xlsx
-├── Correlation          ← r, p, CI, n, method, interpretation
-├── LinearRegression     ← model summary + coefficient table + diagnostics
-│    (or)
-├── Corr_r               ← exploratory r-matrix
-├── Corr_p_corrected     ← FDR/Bonferroni corrected p-matrix
-└── Corr_n               ← n-matrix (per pair)
-```
-
-For stratified exploratory matrices, sheets are named `Corr_r_GroupA`, `Corr_r_GroupB`, etc.
+- Matrix of $r$ / $\rho$ values
+- Matrix of corrected $p$-values
+- Matrix of $n$ per pair — inspect this when pairwise deletion is active; large variation in $n$ across pairs can distort the correlation structure
 
 ---
 
 ## Related Documentation
 
-- [HowTo.md](./HowTo.md) — step-by-step GUI guide including Sections 15–18
-- [ADVANCED_ANOVA_GUIDE.md](./ADVANCED_ANOVA_GUIDE.md) — ANOVA configuration reference
-- [../validation/CLINICAL_MODELS_VALIDATION.md](../validation/CLINICAL_MODELS_VALIDATION.md) — numerical benchmarks for all model classes
+- [HowTo.md](./HowTo.md) — Sections 15–21 cover all analysis types with full configuration reference
+- [ADVANCED_ANOVA_GUIDE.md](./ADVANCED_ANOVA_GUIDE.md) — Factorial ANOVA: configuration, assumptions, sphericity, nonparametric fallbacks

@@ -34,3 +34,19 @@ htmlcov/
 # PyInstaller build log
 build_log.txt
 
+# Editor & personal tool configs (not relevant for end users or contributors)
+.cursorrules
+.vscode/
+.continue/
+pyrefly.toml
+
+# AI assistant instruction files (personal workflow)
+AGENTS.md
+CLAUDE.md
+
+# One-off dev scripts
+refactor_imports.py
+
+# Local example images / scratch assets
+decision_tree_example.png
+

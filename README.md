@@ -23,14 +23,13 @@ BioMedStatX is designed for experimental and biomedical research workflows:
   - Automatic selection of parametric vs. nonparametric tests for supported designs  
   - Guided post-hoc analyses when needed
 
-- **Rich output**  
+  - **Rich output**  
   - Publication-ready plots  
-  - Detailed Excel report with all intermediate steps, assumptions, and test decisions  
+  - Self-contained HTML report with all intermediate steps, assumptions, test decisions, and an interactive decision tree  
   - Clear documentation of which test was selected and why
 
 - **Excel/CSV support**  
-  - Direct import of `.xlsx` and `.csv` files  
-  - Provided template: [`StatisticalAnalyzer_Excel_Template.xlsx`](./docs/StatisticalAnalyzer_Excel_Template.xlsx)
+  - Direct import of `.xlsx` and `.csv` files
 
 - **Correlation & Regression**
   - Pearson / Spearman correlation with 95% confidence intervals (auto-selected via Shapiro-Wilk)
@@ -92,8 +91,7 @@ A detailed, step-by-step **User Guide with screenshots and numbered button refer
    Launch the main application (e.g., via your Python entry point or executable - see the User Guide for details).
 
 2. **Load your dataset**  
-   - Import an Excel or CSV file.  
-   - Optionally use the provided template: [`StatisticalAnalyzer_Excel_Template.xlsx`](./docs/StatisticalAnalyzer_Excel_Template.xlsx).
+   - Import an Excel or CSV file.
 
 3. **Define groups and variables**  
    - Select the sheet (for Excel files).  
@@ -117,7 +115,7 @@ A detailed, step-by-step **User Guide with screenshots and numbered button refer
 
 6. **Inspect the output**  
    - Review plots and statistical results.  
-   - Open the generated Excel report for a fully documented analysis pipeline.
+   - Open the generated **HTML report** for a fully documented analysis pipeline, including the interactive decision tree.
 
 For a complete, screenshot-based walkthrough, including which button to click at each step, see the [User Guide](./docs/HowTo.md).
 
