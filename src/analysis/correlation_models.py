@@ -69,30 +69,24 @@ def _fisher_z_ci(r, n, alpha=0.05):
         return (None, None)
 
 
-_VALID_TRANSFORMS = ('none', 'log10', 'sqrt', 'boxcox')
+_VALID_TRANSFORMS = ('none', 'log10', 'log10(x+1)', 'sqrt', 'boxcox')
 
 
 def _apply_transform(vals: np.ndarray, name: str):
     """Apply a named transformation to a 1-D float array.
 
-    Handles non-positive values automatically:
-    - log10 / sqrt: shifts so minimum becomes 1 / 0 respectively.
-    - boxcox:       shifts so minimum becomes 1 (scipy requirement).
+    Explicitly handles non-positive values by setting them to np.nan, 
+    ensuring they are dropped via listwise deletion later in the pipeline.
+    There is no automatic data shifting (c=0.0 always).
 
     Args:
         vals: 1-D numpy array of finite floats.
-        name: one of 'none', 'log10', 'sqrt', 'boxcox'.
+        name: one of 'none', 'log10', 'log10(x+1)', 'sqrt', 'boxcox'.
 
     Returns:
         Tuple (transformed_array, boxcox_lambda, shift).
-        ``boxcox_lambda`` is a float when name == 'boxcox' and optimisation
-        succeeded; ``None`` for all other transforms or on fallback.
-        ``shift`` is the additive constant c that was applied before the
-        transformation (0.0 when no shift was required).  Documenting c is
-        required for mathematical reproducibility: the full Box-Cox formula is
-        y = ((x + c)^λ - 1) / λ, and log10 / sqrt are similarly applied as
-        log10(x + c) / sqrt(x + c).  A reviewer cannot reconstruct the
-        transformed values from λ alone without knowing c.
+        ``boxcox_lambda`` is a float when name == 'boxcox'; None otherwise.
+        ``shift`` is always 0.0 (kept for API compatibility).
 
     Raises:
         ValueError: if name is not a recognised transformation.
@@ -105,30 +99,87 @@ def _apply_transform(vals: np.ndarray, name: str):
     if name == 'none':
         return vals.copy(), None, 0.0
 
-    v = vals.astype(float)
+    v = vals.astype(float).copy()
 
     if name == 'log10':
-        min_val = v.min()
-        shift = -min_val + 1.0 if min_val <= 0 else 0.0
-        return np.log10(v + shift), None, float(shift)
+        v[v <= 0] = np.nan
+        return np.log10(v), None, 0.0
+
+    if name == 'log10(x+1)':
+        v[v <= -1] = np.nan
+        # Use log1p for numerical stability as requested
+        return np.log1p(v) / np.log(10), None, 0.0
 
     if name == 'sqrt':
-        min_val = v.min()
-        shift = -min_val if min_val < 0 else 0.0
-        return np.sqrt(v + shift), None, float(shift)
+        v[v < 0] = np.nan
+        return np.sqrt(v), None, 0.0
 
     if name == 'boxcox':
         from scipy.stats import boxcox as _scipy_boxcox, boxcox_normmax
-        min_val = v.min()
-        shift = -min_val + 1.0 if min_val <= 0 else 0.0
-        v_shifted = v + shift
+        v[v <= 0] = np.nan
+        # Only optimize over valid (positive) values
+        valid_mask = ~np.isnan(v)
+        if not np.any(valid_mask):
+            return v, None, 0.0
+        
         try:
-            lam = boxcox_normmax(v_shifted)
-            transformed = _scipy_boxcox(v_shifted, lam)
-            return transformed, float(lam), float(shift)
+            lam = boxcox_normmax(v[valid_mask])
+            v[valid_mask] = _scipy_boxcox(v[valid_mask], lam)
+            return v, float(lam), 0.0
         except Exception:
             # Fall back to log (lam ≈ 0) when boxcox_normmax fails
-            return np.log(v_shifted), None, float(shift)
+            v[valid_mask] = np.log(v[valid_mask])
+            return v, None, 0.0
+
+def _optimize_boxcox_for_regression(y: np.ndarray, x_matrix: np.ndarray):
+    """Optimize Box-Cox lambda by maximizing the profile log-likelihood of OLS residuals.
+    
+    Uses the geometric mean scaling approach:
+    y_dot = geometric_mean(y)
+    y_scaled_lambda = ( (y / y_dot)^lambda - 1 ) / lambda
+    The optimal lambda minimizes the Residual Sum of Squares (RSS) of OLS(y_scaled_lambda ~ x_matrix).
+    
+    Args:
+        y: 1-D array of outcome values (must be > 0)
+        x_matrix: 2-D exogenous design matrix (including intercept)
+        
+    Returns:
+        optimal_lambda (float)
+    """
+    from scipy.optimize import minimize_scalar
+    from scipy.stats import gmean
+    from scipy.special import boxcox as scipy_boxcox
+    
+    valid_mask = (y > 0) & ~np.isnan(y)
+    if not np.any(valid_mask):
+        return 1.0 # Fallback if no valid data
+        
+    y_valid = y[valid_mask]
+    x_valid = x_matrix[valid_mask]
+    
+    y_dot = gmean(y_valid)
+    
+    def rss_for_lambda(lam):
+        # Scale Y and apply Box-Cox
+        y_scaled = y_valid / y_dot
+        y_trans = scipy_boxcox(y_scaled, lam)
+        
+        # Fit OLS (np.linalg.lstsq is fastest)
+        try:
+            beta, residuals, rank, s = np.linalg.lstsq(x_valid, y_trans, rcond=None)
+            if len(residuals) > 0:
+                return residuals[0]
+            else:
+                # If exact fit (residuals sum to 0), compute manually
+                y_hat = x_valid @ beta
+                return np.sum((y_trans - y_hat)**2)
+        except np.linalg.LinAlgError:
+            return np.inf
+            
+    res = minimize_scalar(rss_for_lambda, bounds=(-2.0, 2.0), method='bounded')
+    if res.success:
+        return res.x
+    return 1.0 # Fallback to no transformation (lambda=1)
 
 
 # ---------------------------------------------------------------------------
@@ -339,9 +390,8 @@ class CorrelationModel:
             if name == 'boxcox':
                 if lam is not None:
                     return f"boxcox(λ={lam:.4f}{shift_part})"
-                # Fallback: optimisation failed, log was used instead
                 return f"boxcox→log{shift_part}" if shift != 0.0 else "boxcox→log"
-            if name in ('log10', 'sqrt') and shift != 0.0:
+            if name in ('log10', 'sqrt', 'log10(x+1)') and shift != 0.0:
                 return f"{name}(c={shift:.4f})"
             return name
 
@@ -464,10 +514,46 @@ class SimpleLinearRegressionModel:
         # Apply pre-fit transformations (reuses the same helper as CorrelationModel).
         x_raw = pd.to_numeric(self._df[self._x], errors='coerce').to_numpy(dtype=float)
         y_raw = pd.to_numeric(self._df[self._y], errors='coerce').to_numpy(dtype=float)
-        self._x_raw_vals = x_raw
-        self._y_raw_vals = y_raw
+        self._x_raw_vals = x_raw.copy()
+        self._y_raw_vals = y_raw.copy()
+        
         x_vals, self._x_boxcox_lambda, self._x_transform_shift = _apply_transform(x_raw, self._x_transform)
-        y_vals, self._y_boxcox_lambda, self._y_transform_shift = _apply_transform(y_raw, self._y_transform)
+        
+        if self._y_transform == 'boxcox':
+            # Box-Cox on Y must optimize over the OLS residuals, not the marginal distribution.
+            # 1. Temporarily drop NaNs from X (and covariates) and Y.
+            temp_df = self._df.copy()
+            temp_df[self._x] = x_vals
+            temp_df = temp_df.dropna(subset=[self._x, self._y] + self._covariates)
+            
+            if len(temp_df) < 5:
+                # Not enough data, fallback
+                y_vals, self._y_boxcox_lambda, self._y_transform_shift = _apply_transform(y_raw, self._y_transform)
+            else:
+                # Construct design matrix (intercept + X + covariates)
+                import patsy
+                terms = [self._x] + self._covariates
+                formula = f"~ {' + '.join(terms)}"
+                x_matrix = patsy.dmatrix(formula, temp_df, return_type='dataframe').to_numpy()
+                y_clean = pd.to_numeric(temp_df[self._y], errors='coerce').to_numpy(dtype=float)
+                
+                # Check for negative values
+                y_raw_copy = y_raw.copy()
+                y_raw_copy[y_raw_copy <= 0] = np.nan
+                
+                # Optimize lambda
+                lam = _optimize_boxcox_for_regression(y_clean, x_matrix)
+                
+                # Apply transformation with the optimized lambda
+                from scipy.special import boxcox as scipy_boxcox
+                y_vals = y_raw_copy
+                valid_mask = ~np.isnan(y_vals)
+                y_vals[valid_mask] = scipy_boxcox(y_vals[valid_mask], lam)
+                
+                self._y_boxcox_lambda = float(lam)
+                self._y_transform_shift = 0.0
+        else:
+            y_vals, self._y_boxcox_lambda, self._y_transform_shift = _apply_transform(y_raw, self._y_transform)
 
         # Write transformed values back into the working DataFrame so statsmodels sees them.
         self._df = self._df.copy()
@@ -522,6 +608,19 @@ class SimpleLinearRegressionModel:
                 f"Log-log model — elasticity: a 1% increase in X is associated "
                 f"with approximately a β = {beta:.4f}% change in Y."
             )
+        if xt == 'log10(x+1)' and yt == 'none':
+            return (
+                f"Lin-log1p model (X log10(x+1)-transformed): a 10-fold increase in X "
+                f"is associated with a β = {beta:.4f} unit change in Y."
+            )
+        if xt == 'none' and yt == 'log10(x+1)':
+            factor = 10 ** beta
+            direction = "increase" if beta >= 0 else "decrease"
+            return (
+                f"Log1p-linear model (Y log10(x+1)-transformed): a 1-unit increase in X "
+                f"multiplies (Y+1) by 10^β ≈ {factor:.4f} "
+                f"(i.e., a {direction} by factor {factor:.4f})."
+            )
         if xt == 'none' and yt == 'sqrt':
             return (
                 f"Sqrt(Y)-linear model: a 1-unit increase in X changes √Y by β = {beta:.4f}; "
@@ -547,6 +646,7 @@ class SimpleLinearRegressionModel:
             return label
         _pretty = {
             'log10': 'log\u2081\u2080',
+            'log10(x+1)': 'log\u2081\u2080(x+1)',
             'log':   'ln',
             'sqrt':  '\u221a',
             'boxcox': 'BoxCox',

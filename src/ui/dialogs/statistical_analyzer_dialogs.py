@@ -225,20 +225,11 @@ class HelpHubDialog(QDialog):
         actions_layout = QHBoxLayout()
         actions_layout.addStretch()
 
-        self.copy_button = QPushButton("Copy Example Data")
-        self.copy_button.setObjectName("btnCopyExampleData")
-        self.copy_button.clicked.connect(self._copy_current_example_data)
-        actions_layout.addWidget(self.copy_button)
-
         close_button = QPushButton("Close")
         close_button.clicked.connect(self.close)
         actions_layout.addWidget(close_button)
 
         content_layout.addLayout(actions_layout)
-
-        self.copy_feedback = QLabel("")
-        self.copy_feedback.setObjectName("helpCopyFeedback")
-        content_layout.addWidget(self.copy_feedback)
 
         body_splitter.addWidget(content_panel)
         body_splitter.setStretchFactor(0, 0)
@@ -293,7 +284,6 @@ class HelpHubDialog(QDialog):
                 self._current_recipe = None
                 self.recipe_title.setText("No matching recipe")
                 self.recipe_browser.setHtml("<p>No recipe matches your search query.</p>")
-                self.copy_button.setEnabled(False)
 
     def _update_recipe_view(self, current, _previous):
         if current is None:
@@ -311,22 +301,6 @@ class HelpHubDialog(QDialog):
         self._current_recipe = recipe
         self.recipe_title.setText(recipe.get("title", ""))
         self.recipe_browser.setHtml(recipe.get("html", "<p>No content available.</p>"))
-
-        has_example = bool(recipe.get("example_tsv"))
-        self.copy_button.setEnabled(has_example)
-        self.copy_feedback.setText("")
-
-    def _copy_current_example_data(self):
-        if not self._current_recipe:
-            return
-
-        sample_data = self._current_recipe.get("example_tsv", "")
-        if not sample_data:
-            return
-
-        QApplication.clipboard().setText(sample_data)
-        self.copy_feedback.setText("Example data copied to clipboard (tab-separated, Excel-ready).")
-        QTimer.singleShot(2500, lambda: self.copy_feedback.setText(""))
 
 
 class ColumnSelectionDialog(QDialog):

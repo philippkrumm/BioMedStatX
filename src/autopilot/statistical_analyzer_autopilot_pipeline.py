@@ -339,7 +339,7 @@ def _ap_init_ui(self):
     corr_tr_title.setObjectName("panelDescription")
     reg_tr_inner.addWidget(corr_tr_title)
 
-    _TRANSFORMS = ["none", "log10", "sqrt", "boxcox"]
+    _TRANSFORMS = ["none", "log10", "log10(x+1)", "sqrt", "boxcox"]
 
     x_row = QHBoxLayout()
     x_row.addWidget(QLabel("X transform:"))
@@ -357,8 +357,7 @@ def _ap_init_ui(self):
 
     # Warning: shown only when regression mode is active AND a transform is selected.
     self.corr_transform_warning = QLabel(
-        "Note: Transformation changes the interpretation of \u03b2. "
-        "The HTML report will include the correct interpretation."
+        "Warning: Transformed variables require exponentiation or elasticity formulas to interpret β correctly. See manual for exact equations."
     )
     self.corr_transform_warning.setObjectName("warningLabel")
     self.corr_transform_warning.setWordWrap(True)
@@ -1214,6 +1213,26 @@ def _ap_build_analysis_context(self):
     else:
         context['x_transform'] = 'none'
         context['y_transform'] = 'none'
+
+    # Pre-flight data validation for regression/correlation transformations
+    if context['x_transform'] != 'none' or context['y_transform'] != 'none':
+        def _check_bounds(col, transform_name):
+            if transform_name == 'none': return
+            series = pd.to_numeric(analysis_df[col], errors='coerce').dropna()
+            if len(series) == 0: return
+            min_val = series.min()
+            if transform_name in ('log10', 'boxcox') and min_val <= 0:
+                raise ValueError(f"Dataset contains zero or negative values in '{col}'. Standard {transform_name} transformation is mathematically undefined. Consider using log10(x+1) instead, or filter out non-positive values.")
+            if transform_name == 'log10(x+1)' and min_val <= -1:
+                raise ValueError(f"Dataset contains values <= -1 in '{col}'. log10(x+1) transformation is mathematically undefined.")
+            if transform_name == 'sqrt' and min_val < 0:
+                raise ValueError(f"Dataset contains negative values in '{col}'. Square root transformation is mathematically undefined.")
+
+        if context.get("inferred_test") in ("correlation", "linear_regression", "lmm"):
+            if context["factor_columns"]:
+                _check_bounds(context["factor_columns"][0], context['x_transform'])
+            for dv in context["dv_columns"]:
+                _check_bounds(dv, context['y_transform'])
 
     return context
 

@@ -151,23 +151,13 @@ class AssumptionCheckEngine:
             adjusted_formula = "Value ~ C(FactorA) * C(FactorB)"
             logger.debug(f"DEBUG SHAPIRO: Adjusted formula for Two-Way ANOVA: {adjusted_formula}")
         
-        # CLT-Stufe: Bypass normality check for large samples
-        min_n = min(len(v) for v in samples.values()) if samples else 0
-        skip_shapiro = min_n >= 100
-        
         try:
             actual_columns = list(df_raw.columns)
-            if skip_shapiro:
-                logger.info(f"CLT triggered: min_n={min_n} >= 100. Bypassing Shapiro-Wilk.")
-                stat, pval = None, 1.0  # Force is_normal = True
-                add_note(
-                    f"Normality check bypassed: sample size is large enough (min n={min_n} >= 100) to rely on the Central Limit Theorem."
-                )
-            else:
-                # ROBUST FORMULA CREATION: Use actual DataFrame columns, not assumptions
-                logger.debug(f"DEBUG SHAPIRO: Available columns in df_raw: {actual_columns}")
-                logger.debug(f"DEBUG SHAPIRO: Original formula: {formula}")
-                logger.debug(f"DEBUG SHAPIRO: Adjusted formula: {adjusted_formula}")
+            
+            # ROBUST FORMULA CREATION: Use actual DataFrame columns, not assumptions
+            logger.debug(f"DEBUG SHAPIRO: Available columns in df_raw: {actual_columns}")
+            logger.debug(f"DEBUG SHAPIRO: Original formula: {formula}")
+            logger.debug(f"DEBUG SHAPIRO: Adjusted formula: {adjusted_formula}")
             
             if "Value" not in actual_columns:
                 logger.debug("DEBUG SHAPIRO ERROR: 'Value' column missing in DataFrame!")
@@ -252,25 +242,19 @@ class AssumptionCheckEngine:
             stat, pval = None, None
             
         _pre_is_normal = (pval > 0.05 if pval is not None else False)
-        if skip_shapiro:
-            _pre_is_normal = True  # Enforce True if skipped via CLT
 
         test_info["pre_transformation"]["residuals_normality"] = {
-            "statistic": stat, "p_value": pval if not skip_shapiro else None, "is_normal": _pre_is_normal
+            "statistic": stat, "p_value": pval, "is_normal": _pre_is_normal
         }
+        
+        _norm_target = "within-pair differences" if is_paired else "model residuals"
         if trace:
-            if skip_shapiro:
-                trace.add(1, "Normality",
-                          f"Normality assumed via Central Limit Theorem (min group n={min_n} \u2265 100).",
-                          detail="Shapiro-Wilk test bypassed.")
-            else:
-                _norm_verdict = "normality assumed" if _pre_is_normal else "normality violated"
-                _p_str = f"p={pval:.4f}" if isinstance(pval, (float, int)) else "p=N/A"
-                _w_str = f"W={stat:.4f}" if isinstance(stat, (float, int)) else "W=N/A"
-                _norm_target = "within-pair differences" if is_paired else "model residuals"
-                trace.add(1, "Normality",
-                          f"Shapiro-Wilk on {_norm_target} yielded {_p_str} \u2014 {_norm_verdict}.",
-                          detail=f"{_w_str}, {_p_str}")
+            _norm_verdict = "normality assumed" if _pre_is_normal else "normality violated"
+            _p_str = f"p={pval:.4f}" if isinstance(pval, (float, int)) else "p=N/A"
+            _w_str = f"W={stat:.4f}" if isinstance(stat, (float, int)) else "W=N/A"
+            trace.add(1, "Normality",
+                        f"Shapiro-Wilk on {_norm_target} yielded {_p_str} \u2014 {_norm_verdict}.",
+                        detail=f"{_w_str}, {_p_str}")
 
         # Levene test on raw data (Brown-Forsythe test using median)
         if model_type in ("rm", "mixed", "paired"):
@@ -353,6 +337,10 @@ class AssumptionCheckEngine:
             global_min = df_raw["Value"].min() if (not df_raw.empty and "Value" in df_raw.columns) else 0
             global_shift = -global_min + 1 if global_min <= 0 else 0
 
+            if global_shift > 0 and transformation_type in ("log10", "boxcox") and trace:
+                trace.add(2, "Transformation Validation", 
+                          f"Data contained values \u2264 0. A constant shift of {global_shift} was added before {transformation_type} transformation to ensure strict positivity.")
+
             # MEDIUM-3: record very large shifts via validation notes
             if global_shift > 1e6:
                 shift_warning = GroupValidationError(
@@ -411,6 +399,9 @@ class AssumptionCheckEngine:
                     max_val = max(values)
                     # Scale to 0-1 if needed
                     if min_val < 0 or max_val > 1:
+                        if trace and group == valid_groups[0]:
+                            trace.add(2, "Transformation Validation", 
+                                      "Data contained values outside [0, 1]. Data was min-max scaled to [0, 1] before arcsin-sqrt transformation.")
                         # CRITICAL-4: guard against zero variance (min == max)
                         if max_val == min_val:
                             variance_warning = GroupValidationError(
@@ -561,6 +552,14 @@ class AssumptionCheckEngine:
         # Recommend test based on assumptions
         post_norm = test_info["post_transformation"]["residuals_normality"]["is_normal"]
         post_var = test_info["post_transformation"]["variance"]["equal_variance"]
+
+        if need_transform and trace:
+            _p_str2 = f"p={pval2:.4f}" if isinstance(pval2, (float, int)) else "p=N/A"
+            _w_str2 = f"W={stat2:.4f}" if isinstance(stat2, (float, int)) else "W=N/A"
+            _norm_verdict2 = "normality assumption met" if post_norm else "normality assumption violated"
+            trace.add(2, "Normality (Post-Transformation)",
+                      f"Normality reassessed after {test_info.get('transformation')} transformation: Shapiro-Wilk on {_norm_target} yielded {_p_str2} \u2014 {_norm_verdict2}.",
+                      detail=f"{_w_str2}, {_p_str2}")
 
         if model_type in ["twoway", "mixed", "rm"] and post_norm:
             decision_strategy = f"{model_type}_anova"

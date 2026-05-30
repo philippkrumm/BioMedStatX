@@ -604,7 +604,7 @@ class PosthocFallbackEngine:
                 if test_instance:
                     return test_instance.perform_test(valid_groups, samples, alpha=alpha, parametric=is_parametric)
                 
-            elif posthoc_choice == "paired_custom":
+            elif posthoc_choice in ("paired_custom", "paired_fdr"):
                 # Open dialog for pair selection
                 pairs = ui_dialog_manager.select_custom_pairs_dialog(valid_groups)
                 if not pairs:
@@ -617,9 +617,11 @@ class PosthocFallbackEngine:
                     tstat, p = stats.ttest_rel(x, y)
                     stats_list.append(tstat)
                     pvals.append(p)
-                # Holm-Bonferroni-Korrektur
+                # Multiple testing correction
+                correction_method_name = "Holm-\u0160id\u00e1k" if posthoc_choice == "paired_custom" else "FDR (Benjamini-Hochberg)"
+                method_kwarg = 'holm-sidak' if posthoc_choice == "paired_custom" else 'fdr_bh'
                 multipletests = get_statsmodels_multitest()
-                reject, p_adj, _, _ = multipletests(pvals, alpha=alpha, method='holm')
+                reject, p_adj, _, _ = multipletests(pvals, alpha=alpha, method=method_kwarg)
                 # Ergebnisse sammeln
                 for i, (g1, g2) in enumerate(pairs):
                     ci = PostHocStatistics.calculate_ci_mean_diff(samples[g1], samples[g2], alpha=alpha, paired=True)
@@ -632,13 +634,13 @@ class PosthocFallbackEngine:
                         p_value=p_adj[i],
                         statistic=stats_list[i],
                         corrected=True,
-                        correction_method="Holm-Bonferroni",
+                        correction_method=correction_method_name,
                         effect_size=d,
                         effect_size_type="cohen_d",
                         confidence_interval=ci,
                         alpha=alpha
                     )
-                result["posthoc_test"] = "Custom paired t-tests (Holm-Bonferroni)"
+                result["posthoc_test"] = f"Custom paired t-tests ({correction_method_name})"
                 return result
                 
             elif posthoc_choice == "mw_custom":

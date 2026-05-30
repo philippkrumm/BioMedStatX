@@ -133,13 +133,15 @@ class DecisionNodeItem(QGraphicsItem):
 class DecisionEdgeItem(QGraphicsItem):
     """
     Renders connection paths and exact rotated arrowheads.
+    Alternative (non-taken) branch edges are drawn as dashed lines.
     """
-    def __init__(self, source_node, target_node, is_active, is_dark, parent=None):
+    def __init__(self, source_node, target_node, is_active, is_dark, is_alternative=False, parent=None):
         super().__init__(parent)
         self.source_node = source_node
         self.target_node = target_node
         self.is_active = is_active
         self.is_dark = is_dark
+        self.is_alternative = is_alternative
         self.setCacheMode(QGraphicsItem.DeviceCoordinateCache)
 
     def boundingRect(self):
@@ -174,14 +176,26 @@ class DecisionEdgeItem(QGraphicsItem):
             
         # Select palette colors
         if self.is_dark:
-            color = QColor("#2dd4bf") if self.is_active else QColor("#243538")
+            if self.is_active:
+                color = QColor("#2dd4bf")
+            elif self.is_alternative:
+                color = QColor("#3d6068")   # Visible but muted teal-grey
+            else:
+                color = QColor("#243538")
         else:
-            color = QColor("#0f766e") if self.is_active else QColor("#cbd5e1")
-            
-        width = 3.0 if self.is_active else 1.2
+            if self.is_active:
+                color = QColor("#0f766e")
+            elif self.is_alternative:
+                color = QColor("#9fb8be")   # Muted teal-grey for dashed branches
+            else:
+                color = QColor("#cbd5e1")
+
+        width = 3.0 if self.is_active else (1.4 if self.is_alternative else 1.2)
         pen = QPen(color, width)
+        if self.is_alternative and not self.is_active:
+            pen.setStyle(Qt.DashLine)
         painter.setPen(pen)
-        
+
         # Draw line path
         painter.drawLine(QPointF(ex1, ey1), QPointF(ex2, ey2))
         
@@ -322,9 +336,10 @@ class InteractiveDecisionTreeWidget(QGraphicsView):
             
             src_item = node_map.get(src_id)
             tgt_item = node_map.get(tgt_id)
+            is_alternative = bool(edge.get("isAlternative", False))
             
             if src_item and tgt_item:
-                edge_item = DecisionEdgeItem(src_item, tgt_item, is_active, is_dark)
+                edge_item = DecisionEdgeItem(src_item, tgt_item, is_active, is_dark, is_alternative)
                 self.scene.addItem(edge_item)
                 
         # Define scene bounding rectangle

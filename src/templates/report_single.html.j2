@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{ context.report_title }}</title>
 <style>
 :root{--surface:#fffdf8;--surface-2:#fff;--ink:#16313a;--muted:#6b7c84;--line:rgba(22,49,58,.12);--accent:#0f766e;--info:#0369a1;--success:#1f7a5a;--warning:#b7791f;--danger:#9f3a38;--shadow:0 18px 40px rgba(22,49,58,.08)}*{box-sizing:border-box}html{font-size:16px}
@@ -157,10 +157,12 @@ function edgeAnchor(cx,cy,nx,ny,nodeW,nodeH,pad){
     const ey1=srcAnchor.y;
     const ex2=trgAnchor.x;
     const ey2=trgAnchor.y;
-    const line=svgEl('line',{x1:ex1,y1:ey1,x2:ex2,y2:ey2,
-      stroke:isAct?'#0f766e':'rgba(22,49,58,0.13)',
-      'stroke-width':isAct?2.8:1.2,
-      'marker-end':isAct?'url(#mk-act)':'url(#mk-dim)'});
+     const isAlt=(!isAct&&!!e.isAlternative);
+     const line=svgEl('line',{x1:ex1,y1:ey1,x2:ex2,y2:ey2,
+       stroke:isAct?'#0f766e':isAlt?'rgba(22,49,58,0.32)':'rgba(22,49,58,0.13)',
+       'stroke-width':isAct?2.8:isAlt?1.5:1.2,
+       'stroke-dasharray':isAlt?'6 4':'none',
+       'marker-end':isAct?'url(#mk-act)':'url(#mk-dim)'});
     if(isAct&&!reduceMotion){
       const el=Math.sqrt(Math.pow(ex2-ex1,2)+Math.pow(ey2-ey1,2));
       line.setAttribute('stroke-dasharray',el);

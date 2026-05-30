@@ -65,13 +65,13 @@ class PostHocAnalyzer:
         
     @staticmethod
     def _holm_correction(p_values):
-        """Applies Holm-Bonferroni correction to a list of p-values."""
+        """Applies Holm-Šidák correction to a list of p-values."""
         if not p_values:
             return []
         
         # Use statsmodels implementation instead of custom one
         multipletests = get_statsmodels_multitest()
-        reject, corrected_p, _, _ = multipletests(p_values, method='holm')
+        reject, corrected_p, _, _ = multipletests(p_values, method='holm-sidak')
         return corrected_p.tolist()
 
 class TwoWayPostHocAnalyzer(PostHocAnalyzer):
@@ -82,7 +82,7 @@ class TwoWayPostHocAnalyzer(PostHocAnalyzer):
     """Post-hoc tests for Two-Way ANOVA with a uniform interface."""
     
     @staticmethod
-    def perform_test(df, dv, factors, alpha=0.05, selected_comparisons=None, method="holm", control_group=None):
+    def perform_test(df, dv, factors, alpha=0.05, selected_comparisons=None, method="holm-sidak", control_group=None):
         """
         Performs post-hoc tests for Two-Way ANOVA.
         
@@ -220,9 +220,9 @@ class TwoWayPostHocAnalyzer(PostHocAnalyzer):
                                     dunnett_pvals.append(pval)
                                     dunnett_stats.append((g1, g2, stat, pval, vals1, vals2))
                                 
-                                # Apply Dunnett correction using Holm-Bonferroni as fallback
+                                # Apply Dunnett correction using Holm-Šidák as fallback
                                 if dunnett_pvals:
-                                    reject, pvals_corr_dunnett, _, _ = multipletests(dunnett_pvals, alpha=alpha, method='holm')
+                                    reject, pvals_corr_dunnett, _, _ = multipletests(dunnett_pvals, alpha=alpha, method='holm-sidak')
                                     # Map back to original order
                                     pvals_corr = []
                                     dunnett_idx = 0
@@ -234,13 +234,16 @@ class TwoWayPostHocAnalyzer(PostHocAnalyzer):
                                             pvals_corr.append(1.0)  # Non-control comparisons get p=1.0
                                 else:
                                     pvals_corr = [1.0] * len(pvals)
+                    elif method.lower() == 'paired_fdr':
+                        correction_method = "FDR (Benjamini-Hochberg)"
+                        reject, pvals_corr, _, _ = multipletests(pvals, alpha=alpha, method='fdr_bh')
                     else:
-                        # Default: Holm-Bonferroni
-                        correction_method = "Holm-Bonferroni"
-                        reject, pvals_corr, _, _ = multipletests(pvals, alpha=alpha, method='holm')
+                        # Default: Holm-Šidák
+                        correction_method = "Holm-Šidák"
+                        reject, pvals_corr, _, _ = multipletests(pvals, alpha=alpha, method='holm-sidak')
                 else:
                     pvals_corr = []
-                    correction_method = "Holm-Bonferroni"
+                    correction_method = "Holm-Šidák"
                 # Add to results
                 for i, (g1, g2, stat, pval, vals1, vals2) in enumerate(stats_list):
                     # Effect size: Cohen's d
@@ -285,7 +288,7 @@ class TwoWayPostHocAnalyzer(PostHocAnalyzer):
                 df['interaction_group'] = df[factors[0]].astype(str) + "_" + df[factors[1]].astype(str)
                 # Run Tukey HSD on the interaction groups
                 tukey = pairwise_tukeyhsd(df[dv], df['interaction_group'], alpha=alpha)
-                # For the Tukey HSD test in the fallback, we'll need to manually apply Holm-Bonferroni
+                # For the Tukey HSD test in the fallback, we'll need to manually apply Holm-Šidák
                 # First collect all pairwise comparisons and p-values
                 comparisons = []
                 for i in range(len(tukey.pvalues)):
@@ -299,10 +302,10 @@ class TwoWayPostHocAnalyzer(PostHocAnalyzer):
                         'p_value': p_val,
                         'conf_int': conf_int
                     })
-                # Apply Holm-Bonferroni correction
+                # Apply Holm-Šidák correction
                 p_values = [comp['p_value'] for comp in comparisons]
                 multipletests = get_statsmodels_multitest()
-                reject, corrected_p_values, _, _ = multipletests(p_values, alpha=alpha, method='holm')
+                reject, corrected_p_values, _, _ = multipletests(p_values, alpha=alpha, method='holm-sidak')
                 # Convert results into standardized format with corrected p-values
                 for i, comp in enumerate(comparisons):
                     # Normalize for matching
@@ -319,7 +322,7 @@ class TwoWayPostHocAnalyzer(PostHocAnalyzer):
                         p_value=corrected_p_values[i],
                         statistic=None,
                         corrected=True,
-                        correction_method="Holm-Bonferroni",
+                        correction_method="Holm-Šidák",
                         confidence_interval=tuple(comp['conf_int']),
                         alpha=alpha
                     )
@@ -328,8 +331,9 @@ class TwoWayPostHocAnalyzer(PostHocAnalyzer):
             method_name_map = {
                 "tukey": "Tukey HSD",
                 "dunnett": "Dunnett Test",
-                "paired_custom": "Custom paired t-tests (Holm-Bonferroni)",
-                "holm": "Custom paired t-tests (Holm-Bonferroni)"
+                "paired_custom": "Custom paired t-tests (Holm-Šidák)",
+                "paired_fdr": "Custom paired t-tests (FDR Benjamini-Hochberg)",
+                "holm": "Custom paired t-tests (Holm-Šidák)"
             }
             result["posthoc_test"] = method_name_map.get(method, f"Post-hoc test ({method})")
             
@@ -560,8 +564,8 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
                     corrected_p_values = [1.0] * len(p_values)
                     correction_method = "Dunnett (no control comparisons found)"
             else:
-                # Default: Holm-Bonferroni
-                correction_method = "Holm-Bonferroni"
+                # Default: Holm-Šidák
+                correction_method = "Holm-Šidák"
                 corrected_p_values = PostHocAnalyzer._holm_correction(p_values)
             
             # Add each pairwise comparison result with enhanced mixed-design information
@@ -617,7 +621,7 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
                 "tukey": "Tukey HSD (Mixed)",
                 "dunnett": "Dunnett Test (Mixed)",
                 "bonferroni": "Bonferroni (Mixed)",
-                "holm": "Holm-Bonferroni (Mixed)"
+                "holm": "Holm-Šidák (Mixed)"
             }
             result["posthoc_test"] = method_name_map.get(method, f"Mixed Post-hoc ({method})")
             
@@ -843,7 +847,7 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
                 if method.lower() == 'tukey':
                     # For Tukey, we'll use a different approach
                     correction_method = "Tukey HSD"
-                    reject, pvals_corr, _, _ = multipletests(pvals, alpha=alpha, method='holm')  # Fallback
+                    reject, pvals_corr, _, _ = multipletests(pvals, alpha=alpha, method='holm-sidak')  # Fallback
                 elif method.lower() == 'dunnett' and control_group:
                     # For Dunnett, filter to only control group comparisons
                     correction_method = "Dunnett"
@@ -859,7 +863,7 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
                     
                     if dunnett_pvals:
                         # Apply correction only to control group comparisons
-                        reject, pvals_corr_dunnett, _, _ = multipletests(dunnett_pvals, alpha=alpha, method='holm')
+                        reject, pvals_corr_dunnett, _, _ = multipletests(dunnett_pvals, alpha=alpha, method='holm-sidak')
                         # Map back to original order
                         pvals_corr = [1.0] * len(pvals)  # Start with all p-values as 1.0
                         for j, orig_idx in enumerate(control_comparisons):
@@ -867,13 +871,16 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
                     else:
                         pvals_corr = [1.0] * len(pvals)
                         correction_method = "Dunnett (no control comparisons found)"
+                elif method.lower() == 'paired_fdr':
+                    correction_method = "FDR (Benjamini-Hochberg)"
+                    reject, pvals_corr, _, _ = multipletests(pvals, alpha=alpha, method='fdr_bh')
                 else:
-                    # Default: Holm-Bonferroni
-                    correction_method = "Holm-Bonferroni"
-                    reject, pvals_corr, _, _ = multipletests(pvals, alpha=alpha, method='holm')
+                    # Default: Holm-Šidák
+                    correction_method = "Holm-Šidák"
+                    reject, pvals_corr, _, _ = multipletests(pvals, alpha=alpha, method='holm-sidak')
             else:
                 pvals_corr = []
-                correction_method = "Holm-Bonferroni"
+                correction_method = "Holm-Šidák"
             
             # Add results
             for i, (g1, g2, stat, pval, test_type, data1, data2, matched_data1, matched_data2) in enumerate(stats_list):
@@ -947,8 +954,8 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
             method_name_map = {
                 "tukey": "Tukey HSD",
                 "dunnett": "Dunnett Test", 
-                "paired_custom": "Custom paired t-tests (Holm-Bonferroni)",
-                "holm": "Custom paired t-tests (Holm-Bonferroni)"
+                "paired_custom": "Custom paired t-tests (Holm-Šidák)",
+                "holm": "Custom paired t-tests (Holm-Šidák)"
             }
             result["posthoc_test"] = method_name_map.get(method, f"Post-hoc test ({method})")
             
@@ -1135,8 +1142,8 @@ class RMAnovaPostHocAnalyzer(PostHocAnalyzer):
                     corrected_p_values = [1.0] * len(p_values)
                     correction_method = "Dunnett (no control comparisons found)"
             else:
-                # Default: Holm-Bonferroni (step-down method, less conservative than Bonferroni)
-                correction_method = "Holm-Bonferroni"
+                # Default: Holm-Šidák (step-down method, less conservative than Bonferroni)
+                correction_method = "Holm-Šidák"
                 corrected_p_values = PostHocAnalyzer._holm_correction(p_values)
             
             # Calculate family-wise corrected confidence intervals
@@ -1196,7 +1203,7 @@ class RMAnovaPostHocAnalyzer(PostHocAnalyzer):
                 "tukey": "Tukey HSD (RM)",
                 "dunnett": "Dunnett Test (RM)",
                 "bonferroni": "Bonferroni (RM)",
-                "holm": "Holm-Bonferroni (RM)"
+                "holm": "Holm-Šidák (RM)"
             }
             result["posthoc_test"] = method_name_map.get(method, f"RM Post-hoc ({method})")
             
@@ -1480,7 +1487,7 @@ class DunnettTest(PostHocAnalyzer):
                 effect_sizes.append(effect_size)
 
             multipletests = get_statsmodels_multitest()
-            reject, p_adj, _, _ = multipletests(p_vals, alpha=alpha, method='holm')
+            reject, p_adj, _, _ = multipletests(p_vals, alpha=alpha, method='holm-sidak')
 
             for i, group in enumerate(group_pairs):
                 PostHocAnalyzer.add_comparison(
@@ -1491,7 +1498,7 @@ class DunnettTest(PostHocAnalyzer):
                     p_value=p_adj[i],
                     statistic=None,
                     corrected=True,
-                    correction_method="Holm-Bonferroni",
+                    correction_method="Holm-Šidák",
                     effect_size=effect_sizes[i],
                     effect_size_type="cohen_d",
                     confidence_interval=(float(ci_lowers[i]), float(ci_uppers[i])),
@@ -1525,7 +1532,7 @@ class DunnTest(PostHocAnalyzer):
         data_array = [samples[g] for g in valid_groups]
         raw_p = sp.posthoc_dunn(data_array, p_adjust=None)  # no internal correction
 
-        # 2) Flatten into list and correct with Holm-Bonferroni
+        # 2) Flatten into list and correct with Holm-Šidák
         pairs = []
         pvals = []
         for i, g1 in enumerate(valid_groups):
@@ -1534,7 +1541,7 @@ class DunnTest(PostHocAnalyzer):
                     pairs.append((g1, g2))
                     pvals.append(raw_p.iloc[i, j])
         multipletests = get_statsmodels_multitest()
-        reject, p_adj, _, _ = multipletests(pvals, alpha=alpha, method='holm')
+        reject, p_adj, _, _ = multipletests(pvals, alpha=alpha, method='holm-sidak')
 
         # 3) Loop over pairs and compute effect & CI
         for (g1, g2), pval_adj, sig in zip(pairs, p_adj, reject):
@@ -1563,7 +1570,7 @@ class DunnTest(PostHocAnalyzer):
                 p_value=pval_adj,
                 statistic=None,
                 corrected=True,
-                correction_method="Holm-Bonferroni",
+                correction_method="Holm-Šidák",
                 effect_size=effect_r,
                 effect_size_type="r",
                 confidence_interval=(float(ci_low), float(ci_high)),
@@ -1606,9 +1613,9 @@ class DependentPostHoc(PostHocAnalyzer):
             pvals.append(p)
             pairs.append((g1, g2, x, y))
 
-        # 3) Holm-Bonferroni correction
+        # 3) Holm-Šidák correction
         multipletests = get_statsmodels_multitest()
-        reject, p_adj, _, _ = multipletests(pvals, alpha=alpha, method='holm')
+        reject, p_adj, _, _ = multipletests(pvals, alpha=alpha, method='holm-sidak')
 
         # 4) add comparisons
         for i, (g1, g2, x, y) in enumerate(pairs):
@@ -1640,7 +1647,7 @@ class DependentPostHoc(PostHocAnalyzer):
                 p_value=p_adj[i],
                 statistic=stat,
                 corrected=True,
-                correction_method="Holm-Bonferroni",
+                correction_method="Holm-Šidák",
                 effect_size=es,
                 effect_size_type=estype,
                 confidence_interval=ci,

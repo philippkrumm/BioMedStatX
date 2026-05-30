@@ -116,7 +116,7 @@ Switch between modes with the radio buttons above the table preview.
 Click **Start Auto Analysis**. The pipeline executes in this order:
 
 1. Apply the active data scope (Filter + group selection).
-2. Normality check (Shapiro–Wilk on model residuals).
+2. Normality check (Shapiro–Wilk on model residuals; bypassed if $N \ge 30$ per the Central Limit Theorem).
 3. Variance homogeneity check (Levene's test).
 4. Test selection — parametric, Welch, or nonparametric.
 5. Main test.
@@ -135,9 +135,7 @@ Set the **output file name** before or after analysis. Drag group labels in the 
 
 ## 7. Assumption Checks and Data Transformations
 
-Shapiro–Wilk tests normality of model residuals; Levene's test checks variance homogeneity. When assumptions fail, the application prompts for a transformation.
-
-![Select Transformation dialog](HowToScreenshots/Bild8.png)
+Shapiro–Wilk tests normality of model residuals (normality is assumed if $N \ge 30$ per the Central Limit Theorem); Levene's test checks variance homogeneity. When assumptions fail, the application prompts for a transformation.
 
 | Transformation | Use case |
 |---|---|
@@ -153,15 +151,15 @@ Skipping the transformation is always valid. The application then takes the nonp
 
 A significant main test with $\geq 3$ groups triggers a post-hoc selection prompt.
 
-![Select Post-hoc Test dialog](HowToScreenshots/Bild9.png)
-
 **Parametric options:**
 
 | Test | When to use |
 |---|---|
-| **Tukey HSD** | All pairwise comparisons; family-wise error rate controlled at $\alpha$ |
+| **Tukey HSD** | All pairwise comparisons. Available for Advanced ANOVAs (Two-Way, Repeated Measures, Mixed). |
+| **Games-Howell** | All pairwise comparisons; does not assume equal variances. Default for One-Way Welch-ANOVA. |
 | **Dunnett** | Each treatment group vs. one control; more power than Tukey when a reference group exists |
-| **Holm-corrected pairwise t-tests** | User-selected pairs; sequential Bonferroni correction |
+| **Holm-\u0160id\u00e1k corrected pairwise t-tests** | User-selected pairs; sequential \u0160id\u00e1k correction |
+| **FDR-corrected pairwise t-tests** | User-selected pairs; Benjamini-Hochberg FDR (Available for Advanced ANOVAs) |
 
 **Nonparametric path** (applied without prompting when the nonparametric route is taken):
 - Dunn's test with Holm correction after Kruskal–Wallis.
@@ -195,8 +193,7 @@ The **Plot Appearance Settings** dialog (accessed from the plot preview) control
 | **Paired t-Test** | Factor 1 categorical, 2 groups, Subject ID assigned |
 | **Mann–Whitney U** | t-Test conditions; normality violated |
 | **Wilcoxon signed-rank** | Paired t-Test conditions; normality violated |
-| **One-Way ANOVA** | Factor 1 categorical, $\geq 3$ groups, no Subject ID, equal variances |
-| **Welch's ANOVA** | One-Way ANOVA conditions; variances unequal |
+| **Welch's ANOVA** | Factor 1 categorical, $\geq 3$ groups, no Subject ID. Default parametric One-Way ANOVA (robust to unequal variances) |
 | **Kruskal–Wallis** | ANOVA conditions; normality violated |
 | **Repeated Measures ANOVA** | Factor 1 categorical, Subject ID assigned, $\geq 3$ levels |
 | **Friedman test** | RM-ANOVA conditions; normality violated |
@@ -234,8 +231,6 @@ The HTML report contains an interactive decision tree. The path actually taken i
 ## 12. Reviewing Results — HTML Report
 
 Analysis produces a single self-contained `.html` file that opens in your browser.
-
-![Analysis Complete dialog](HowToScreenshots/Bild10.png)
 
 The report contains:
 
@@ -372,10 +367,17 @@ Available for both X (Factor 1) and Y (Dependent Variable) when Regression mode 
 | Transform | Formula | Use case |
 |---|---|---|
 | **log₁₀** | $X' = \log_{10}(X)$ | Right-skewed positive variables |
+| **log₁₀(x+1)** | $X' = \log_{10}(X+1)$ | Count data with exact zeros |
 | **sqrt** | $X' = \sqrt{X}$ | Count data; moderate skew |
 | **Box–Cox** | $X' = \frac{X^\lambda - 1}{\lambda}$ | Automatic $\lambda$ optimisation |
 
 When a transform is applied, the displayed $\hat{\beta}$ operates on the transformed scale. A $\hat{\beta}_1 = 0.3$ with log₁₀-transformed Y means a one-unit increase in X multiplies the original Y by $10^{0.3} \approx 2.0$. The HTML report states this interpretation explicitly.
+
+If **both X and Y are log-transformed** (Log-Log model), $\beta$ represents an elasticity: a 1% increase in X is associated with a $\beta$% change in Y.
+
+> [!WARNING]
+> Transformations should be chosen based on theoretical grounds or to resolve assumption violations (e.g., heteroscedasticity or non-linearity), not purely because raw predictors "look skewed". Normality of predictors (X) is not an assumption of OLS regression.
+> **Avoid P-Hacking:** Do not iteratively try different transformations just to drive the p-value below 0.05. This invalidates your statistical inference.
 
 ### What is reported (HTML report)
 

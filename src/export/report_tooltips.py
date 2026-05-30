@@ -34,7 +34,9 @@ STAT_ROW_DESCRIPTIONS: Mapping[str, str] = {
     ),
     "Adjusted p-value": (
         "p-value after correction for multiple testing (e.g. Benjamini–Hochberg FDR). "
-        "Use this when several hypotheses are tested simultaneously."
+        "Use this when several hypotheses are tested simultaneously. "
+        "Note: BH assumes independent or positively dependent tests. For arbitrary dependence, "
+        "Benjamini-Yekutieli is technically cleaner, but BH remains a valid choice for exploratory screening."
     ),
     "Effect size": (
         "Standardised magnitude of the effect, independent of sample size. "

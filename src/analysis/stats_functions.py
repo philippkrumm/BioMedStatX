@@ -504,17 +504,16 @@ class UIDialogManager:
             # For advanced ANOVAs: only offer Tukey and Custom paired t-tests (no Dunnett)
             options = [
                 ("Tukey-HSD Test (compares all pairs)", "tukey"),
-                ("Custom paired t-tests (you select specific pairs to compare)", "paired_custom"),
+                ("Custom paired t-tests (you select specific pairs, Holm-\u0160id\u00e1k)", "paired_custom"),
+                ("Custom paired t-tests (you select specific pairs, FDR Benjamini-Hochberg)", "paired_fdr"),
             ]
         else:
-            # For One-Way ANOVA: offer all options
-            options = [
-                ("Tukey-HSD Test (compares all pairs, equal variances assumed)", "tukey"),
-                ("Dunnett Test (compares all groups against ONE control group)", "dunnett"),
-                ("Custom paired t-tests (you select specific pairs to compare)", "paired_custom"),
-            ]
-            if equal_variance is False:
-                options.insert(1, ("Games-Howell Test (compares all pairs, robust to unequal variances)", "games_howell"))
+            # For One-Way ANOVA (Welch): offer unconditional robust options
+            options = []
+            options.append(("Games-Howell Test (compares all pairs, robust to unequal variances)", "games_howell"))
+            options.append(("Dunnett Test (compares all groups against ONE control group)", "dunnett"))
+            options.append(("Custom paired t-tests (you select specific pairs, Holm-\u0160id\u00e1k)", "paired_custom"))
+
         radio_buttons = []
         for label, value in options:
             rb = QRadioButton(label)
