@@ -169,10 +169,12 @@ class DecisionTreeVisualizer:
             transformation = results.get("transformation", "None")
             p_value = results.get("p_value", None)
 
-            # Route to specialized visualizers for association/regression tests
+            # Route sequential/pipeline workflows to FlowchartVisualizer
             _model_type = results.get("model_type", "")
-            if _model_type in ["Correlation", "LinearRegression", "LogisticRegression", "ANCOVA", "CorrelationMatrix"]:
-                return DecisionTreeVisualizer._visualize_association_test(results, _model_type, output_path)
+            if _model_type in ["Correlation", "LinearRegression", "LogisticRegression",
+                                "ANCOVA", "LMM", "CorrelationMatrix"]:
+                from visualization.flowchartvisualizer import FlowchartVisualizer
+                return FlowchartVisualizer.visualize(results, output_path)
 
             # Get test_info for more detailed analysis
             test_info = results.get("test_info", {})
@@ -362,24 +364,24 @@ class DecisionTreeVisualizer:
             print(f"DEBUG TREE: Welch conditions - t-test: {welch_t_condition}, ANOVA: {welch_anova_condition}")
 
             if welch_t_condition or welch_anova_condition:
-                test_recommendation_label = "Test Recommendation:\nNormal distributed\nbut unequal variances"
+                test_recommendation_label = "Normal data, unequal variances\n-> Welch correction"
             elif actual_test_type.lower() == "parametric":
-                test_recommendation_label = "Test Recommendation:\nParametric Test"
+                test_recommendation_label = "Assumptions met\n-> parametric test"
             elif actual_test_type.lower() == "non_parametric" or actual_test_type.lower() == "non-parametric":
-                test_recommendation_label = "Test Recommendation:\nNon-parametric Test"
+                test_recommendation_label = "Assumptions violated\n-> non-parametric test"
             else:
                 test_recommendation_label = "Test Recommendation"
                 print(f"DEBUG TREE: Warning - using default label, actual_test_type was '{actual_test_type}'")
 
             # Update sphericity label logic
             if n_within_levels == 2:
-                k1_m_sph_label = "Sphericity N/A\n(< 3 Levels)"
+                k1_m_sph_label = "Sphericity N/A\n(only 2 levels, no check needed)"
             elif has_sphericity is True:
-                k1_m_sph_label = "Sphericity Met\n(Mauchly's p > 0.05)"
+                k1_m_sph_label = "Even correlation confirmed\n(Mauchly's p > 0.05)"
             elif has_sphericity is False:
-                k1_m_sph_label = "Sphericity Violated\n(Correction Applied)"
+                k1_m_sph_label = "Uneven correlation detected\n(correction applied)"
             else:
-                k1_m_sph_label = "Sphericity Check\n(Mauchly's Test)"
+                k1_m_sph_label = "Are repeated measurements\nevenly correlated? (Mauchly's)"
 
             # Get sphericity correction info from results
             sphericity_correction = "None"
@@ -394,110 +396,109 @@ class DecisionTreeVisualizer:
             nodes_info = {
                 # Common path
                 'A': {"label": "Start", "pos": (0, 14)},
-                'B': {"label": f"Check Assumptions\nShapiro-Wilk: {pre_is_normal}\nBrown-Forsythe: {pre_has_equal_variance}", "pos": (0, 12.5)},
-                'C': {"label": f"Assumptions{': ' + ('Met' if pre_is_normal and pre_has_equal_variance else 'Not Met')}", "pos": (0, 11)},
+                'B': {"label": f"Are the data normally distributed and variances equal?\nShapiro-Wilk: {pre_is_normal}  |  Brown-Forsythe: {pre_has_equal_variance}", "pos": (0, 12.5)},
+                'C': {"label": f"Assumptions {'met' if pre_is_normal and pre_has_equal_variance else 'violated'}", "pos": (0, 11)},
 
                 # Transformation branch point
-                'D1': {"label": "No Transformation\nNeeded", "pos": (-2, 9.5)},
-                'D2': {"label": f"Apply Transformation\n{transformation}", "pos": (2, 9.5)},
-                'E': {"label": f"Re-check Assumptions\nShapiro-Wilk: {is_normal}\nBrown-Forsythe: {has_equal_variance}" if was_transformed else "Re-check Assumptions", "pos": (2, 8)},
+                'D1': {"label": "Data is ready\n(no transformation needed)", "pos": (-2, 9.5)},
+                'D2': {"label": f"Transform the data\n({transformation})", "pos": (2, 9.5)},
+                'E': {"label": f"Check again after transformation\nShapiro-Wilk: {is_normal}  |  Brown-Forsythe: {has_equal_variance}" if was_transformed else "Check again after transformation", "pos": (2, 8)},
 
                 # Test recommendation
                 'F': {"label": f"{test_recommendation_label}", "pos": (0, 6.5)},
 
-                # Welch tests - direct branches from test recommendation
-                'WELCH_T_TEST': {"label": "Welch's t-test\n(2 groups)", "pos": (-1.5, 4.5)},
-                'WELCH_ANOVA': {"label": "Welch-ANOVA\n(>2 groups)", "pos": (1.5, 4.5)},
-                'WELCH_DUNNETT_T3': {"label": "Dunnett T3\nPost-hoc", "pos": (1.5, 3)},
+                # Test recommendation
+                'F': {"label": f"{test_recommendation_label}", "pos": (0, 6.5)},
 
                 # Parametric branch
-                'G1': {"label": "Parametric Test", "pos": (-10, 5)},
-                'H1': {"label": "Group Structure", "pos": (-10, 4)},
-                'I1_2': {"label": "Two Groups", "pos": (-13, 3)},         # MOVED CLOSER TO CENTER
-                'I1_M': {"label": "Multiple Groups", "pos": (-3, 3)},      # MOVED CLOSER TO CENTER
+                'G1': {"label": "Standard parametric test", "pos": (-10, 5)},
+                'H1': {"label": "How many groups?", "pos": (-10, 4)},
+                'I1_2': {"label": "2 groups", "pos": (-13, 3)},         # MOVED CLOSER TO CENTER
+                'I1_M': {"label": "3 or more groups", "pos": (-3, 3)},      # MOVED CLOSER TO CENTER
 
                 # Parametric - Two Groups (MOVED CLOSER TO TWO GROUPS)
-                'J1_INDEP': {"label": "Independent\nSamples", "pos": (-14, 2)},     # CLOSER
-                'J1_DEP': {"label": "Dependent\nSamples", "pos": (-12, 2)},         # CLOSER
-                'K1_2_IND': {"label": "Independent t-test", "pos": (-14, 1)},
+                'J1_INDEP': {"label": "Independent\n(different participants)", "pos": (-14, 2)},     # CLOSER
+                'J1_DEP': {"label": "Dependent\n(same participants)", "pos": (-12, 2)},         # CLOSER
+                'K1_2_IND': {"label": "Welch's t-test", "pos": (-14, 1)},
                 'K1_2_DEP': {"label": "Paired t-test", "pos": (-12, 1)},
 
                 # THREE ANOVA DESIGNS - MOVED INDEPENDENT GROUPS FURTHER LEFT
-                'INDEPENDENT_GROUPS': {"label": "Independent\nGroups", "pos": (-8, 2)},     # MOVED FURTHER LEFT
-                'REPEATED_MEASURES': {"label": "Repeated\nMeasures", "pos": (-2, 2)},       # SAME 
-                'MIXED_DESIGN': {"label": "Mixed\nDesign", "pos": (4, 2)},                  # MOVED CLOSER
+                'INDEPENDENT_GROUPS': {"label": "Different participants\nin each group", "pos": (-8, 2)},     # MOVED FURTHER LEFT
+                'REPEATED_MEASURES': {"label": "Same participants\nmeasured multiple times", "pos": (-2, 2)},       # SAME 
+                'MIXED_DESIGN': {"label": "Mixed design\n(between + within factors)", "pos": (4, 2)},                  # MOVED CLOSER
 
                 # INDEPENDENT GROUPS PATH - MOVED FURTHER LEFT AND MORE SPACING
-                'IND_ONE_WAY': {"label": "One-way ANOVA", "pos": (-9, 1)},                  # MOVED LEFT
+                'IND_ONE_WAY': {"label": "Welch's ANOVA", "pos": (-9, 1)},                  # MOVED LEFT
                 'IND_TWO_WAY': {"label": "Two-way ANOVA", "pos": (-7, 1)},                  # MOVED LEFT
-                'IND_POSTHOC': {"label": "Independent\nPost-hoc Tests", "pos": (-8, 0)},    # MOVED LEFT
-                'IND_TUKEY': {"label": "Tukey HSD", "pos": (-9.5, -1)},                     # MORE SPACING: 1.5 apart
+                'IND_POSTHOC': {"label": "Which specific groups differ?", "pos": (-8, 0)},    # MOVED LEFT
+                'IND_TUKEY': {"label": "Games-Howell", "pos": (-9.5, -1)},                     # MORE SPACING: 1.5 apart
                 'IND_DUNNETT': {"label": "Dunnett Test", "pos": (-8, -1)},                  # MORE SPACING: 1.5 apart
-                'IND_HOLM_SIDAK': {"label": "Pairwise t-tests\n(Holm-Bonferroni)", "pos": (-6.5, -1)}, # MORE SPACING: 1.5 apart
+                'IND_HOLM_SIDAK': {"label": "Pairwise t-tests\n(Holm-Šidák)", "pos": (-6.5, -1)}, # MORE SPACING: 1.5 apart
+                # FDR removed from One-Way ANOVA
 
                 # REPEATED MEASURES PATH - SAME INTERNAL SPACING
                 'RM_MAUCHLY': {"label": k1_m_sph_label, "pos": (-2, 1)},
-                'RM_SPHERICITY_OK': {"label": "Sphericity\nAssumption Met", "pos": (-3.5, 0)},    # KEEP CLOSE
-                'RM_SPHERICITY_VIOLATED': {"label": "Sphericity\nViolated", "pos": (-0.5, 0)},   # KEEP CLOSE
-                'RM_CHOOSE_CORRECTION': {"label": "Choose\nCorrection", "pos": (-0.5, -1)},
-                'RM_GG_CORRECTION': {"label": "Greenhouse-Geisser\nCorrection", "pos": (-1.5, -2)},  # KEEP CLOSE
-                'RM_HF_CORRECTION': {"label": "Huynh-Feldt\nCorrection", "pos": (0.5, -2)},         # KEEP CLOSE
+                'RM_SPHERICITY_OK': {"label": "Even correlation\n-> no correction needed", "pos": (-3.5, 0)},    # KEEP CLOSE
+                'RM_SPHERICITY_VIOLATED': {"label": "Uneven correlation\n-> correction needed", "pos": (-0.5, 0)},   # KEEP CLOSE
+                'RM_CHOOSE_CORRECTION': {"label": "Select sphericity\ncorrection", "pos": (-0.5, -1)},
+                'RM_GG_CORRECTION': {"label": "Greenhouse-Geisser\n(conservative)", "pos": (-1.5, -2)},  # KEEP CLOSE
+                'RM_HF_CORRECTION': {"label": "Huynh-Feldt\n(less conservative)", "pos": (0.5, -2)},         # KEEP CLOSE
                 'RM_ANOVA_STANDARD': {"label": "RM ANOVA", "pos": (-3.5, -1)},
                 'RM_ANOVA_CORRECTED': {"label": "RM ANOVA\n(Corrected)", "pos": (-0.5, -3)},
-                'RM_POSTHOC': {"label": "RM Post-hoc Tests", "pos": (-2, -4)},
+                'RM_POSTHOC': {"label": "Which time points differ?", "pos": (-2, -4)},
                 'RM_TUKEY': {"label": "Tukey HSD\n(RM)", "pos": (-3.5, -5)},
-                'RM_PAIRED_TESTS': {"label": "Pairwise Paired t-tests\n(Holm-Bonferroni)", "pos": (-0.5, -5)},
+                'RM_PAIRED_TESTS': {"label": "Pairwise Paired t-tests\n(Holm-Šidák)", "pos": (-0.5, -5)},
 
                 # MIXED DESIGN PATH - MOVED LEFT TO BE CLOSER, SAME INTERNAL SPACING
                 'MIXED_MAUCHLY': {"label": k1_m_sph_label, "pos": (4, 1)},
-                'MIXED_SPHERICITY_OK': {"label": "Sphericity\nAssumption Met", "pos": (2.5, 0)},     # KEEP CLOSE
-                'MIXED_SPHERICITY_VIOLATED': {"label": "Sphericity\nViolated", "pos": (5.5, 0)},    # KEEP CLOSE
-                'MIXED_CHOOSE_CORRECTION': {"label": "Choose\nCorrection", "pos": (5.5, -1)},
-                'MIXED_GG_CORRECTION': {"label": "Greenhouse-Geisser\nCorrection", "pos": (4.5, -2)}, # KEEP CLOSE
-                'MIXED_HF_CORRECTION': {"label": "Huynh-Feldt\nCorrection", "pos": (6.5, -2)},      # KEEP CLOSE
+                'MIXED_SPHERICITY_OK': {"label": "Even correlation\n-> no correction needed", "pos": (2.5, 0)},     # KEEP CLOSE
+                'MIXED_SPHERICITY_VIOLATED': {"label": "Uneven correlation\n-> correction needed", "pos": (5.5, 0)},    # KEEP CLOSE
+                'MIXED_CHOOSE_CORRECTION': {"label": "Select sphericity\ncorrection", "pos": (5.5, -1)},
+                'MIXED_GG_CORRECTION': {"label": "Greenhouse-Geisser\n(conservative)", "pos": (4.5, -2)}, # KEEP CLOSE
+                'MIXED_HF_CORRECTION': {"label": "Huynh-Feldt\n(less conservative)", "pos": (6.5, -2)},      # KEEP CLOSE
                 'MIXED_ANOVA_STANDARD': {"label": "Mixed ANOVA", "pos": (2.5, -1)},
                 'MIXED_ANOVA_CORRECTED': {"label": "Mixed ANOVA\n(Within Corrected)", "pos": (5.5, -3)},
-                'MIXED_POSTHOC': {"label": "Mixed Post-hoc Tests", "pos": (4, -4)},
+                'MIXED_POSTHOC': {"label": "Which groups / time points differ?", "pos": (4, -4)},
                 'MIXED_TUKEY': {"label": "Mixed Tukey\n(Between/Within)", "pos": (2, -5)},      # MORE SPACING: 1.5 apart
-                'MIXED_BETWEEN': {"label": "Between-Subjects\nComparisons", "pos": (4, -5)},       # MORE SPACING: 1.5 apart  
-                'MIXED_WITHIN': {"label": "Within-Subjects\nComparisons", "pos": (6, -5)},       # MORE SPACING: 1.5 apart
+                'MIXED_BETWEEN': {"label": "Between groups\n(different participants)", "pos": (4, -5)},       # MORE SPACING: 1.5 apart  
+                'MIXED_WITHIN': {"label": "Within group\n(same participants over time)", "pos": (6, -5)},       # MORE SPACING: 1.5 apart
 
                 # Non-parametric branch - MOVED CLOSER TO PARAMETRIC
-                'G2': {"label": "Non-parametric Test", "pos": (10, 5)},                      # MOVED CLOSER
-                'H2': {"label": "Group Structure", "pos": (10, 4)},
-                'I2_2': {"label": "Two Groups", "pos": (8, 3)},                             # MOVED CLOSER
-                'I2_M': {"label": "Multiple Groups", "pos": (14, 3)},
+                'G2': {"label": "Non-parametric test\n(rank-based)", "pos": (10, 5)},                      # MOVED CLOSER
+                'H2': {"label": "How many groups?", "pos": (10, 4)},
+                'I2_2': {"label": "2 groups", "pos": (8, 3)},                             # MOVED CLOSER
+                'I2_M': {"label": "3 or more groups", "pos": (14, 3)},
 
                 # Non-parametric - Two groups (MOVED CLOSER TO TWO GROUPS)
-                'J2_INDEP': {"label": "Independent\nSamples", "pos": (7, 2)},               # MOVED CLOSER
-                'J2_DEP': {"label": "Dependent\nSamples", "pos": (9, 2)},                   # MOVED CLOSER
+                'J2_INDEP': {"label": "Independent\n(different participants)", "pos": (7, 2)},               # MOVED CLOSER
+                'J2_DEP': {"label": "Dependent\n(same participants)", "pos": (9, 2)},                   # MOVED CLOSER
                 'K2_2_IND': {"label": "Mann-Whitney U", "pos": (7, 1)},
                 'K2_2_DEP': {"label": "Wilcoxon\nSigned-Rank", "pos": (9, 1)},
 
                 # Non-parametric - Multiple groups (advanced layout aligned to parametric pattern)
-                'NP_INDEPENDENT_GROUPS': {"label": "Independent\nGroups", "pos": (12.5, 2)},
-                'NP_REPEATED_MEASURES': {"label": "Repeated\nMeasures", "pos": (16, 2)},
-                'NP_MIXED_DESIGN': {"label": "Mixed\nDesign", "pos": (20, 2)},
+                'NP_INDEPENDENT_GROUPS': {"label": "Different participants\nin each group", "pos": (12.5, 2)},
+                'NP_REPEATED_MEASURES': {"label": "Same participants\nmeasured multiple times", "pos": (16, 2)},
+                'NP_MIXED_DESIGN': {"label": "Mixed design\n(between + within)", "pos": (20, 2)},
 
                 # Non-parametric independent path (classic + robust two-way)
                 'K2_M_IND': {"label": "Kruskal-Wallis", "pos": (11.5, 1)},
-                'NP_POSTHOC': {"label": "Non-parametric\nPost-hoc Tests", "pos": (11.5, 0)},
+                'NP_POSTHOC': {"label": "Which groups differ?", "pos": (11.5, 0)},
                 'NP_DUNN': {"label": "Dunn Test", "pos": (10.5, -1)},
                 'NP_MANN_WHITNEY': {"label": "Pairwise\nMann-Whitney U", "pos": (12.5, -1)},
                 'NP_TWO_WAY_ROBUST': {"label": "Freedman-Lane\nPermutation", "pos": (13.5, 1)},
-                'NP_TWO_WAY_POSTHOC': {"label": "Two-way\nPost-hoc", "pos": (13.5, 0)},
+                'NP_TWO_WAY_POSTHOC': {"label": "Which groups / conditions differ?", "pos": (13.5, 0)},
                 'NP_TWO_WAY_PAIRWISE': {"label": "Marginal Effects\nPairwise", "pos": (13.5, -1)},
 
                 # Non-parametric repeated-measures path
                 'NP_RM_ROBUST': {"label": "Friedman Test", "pos": (16, 1)},
-                'NP_RM_POSTHOC': {"label": "Friedman\nPost-hoc", "pos": (16, 0)},
+                'NP_RM_POSTHOC': {"label": "Which time points differ?", "pos": (16, 0)},
                 'NP_RM_PAIRWISE': {"label": "RM Pairwise\nComparisons", "pos": (16, -1)},
 
                 # Non-parametric mixed path
                 'NP_MIXED_ROBUST': {"label": "Brunner-Langer\nATS", "pos": (20, 1)},
-                'NP_MIXED_POSTHOC': {"label": "Mixed Robust\nPost-hoc", "pos": (20, 0)},
-                'NP_MIXED_BETWEEN': {"label": "Between-Subjects\nComparisons", "pos": (19, -1)},
-                'NP_MIXED_WITHIN': {"label": "Within-Subjects\nComparisons", "pos": (21, -1)},
+                'NP_MIXED_POSTHOC': {"label": "Which groups / time points differ?", "pos": (20, 0)},
+                'NP_MIXED_BETWEEN': {"label": "Between groups\n(different participants)", "pos": (19, -1)},
+                'NP_MIXED_WITHIN': {"label": "Within group\n(same participants over time)", "pos": (21, -1)},
             }
 
             # Apply wide-canvas spacing to preserve structure while avoiding label collisions.
@@ -521,11 +522,6 @@ class DecisionTreeVisualizer:
                 ('D2', 'E'),  # Re-check after transformation
                 ('E', 'F'),   # Go to test recommendation after re-check
                 ('D1', 'F'),  # Skip re-check if no transformation
-
-                # Welch tests - direct from test recommendation
-                ('F', 'WELCH_T_TEST'),      # Two groups with unequal variances
-                ('F', 'WELCH_ANOVA'),       # Multiple groups with unequal variances
-                ('WELCH_ANOVA', 'WELCH_DUNNETT_T3'),
 
                 # Test type decision
                 ('F', 'G1'),  # Parametric
@@ -711,24 +707,11 @@ class DecisionTreeVisualizer:
             
             print(f"DEBUG TREE: is_nonparametric_test={is_nonparametric_test}")
             
-            # Welch test path (both t-test and ANOVA)
-            if (welch_t_condition or welch_anova_condition) and not auto_switched and not is_nonparametric_test:
-                
-                if welch_t_condition:
-                    # Welch's t-test path - direct from test recommendation
-                    highlighted.add(('F', 'WELCH_T_TEST'))
-                    print("DEBUG TREE: Highlighting Welch's t-test path")
-                elif welch_anova_condition:
-                    # Welch ANOVA path - direct from test recommendation
-                    highlighted.add(('F', 'WELCH_ANOVA'))
-                    # Only highlight post-hoc if significant
-                    alpha = results.get("alpha", 0.05)
-                    if p_value is not None and p_value < alpha:
-                        if posthoc_test and "dunnett" in posthoc_test.lower() and "t3" in posthoc_test.lower():
-                            highlighted.add(('WELCH_ANOVA', 'WELCH_DUNNETT_T3'))
-                    print("DEBUG TREE: Highlighting Welch ANOVA path")
+            # Ensure welch bypass condition is disabled so we flow into standard tree branch
+            welch_t_condition = False
+            welch_anova_condition = False
                     
-            elif is_nonparametric_test:
+            if is_nonparametric_test:
                 print("DEBUG TREE: Taking non-parametric path")
                 if not auto_switched:
                     highlighted.add(('F', 'G2'))  # Non-parametric path
@@ -927,6 +910,8 @@ class DecisionTreeVisualizer:
                                 highlighted.add(('IND_POSTHOC', 'IND_TUKEY'))
                             elif "dunnett" in posthoc_test.lower():
                                 highlighted.add(('IND_POSTHOC', 'IND_DUNNETT'))
+                            elif "fdr" in posthoc_test.lower() or "benjamini" in posthoc_test.lower():
+                                highlighted.add(('IND_POSTHOC', 'IND_FDR'))
                             else:
                                 highlighted.add(('IND_POSTHOC', 'IND_HOLM_SIDAK'))
                             
@@ -944,6 +929,8 @@ class DecisionTreeVisualizer:
                                 highlighted.add(('IND_POSTHOC', 'IND_TUKEY'))
                             elif "dunnett" in posthoc_test.lower():
                                 highlighted.add(('IND_POSTHOC', 'IND_DUNNETT'))
+                            elif "fdr" in posthoc_test.lower() or "benjamini" in posthoc_test.lower():
+                                highlighted.add(('IND_POSTHOC', 'IND_FDR'))
                             else:
                                 highlighted.add(('IND_POSTHOC', 'IND_HOLM_SIDAK'))
             # Generate edge lists for drawing
@@ -1149,8 +1136,10 @@ class DecisionTreeVisualizer:
         """
         try:
             _model_type = results.get("model_type", "")
-            if _model_type in ["Correlation", "LinearRegression", "LogisticRegression", "ANCOVA", "LMM", "CorrelationMatrix"]:
-                return DecisionTreeVisualizer._get_association_tree_json(results, _model_type)
+            if _model_type in ["Correlation", "LinearRegression", "LogisticRegression",
+                                "ANCOVA", "LMM", "CorrelationMatrix"]:
+                from visualization.flowchartvisualizer import FlowchartVisualizer
+                return FlowchartVisualizer.get_tree_json(results)
 
             test_name = results.get("test_name", results.get("test", ""))
             test_type = results.get("test_recommendation", results.get("test_type", ""))
@@ -1279,104 +1268,106 @@ class DecisionTreeVisualizer:
 
             # labels
             if welch_t_condition or welch_anova_condition:
-                f_label = "Test Recommendation:\nNormal distributed\nbut unequal variances"
+                f_label = "Normal data, unequal variances\n-> Welch correction"
             elif actual_test_type.lower() == "parametric":
-                f_label = "Test Recommendation:\nParametric Test"
+                f_label = "Assumptions met\n-> parametric test"
             elif actual_test_type.lower() in ("non_parametric", "non-parametric"):
-                f_label = "Test Recommendation:\nNon-parametric Test"
+                f_label = "Assumptions violated\n-> non-parametric test"
             else:
                 f_label = "Test Recommendation"
 
             # nodes
             nodes_info = {
                 'A':  {"label": "Start", "pos": (0, 14)},
-                'B':  {"label": f"Check Assumptions\nShapiro-Wilk: {pre_is_normal}\nBrown-Forsythe: {pre_has_equal_variance}", "pos": (0, 12.5)},
-                'C':  {"label": f"Assumptions: {'Met' if pre_is_normal and pre_has_equal_variance else 'Not Met'}", "pos": (0, 11)},
-                'D1': {"label": "No Transformation\nNeeded", "pos": (-2, 9.5)},
-                'D2': {"label": f"Apply Transformation\n{transformation}", "pos": (2, 9.5)},
-                'E':  {"label": f"Re-check Assumptions\nShapiro-Wilk: {is_normal}\nBrown-Forsythe: {has_equal_variance}" if was_transformed else "Re-check Assumptions", "pos": (2, 8)},
+                'B':  {"label": f"Are the data normally distributed and variances equal?\nShapiro-Wilk: {pre_is_normal}  |  Brown-Forsythe: {pre_has_equal_variance}", "pos": (0, 12.5)},
+                'C':  {"label": f"Assumptions {'met' if pre_is_normal and pre_has_equal_variance else 'violated'}", "pos": (0, 11)},
+                'D1': {"label": "Data is ready\n(no transformation needed)", "pos": (-2, 9.5)},
+                'D2': {"label": f"Transform the data\n({transformation})", "pos": (2, 9.5)},
+                'E':  {"label": f"Check again after transformation\nShapiro-Wilk: {is_normal}  |  Brown-Forsythe: {has_equal_variance}" if was_transformed else "Check again after transformation", "pos": (2, 8)},
                 'F':  {"label": f_label, "pos": (0, 6.5)},
                 'WELCH_T_TEST':   {"label": "Welch's t-test\n(2 groups)", "pos": (-1.5, 4.5)},
-                'WELCH_ANOVA':    {"label": "Welch-ANOVA\n(>2 groups)", "pos": (1.5, 4.5)},
-                'WELCH_DUNNETT_T3': {"label": "Dunnett T3\nPost-hoc", "pos": (1.5, 3)},
-                'G1': {"label": "Parametric Test", "pos": (-10, 5)},
-                'H1': {"label": "Group Structure", "pos": (-10, 4)},
-                'I1_2': {"label": "Two Groups", "pos": (-13, 3)},
-                'I1_M': {"label": "Multiple Groups", "pos": (-3, 3)},
-                'J1_INDEP': {"label": "Independent\nSamples", "pos": (-14, 2)},
-                'J1_DEP':   {"label": "Dependent\nSamples", "pos": (-12, 2)},
+                'WELCH_ANOVA':    {"label": "Welch's ANOVA\n(> 2 groups)", "pos": (1.5, 4.5)},
+                'WELCH_DUNNETT_T3': {"label": "Which groups differ?\n(Dunnett T3)", "pos": (1.5, 3)},
+                'WELCH_GAMES_HOWELL': {"label": "Which groups differ?\n(Games-Howell)", "pos": (3.5, 3)},
+                'G1': {"label": "Standard parametric test", "pos": (-10, 5)},
+                'H1': {"label": "How many groups?", "pos": (-10, 4)},
+                'I1_2': {"label": "2 groups", "pos": (-13, 3)},
+                'I1_M': {"label": "3 or more groups", "pos": (-3, 3)},
+                'J1_INDEP': {"label": "Independent\n(different participants)", "pos": (-14, 2)},
+                'J1_DEP':   {"label": "Dependent\n(same participants)", "pos": (-12, 2)},
                 'K1_2_IND': {"label": "Independent t-test", "pos": (-14, 1)},
                 'K1_2_DEP': {"label": "Paired t-test", "pos": (-12, 1)},
-                'INDEPENDENT_GROUPS': {"label": "Independent\nGroups", "pos": (-8, 2)},
-                'REPEATED_MEASURES':  {"label": "Repeated\nMeasures", "pos": (-2, 2)},
-                'MIXED_DESIGN':        {"label": "Mixed\nDesign", "pos": (4, 2)},
+                'INDEPENDENT_GROUPS': {"label": "Different participants\nin each group", "pos": (-8, 2)},
+                'REPEATED_MEASURES':  {"label": "Same participants\nmeasured multiple times", "pos": (-2, 2)},
+                'MIXED_DESIGN':        {"label": "Mixed design\n(between + within factors)", "pos": (4, 2)},
                 'IND_ONE_WAY':   {"label": "One-way ANOVA", "pos": (-9, 1)},
                 'IND_TWO_WAY':   {"label": "Two-way ANOVA", "pos": (-7, 1)},
-                'IND_POSTHOC':   {"label": "Independent\nPost-hoc Tests", "pos": (-8, 0)},
+                'IND_POSTHOC':   {"label": "Which specific groups differ?", "pos": (-8, 0)},
                 'IND_TUKEY':     {"label": "Tukey HSD", "pos": (-9.5, -1)},
                 'IND_DUNNETT':   {"label": "Dunnett Test", "pos": (-8, -1)},
-                'IND_HOLM_SIDAK':{"label": "Pairwise t-tests\n(Holm-Bonferroni)", "pos": (-6.5, -1)},
+                'IND_HOLM_SIDAK':{"label": "Pairwise t-tests\n(Holm-Šidák)", "pos": (-6.5, -1)},
+                'IND_FDR':       {"label": "Pairwise t-tests\n(FDR)", "pos": (-5.0, -1)},
                 'RM_MAUCHLY':            {"label": k1_m_sph_label, "pos": (-2, 1)},
-                'RM_SPHERICITY_OK':      {"label": "Sphericity\nAssumption Met", "pos": (-3.5, 0)},
-                'RM_SPHERICITY_VIOLATED':{"label": "Sphericity\nViolated", "pos": (-0.5, 0)},
-                'RM_CHOOSE_CORRECTION':  {"label": "Choose\nCorrection", "pos": (-0.5, -1)},
-                'RM_GG_CORRECTION':      {"label": "Greenhouse-Geisser\nCorrection", "pos": (-1.5, -2)},
-                'RM_HF_CORRECTION':      {"label": "Huynh-Feldt\nCorrection", "pos": (0.5, -2)},
+                'RM_SPHERICITY_OK':      {"label": "Even correlation\n-> no correction needed", "pos": (-3.5, 0)},
+                'RM_SPHERICITY_VIOLATED':{"label": "Uneven correlation\n-> correction needed", "pos": (-0.5, 0)},
+                'RM_CHOOSE_CORRECTION':  {"label": "Select sphericity\ncorrection", "pos": (-0.5, -1)},
+                'RM_GG_CORRECTION':      {"label": "Greenhouse-Geisser\n(conservative)", "pos": (-1.5, -2)},
+                'RM_HF_CORRECTION':      {"label": "Huynh-Feldt\n(less conservative)", "pos": (0.5, -2)},
                 'RM_ANOVA_STANDARD':     {"label": "RM ANOVA", "pos": (-3.5, -1)},
                 'RM_ANOVA_CORRECTED':    {"label": "RM ANOVA\n(Corrected)", "pos": (-0.5, -3)},
-                'RM_POSTHOC':            {"label": "RM Post-hoc Tests", "pos": (-2, -4)},
+                'RM_POSTHOC':            {"label": "Which time points differ?", "pos": (-2, -4)},
                 'RM_TUKEY':              {"label": "Tukey HSD\n(RM)", "pos": (-3.5, -5)},
-                'RM_PAIRED_TESTS':       {"label": "Pairwise Paired t-tests\n(Holm-Bonferroni)", "pos": (-0.5, -5)},
+                'RM_PAIRED_TESTS':       {"label": "Pairwise Paired t-tests\n(Holm-Šidák)", "pos": (-0.5, -5)},
                 'MIXED_MAUCHLY':             {"label": k1_m_sph_label, "pos": (4, 1)},
-                'MIXED_SPHERICITY_OK':       {"label": "Sphericity\nAssumption Met", "pos": (2.5, 0)},
-                'MIXED_SPHERICITY_VIOLATED': {"label": "Sphericity\nViolated", "pos": (5.5, 0)},
-                'MIXED_CHOOSE_CORRECTION':   {"label": "Choose\nCorrection", "pos": (5.5, -1)},
-                'MIXED_GG_CORRECTION':       {"label": "Greenhouse-Geisser\nCorrection", "pos": (4.5, -2)},
-                'MIXED_HF_CORRECTION':       {"label": "Huynh-Feldt\nCorrection", "pos": (6.5, -2)},
+                'MIXED_SPHERICITY_OK':       {"label": "Even correlation\n-> no correction needed", "pos": (2.5, 0)},
+                'MIXED_SPHERICITY_VIOLATED': {"label": "Uneven correlation\n-> correction needed", "pos": (5.5, 0)},
+                'MIXED_CHOOSE_CORRECTION':   {"label": "Select sphericity\ncorrection", "pos": (5.5, -1)},
+                'MIXED_GG_CORRECTION':       {"label": "Greenhouse-Geisser\n(conservative)", "pos": (4.5, -2)},
+                'MIXED_HF_CORRECTION':       {"label": "Huynh-Feldt\n(less conservative)", "pos": (6.5, -2)},
                 'MIXED_ANOVA_STANDARD':      {"label": "Mixed ANOVA", "pos": (2.5, -1)},
                 'MIXED_ANOVA_CORRECTED':     {"label": "Mixed ANOVA\n(Within Corrected)", "pos": (5.5, -3)},
-                'MIXED_POSTHOC':             {"label": "Mixed Post-hoc Tests", "pos": (4, -4)},
+                'MIXED_POSTHOC':             {"label": "Which groups / time points differ?", "pos": (4, -4)},
                 'MIXED_TUKEY':   {"label": "Mixed Tukey\n(Between/Within)", "pos": (2, -5)},
-                'MIXED_BETWEEN': {"label": "Between-Subjects\nComparisons", "pos": (4, -5)},
-                'MIXED_WITHIN':  {"label": "Within-Subjects\nComparisons", "pos": (6, -5)},
-                'G2': {"label": "Non-parametric Test", "pos": (10, 5)},
-                'H2': {"label": "Group Structure", "pos": (10, 4)},
-                'I2_2': {"label": "Two Groups", "pos": (8, 3)},
-                'I2_M': {"label": "Multiple Groups", "pos": (14, 3)},
-                'J2_INDEP': {"label": "Independent\nSamples", "pos": (7, 2)},
-                'J2_DEP':   {"label": "Dependent\nSamples", "pos": (9, 2)},
+                'MIXED_BETWEEN': {"label": "Between groups\n(different participants)", "pos": (4, -5)},
+                'MIXED_WITHIN':  {"label": "Within group\n(same participants over time)", "pos": (6, -5)},
+                'G2': {"label": "Non-parametric test\n(rank-based)", "pos": (10, 5)},
+                'H2': {"label": "How many groups?", "pos": (10, 4)},
+                'I2_2': {"label": "2 groups", "pos": (8, 3)},
+                'I2_M': {"label": "3 or more groups", "pos": (14, 3)},
+                'J2_INDEP': {"label": "Independent\n(different participants)", "pos": (7, 2)},
+                'J2_DEP':   {"label": "Dependent\n(same participants)", "pos": (9, 2)},
                 'K2_2_IND': {"label": "Mann-Whitney U", "pos": (7, 1)},
                 'K2_2_DEP': {"label": "Wilcoxon\nSigned-Rank", "pos": (9, 1)},
-                'NP_INDEPENDENT_GROUPS': {"label": "Independent\nGroups", "pos": (12.5, 2)},
-                'NP_REPEATED_MEASURES':  {"label": "Repeated\nMeasures", "pos": (16, 2)},
-                'NP_MIXED_DESIGN':       {"label": "Mixed\nDesign", "pos": (20, 2)},
+                'NP_INDEPENDENT_GROUPS': {"label": "Different participants\nin each group", "pos": (12.5, 2)},
+                'NP_REPEATED_MEASURES':  {"label": "Same participants\nmeasured multiple times", "pos": (16, 2)},
+                'NP_MIXED_DESIGN':       {"label": "Mixed design\n(between + within)", "pos": (20, 2)},
                 'K2_M_IND':           {"label": "Kruskal-Wallis", "pos": (11.5, 1)},
-                'NP_POSTHOC':         {"label": "Non-parametric\nPost-hoc Tests", "pos": (11.5, 0)},
+                'NP_POSTHOC':         {"label": "Which groups differ?", "pos": (11.5, 0)},
                 'NP_DUNN':            {"label": "Dunn Test", "pos": (10.5, -1)},
                 'NP_MANN_WHITNEY':    {"label": "Pairwise\nMann-Whitney U", "pos": (12.5, -1)},
                 'NP_TWO_WAY_ROBUST':  {"label": "Freedman-Lane\nPermutation", "pos": (13.5, 1)},
-                'NP_TWO_WAY_POSTHOC': {"label": "Two-way\nPost-hoc", "pos": (13.5, 0)},
+                'NP_TWO_WAY_POSTHOC': {"label": "Which groups / conditions differ?", "pos": (13.5, 0)},
                 'NP_TWO_WAY_PAIRWISE':{"label": "Marginal Effects\nPairwise", "pos": (13.5, -1)},
                 'NP_RM_ROBUST':   {"label": "Friedman Test", "pos": (16, 1)},
-                'NP_RM_POSTHOC':  {"label": "Friedman\nPost-hoc", "pos": (16, 0)},
+                'NP_RM_POSTHOC':  {"label": "Which time points differ?", "pos": (16, 0)},
                 'NP_RM_PAIRWISE': {"label": "RM Pairwise\nComparisons", "pos": (16, -1)},
                 'NP_MIXED_ROBUST':   {"label": "Brunner-Langer\nATS", "pos": (20, 1)},
-                'NP_MIXED_POSTHOC':  {"label": "Mixed Robust\nPost-hoc", "pos": (20, 0)},
-                'NP_MIXED_BETWEEN':  {"label": "Between-Subjects\nComparisons", "pos": (19, -1)},
-                'NP_MIXED_WITHIN':   {"label": "Within-Subjects\nComparisons", "pos": (21, -1)},
+                'NP_MIXED_POSTHOC':  {"label": "Which groups / time points differ?", "pos": (20, 0)},
+                'NP_MIXED_BETWEEN':  {"label": "Between groups\n(different participants)", "pos": (19, -1)},
+                'NP_MIXED_WITHIN':   {"label": "Within group\n(same participants over time)", "pos": (21, -1)},
             }
             nodes_info = DecisionTreeVisualizer._apply_wide_canvas_layout(nodes_info)
 
             edges = {
                 ('A','B'),('B','C'),('C','D1'),('C','D2'),('D2','E'),('E','F'),('D1','F'),
-                ('F','WELCH_T_TEST'),('F','WELCH_ANOVA'),('WELCH_ANOVA','WELCH_DUNNETT_T3'),
+                ('F','WELCH_T_TEST'),('F','WELCH_ANOVA'),('WELCH_ANOVA','WELCH_DUNNETT_T3'),('WELCH_ANOVA','WELCH_GAMES_HOWELL'),
                 ('F','G1'),('F','G2'),
                 ('G1','H1'),('H1','I1_2'),('H1','I1_M'),
                 ('I1_2','J1_INDEP'),('I1_2','J1_DEP'),('J1_INDEP','K1_2_IND'),('J1_DEP','K1_2_DEP'),
                 ('I1_M','INDEPENDENT_GROUPS'),('I1_M','REPEATED_MEASURES'),('I1_M','MIXED_DESIGN'),
                 ('INDEPENDENT_GROUPS','IND_ONE_WAY'),('INDEPENDENT_GROUPS','IND_TWO_WAY'),
                 ('IND_ONE_WAY','IND_POSTHOC'),('IND_TWO_WAY','IND_POSTHOC'),
-                ('IND_POSTHOC','IND_TUKEY'),('IND_POSTHOC','IND_DUNNETT'),('IND_POSTHOC','IND_HOLM_SIDAK'),
+                ('IND_POSTHOC','IND_TUKEY'),('IND_POSTHOC','IND_DUNNETT'),('IND_POSTHOC','IND_HOLM_SIDAK'),('IND_POSTHOC','IND_FDR'),
                 ('REPEATED_MEASURES','RM_MAUCHLY'),
                 ('RM_MAUCHLY','RM_SPHERICITY_OK'),('RM_MAUCHLY','RM_SPHERICITY_VIOLATED'),
                 ('RM_SPHERICITY_OK','RM_ANOVA_STANDARD'),
@@ -1442,6 +1433,8 @@ class DecisionTreeVisualizer:
                     if p_value is not None and p_value < alpha:
                         if "dunnett" in posthoc_test.lower() and "t3" in posthoc_test.lower():
                             highlighted.add(('WELCH_ANOVA','WELCH_DUNNETT_T3'))
+                        elif "games" in posthoc_test.lower():
+                            highlighted.add(('WELCH_ANOVA','WELCH_GAMES_HOWELL'))
 
             elif is_nonparametric_test:
                 if not auto_switched:
@@ -1534,6 +1527,7 @@ class DecisionTreeVisualizer:
                             ph = posthoc_test.lower()
                             if "tukey" in ph: highlighted.add(('IND_POSTHOC','IND_TUKEY'))
                             elif "dunnett" in ph: highlighted.add(('IND_POSTHOC','IND_DUNNETT'))
+                            elif "fdr" in ph or "benjamini" in ph: highlighted.add(('IND_POSTHOC','IND_FDR'))
                             else: highlighted.add(('IND_POSTHOC','IND_HOLM_SIDAK'))
                     else:
                         highlighted.update([('I1_M','INDEPENDENT_GROUPS'),('INDEPENDENT_GROUPS','IND_ONE_WAY')])
@@ -1542,6 +1536,7 @@ class DecisionTreeVisualizer:
                             ph = posthoc_test.lower()
                             if "tukey" in ph: highlighted.add(('IND_POSTHOC','IND_TUKEY'))
                             elif "dunnett" in ph: highlighted.add(('IND_POSTHOC','IND_DUNNETT'))
+                            elif "fdr" in ph or "benjamini" in ph: highlighted.add(('IND_POSTHOC','IND_FDR'))
                             else: highlighted.add(('IND_POSTHOC','IND_HOLM_SIDAK'))
 
             # active node set
@@ -1589,8 +1584,12 @@ class DecisionTreeVisualizer:
             print(f"WARNING DecisionTreeVisualizer.get_tree_json: {exc}")
             return None
 
+    # --- _build_tree_topology, _get_association_tree_json, and
+    # --- _visualize_association_test have been moved to FlowchartVisualizer.
+    # --- (src/visualization/flowchartvisualizer.py)
+
     @staticmethod
-    def _build_tree_topology(results: dict, model_type: str, alpha: float = 0.05):
+    def _build_tree_topology_REMOVED(results: dict, model_type: str, alpha: float = 0.05):
         p_value = results.get("p_value", None)
         method = results.get("method", "")
         # Extract assumption check results
@@ -1975,18 +1974,18 @@ class DecisionTreeVisualizer:
 
     def create_association_tree(self, results, output_path=None):
         """
-        Public instance-method wrapper around _visualize_association_test.
+        Generates a vertical flowchart for sequential/pipeline workflows
+        (Correlation, LinearRegression, LogisticRegression, ANCOVA, LMM).
         Returns the saved file path (str) on success, or None on failure.
         """
-        model_type = results.get("model_type", "Correlation")
-        return DecisionTreeVisualizer._visualize_association_test(results, model_type, output_path)
+        from visualization.flowchartvisualizer import FlowchartVisualizer
+        return FlowchartVisualizer.visualize(results, output_path)
 
     @staticmethod
     def _visualize_association_test(results, model_type, output_path=None):
-        """
-        Generates a decision tree for association/regression tests:
-        Correlation (Pearson/Spearman), Linear Regression, Logistic Regression, ANCOVA.
-        """
+        """Removed — delegates to FlowchartVisualizer.visualize() instead."""
+        from visualization.flowchartvisualizer import FlowchartVisualizer
+        return FlowchartVisualizer.visualize(results, output_path)
         try:
             import matplotlib.pyplot as plt
             import networkx as nx
@@ -2113,13 +2112,13 @@ class DecisionTreeVisualizer:
             print("DEBUG TREE: One-Way ANOVA detected - showing all post-hoc options for user choice")
             highlighted.add(('O1_PH', 'P1_PH_TK'))  # Tukey
             highlighted.add(('O1_PH', 'P1_PH_DN'))  # Dunnett  
-            highlighted.add(('O1_PH', 'P1_PH_SD'))  # Holm-Bonferroni
+            highlighted.add(('O1_PH', 'P1_PH_SD'))  # Holm-Šidák
             return
         elif is_advanced_anova and not posthoc_test:
             # For Advanced ANOVAs with no specific post-hoc performed: show only Tukey and Pairwise (no Dunnett)
             print("DEBUG TREE: Advanced ANOVA detected - showing only Tukey and Pairwise post-hoc options")
             highlighted.add(('O1_PH', 'P1_PH_TK'))  # Tukey
-            highlighted.add(('O1_PH', 'P1_PH_SD'))  # Holm-Bonferroni (Pairwise t-tests)
+            highlighted.add(('O1_PH', 'P1_PH_SD'))  # Holm-Šidák (Pairwise t-tests)
             return
         
         # For specific tests or when a post-hoc was actually performed: show the specific path
@@ -2133,7 +2132,7 @@ class DecisionTreeVisualizer:
                 highlighted.add(('O1_PH', 'P1_PH_DN'))
             elif ("holm" in posthoc_test.lower() or "sidak" in posthoc_test.lower() or 
                   "pairwise t-test" in posthoc_test.lower() or "pairwise" in posthoc_test.lower()):
-                print(f"DEBUG TREE: Highlighting Holm-Bonferroni path for posthoc: '{posthoc_test}'")
+                print(f"DEBUG TREE: Highlighting Holm-Šidák path for posthoc: '{posthoc_test}'")
                 highlighted.add(('O1_PH', 'P1_PH_SD'))
             # Handle non-parametric post-hoc tests
             elif "mann-whitney" in posthoc_test.lower():
@@ -2146,7 +2145,7 @@ class DecisionTreeVisualizer:
                 print("DEBUG TREE: Highlighting Wilcoxon post-hoc path")
                 highlighted.add(('L2_PH', 'NP_PH_WILC'))
             else:
-                print(f"DEBUG TREE: Unknown post-hoc test '{posthoc_test}', defaulting to Holm-Bonferroni")
+                print(f"DEBUG TREE: Unknown post-hoc test '{posthoc_test}', defaulting to Holm-Šidák")
                 highlighted.add(('O1_PH', 'P1_PH_SD'))
         else:
             # Check for pairwise comparisons to infer post-hoc test type
@@ -2170,7 +2169,7 @@ class DecisionTreeVisualizer:
                     "holm" in corrected_method or "sidak" in corrected_method or 
                     "holm" in correction_method_str or "sidak" in correction_method_str or
                     "holm" in correction_field_str or "sidak" in correction_field_str):
-                    print("DEBUG TREE: Inferred Holm-Bonferroni from pairwise test")
+                    print("DEBUG TREE: Inferred Holm-Šidák from pairwise test")
                     highlighted.add(('O1_PH', 'P1_PH_SD'))
                 elif ("tukey" in test_name_in_comp or 
                       "tukey" in correction_field_str):
@@ -2181,7 +2180,7 @@ class DecisionTreeVisualizer:
                     highlighted.add(('O1_PH', 'P1_PH_DN'))
                 elif ("pairwise" in test_name_in_comp and ("holm" in corrected_method or "sidak" in corrected_method or 
                                                         "holm" in correction_method_str or "sidak" in correction_method_str)):
-                    print("DEBUG TREE: Inferred Holm-Bonferroni from pairwise test with correction method")
+                    print("DEBUG TREE: Inferred Holm-Šidák from pairwise test with correction method")
                     highlighted.add(('O1_PH', 'P1_PH_SD'))
                 else:
                     print("DEBUG TREE: Unknown pairwise test type, showing options for choice")
@@ -2202,11 +2201,11 @@ class DecisionTreeVisualizer:
                     print("DEBUG TREE: One-Way ANOVA - showing all post-hoc options for user choice")
                     highlighted.add(('O1_PH', 'P1_PH_TK'))  # Tukey
                     highlighted.add(('O1_PH', 'P1_PH_DN'))  # Dunnett
-                    highlighted.add(('O1_PH', 'P1_PH_SD'))  # Holm-Bonferroni
+                    highlighted.add(('O1_PH', 'P1_PH_SD'))  # Holm-Šidák
                 elif is_advanced_anova:
                     print("DEBUG TREE: Advanced ANOVA - showing only Tukey and Pairwise post-hoc options")
                     highlighted.add(('O1_PH', 'P1_PH_TK'))  # Tukey
-                    highlighted.add(('O1_PH', 'P1_PH_SD'))  # Holm-Bonferroni (Pairwise t-tests)
+                    highlighted.add(('O1_PH', 'P1_PH_SD'))  # Holm-Šidák (Pairwise t-tests)
                 else:
                     print("DEBUG TREE: Using default Tukey for other test types")
                     highlighted.add(('O1_PH', 'P1_PH_TK'))
@@ -2299,9 +2298,9 @@ class DecisionTreeVisualizer:
                 highlighted.add(('O1_MIX_PH', 'P1_MIX_WITHIN'))
 
 def test_decision_tree_visualization():
-    # Beispielhafte Ergebnisse für einen One-Way-ANOVA mit signifikantem Ergebnis und Tukey-Posthoc
+    # Beispielhafte Ergebnisse für einen Welch's ANOVA mit signifikantem Ergebnis und Games-Howell-Posthoc
     results = {
-        "test": "One-way ANOVA",
+        "test": "Welch-ANOVA",
         "test_recommendation": "parametric",
         "transformation": "None",
         "p_value": 0.002,
@@ -2313,12 +2312,12 @@ def test_decision_tree_visualization():
             "C": {"is_normal": True},
             "all_data": {"is_normal": True}
         },
-        "variance_test": {"equal_variance": True},
-        "posthoc_test": "Tukey",
+        "variance_test": {"equal_variance": False},
+        "posthoc_test": "Games-Howell",
         "pairwise_comparisons": [
-            {"groups": ("A", "B"), "p_value": 0.01, "test": "Tukey"},
-            {"groups": ("A", "C"), "p_value": 0.03, "test": "Tukey"},
-            {"groups": ("B", "C"), "p_value": 0.20, "test": "Tukey"}
+            {"groups": ("A", "B"), "p_value": 0.01, "test": "Games-Howell"},
+            {"groups": ("A", "C"), "p_value": 0.03, "test": "Games-Howell"},
+            {"groups": ("B", "C"), "p_value": 0.20, "test": "Games-Howell"}
         ]
     }
     # Generiere und speichere den Entscheidungsbaum
@@ -2350,11 +2349,11 @@ def test_rm_anova_decision_tree():
         },
         "correction_used": "Greenhouse-Geisser (ε = 0.72 ≤ 0.75)",
         "corrected_p_value": 0.018,
-        "posthoc_test": "Paired t-tests (Holm-Bonferroni corrected)",
+        "posthoc_test": "Paired t-tests (Holm-Šidák corrected)",
         "pairwise_comparisons": [
-            {"groups": ("Time1", "Time2"), "p_value": 0.02, "test": "Paired t-test", "correction": "Holm-Bonferroni"},
-            {"groups": ("Time1", "Time3"), "p_value": 0.005, "test": "Paired t-test", "correction": "Holm-Bonferroni"},
-            {"groups": ("Time2", "Time3"), "p_value": 0.15, "test": "Paired t-test", "correction": "Holm-Bonferroni"}
+            {"groups": ("Time1", "Time2"), "p_value": 0.02, "test": "Paired t-test", "correction": "Holm-Šidák"},
+            {"groups": ("Time1", "Time3"), "p_value": 0.005, "test": "Paired t-test", "correction": "Holm-Šidák"},
+            {"groups": ("Time2", "Time3"), "p_value": 0.15, "test": "Paired t-test", "correction": "Holm-Šidák"}
         ]
     }
     # Generiere und speichere den Entscheidungsbaum
