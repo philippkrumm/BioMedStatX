@@ -1930,48 +1930,6 @@ class DecisionTreeVisualizer:
 
         return nodes_info, edges, highlighted, tree_meta
 
-    @staticmethod
-    def _get_association_tree_json(results: dict, model_type: str) -> dict | None:
-        try:
-            alpha = results.get("alpha", 0.05)
-            nodes_info, edges, highlighted, tree_meta = DecisionTreeVisualizer._build_tree_topology(results, model_type, alpha)
-
-            active_nodes = set()
-            for u, v in highlighted:
-                active_nodes.add(u)
-                active_nodes.add(v)
-
-            node_list = []
-            for nid, info in nodes_info.items():
-                node_list.append({
-                    "id": nid,
-                    "x": float(info["pos"][0]),
-                    "y": float(info["pos"][1]),
-                    "label": info["label"],
-                    "isActive": nid in active_nodes,
-                    "active": nid in active_nodes,
-                    "isSquare": info["isSquare"],
-                })
-
-            edge_list = [
-                {
-                    "source": u,
-                    "from": u,
-                    "target": v,
-                    "to": v,
-                    "isActive": (u, v) in highlighted,
-                    "active": (u, v) in highlighted,
-                }
-                for u, v in edges
-            ]
-            return {"tree_meta": tree_meta, "nodes": node_list, "edges": edge_list}
-
-        except Exception as exc:
-            import traceback
-            traceback.print_exc()
-            print(f"WARNING DecisionTreeVisualizer._get_association_tree_json: {exc}")
-            return None
-
     def create_association_tree(self, results, output_path=None):
         """
         Generates a vertical flowchart for sequential/pipeline workflows

@@ -128,21 +128,18 @@ def test_association_decision_trees(qapp):
         assert len(tree_json["nodes"]) > 0, f"Empty nodes list for {model}"
         assert len(tree_json["edges"]) > 0, f"Empty edges list for {model}"
         
-        # Verify node/edge schemas
+        # Verify node/edge schemas (FlowchartVisualizer.get_tree_json contract)
         for node in tree_json["nodes"]:
             assert "id" in node
             assert "x" in node
             assert "y" in node
             assert "label" in node
             assert "isActive" in node
-            assert "active" in node
             assert "isSquare" in node
-            
+
         for edge in tree_json["edges"]:
             assert "source" in edge
-            assert "from" in edge
             assert "target" in edge
-            assert "to" in edge
             assert "isActive" in edge
-            assert "active" in edge
+            assert "isAlternative" in edge
 
