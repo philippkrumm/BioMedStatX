@@ -1313,7 +1313,7 @@ class StatisticalTester:
         
         # Create a dictionary with the required parameters
         test_params = {}
-        if 'd' in valid_params: test_params['d'] = df
+        if 'df' in valid_params: test_params['df'] = df
         if 'dv' in valid_params: test_params['dv'] = dv
         if 'subject' in valid_params and subject is not None: test_params['subject'] = subject
         if 'between' in valid_params and between is not None: test_params['between'] = between
