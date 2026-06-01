@@ -202,7 +202,7 @@ class AnalysisManager:
                 "additional_factors": additional_factors,
             }
 
-        injected_df = analysis_context.get("injected_d")
+        injected_df = analysis_context.get("injected_df")
         if injected_df is not None:
             df = injected_df.copy()
         else:
