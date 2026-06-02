@@ -34,6 +34,7 @@
   }
   var pairwiseData = parseJsonNode("pd-data-pairs", []);
   var groupOrder = parseJsonNode("pd-data-order", []);
+  var groupFactorMapPayload = parseJsonNode("pd-data-group-factor-map", {});
 
   function normalizeReferenceLines(rawLines) {
     if (!Array.isArray(rawLines)) {
@@ -254,7 +255,15 @@
     autoPatternsEnabled: false,
     visiblePairIds: [],
     groupLabels: {},
-    spaghettiOpacity: 0.35
+    spaghettiOpacity: 0.35,
+    pointLayout: "jitter",
+    grouping: {
+      enabled: false,
+      map: {},
+      majorOrder: [],
+      minorOrder: [],
+      mode: "traces"
+    }
   };
 
   function hasUsableSubjectTrajectories() {
@@ -394,16 +403,97 @@
     state.showPairedLines = true;
   }
 
+  function buildGroupingControls() {
+    var enabledEl = document.getElementById("pd-group-enabled");
+    var modeEl = document.getElementById("pd-group-mode");
+    var editorEl = document.getElementById("pd-group-mapping-editor");
+    if (!enabledEl || !modeEl || !editorEl) return;
+
+    enabledEl.checked = state.grouping.enabled;
+    modeEl.value = state.grouping.mode;
+    document.getElementById("pd-group-mode-row").className = state.grouping.enabled ? "pd-row" : "pd-row is-disabled";
+    modeEl.disabled = !state.grouping.enabled;
+
+    if (!state.grouping.enabled) {
+      editorEl.style.display = "none";
+      return;
+    }
+    editorEl.style.display = "block";
+    editorEl.innerHTML = "";
+    
+    // Auto-populate map if empty but we have factors from backend
+    var backendGroups = Object.keys(groupFactorMapPayload);
+    if (Object.keys(state.grouping.map).length === 0 && backendGroups.length > 0) {
+      backendGroups.forEach(function(g) {
+        state.grouping.map[g] = {
+          major: groupFactorMapPayload[g].major,
+          minor: groupFactorMapPayload[g].minor
+        };
+      });
+    }
+
+    groupOrder.forEach(function (group) {
+      var row = document.createElement("div");
+      row.className = "pd-row";
+      row.style.marginBottom = "5px";
+      
+      var label = document.createElement("label");
+      label.textContent = group;
+      label.style.fontSize = "0.75rem";
+      label.style.width = "40%";
+      label.style.overflow = "hidden";
+      label.style.textOverflow = "ellipsis";
+      label.style.whiteSpace = "nowrap";
+
+      var mapObj = state.grouping.map[group] || { major: "", minor: "" };
+
+      var majorInput = document.createElement("input");
+      majorInput.type = "text";
+      majorInput.value = mapObj.major;
+      majorInput.placeholder = "Major (X)";
+      majorInput.style.width = "28%";
+      majorInput.addEventListener("input", function() {
+        state.grouping.map[group] = state.grouping.map[group] || {};
+        state.grouping.map[group].major = majorInput.value;
+        buildPlot();
+      });
+
+      var minorInput = document.createElement("input");
+      minorInput.type = "text";
+      minorInput.value = mapObj.minor;
+      minorInput.placeholder = "Minor (Color)";
+      minorInput.style.width = "28%";
+      minorInput.addEventListener("input", function() {
+        state.grouping.map[group] = state.grouping.map[group] || {};
+        state.grouping.map[group].minor = minorInput.value;
+        buildPlot();
+      });
+
+      row.appendChild(label);
+      row.appendChild(majorInput);
+      row.appendChild(minorInput);
+      editorEl.appendChild(row);
+    });
+  }
+
   function setControlDefaults() {
     document.getElementById("pd-plot-type").value = state.plotType;
     document.getElementById("pd-title").value = state.title;
     document.getElementById("pd-x-label").value = state.xLabel;
     document.getElementById("pd-y-label").value = state.yLabel;
+    document.getElementById("pd-y-min").value = state.yMin == null ? "" : String(state.yMin);
+    document.getElementById("pd-y-max").value = state.yMax == null ? "" : String(state.yMax);
     document.getElementById("pd-font-family").value = state.fontFamily;
     document.getElementById("pd-title-size").value = state.titleSize;
     document.getElementById("pd-axis-size").value = state.axisSize;
     document.getElementById("pd-alpha").value = state.alpha;
     document.getElementById("pd-show-points").checked = state.showPoints;
+    
+    var pointLayoutEl = document.getElementById("pd-point-layout");
+    if (pointLayoutEl) {
+      pointLayoutEl.value = state.pointLayout || "jitter";
+    }
+
     document.getElementById("pd-show-paired-lines").checked = state.showPairedLines;
     document.getElementById("pd-show-error-bars").checked = state.showErrorBars;
     document.getElementById("pd-central-measure").value = state.centralMeasure;
@@ -442,8 +532,27 @@
     document.getElementById("pd-png-scale").value = String(state.pngScale);
     var spaghettiOpacityEl = document.getElementById("pd-spaghetti-opacity");
     if (spaghettiOpacityEl) spaghettiOpacityEl.value = state.spaghettiOpacity;
+    
+    var groupEnabledEl = document.getElementById("pd-group-enabled");
+    if (groupEnabledEl) {
+      groupEnabledEl.addEventListener("change", function() {
+        state.grouping.enabled = groupEnabledEl.checked;
+        buildGroupingControls();
+        buildPlot();
+      });
+    }
+    
+    var groupModeEl = document.getElementById("pd-group-mode");
+    if (groupModeEl) {
+      groupModeEl.addEventListener("change", function() {
+        state.grouping.mode = groupModeEl.value;
+        buildPlot();
+      });
+    }
+    
     updatePairedLineControlState();
     buildNodeLabelControls();
+    buildGroupingControls();
     updateEncodingControlVisibility();
     updateControlAvailability();
     updateFontPreviewStatus();
@@ -459,6 +568,12 @@
     state.axisSize = parseInt(document.getElementById("pd-axis-size").value, 10) || 12;
     state.alpha = parseFloat(document.getElementById("pd-alpha").value) || 0.85;
     state.showPoints = document.getElementById("pd-show-points").checked;
+    
+    var pointLayoutEl = document.getElementById("pd-point-layout");
+    if (pointLayoutEl) {
+      state.pointLayout = pointLayoutEl.value || "jitter";
+    }
+
     state.showPairedLines = document.getElementById("pd-show-paired-lines").checked;
     if (!hasUsableSubjectTrajectories()) {
       state.showPairedLines = false;
@@ -579,6 +694,26 @@
     });
   }
 
+  function moveGroup(index, direction) {
+    if (direction === -1 && index > 0) {
+      var temp = groupOrder[index - 1];
+      groupOrder[index - 1] = groupOrder[index];
+      groupOrder[index] = temp;
+    } else if (direction === 1 && index < groupOrder.length - 1) {
+      var temp = groupOrder[index + 1];
+      groupOrder[index + 1] = groupOrder[index];
+      groupOrder[index] = temp;
+    } else {
+      return;
+    }
+    buildNodeLabelControls();
+    buildColorControls();
+    buildPatternControls();
+    buildSymbolControls();
+    buildGroupingControls();
+    buildPlot();
+  }
+
   function buildNodeLabelControls() {
     var root = document.getElementById("pd-node-label-controls");
     var groupSection = document.getElementById("pd-node-labels-group");
@@ -589,7 +724,7 @@
     }
     if (groupSection) groupSection.style.display = "";
     root.innerHTML = "";
-    groupOrder.forEach(function (group) {
+    groupOrder.forEach(function (group, index) {
       var row = document.createElement("div");
       row.className = "pd-row";
       var label = document.createElement("label");
@@ -605,8 +740,29 @@
         state.groupLabels[group] = input.value;
         buildPlot();
       });
+      
+      var btnContainer = document.createElement("div");
+      btnContainer.className = "pd-button-row";
+      btnContainer.style.marginLeft = "4px";
+      
+      var upBtn = document.createElement("button");
+      upBtn.type = "button";
+      upBtn.innerHTML = "↑";
+      upBtn.setAttribute("aria-label", "Move up");
+      upBtn.onclick = function() { moveGroup(index, -1); };
+      
+      var downBtn = document.createElement("button");
+      downBtn.type = "button";
+      downBtn.innerHTML = "↓";
+      downBtn.setAttribute("aria-label", "Move down");
+      downBtn.onclick = function() { moveGroup(index, 1); };
+      
+      btnContainer.appendChild(upBtn);
+      btnContainer.appendChild(downBtn);
+
       row.appendChild(label);
       row.appendChild(input);
+      row.appendChild(btnContainer);
       root.appendChild(row);
     });
   }
@@ -902,6 +1058,68 @@
     var lowerBounds = [];
     var upperBounds = [];
 
+    function getXForShape(group, length) {
+      if (state.grouping.enabled) {
+        var mapObj = state.grouping.map[group] || { major: "", minor: "" };
+        var majors = [];
+        var minors = [];
+        for (var i = 0; i < length; i++) {
+          majors.push(mapObj.major || "");
+          minors.push(mapObj.minor || "");
+        }
+        return [majors, minors];
+      } else {
+        var numVal = idxMap[group];
+        var arr = [];
+        for (var i = 0; i < length; i++) arr.push(numVal);
+        return arr;
+      }
+    }
+
+    function getJitterBase(group) {
+      return state.grouping.enabled ? (idxMap[group] - 1) : idxMap[group];
+    }
+
+    function calculateBeeswarmOffsets(yValues, amplitude) {
+      var offsets = new Array(yValues.length).fill(0);
+      var items = yValues.map(function(v, i) { return { v: v, i: i }; });
+      items.sort(function(a, b) { return a.v - b.v; });
+      if (!items.length) return offsets;
+      var ySpan = items[items.length - 1].v - items[0].v;
+      var binSize = Math.max(ySpan * 0.05, 1e-9);
+      var currentBin = [];
+      var currentBinY = items[0].v;
+      function flushBin() {
+        if (!currentBin.length) return;
+        var n = currentBin.length;
+        var step = (amplitude * 2) / Math.max(1, n);
+        var start = -(n - 1) * step / 2;
+        currentBin.forEach(function(item, idx) {
+          offsets[item.i] = start + idx * step;
+        });
+        currentBin = [];
+      }
+      items.forEach(function(item) {
+        if (item.v - currentBinY > binSize) {
+          flushBin();
+          currentBinY = item.v;
+        }
+        currentBin.push(item);
+      });
+      flushBin();
+      return offsets;
+    }
+
+    function getPointXOffsets(group, values, pointOffset, pointJitter, groupIndex) {
+      if (state.pointLayout === "beeswarm") {
+        var swarms = calculateBeeswarmOffsets(values, pointJitter || 0.22);
+        return values.map(function(_, i) { return getJitterBase(group) + (pointOffset || 0) + swarms[i]; });
+      }
+      return values.map(function(_, pointIndex) {
+        return stableJitter(getJitterBase(group) + (pointOffset || 0), pointIndex, groupIndex !== undefined ? groupIndex : (idxMap[group] - 1), pointJitter || 0.22);
+      });
+    }
+
     groupOrder.forEach(function (group) {
       var gMin = getStat(group, "min");
       var gMax = getStat(group, "max");
@@ -966,7 +1184,7 @@
 
         traces.push({
           type: "bar",
-          x: [x],
+          x: getXForShape(group, 1),
           y: [centerValue],
           name: group,
           legendgroup: group,
@@ -989,9 +1207,7 @@
         traces.push({
           type: "scatter",
           mode: "markers",
-          x: values.map(function (_, pointIndex) {
-            return stableJitter(idxMap[group], pointIndex, groupIndex, 0.22);
-          }),
+          x: getPointXOffsets(group, values, 0, 0.22, groupIndex),
           y: values,
           marker: {
             color: state.colors[group],
@@ -1015,7 +1231,7 @@
             type: "box",
             name: group,
             legendgroup: group,
-            x: [idxMap[group]],
+            x: getXForShape(group, 1),
             q1: [summary.q1],
             median: [summary.median],
             q3: [summary.q3],
@@ -1033,7 +1249,7 @@
             type: "box",
             name: group,
             legendgroup: group,
-            x: values.map(function () { return idxMap[group]; }),
+            x: getXForShape(group, values.length),
             y: values,
             boxpoints: false,
             jitter: 0.3,
@@ -1050,9 +1266,7 @@
         traces.push({
           type: "scatter",
           mode: "markers",
-          x: values.map(function (_, pointIndex) {
-            return stableJitter(idxMap[group], pointIndex, idxMap[group] - 1, 0.22);
-          }),
+          x: getPointXOffsets(group, values, 0, 0.22, undefined),
           y: values,
           marker: {
             color: state.colors[group],
@@ -1075,7 +1289,7 @@
           type: "violin",
           name: group,
           legendgroup: group,
-          x: values.map(function () { return idxMap[group]; }),
+          x: getXForShape(group, values.length),
           y: values,
           points: state.showPoints ? "all" : false,
           jitter: 0.28,
@@ -1107,7 +1321,7 @@
           legendgroup: group,
           orientation: "h",
           x: values,
-          y: values.map(function () { return baseX; }),
+          y: getXForShape(group, values.length),
           side: "positive",
           points: false,
           box: { visible: false },
@@ -1144,9 +1358,7 @@
             type: "scatter",
             mode: "markers",
             x: values,
-            y: values.map(function (_, pointIndex) {
-              return stableJitter(baseX + pointOffset, pointIndex, groupIndex, pointJitter);
-            }),
+            y: getPointXOffsets(group, values, pointOffset, pointJitter, groupIndex),
             marker: {
               color: state.colors[group],
               symbol: getSymbolForGroup(group, groupIndex),
@@ -1160,9 +1372,132 @@
           });
         }
       });
+    } else if (state.plotType === "Forest") {
+      var validPairsForForest = pairwiseData.filter(function(p) { return p.effect_size != null; });
+      if (validPairsForForest.length === 0) {
+        return { traces: [], yMin: 0, yMax: 1, idxMap: idxMap, warning: "Forest plot requires effect size and confidence intervals from post-hoc tests." };
+      }
+      validPairsForForest.reverse();
+      
+      var effectTypeLower = (validPairsForForest[0].effect_size_type || "").toLowerCase();
+      var isRatio = effectTypeLower.indexOf("odds") !== -1 || effectTypeLower.indexOf("ratio") !== -1 || effectTypeLower.indexOf("fold") !== -1;
+      
+      traces.push({
+        type: "scatter",
+        mode: "markers",
+        x: validPairsForForest.map(function(p) { return p.effect_size; }),
+        y: validPairsForForest.map(function(p) { return p.comparison; }),
+        error_x: {
+          type: "data",
+          symmetric: false,
+          array: validPairsForForest.map(function(p) { return p.ci_upper != null ? (p.ci_upper - p.effect_size) : 0; }),
+          arrayminus: validPairsForForest.map(function(p) { return p.ci_lower != null ? (p.effect_size - p.ci_lower) : 0; }),
+          visible: true,
+          color: "#16313a",
+          thickness: 1.5,
+          width: 4
+        },
+        marker: { size: 10, color: "#0f766e", symbol: "square" },
+        showlegend: false
+      });
+      
+      var minEffForest = Math.min.apply(null, validPairsForForest.map(function(p) { return p.ci_lower != null ? p.ci_lower : p.effect_size; }));
+      var maxEffForest = Math.max.apply(null, validPairsForForest.map(function(p) { return p.ci_upper != null ? p.ci_upper : p.effect_size; }));
+      return { traces: traces, yMin: minEffForest, yMax: maxEffForest, idxMap: idxMap, isHorizontalForest: true, isRatioEffect: isRatio };
+
+    } else if (state.plotType === "Estimation") {
+      var validPairsForEst = pairwiseData.filter(function(p) { return p.effect_size != null; });
+      if (validPairsForEst.length === 0) {
+        return { traces: [], yMin: 0, yMax: 1, idxMap: idxMap, warning: "Estimation plot requires effect size and confidence intervals from post-hoc tests." };
+      }
+      
+      var counts = {};
+      validPairsForEst.forEach(function(p) {
+        counts[p.group1] = (counts[p.group1] || 0) + 1;
+        counts[p.group2] = (counts[p.group2] || 0) + 1;
+      });
+      
+      var commonControl = null;
+      Object.keys(counts).forEach(function(g) {
+         if (counts[g] === validPairsForEst.length) commonControl = g;
+      });
+      
+      if (!commonControl) {
+         return { traces: [], yMin: 0, yMax: 1, idxMap: idxMap, warning: "Estimation plot currently requires a control-referenced design (e.g., Dunnett's). All-pairwise (Tukey) is not supported in this view." };
+      }
+
+      // Upper Panel: Raw Data Scatter
+      groupOrder.forEach(function (group, groupIndex) {
+        var values = groupValues(group);
+        if (!values.length) return;
+        traces.push({
+          type: "scatter",
+          mode: "markers",
+          x: getPointXOffsets(group, values, 0, 0.22, groupIndex),
+          y: values,
+          marker: {
+            color: state.colors[group],
+            symbol: getSymbolForGroup(group, groupIndex),
+            size: 6,
+            opacity: 0.7,
+            line: { width: 0.5, color: "#16313a" }
+          },
+          legendgroup: group,
+          name: group,
+          showlegend: state.showLegend,
+          yaxis: "y"
+        });
+      });
+      
+      // Lower Panel: Effect Sizes
+      var effectTypeLowerEst = (validPairsForEst[0].effect_size_type || "").toLowerCase();
+      var isRatioEst = effectTypeLowerEst.indexOf("odds") !== -1 || effectTypeLowerEst.indexOf("ratio") !== -1 || effectTypeLowerEst.indexOf("fold") !== -1;
+      
+      var yMinEff = Infinity;
+      var yMaxEff = -Infinity;
+      
+      validPairsForEst.forEach(function(p) {
+         var targetGroup = p.group1 === commonControl ? p.group2 : p.group1;
+         traces.push({
+           type: "scatter",
+           mode: "markers",
+           x: getXForShape(targetGroup, 1),
+           y: [p.effect_size],
+           error_y: {
+             type: "data",
+             symmetric: false,
+             array: [p.ci_upper != null ? (p.ci_upper - p.effect_size) : 0],
+             arrayminus: [p.ci_lower != null ? (p.effect_size - p.ci_lower) : 0],
+             visible: true,
+             color: state.colors[targetGroup] || "#16313a",
+             thickness: 2,
+             width: 6
+           },
+           marker: { size: 10, color: state.colors[targetGroup] || "#16313a", symbol: "triangle-up" },
+           showlegend: false,
+           yaxis: "y2"
+         });
+         
+         if (p.ci_lower != null) yMinEff = Math.min(yMinEff, p.ci_lower);
+         else yMinEff = Math.min(yMinEff, p.effect_size);
+         
+         if (p.ci_upper != null) yMaxEff = Math.max(yMaxEff, p.ci_upper);
+         else yMaxEff = Math.max(yMaxEff, p.effect_size);
+      });
+      
+      return { 
+        traces: traces, 
+        yMin: Math.min.apply(null, lowerBounds), 
+        yMax: Math.max.apply(null, upperBounds), 
+        idxMap: idxMap, 
+        isEstimation: true,
+        yMinEff: yMinEff,
+        yMaxEff: yMaxEff,
+        isRatioEffect: isRatioEst
+      };
     }
 
-    if (state.showPairedLines && state.plotType !== "Raincloud") {
+    if (state.showPairedLines && state.plotType !== "Raincloud" && state.plotType !== "Forest" && state.plotType !== "Estimation") {
       traces = traces.concat(buildPairedLineTraces(idxMap));
     }
 
@@ -1642,6 +1977,10 @@
     } else if (state.yAxisFormat === "decimal") {
       yAxis.tickformat = ".2f";
     }
+    
+    if (built.isEstimation) {
+      yAxis.domain = [0.35, 1.0];
+    }
 
     var isHorizontalRaincloud = state.plotType === "Raincloud";
 
@@ -1700,17 +2039,9 @@
     var hasReferenceAnnotations = Array.isArray(referenceLayer.annotations) && referenceLayer.annotations.length > 0;
     var resolvedFontFamily = resolveFontFamilyStack(state.fontFamily);
 
-    var layout = {
-      template: "plotly_white",
-      title: { text: state.title, font: { family: resolvedFontFamily, size: state.titleSize } },
-      font: { family: resolvedFontFamily, size: state.axisSize, color: "#16313a" },
-      margin: { l: 64, r: Math.max(legendOutsideRight ? 160 : 24, hasReferenceAnnotations ? 130 : 24), t: 58, b: legendBottom ? 120 : 68 },
-      xaxis: {
+      var xAxisConfig = {
         title: { text: state.xLabel, font: { size: state.axisSize } },
-        tickvals: groupOrder.map(function (_, index) { return index + 1; }),
-        ticktext: groupOrder.map(function (g) { return state.groupLabels[g] !== undefined ? state.groupLabels[g] : g; }),
         tickangle: state.xTickAngle,
-        type: state.logX ? "log" : "linear",
         showgrid: state.gridStyle === "major" || state.gridStyle === "both",
         zeroline: false,
         showline: true,
@@ -1719,9 +2050,24 @@
         ticks: tickMode,
         tickwidth: Math.max(0.5, state.axisThickness),
         ticklen: Math.max(4, Math.round(4 + state.axisThickness * 2)),
-        mirror: axisMirror,
-        range: state.logX ? [Math.max(0.8, 1 - 0.2), groupOrder.length + 0.6] : [0.4, groupOrder.length + 0.6]
-      },
+        mirror: axisMirror
+      };
+      
+      if (state.grouping.enabled) {
+        xAxisConfig.type = "multicategory";
+      } else {
+        xAxisConfig.type = state.logX ? "log" : "linear";
+        xAxisConfig.tickvals = groupOrder.map(function (_, index) { return index + 1; });
+        xAxisConfig.ticktext = groupOrder.map(function (g) { return state.groupLabels[g] !== undefined ? state.groupLabels[g] : g; });
+        xAxisConfig.range = state.logX ? [Math.max(0.8, 1 - 0.2), groupOrder.length + 0.6] : [0.4, groupOrder.length + 0.6];
+      }
+
+    var layout = {
+      template: "plotly_white",
+      title: { text: state.title, font: { family: resolvedFontFamily, size: state.titleSize } },
+      font: { family: resolvedFontFamily, size: state.axisSize, color: "#16313a" },
+      margin: { l: 64, r: Math.max(legendOutsideRight ? 160 : 24, hasReferenceAnnotations ? 130 : 24), t: 58, b: legendBottom ? 120 : 68 },
+      xaxis: xAxisConfig,
       yaxis: yAxis,
       showlegend: state.showLegend,
       legend: {
@@ -1738,12 +2084,71 @@
       hovermode: "closest"
     };
 
+    if (built.isEstimation) {
+      layout.yaxis2 = Object.assign({}, yAxis, {
+        domain: [0.0, 0.22],
+        title: { text: "Effect Size", font: { size: Math.max(10, state.axisSize - 2) } },
+        range: undefined,
+        autorange: true
+      });
+      layout.shapes.push({
+        type: "line",
+        xref: "paper",
+        x0: 0,
+        x1: 1,
+        yref: "y2",
+        y0: built.isRatioEffect ? 1 : 0,
+        y1: built.isRatioEffect ? 1 : 0,
+        line: { color: "rgba(22,49,58,0.72)", width: 1.5, dash: "dash" }
+      });
+    }
+
+    if (built.isHorizontalForest) {
+      layout.yaxis = {
+        title: { text: "", font: { size: state.axisSize } },
+        type: "category",
+        showgrid: true,
+        zeroline: false,
+        showline: true,
+        linecolor: "rgba(22,49,58,0.75)",
+        linewidth: Math.max(0.5, state.axisThickness),
+        ticks: tickMode,
+        tickwidth: Math.max(0.5, state.axisThickness),
+        ticklen: Math.max(4, Math.round(4 + state.axisThickness * 2)),
+        mirror: axisMirror
+      };
+      layout.xaxis = {
+        title: { text: "Effect Size", font: { size: state.axisSize } },
+        type: built.isRatioEffect ? "log" : "linear",
+        showgrid: true,
+        zeroline: false,
+        showline: true,
+        linecolor: "rgba(22,49,58,0.75)",
+        linewidth: Math.max(0.5, state.axisThickness),
+        ticks: tickMode,
+        tickwidth: Math.max(0.5, state.axisThickness),
+        ticklen: Math.max(4, Math.round(4 + state.axisThickness * 2)),
+        mirror: axisMirror
+      };
+      layout.shapes = [{
+        type: "line",
+        xref: "x",
+        x0: built.isRatioEffect ? 1 : 0,
+        x1: built.isRatioEffect ? 1 : 0,
+        yref: "paper",
+        y0: 0,
+        y1: 1,
+        line: { color: "rgba(22,49,58,0.72)", width: 1.5, dash: "dash" }
+      }];
+      layout.annotations = [];
+    }
+
     if (isHorizontalRaincloud) {
       var horizontalXAxis = {
         title: { text: state.yLabel, font: { size: state.axisSize } },
-        type: state.logX ? "log" : "linear",
+        type: state.logY ? "log" : "linear",
         showgrid: state.gridStyle === "major" || state.gridStyle === "both",
-        zeroline: !state.logX,
+        zeroline: !state.logY,
         showline: true,
         linecolor: "rgba(22,49,58,0.75)",
         linewidth: Math.max(0.5, state.axisThickness),
@@ -1753,11 +2158,14 @@
         mirror: axisMirror
       };
 
+      if (!state.logY && state.yMin != null && state.yMax != null && state.yMax > state.yMin) {
+        horizontalXAxis.range = [state.yMin, state.yMax];
+      }
+
       var horizontalYAxis = {
         title: { text: state.xLabel, font: { size: state.axisSize } },
-        tickvals: groupOrder.map(function (_, index) { return index + 1; }),
-        ticktext: groupOrder.map(function (g) { return state.groupLabels[g] !== undefined ? state.groupLabels[g] : g; }),
-        showgrid: false,
+        tickangle: state.xTickAngle,
+        showgrid: state.gridStyle === "major" || state.gridStyle === "both",
         zeroline: false,
         showline: true,
         linecolor: "rgba(22,49,58,0.75)",
@@ -1765,9 +2173,17 @@
         ticks: tickMode,
         tickwidth: Math.max(0.5, state.axisThickness),
         ticklen: Math.max(4, Math.round(4 + state.axisThickness * 2)),
-        mirror: axisMirror,
-        range: [0.5, groupOrder.length + 0.5]
+        mirror: axisMirror
       };
+      
+      if (state.grouping.enabled) {
+        horizontalYAxis.type = "multicategory";
+      } else {
+        horizontalYAxis.type = state.logX ? "log" : "linear";
+        horizontalYAxis.tickvals = groupOrder.map(function (_, index) { return index + 1; });
+        horizontalYAxis.ticktext = groupOrder.map(function (g) { return state.groupLabels[g] !== undefined ? state.groupLabels[g] : g; });
+        horizontalYAxis.range = state.logX ? [Math.max(0.8, 1 - 0.2), groupOrder.length + 0.6] : [0.4, groupOrder.length + 0.6];
+      }
 
       var xCandidatesHorizontal = [built.yMin, built.yMax];
       if (Number.isFinite(bracketLayer.xAxisMax)) {

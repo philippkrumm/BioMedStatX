@@ -232,10 +232,13 @@ class AnalysisManager:
         if len(factor_columns) == 2:
             factor_a, factor_b = factor_columns
             display_group_col = "__AUTO_GROUP__"
-            working_df[display_group_col] = working_df.apply(
-                lambda row: f"{factor_a}={row[factor_a]}, {factor_b}={row[factor_b]}",
-                axis=1
-            )
+            group_factor_map = {}
+            def make_auto_group(row):
+                group_name = f"{factor_a}={row[factor_a]}, {factor_b}={row[factor_b]}"
+                group_factor_map[group_name] = {"major": str(row[factor_a]), "minor": str(row[factor_b])}
+                return group_name
+            working_df[display_group_col] = working_df.apply(make_auto_group, axis=1)
+            analysis_context["group_factor_map"] = group_factor_map
             if not groups_to_use:
                 groups_to_use = sorted(working_df[display_group_col].dropna().unique(), key=lambda item: str(item))
         else:
@@ -513,6 +516,8 @@ class AnalysisManager:
 
             # Initialize the result dictionary (important: before first assignments!)
             results = {}
+            if "analysis_context" in kwargs and "group_factor_map" in kwargs["analysis_context"]:
+                results["group_factor_map"] = kwargs["analysis_context"]["group_factor_map"]
 
             # --- Clinical model dispatch (ANCOVA, LMM, Logistic Regression, Correlation, Linear Regression) ---
             if kwargs.get('test') in ('ancova', 'two_way_ancova', 'lmm', 'logistic_regression',

@@ -110,6 +110,10 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
                 "p_value": row.get("p_value_raw"),
                 "stars": row.get("stars", ""),
                 "significant": bool(row.get("significant")),
+                "effect_size": row.get("effect_size"),
+                "effect_size_type": row.get("effect_size_type") or row.get("effect_type") or "",
+                "ci_lower": row.get("ci_lower"),
+                "ci_upper": row.get("ci_upper"),
             }
             for row in pairwise
         ]
@@ -157,6 +161,7 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
             "raw_data_table": raw_table,
             "chart_blocks": charts,
             "methods_text": methods_text,
+            "group_factor_map_json": json.dumps(results_copy.get("group_factor_map", {}), ensure_ascii=False),
             "info_texts": HTMLExporter._info_texts(),
             "generated_warning": results_copy.get("error"),
             "normalized_results_json": json.dumps(normalized, cls=_ResultsEncoder, ensure_ascii=False),

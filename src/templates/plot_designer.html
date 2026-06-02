@@ -107,9 +107,18 @@
                 <option value="Box">Box</option>
                 <option value="Violin">Violin</option>
                 <option value="Raincloud">Raincloud</option>
+                <option value="Forest">Forest</option>
+                <option value="Estimation">Estimation</option>
               </select>
             </div>
             <label class="pd-check"><input id="pd-show-points" type="checkbox" checked> Show points</label>
+            <div class="pd-row" id="pd-point-layout-row">
+              <label for="pd-point-layout">Point layout</label>
+              <select id="pd-point-layout">
+                <option value="jitter" selected>Jitter</option>
+                <option value="beeswarm">Beeswarm</option>
+              </select>
+            </div>
             <label class="pd-check" id="pd-paired-lines-wrap"><input id="pd-show-paired-lines" type="checkbox"> Show individual subject lines (Spaghetti)</label>
             <div class="pd-row" id="pd-spaghetti-opacity-row">
               <label for="pd-spaghetti-opacity">Individual line opacity</label>
@@ -142,6 +151,20 @@
               </select>
             </div>
           </div>
+
+          <details class="pd-subgroup" open id="pd-grouping-section">
+            <summary>Grouped Mode (Two-Way)</summary>
+            <label class="pd-check"><input id="pd-group-enabled" type="checkbox"> Enable Grouped Mode</label>
+            <div class="pd-row is-disabled" id="pd-group-mode-row">
+              <label for="pd-group-mode">Mode</label>
+              <select id="pd-group-mode" disabled>
+                <option value="traces" selected>Nested (X-Axis: Major, Legend: Minor)</option>
+              </select>
+            </div>
+            <div id="pd-group-mapping-editor" style="margin-top:10px; display:none;">
+              <!-- Dynamically populated by JS -->
+            </div>
+          </details>
         </section>
 
         <section data-tab-panel="axes" role="tabpanel" class="is-hidden">
@@ -258,7 +281,7 @@
 
           <div class="pd-group" id="pd-node-labels-group">
             <h4>X-Axis Node Labels</h4>
-            <p class="pd-note" style="margin-top:0;margin-bottom:8px;">Vorausgefüllt aus den Gruppennamen — hier anpassen.</p>
+            <p class="pd-note" style="margin-top:0;margin-bottom:8px;">Pre-populated from group names — customize here.</p>
             <div id="pd-node-label-controls"></div>
           </div>
         </section>
@@ -382,6 +405,7 @@
   <script id="pd-data-stats" type="application/json">{{ context.plot_stats_json | safe }}</script>
   <script id="pd-data-pairs" type="application/json">{{ context.pairwise_data_json | safe }}</script>
   <script id="pd-data-order" type="application/json">{{ context.group_order_json | safe }}</script>
+  <script id="pd-data-group-factor-map" type="application/json">{{ context.group_factor_map_json | safe }}</script>
   <script>
 {% include "plot_designer.js" %}
   </script>
