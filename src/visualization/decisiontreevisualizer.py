@@ -1285,25 +1285,22 @@ class DecisionTreeVisualizer:
                 'D2': {"label": f"Transform the data\n({transformation})", "pos": (2, 9.5)},
                 'E':  {"label": f"Check again after transformation\nShapiro-Wilk: {is_normal}  |  Brown-Forsythe: {has_equal_variance}" if was_transformed else "Check again after transformation", "pos": (2, 8)},
                 'F':  {"label": f_label, "pos": (0, 6.5)},
-                'WELCH_T_TEST':   {"label": "Welch's t-test\n(2 groups)", "pos": (-1.5, 4.5)},
-                'WELCH_ANOVA':    {"label": "Welch's ANOVA\n(> 2 groups)", "pos": (1.5, 4.5)},
-                'WELCH_DUNNETT_T3': {"label": "Which groups differ?\n(Dunnett T3)", "pos": (1.5, 3)},
-                'WELCH_GAMES_HOWELL': {"label": "Which groups differ?\n(Games-Howell)", "pos": (3.5, 3)},
+
                 'G1': {"label": "Standard parametric test", "pos": (-10, 5)},
                 'H1': {"label": "How many groups?", "pos": (-10, 4)},
                 'I1_2': {"label": "2 groups", "pos": (-13, 3)},
                 'I1_M': {"label": "3 or more groups", "pos": (-3, 3)},
                 'J1_INDEP': {"label": "Independent\n(different participants)", "pos": (-14, 2)},
                 'J1_DEP':   {"label": "Dependent\n(same participants)", "pos": (-12, 2)},
-                'K1_2_IND': {"label": "Independent t-test", "pos": (-14, 1)},
+                'K1_2_IND': {"label": "Welch's t-test", "pos": (-14, 1)},
                 'K1_2_DEP': {"label": "Paired t-test", "pos": (-12, 1)},
                 'INDEPENDENT_GROUPS': {"label": "Different participants\nin each group", "pos": (-8, 2)},
                 'REPEATED_MEASURES':  {"label": "Same participants\nmeasured multiple times", "pos": (-2, 2)},
                 'MIXED_DESIGN':        {"label": "Mixed design\n(between + within factors)", "pos": (4, 2)},
-                'IND_ONE_WAY':   {"label": "One-way ANOVA", "pos": (-9, 1)},
+                'IND_ONE_WAY':   {"label": "Welch's ANOVA", "pos": (-9, 1)},
                 'IND_TWO_WAY':   {"label": "Two-way ANOVA", "pos": (-7, 1)},
                 'IND_POSTHOC':   {"label": "Which specific groups differ?", "pos": (-8, 0)},
-                'IND_TUKEY':     {"label": "Tukey HSD", "pos": (-9.5, -1)},
+                'IND_TUKEY':     {"label": "Games-Howell", "pos": (-9.5, -1)},
                 'IND_DUNNETT':   {"label": "Dunnett Test", "pos": (-8, -1)},
                 'IND_HOLM_SIDAK':{"label": "Pairwise t-tests\n(Holm-Šidák)", "pos": (-6.5, -1)},
                 'IND_FDR':       {"label": "Pairwise t-tests\n(FDR)", "pos": (-5.0, -1)},
@@ -1360,7 +1357,7 @@ class DecisionTreeVisualizer:
 
             edges = {
                 ('A','B'),('B','C'),('C','D1'),('C','D2'),('D2','E'),('E','F'),('D1','F'),
-                ('F','WELCH_T_TEST'),('F','WELCH_ANOVA'),('WELCH_ANOVA','WELCH_DUNNETT_T3'),('WELCH_ANOVA','WELCH_GAMES_HOWELL'),
+
                 ('F','G1'),('F','G2'),
                 ('G1','H1'),('H1','I1_2'),('H1','I1_M'),
                 ('I1_2','J1_INDEP'),('I1_2','J1_DEP'),('J1_INDEP','K1_2_IND'),('J1_DEP','K1_2_DEP'),
@@ -1425,18 +1422,11 @@ class DecisionTreeVisualizer:
 
             alpha = results.get("alpha", 0.05)
 
-            if (welch_t_condition or welch_anova_condition) and not auto_switched and not is_nonparametric_test:
-                if welch_t_condition:
-                    highlighted.add(('F','WELCH_T_TEST'))
-                else:
-                    highlighted.add(('F','WELCH_ANOVA'))
-                    if p_value is not None and p_value < alpha:
-                        if "dunnett" in posthoc_test.lower() and "t3" in posthoc_test.lower():
-                            highlighted.add(('WELCH_ANOVA','WELCH_DUNNETT_T3'))
-                        elif "games" in posthoc_test.lower():
-                            highlighted.add(('WELCH_ANOVA','WELCH_GAMES_HOWELL'))
+            # Ensure welch bypass condition is disabled so we flow into standard tree branch
+            welch_t_condition = False
+            welch_anova_condition = False
 
-            elif is_nonparametric_test:
+            if is_nonparametric_test:
                 if not auto_switched:
                     highlighted.add(('F','G2'))
                 highlighted.add(('G2','H2'))
@@ -1474,7 +1464,7 @@ class DecisionTreeVisualizer:
                             ph = posthoc_test.lower()
                             highlighted.add(('NP_POSTHOC','NP_DUNN') if "dunn" in ph else ('NP_POSTHOC','NP_MANN_WHITNEY'))
 
-            elif (actual_test_type.lower() == "parametric" or ("anova" in test_name.lower() and "non" not in test_name.lower())) and not welch_t_condition and not welch_anova_condition:
+            elif actual_test_type.lower() == "parametric" or ("anova" in test_name.lower() and "non" not in test_name.lower()):
                 if not auto_switched:
                     highlighted.add(('F','G1'))
                 highlighted.add(('G1','H1'))
