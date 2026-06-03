@@ -42,6 +42,7 @@
     .pd-row.is-disabled label, .pd-check.is-disabled { opacity: 0.5; }
     .pd-row.is-disabled input:not([type="checkbox"]):not([type="range"]), .pd-row.is-disabled select { background: rgba(22,49,58,0.05); color: var(--muted); cursor: not-allowed; }
     .pd-check.is-disabled input[type="checkbox"] { cursor: not-allowed; }
+    [data-plot-types].pd-hidden-by-type { display: none !important; }
     .pd-button-row { display: flex; flex-wrap: wrap; gap: 6px; }
     .pd-button-row button { border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; background: var(--surface); color: var(--ink); cursor: pointer; font-size: 0.78rem; }
     .pd-button-row button:hover { background: rgba(15,118,110,.08); }
@@ -111,48 +112,50 @@
                 <option value="Estimation">Estimation</option>
               </select>
             </div>
-            <label class="pd-check"><input id="pd-show-points" type="checkbox" checked> Show points</label>
-            <div class="pd-row" id="pd-point-layout-row">
+            <label class="pd-check" data-plot-types="Bar,Box,Violin,Raincloud,Estimation"><input id="pd-show-points" type="checkbox" checked> Show points</label>
+            <div class="pd-row" id="pd-point-layout-row" data-plot-types="Bar,Box,Violin,Raincloud,Estimation">
               <label for="pd-point-layout">Point layout</label>
               <select id="pd-point-layout">
                 <option value="jitter" selected>Jitter</option>
                 <option value="beeswarm">Beeswarm</option>
               </select>
             </div>
-            <label class="pd-check" id="pd-paired-lines-wrap"><input id="pd-show-paired-lines" type="checkbox"> Show individual subject lines (Spaghetti)</label>
-            <div class="pd-row" id="pd-spaghetti-opacity-row">
+            <label class="pd-check" id="pd-paired-lines-wrap" data-plot-types="Bar,Box,Violin"><input id="pd-show-paired-lines" type="checkbox"> Show individual subject lines (Spaghetti)</label>
+            <div class="pd-row" id="pd-spaghetti-opacity-row" data-plot-types="Bar,Box,Violin">
               <label for="pd-spaghetti-opacity">Individual line opacity</label>
               <input id="pd-spaghetti-opacity" type="range" min="0.05" max="0.9" step="0.05" value="0.35">
             </div>
-            <label class="pd-check"><input id="pd-show-error-bars" type="checkbox" checked> Show error bars (Bar)</label>
-            <div class="pd-row">
-              <label for="pd-central-measure">Central measure</label>
-              <select id="pd-central-measure">
-                <option value="mean" selected>Mean</option>
-                <option value="median">Median</option>
-              </select>
-            </div>
-            <div class="pd-row">
-              <label for="pd-error-type">Error metric</label>
-              <select id="pd-error-type">
-                <option value="sd" selected>SD</option>
-                <option value="sem">SEM</option>
-                <option value="ci95">95% CI</option>
-                <option value="iqr">IQR</option>
-                <option value="range">Range (Min-Max)</option>
-              </select>
-            </div>
-            <div class="pd-row">
-              <label for="pd-error-direction">Error bar direction</label>
-              <select id="pd-error-direction">
-                <option value="both" selected>Both (top + bottom)</option>
-                <option value="plus">Top only</option>
-                <option value="minus">Bottom only</option>
-              </select>
+            <div id="pd-error-bar-section" data-plot-types="Bar">
+              <label class="pd-check"><input id="pd-show-error-bars" type="checkbox" checked> Show error bars</label>
+              <div class="pd-row">
+                <label for="pd-central-measure">Central measure</label>
+                <select id="pd-central-measure">
+                  <option value="mean" selected>Mean</option>
+                  <option value="median">Median</option>
+                </select>
+              </div>
+              <div class="pd-row">
+                <label for="pd-error-type">Error metric</label>
+                <select id="pd-error-type">
+                  <option value="sd" selected>SD</option>
+                  <option value="sem">SEM</option>
+                  <option value="ci95">95% CI</option>
+                  <option value="iqr">IQR</option>
+                  <option value="range">Range (Min-Max)</option>
+                </select>
+              </div>
+              <div class="pd-row">
+                <label for="pd-error-direction">Error bar direction</label>
+                <select id="pd-error-direction">
+                  <option value="both" selected>Both (top + bottom)</option>
+                  <option value="plus">Top only</option>
+                  <option value="minus">Bottom only</option>
+                </select>
+              </div>
             </div>
           </div>
 
-          <details class="pd-subgroup" open id="pd-grouping-section">
+          <details class="pd-subgroup" open id="pd-grouping-section" data-plot-types="Bar,Box,Violin,Raincloud">
             <summary>Grouped Mode (Two-Way)</summary>
             <label class="pd-check"><input id="pd-group-enabled" type="checkbox"> Enable Grouped Mode</label>
             <div class="pd-row is-disabled" id="pd-group-mode-row">
@@ -170,8 +173,8 @@
         <section data-tab-panel="axes" role="tabpanel" class="is-hidden">
           <div class="pd-group">
             <h4>Axes & Legend</h4>
-            <label class="pd-check"><input id="pd-log-x" type="checkbox"> Log X</label>
-            <label class="pd-check"><input id="pd-log-y" type="checkbox"> Log Y</label>
+            <label class="pd-check" data-plot-types="Bar,Box,Violin,Raincloud"><input id="pd-log-x" type="checkbox"> Log X</label>
+            <label class="pd-check" data-plot-types="Bar,Box,Violin,Raincloud"><input id="pd-log-y" type="checkbox"> Log Y</label>
             <label class="pd-check"><input id="pd-minor-ticks" type="checkbox"> Show minor ticks</label>
             <div class="pd-row-inline">
               <div class="pd-row">
@@ -196,7 +199,7 @@
                 </select>
               </div>
             </div>
-            <div class="pd-row">
+            <div class="pd-row" data-plot-types="Bar,Box,Violin,Raincloud,Estimation">
               <label for="pd-x-tick-angle">X label angle</label>
               <select id="pd-x-tick-angle">
                 <option value="0">0°</option>
@@ -206,7 +209,7 @@
                 <option value="-90">−90°</option>
               </select>
             </div>
-            <div class="pd-row">
+            <div class="pd-row" data-plot-types="Bar,Box,Violin,Raincloud">
               <label for="pd-y-axis-format">Y format</label>
               <select id="pd-y-axis-format">
                 <option value="auto" selected>Auto</option>
@@ -215,7 +218,7 @@
                 <option value="decimal">Decimal (2)</option>
               </select>
             </div>
-            <div class="pd-row-inline">
+            <div class="pd-row-inline" data-plot-types="Bar,Box,Violin,Raincloud">
               <div class="pd-row"><label for="pd-y-min">Y min (optional)</label><input id="pd-y-min" type="number" step="any" placeholder="auto"></div>
               <div class="pd-row"><label for="pd-y-max">Y max (optional)</label><input id="pd-y-max" type="number" step="any" placeholder="auto"></div>
             </div>
@@ -258,7 +261,7 @@
               </div>
             </div>
 
-            <details class="pd-subgroup" open>
+            <details class="pd-subgroup" open data-plot-types="Bar,Box,Violin">
               <summary>Reference lines</summary>
               <label class="pd-check"><input id="pd-ref-zero" type="checkbox"> Baseline y = 0</label>
               <label class="pd-check"><input id="pd-ref-unit" type="checkbox"> Unit line y = 1 (fold-change)</label>
@@ -279,7 +282,7 @@
             </details>
           </div>
 
-          <div class="pd-group" id="pd-node-labels-group">
+          <div class="pd-group" id="pd-node-labels-group" data-plot-types="Bar,Box,Violin,Raincloud,Estimation">
             <h4>X-Axis Node Labels</h4>
             <p class="pd-note" style="margin-top:0;margin-bottom:8px;">Pre-populated from group names — customize here.</p>
             <div id="pd-node-label-controls"></div>
@@ -312,21 +315,21 @@
               <div class="pd-row"><label for="pd-title-size">Title size</label><input id="pd-title-size" type="number" min="8" max="42" value="16"></div>
               <div class="pd-row"><label for="pd-axis-size">Axis size</label><input id="pd-axis-size" type="number" min="8" max="32" value="12"></div>
             </div>
-            <div class="pd-row">
+            <div class="pd-row" data-plot-types="Bar,Box,Violin,Raincloud">
               <label for="pd-alpha">Summary opacity</label>
               <input id="pd-alpha" type="range" min="0.2" max="1" step="0.05" value="0.85">
             </div>
           </div>
 
-          <div class="pd-group">
+          <div class="pd-group" data-plot-types="Bar,Box,Violin,Raincloud,Estimation">
             <h4>Colors</h4>
             <div id="pd-color-controls"></div>
           </div>
 
-          <div class="pd-group">
+          <div class="pd-group" data-plot-types="Bar,Box,Violin,Raincloud,Estimation">
             <h4>Monochrome Encodings</h4>
-            <label class="pd-check"><input id="pd-auto-pattern" type="checkbox"> Auto-pattern assignment</label>
-            <div class="pd-row">
+            <label class="pd-check" data-plot-types="Bar"><input id="pd-auto-pattern" type="checkbox"> Auto-pattern assignment</label>
+            <div class="pd-row" data-plot-types="Bar">
               <label>Bar patterns</label>
               <div id="pd-pattern-controls"></div>
             </div>
@@ -338,7 +341,7 @@
         </section>
 
         <section data-tab-panel="stats" role="tabpanel" class="is-hidden">
-          <div class="pd-group">
+          <div class="pd-group" data-plot-types="Bar,Box,Violin,Raincloud,Estimation">
             <h4>Significance</h4>
             <label class="pd-check"><input id="pd-show-significance" type="checkbox" checked> Show brackets</label>
             <div class="pd-row-inline">

@@ -320,41 +320,124 @@
     }
   }
 
-  function updateControlAvailability() {
-    var isBar = state.plotType === "Bar";
-    var isRaincloud = state.plotType === "Raincloud";
+  function applyPlotTypeVisibility() {
+    var currentType = state.plotType;
+    var elements = document.querySelectorAll("[data-plot-types]");
+    for (var i = 0; i < elements.length; i++) {
+      var el = elements[i];
+      var allowedTypes = el.dataset.plotTypes.split(",");
+      var isVisible = false;
+      for (var j = 0; j < allowedTypes.length; j++) {
+        if (allowedTypes[j].trim() === currentType) {
+          isVisible = true;
+          break;
+        }
+      }
+      if (isVisible) {
+        el.classList.remove("pd-hidden-by-type");
+      } else {
+        el.classList.add("pd-hidden-by-type");
+      }
+    }
+  }
 
-    ["pd-show-error-bars", "pd-central-measure", "pd-error-type", "pd-error-direction", "pd-auto-pattern"].forEach(function (id) {
-      setControlDisabled(id, !isBar);
-    });
+  function resetStateForHiddenControls() {
+    var type = state.plotType;
+    var barBoxViolin = ["Bar", "Box", "Violin"];
+    var barBoxViolinRaincloud = ["Bar", "Box", "Violin", "Raincloud"];
 
-    if (!isBar) {
+    // Error bars + auto-pattern: Bar only
+    if (type !== "Bar") {
       state.showErrorBars = false;
-      var showErrorBarsNode = document.getElementById("pd-show-error-bars");
-      if (showErrorBarsNode) showErrorBarsNode.checked = false;
+      var showErrEl = document.getElementById("pd-show-error-bars");
+      if (showErrEl) showErrEl.checked = false;
+
+      state.autoPatternsEnabled = false;
+      var autoPatEl = document.getElementById("pd-auto-pattern");
+      if (autoPatEl) autoPatEl.checked = false;
     }
 
-    var thresholdToggle = document.getElementById("pd-ref-thresholds");
-    var thresholdUnavailable = thresholdReferenceLines.length === 0;
-
-    ["pd-ref-zero", "pd-ref-unit", "pd-ref-style", "pd-ref-width"].forEach(function (id) {
-      setControlDisabled(id, isRaincloud);
-    });
-    setControlDisabled("pd-ref-thresholds", isRaincloud || thresholdUnavailable);
-
-    if (isRaincloud) {
+    // Reference lines: Bar, Box, Violin only
+    if (barBoxViolin.indexOf(type) === -1) {
       state.showZeroReferenceLine = false;
       state.showUnitReferenceLine = false;
       state.showThresholdReferenceLines = false;
-      var refZeroNode = document.getElementById("pd-ref-zero");
-      var refUnitNode = document.getElementById("pd-ref-unit");
-      var refThresholdNode = document.getElementById("pd-ref-thresholds");
-      if (refZeroNode) refZeroNode.checked = false;
-      if (refUnitNode) refUnitNode.checked = false;
-      if (refThresholdNode) refThresholdNode.checked = false;
+      ["pd-ref-zero", "pd-ref-unit", "pd-ref-thresholds"].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el) el.checked = false;
+      });
     }
 
+    // Paired lines: Bar, Box, Violin only
+    if (barBoxViolin.indexOf(type) === -1) {
+      state.showPairedLines = false;
+      var pairEl = document.getElementById("pd-show-paired-lines");
+      if (pairEl) pairEl.checked = false;
+    }
+
+    // Grouping: Bar, Box, Violin, Raincloud only
+    if (barBoxViolinRaincloud.indexOf(type) === -1) {
+      state.grouping.enabled = false;
+      var grpEl = document.getElementById("pd-group-enabled");
+      if (grpEl) grpEl.checked = false;
+    }
+
+    // Log axes + Y range/format: Bar, Box, Violin, Raincloud only
+    if (barBoxViolinRaincloud.indexOf(type) === -1) {
+      state.logX = false;
+      state.logY = false;
+      var logXEl = document.getElementById("pd-log-x");
+      var logYEl = document.getElementById("pd-log-y");
+      if (logXEl) logXEl.checked = false;
+      if (logYEl) logYEl.checked = false;
+
+      state.yMin = null;
+      state.yMax = null;
+      var yMinEl = document.getElementById("pd-y-min");
+      var yMaxEl = document.getElementById("pd-y-max");
+      if (yMinEl) yMinEl.value = "";
+      if (yMaxEl) yMaxEl.value = "";
+    }
+
+    // Show points: not available for Forest
+    if (type === "Forest") {
+      state.showPoints = false;
+      var spEl = document.getElementById("pd-show-points");
+      if (spEl) spEl.checked = false;
+
+      state.showSignificance = false;
+      var sigEl = document.getElementById("pd-show-significance");
+      if (sigEl) sigEl.checked = false;
+    }
+  }
+
+  function updateControlAvailability() {
+    // 1. Declarative type-based visibility via data-plot-types attributes
+    applyPlotTypeVisibility();
+
+    // 2. Synchronize internal state + DOM for controls hidden by plot type
+    resetStateForHiddenControls();
+
+    // 3. Data-dependent residual logic (supplements type-based visibility)
+
+    // Threshold toggle: disable when no threshold data exists in payload
+    var thresholdUnavailable = thresholdReferenceLines.length === 0;
+    setControlDisabled("pd-ref-thresholds", thresholdUnavailable);
+
+    // Grouped Mode: also hide when no factor map from backend
+    var hasFactorMap = groupFactorMapPayload && typeof groupFactorMapPayload === "object" && Object.keys(groupFactorMapPayload).length > 0;
+    var groupingSection = document.getElementById("pd-grouping-section");
+    if (groupingSection && !hasFactorMap) {
+      groupingSection.classList.add("pd-hidden-by-type");
+      state.grouping.enabled = false;
+      var grpEnabledEl = document.getElementById("pd-group-enabled");
+      if (grpEnabledEl) grpEnabledEl.checked = false;
+    }
+
+    // Paired lines: data-dependent (needs usable trajectory data)
     updatePairedLineControlState();
+
+    // Reference note text
     updateReferenceNote();
   }
 
