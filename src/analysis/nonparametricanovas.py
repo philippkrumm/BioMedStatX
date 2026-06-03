@@ -434,24 +434,31 @@ def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05, n_permu
         formula_no_b    = f"{safe_dv} ~ C({safe_a})"
         formula_no_inter= f"{safe_dv} ~ C({safe_a}) + C({safe_b})"
 
-        full_model = smf.ols(formula_full, data=df).fit()
-        RSS_full   = full_model.ssr
-        df_resid   = full_model.df_resid
+        def _f_obs_and_perm(formula_full_eff, formula_reduced):
+            """Freedman-Lane test for one effect via its own (full, reduced) pair.
 
-        def _f_obs_and_perm(formula_reduced, effect_label):
-            """Return (F_obs, df_effect, p_perm, p_parametric)."""
-            red_model  = smf.ols(formula_reduced, data=df).fit()
-            RSS_red    = red_model.ssr
-            df_effect  = max(red_model.df_model - full_model.df_model, 1)
-            # Recompute df_effect as difference in residual df (more reliable)
-            df_effect  = int(round(red_model.df_resid - full_model.df_resid))
-            if df_effect < 1:
-                df_effect = 1
-            F_obs = ((RSS_red - RSS_full) / df_effect) / (RSS_full / df_resid)
-            F_obs = max(F_obs, 0.0)
+            Returns (F_obs, df1, df2, p_perm, p_parametric, partial_eta2).
+            Main effects use the additive model as full (df1 = a-1 / b-1); the
+            interaction uses the full interaction model (df1 = (a-1)(b-1)).
+            df2 = residual df of the effect-specific full model. partial_eta2 is
+            taken from the observed SS decomposition (nested OLS -> SS_eff >= 0)
+            and equals F*df1/(F*df1+df2), so the reported (F, df1, df2, eta2) cohere.
+            """
+            full_eff = smf.ols(formula_full_eff, data=df).fit()
+            red_eff  = smf.ols(formula_reduced,  data=df).fit()
+            rss_full = float(full_eff.ssr)
+            rss_red  = float(red_eff.ssr)
+            df1 = int(round(red_eff.df_resid - full_eff.df_resid))
+            if df1 < 1:
+                df1 = 1
+            df2 = int(round(full_eff.df_resid))
+            ss_eff = max(rss_red - rss_full, 0.0)
+            F_obs  = ((ss_eff / df1) / (rss_full / df2)) if rss_full > 0 else 0.0
+            F_obs  = max(F_obs, 0.0)
+            eta_p2 = (ss_eff / rss_red) if rss_red > 0 else 0.0
 
-            y_hat_red = red_model.fittedvalues.values
-            e_red     = red_model.resid.values
+            y_hat_red = red_eff.fittedvalues.values
+            e_red     = red_eff.resid.values
 
             F_perm_arr = np.empty(n_permutations)
             for i in range(n_permutations):
@@ -459,23 +466,24 @@ def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05, n_permu
                 y_perm  = y_hat_red + e_perm
                 df_perm = df.copy()
                 df_perm[safe_dv] = y_perm
-                fm = smf.ols(formula_full,    data=df_perm).fit()
-                rm = smf.ols(formula_reduced, data=df_perm).fit()
+                fm = smf.ols(formula_full_eff, data=df_perm).fit()
+                rm = smf.ols(formula_reduced,  data=df_perm).fit()
                 rss_f = fm.ssr; rss_r = rm.ssr
-                F_p = ((rss_r - rss_f) / df_effect) / (rss_f / df_resid)
+                F_p = ((rss_r - rss_f) / df1) / (rss_f / df2) if rss_f > 0 else 0.0
                 F_perm_arr[i] = max(F_p, 0.0)
 
             p_perm = (np.sum(F_perm_arr >= F_obs) + 1) / (n_permutations + 1)
-            # Parametric reference p: derived from the same reduced vs full comparison
-            F_para = float(F_obs)
-            p_parametric = float(sp_stats.f.sf(F_para, dfn=df_effect, dfd=df_resid)) if F_para > 0 else 1.0
-            return float(F_obs), int(df_effect), float(p_perm), p_parametric
+            p_parametric = float(sp_stats.f.sf(F_obs, dfn=df1, dfd=df2)) if F_obs > 0 else 1.0
+            return float(F_obs), int(df1), int(df2), float(p_perm), p_parametric, float(eta_p2)
 
-        # Compute for each effect
-        F_A,   df_A,   p_perm_A,   p_par_A   = _f_obs_and_perm(formula_no_a,    "A")
-        F_B,   df_B,   p_perm_B,   p_par_B   = _f_obs_and_perm(formula_no_b,    "B")
-        F_AB,  df_AB,  p_perm_AB,  p_par_AB  = _f_obs_and_perm(formula_no_inter,"AB_interaction")
-        df2 = int(df_resid)
+        # Effect-specific (full, reduced) pairs. Main effects are tested in the
+        # additive model (Type-II style) so df1 = a-1 / b-1; the interaction is
+        # tested in the full model so df1 = (a-1)(b-1). df2 is the residual df of
+        # each effect's own full model (per-row, not one global value).
+        formula_additive = formula_no_inter  # "Y ~ C(A) + C(B)"
+        F_A,  df_A,  df2_A,  p_perm_A,  p_par_A,  eta2_A  = _f_obs_and_perm(formula_additive, formula_no_a)
+        F_B,  df_B,  df2_B,  p_perm_B,  p_par_B,  eta2_B  = _f_obs_and_perm(formula_additive, formula_no_b)
+        F_AB, df_AB, df2_AB, p_perm_AB, p_par_AB, eta2_AB = _f_obs_and_perm(formula_full,     formula_no_inter)
 
         # --- Descriptive stats ---
         descriptive = {}
@@ -495,26 +503,25 @@ def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05, n_permu
                     "ci_lower": None, "ci_upper": None,
                 }
 
-        # --- ANOVA table ---
+        # --- ANOVA table (per-effect DF2: additive-model error for main effects,
+        #     full-model error for the interaction) ---
         anova_table = pd.DataFrame([
-            {"Source": factor_a,              "F": F_A,  "p-perm": p_perm_A,  "p-parametric": p_par_A,  "DF1": df_A,  "DF2": df2, "StatisticType": "Permutation F (Freedman-Lane)", "Wald_Chi2": F_A},
-            {"Source": factor_b,              "F": F_B,  "p-perm": p_perm_B,  "p-parametric": p_par_B,  "DF1": df_B,  "DF2": df2, "StatisticType": "Permutation F (Freedman-Lane)", "Wald_Chi2": F_B},
-            {"Source": f"{factor_a}:{factor_b}", "F": F_AB, "p-perm": p_perm_AB, "p-parametric": p_par_AB, "DF1": df_AB, "DF2": df2, "StatisticType": "Permutation F (Freedman-Lane)", "Wald_Chi2": F_AB},
+            {"Source": factor_a,              "F": F_A,  "p-perm": p_perm_A,  "p-parametric": p_par_A,  "DF1": df_A,  "DF2": df2_A,  "StatisticType": "Permutation F (Freedman-Lane)", "Wald_Chi2": F_A},
+            {"Source": factor_b,              "F": F_B,  "p-perm": p_perm_B,  "p-parametric": p_par_B,  "DF1": df_B,  "DF2": df2_B,  "StatisticType": "Permutation F (Freedman-Lane)", "Wald_Chi2": F_B},
+            {"Source": f"{factor_a}:{factor_b}", "F": F_AB, "p-perm": p_perm_AB, "p-parametric": p_par_AB, "DF1": df_AB, "DF2": df2_AB, "StatisticType": "Permutation F (Freedman-Lane)", "Wald_Chi2": F_AB},
         ])
         # Also expose p-perm as p_unc for exporter compatibility
         anova_table["p_unc"] = anova_table["p-perm"]
 
-        # Cohen's f (approx.) from permutation F: f = sqrt(F * df_effect / n_total)
-        # Labelled "approx." because F comes from permutations, not OLS SS decomposition.
-        def _cohens_f_approx(F_val, df_val):
-            return float(np.sqrt(max(F_val * df_val / n_total, 0.0)))
-
+        # Effect sizes: partial eta^2 from the observed OLS SS decomposition
+        # (bounded [0, 1]; no Cohen's f > 1 artefact). Consistent with each
+        # effect's reported (F, df1, df2): eta2p = F*df1 / (F*df1 + df2).
         factors = [
-            {"factor": factor_a, "type": "between", "F": F_A,  "Wald_Chi2": F_A,  "p_value": p_perm_A,  "df1": df_A,  "df2": df2, "effect_size": _cohens_f_approx(F_A, df_A),   "effect_size_type": "Cohen's f (approx.)"},
-            {"factor": factor_b, "type": "between", "F": F_B,  "Wald_Chi2": F_B,  "p_value": p_perm_B,  "df1": df_B,  "df2": df2, "effect_size": _cohens_f_approx(F_B, df_B),   "effect_size_type": "Cohen's f (approx.)"},
+            {"factor": factor_a, "type": "between", "F": F_A,  "Wald_Chi2": F_A,  "p_value": p_perm_A,  "df1": df_A,  "df2": df2_A,  "effect_size": eta2_A, "effect_size_type": "partial η²"},
+            {"factor": factor_b, "type": "between", "F": F_B,  "Wald_Chi2": F_B,  "p_value": p_perm_B,  "df1": df_B,  "df2": df2_B,  "effect_size": eta2_B, "effect_size_type": "partial η²"},
         ]
         interactions = [
-            {"factors": [factor_a, factor_b], "F": F_AB, "Wald_Chi2": F_AB, "p_value": p_perm_AB, "df1": df_AB, "df2": df2, "effect_size": _cohens_f_approx(F_AB, df_AB), "effect_size_type": "Cohen's f (approx.)"},
+            {"factors": [factor_a, factor_b], "F": F_AB, "Wald_Chi2": F_AB, "p_value": p_perm_AB, "df1": df_AB, "df2": df2_AB, "effect_size": eta2_AB, "effect_size_type": "partial η²"},
         ]
 
         # --- Primary effect (interaction_first policy) ---
@@ -544,7 +551,14 @@ def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05, n_permu
         analysis_note = (
             "Assumptions for parametric Two-Way ANOVA were violated. "
             f"A Freedman-Lane permutation test ({n_permutations} permutations, seed={seed}) "
-            f"was used as nonparametric alternative for factors '{factor_a}' and '{factor_b}'."
+            f"was used as nonparametric alternative for factors '{factor_a}' and '{factor_b}'. "
+            "Main effects are tested in the additive model (each main effect adjusted for the "
+            "other; numerator df = number of levels − 1); the interaction is tested in the full "
+            "model (df = (a−1)(b−1)). Effect sizes are partial η² from the observed sum-of-squares "
+            "decomposition (range 0–1). "
+            "Post-hoc tests are pairwise Mann-Whitney U on the marginal / cell groupings "
+            "(simple effects, Holm-corrected): they assess group differences marginally and do "
+            "not retain the covariance structure of the two-way model."
         )
 
         # --- Post-hoc: pairwise MWU for significant main effects and interaction (Holm) ---
@@ -605,11 +619,11 @@ def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05, n_permu
             "confidence_interval": None,
             "ci_level": 0.95,
             "power": None,
-            "effect_size": _cohens_f_approx(primary_F, df_AB if interaction_significant else (df_A if p_perm_A <= p_perm_B else df_B)),
-            "effect_size_type": "Cohen's f (approx.)",
+            "effect_size": eta2_AB if interaction_significant else (eta2_A if p_perm_A <= p_perm_B else eta2_B),
+            "effect_size_type": "partial η²",
             "error": None,
             "df1": df_AB if interaction_significant else (df_A if p_perm_A <= p_perm_B else df_B),
-            "df2": df2,
+            "df2": df2_AB if interaction_significant else (df2_A if p_perm_A <= p_perm_B else df2_B),
             "model_type": "FreedmanLanePermutation",
             "model_class": "Freedman-Lane Permutation",
             "model_family": None,
