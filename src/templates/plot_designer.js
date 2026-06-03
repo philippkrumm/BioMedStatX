@@ -1308,7 +1308,7 @@
           showlegend: state.showLegend
         });
       });
-    } else {
+    } else if (state.plotType === "Raincloud") {
       groupOrder.forEach(function (group, groupIndex) {
         var values = groupValues(group);
         if (!values.length) return;
@@ -1379,8 +1379,7 @@
       }
       validPairsForForest.reverse();
       
-      var effectTypeLower = (validPairsForForest[0].effect_size_type || "").toLowerCase();
-      var isRatio = effectTypeLower.indexOf("odds") !== -1 || effectTypeLower.indexOf("ratio") !== -1 || effectTypeLower.indexOf("fold") !== -1;
+      var isRatio = validPairsForForest[0].is_ratio === true;
       
       traces.push({
         type: "scatter",
@@ -1390,8 +1389,8 @@
         error_x: {
           type: "data",
           symmetric: false,
-          array: validPairsForForest.map(function(p) { return p.ci_upper != null ? (p.ci_upper - p.effect_size) : 0; }),
-          arrayminus: validPairsForForest.map(function(p) { return p.ci_lower != null ? (p.effect_size - p.ci_lower) : 0; }),
+          array: validPairsForForest.map(function(p) { return p.ci_upper != null ? Math.max(0, p.ci_upper - p.effect_size) : 0; }),
+          arrayminus: validPairsForForest.map(function(p) { return p.ci_lower != null ? Math.max(0, p.effect_size - p.ci_lower) : 0; }),
           visible: true,
           color: "#16313a",
           thickness: 1.5,
@@ -1450,8 +1449,7 @@
       });
       
       // Lower Panel: Effect Sizes
-      var effectTypeLowerEst = (validPairsForEst[0].effect_size_type || "").toLowerCase();
-      var isRatioEst = effectTypeLowerEst.indexOf("odds") !== -1 || effectTypeLowerEst.indexOf("ratio") !== -1 || effectTypeLowerEst.indexOf("fold") !== -1;
+      var isRatioEst = validPairsForEst[0].is_ratio === true;
       
       var yMinEff = Infinity;
       var yMaxEff = -Infinity;
@@ -1466,8 +1464,8 @@
            error_y: {
              type: "data",
              symmetric: false,
-             array: [p.ci_upper != null ? (p.ci_upper - p.effect_size) : 0],
-             arrayminus: [p.ci_lower != null ? (p.effect_size - p.ci_lower) : 0],
+             array: [p.ci_upper != null ? Math.max(0, p.ci_upper - p.effect_size) : 0],
+             arrayminus: [p.ci_lower != null ? Math.max(0, p.effect_size - p.ci_lower) : 0],
              visible: true,
              color: state.colors[targetGroup] || "#16313a",
              thickness: 2,

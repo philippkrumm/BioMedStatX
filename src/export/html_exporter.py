@@ -24,6 +24,19 @@ except ImportError:  # pragma: no cover — fallback when logger_config missing
 logger = get_logger(__name__)
 
 
+def _effect_is_ratio(effect_type) -> bool:
+    """True for ratio-scale effect measures (centered at 1, log-friendly):
+    odds/risk/hazard/rate ratio, linear fold change. False for differences —
+    including any *log* scale (log2 fold change, log-odds), which is centered
+    at 0 and may be negative, so it must not get a reference line at 1 or a
+    log axis.
+    """
+    t = str(effect_type or "").lower()
+    if "log" in t:
+        return False
+    return "ratio" in t or "odds" in t or "fold" in t
+
+
 class _ResultsEncoder(json.JSONEncoder):
     def default(self, obj):
         return HTMLExporter._normalize_for_json(obj)
@@ -110,10 +123,11 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
                 "p_value": row.get("p_value_raw"),
                 "stars": row.get("stars", ""),
                 "significant": bool(row.get("significant")),
-                "effect_size": row.get("effect_size"),
+                "effect_size": row.get("effect_size_value"),
                 "effect_size_type": row.get("effect_size_type") or row.get("effect_type") or "",
                 "ci_lower": row.get("ci_lower"),
                 "ci_upper": row.get("ci_upper"),
+                "is_ratio": _effect_is_ratio(row.get("effect_size_type") or row.get("effect_type")),
             }
             for row in pairwise
         ]
