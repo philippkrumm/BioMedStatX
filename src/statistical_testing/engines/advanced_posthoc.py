@@ -186,6 +186,12 @@ class AdvancedPostHocEngine:
                 fallback_posthoc = StatisticalTester._run_rm_marginaleffects_posthoc(res, within[0], alpha=alpha)
             elif test == "mixed_anova" and between and within:
                 fallback_posthoc = StatisticalTester._run_mixed_marginaleffects_posthoc(res, between, within, alpha=alpha)
+            elif (
+                test == "two_way_anova" and between and len(between) == 2
+                and df_original is not None
+                and res.get("model_class") == "Freedman-Lane Permutation"
+            ):
+                fallback_posthoc = self._freedman_lane_dialog_posthoc(res, df_original, dv, between, alpha)
 
             updates: dict[str, Any] = {}
             warnings_list = list(res.get("warnings", []))
@@ -229,3 +235,127 @@ class AdvancedPostHocEngine:
             return updates
         except Exception as exc:
             return {"error": str(exc)}
+
+    @staticmethod
+    def _freedman_lane_candidate_specs(res, df, between, alpha):
+        """Build significance-gated candidate comparisons for the Freedman-Lane
+        post-hoc, mirroring the additive-model omnibus structure.
+
+        Marginal level pairs are offered for each significant main effect
+        (pooled over the other factor); cell pairs are offered only when the
+        interaction is significant. Returns a list of
+        ``(label1, label2, kind, payload)`` specs.
+        """
+        from itertools import combinations as _comb
+
+        factor_a, factor_b = between[0], between[1]
+        a_levels = sorted(df[factor_a].dropna().unique())
+        b_levels = sorted(df[factor_b].dropna().unique())
+
+        sig_a = sig_b = sig_ab = False
+        for f in res.get("factors", []):
+            if f.get("p_value") is None:
+                continue
+            if f.get("factor") == factor_a:
+                sig_a = f["p_value"] < alpha
+            elif f.get("factor") == factor_b:
+                sig_b = f["p_value"] < alpha
+        for it in res.get("interactions", []):
+            if it.get("p_value") is not None and it["p_value"] < alpha:
+                sig_ab = True
+
+        specs = []
+        if sig_a and len(a_levels) >= 2:
+            for v1, v2 in _comb(a_levels, 2):
+                specs.append((f"{factor_a}={v1}", f"{factor_a}={v2}", "marginal_a", (v1, v2)))
+        if sig_b and len(b_levels) >= 2:
+            for v1, v2 in _comb(b_levels, 2):
+                specs.append((f"{factor_b}={v1}", f"{factor_b}={v2}", "marginal_b", (v1, v2)))
+        if sig_ab:
+            cells = [(av, bv) for av in a_levels for bv in b_levels]
+            for (a1, b1), (a2, b2) in _comb(cells, 2):
+                specs.append((
+                    f"{factor_a}={a1}, {factor_b}={b1}",
+                    f"{factor_a}={a2}, {factor_b}={b2}",
+                    "cell", ((a1, b1), (a2, b2)),
+                ))
+        return specs
+
+    @staticmethod
+    def _select_comparisons_dialog(all_pairs):
+        """Show the ComparisonSelectionDialog and return the chosen pairs.
+
+        Headless / cancelled / error -> return ``all_pairs`` unchanged, preserving
+        the non-interactive all-candidates behaviour.
+        """
+        try:
+            import sys
+            from PyQt5.QtWidgets import QApplication
+            from ui.dialogs.comparison_selection_dialog import ComparisonSelectionDialog
+
+            app = QApplication.instance()
+            if app is None:
+                app = QApplication(sys.argv)
+            dialog = ComparisonSelectionDialog(all_pairs, checked_by_default=True)
+            if dialog.exec_() == dialog.Accepted:
+                chosen = dialog.get_selected_comparisons()
+                return chosen if chosen else all_pairs
+            return all_pairs
+        except Exception as exc:
+            logger.warning("Could not show Freedman-Lane comparison dialog: %s", exc)
+            return all_pairs
+
+    @staticmethod
+    def _freedman_lane_compute(specs, selected_pairs, df, dv, between, alpha):
+        """Run pairwise Mann-Whitney U + Holm on the selected Freedman-Lane specs.
+
+        Marginal pairs pool the dependent variable over the other factor; cell
+        pairs use the (A, B) subgroup. Reuses the omnibus MWU / Holm helpers so
+        the statistics match the all-pairs path exactly.
+        """
+        from analysis.nonparametricanovas import _mwu_posthoc_comp, _apply_holm
+
+        factor_a, factor_b = between[0], between[1]
+        selected_set = set(selected_pairs)
+
+        raw = []
+        for label1, label2, kind, payload in specs:
+            if (label1, label2) not in selected_set:
+                continue
+            if kind == "marginal_a":
+                v1, v2 = payload
+                arr1 = df[df[factor_a] == v1][dv].values
+                arr2 = df[df[factor_a] == v2][dv].values
+            elif kind == "marginal_b":
+                v1, v2 = payload
+                arr1 = df[df[factor_b] == v1][dv].values
+                arr2 = df[df[factor_b] == v2][dv].values
+            else:  # cell
+                (a1, b1), (a2, b2) = payload
+                arr1 = df[(df[factor_a] == a1) & (df[factor_b] == b1)][dv].values
+                arr2 = df[(df[factor_a] == a2) & (df[factor_b] == b2)][dv].values
+            comp = _mwu_posthoc_comp(arr1, arr2, label1, label2, alpha)
+            if comp is not None:
+                raw.append(comp)
+
+        if not raw:
+            return {"pairwise_comparisons": [], "posthoc_test": "No comparisons selected"}
+
+        comps = _apply_holm(raw, alpha)
+        return {
+            "pairwise_comparisons": comps,
+            "posthoc_test": "Pairwise Mann-Whitney U (marginal / cell simple effects, Holm-corrected)",
+        }
+
+    def _freedman_lane_dialog_posthoc(self, res, df_original, dv, between, alpha):
+        """Dialog-driven pairwise MWU post-hoc for the Freedman-Lane fallback.
+
+        Builds the significance-gated candidate set, lets the user pick a subset
+        (all candidates when headless/cancelled), then computes MWU + Holm.
+        """
+        specs = self._freedman_lane_candidate_specs(res, df_original, between, alpha)
+        if not specs:
+            return {"pairwise_comparisons": [], "posthoc_test": "No applicable post-hoc comparisons"}
+        all_pairs = [(s[0], s[1]) for s in specs]
+        selected_pairs = self._select_comparisons_dialog(all_pairs)
+        return self._freedman_lane_compute(specs, selected_pairs, df_original, dv, between, alpha)
