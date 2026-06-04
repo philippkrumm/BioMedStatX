@@ -37,6 +37,52 @@ def test_freedman_lane_df():
         assert abs(expect - es[i]) < 1e-6, f"row {i} {row.Source}: F-form {expect} != stored {es[i]}"
 
 
+def test_freedman_lane_df_nan():
+    """NaN in DV and factor labels must not crash; eta2p must stay in [0,1]."""
+    rng = np.random.default_rng(42)
+    A = ["a1", "a2", "a3", "a4"]
+    B = ["b1", "b2", "b3"]
+    rows = []
+    for ai, a in enumerate(A):
+        for bi, b in enumerate(B):
+            for k in range(7):  # more obs so cells survive NaN loss
+                rows.append({"y": 1.5 * ai + 0.5 * bi + rng.normal(0, 1), "A": a, "B": b})
+    df = pd.DataFrame(rows)
+    N_full = len(df)
+
+    # ~15% NaN in DV
+    nan_dv = rng.choice(df.index, size=N_full // 7, replace=False)
+    df.loc[nan_dv, "y"] = np.nan
+    # NaN in factor labels (a few rows) → dropna removes them entirely
+    nan_fac = rng.choice(df.index, size=4, replace=False)
+    df.loc[nan_fac, "A"] = np.nan
+
+    res = perform_freedman_lane_test(df, "y", "A", "B", alpha=0.05, n_permutations=200, seed=1)
+    assert res["error"] is None, f"FL raised on NaN data: {res['error']}"
+    at = res["anova_table"]
+    assert at is not None
+    assert all(int(x) >= 1 for x in at["DF1"])
+
+    es = [f["effect_size"] for f in res["factors"]] + [res["interactions"][0]["effect_size"]]
+    ts = {f["effect_size_type"] for f in res["factors"]} | {res["interactions"][0]["effect_size_type"]}
+    for e in es:
+        assert 0.0 <= e <= 1.0, f"eta2 out of [0,1] after NaN injection: {e}"
+    assert ts == {"partial η²"}, ts
+
+    # eta2p == F*df1/(F*df1+df2) still holds on cleaned data
+    for i, row in enumerate(at.itertuples(index=False)):
+        F = float(row.F); d1 = int(row.DF1); d2 = int(row.DF2)
+        expect = F * d1 / (F * d1 + d2) if F > 0 else 0.0
+        assert abs(expect - es[i]) < 1e-6, f"row {i}: F-form {expect} != stored {es[i]}"
+
+    # Pairwise list must not contain None entries
+    assert isinstance(res["pairwise_comparisons"], list)
+    assert all(c is not None for c in res["pairwise_comparisons"])
+    for c in res["pairwise_comparisons"]:
+        assert 0.0 <= c["p_value"] <= 1.0
+
+
 if __name__ == "__main__":
     test_freedman_lane_df()
+    test_freedman_lane_df_nan()
     print("ALL ASSERTS PASS")
