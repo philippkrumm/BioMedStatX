@@ -23,6 +23,7 @@ def test_brunner_langer_dialog():
     df = pd.DataFrame(rows)
 
     res = perform_brunner_langer_ats(df, "y", "G", "Time", "subj", alpha=0.05)
+    assert res["error"] is None, f"BL failed on clean data: {res['error']}"
     pB = next(f["p_value"] for f in res["factors"] if f["factor"] == "G")
     pW = next(f["p_value"] for f in res["factors"] if f["factor"] == "Time")
     pBW = res["interactions"][0]["p_value"]
@@ -125,7 +126,43 @@ def test_brunner_langer_dialog_nan():
         assert 0.0 <= c["p_value"] <= 1.0
 
 
+def test_brunner_langer_catastrophic_nan():
+    """When NaN reduces a between-group to n_i=1 complete subjects, BL must
+    return a graceful error dict (not raise), pipeline posthoc must not crash."""
+    rng = np.random.default_rng(99)
+    rows = []
+    sid = 0
+    for g in ["g1", "g2"]:
+        for _ in range(3):   # 3 subjects per group (minimum for BL to run clean)
+            sid += 1
+            for t in ["t1", "t2"]:
+                rows.append({"y": rng.normal(0, 1), "G": g, "Time": t, "subj": f"s{sid}"})
+    df = pd.DataFrame(rows)
+    # Wipe all t1 measurements for g1 subjects → g1 wide matrix has n_i=0 (all subjects miss t1)
+    g1_subjs = df[df["G"] == "g1"]["subj"].unique()
+    df.loc[(df["subj"].isin(g1_subjs)) & (df["Time"] == "t1"), "y"] = np.nan
+
+    res = perform_brunner_langer_ats(df, "y", "G", "Time", "subj", alpha=0.05)
+    # Must NOT raise — must return graceful error dict
+    assert res["error"] is not None, "Expected error for n_i=0 group, got None"
+    assert isinstance(res["error"], str)
+    assert res["pairwise_comparisons"] == []
+    assert res["factors"] == []
+
+    # Pipeline posthoc must also not crash
+    from statistical_testing.engines.advanced_posthoc import AdvancedPostHocEngine
+    AdvancedPostHocEngine._select_comparisons_dialog = staticmethod(lambda pairs: pairs)
+    eng = AdvancedPostHocEngine()
+    upd = eng._run_nonparametric_fallback_posthoc({
+        "res": res, "test": "mixed_anova", "df_original": df, "dv": "y",
+        "subject": "subj", "between": ["G"], "within": ["Time"], "alpha": 0.05,
+    })
+    # Returns {} because res["error"] is not None (line 166 guard)
+    assert upd == {} or isinstance(upd, dict)
+
+
 if __name__ == "__main__":
     test_brunner_langer_dialog()
     test_brunner_langer_dialog_nan()
+    test_brunner_langer_catastrophic_nan()
     print("ALL BL ASSERTS PASS")

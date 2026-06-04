@@ -17,6 +17,7 @@ def test_freedman_lane_integration():
                 rows.append({"y": 2.0 * ai + rng.normal(0, 1), "A": a, "B": b})
     df = pd.DataFrame(rows)
     res = perform_freedman_lane_test(df, "y", "A", "B", alpha=0.05, n_permutations=200, seed=1)
+    assert res["error"] is None, f"FL failed on clean data: {res['error']}"
 
     eng = AdvancedPostHocEngine()
     upd = eng._run_nonparametric_fallback_posthoc({

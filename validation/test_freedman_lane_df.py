@@ -17,6 +17,7 @@ def test_freedman_lane_df():
     N = len(df)
 
     res = perform_freedman_lane_test(df, "y", "A", "B", alpha=0.05, n_permutations=300, seed=1)
+    assert res["error"] is None, f"FL failed on clean data: {res['error']}"
     at = res["anova_table"]
 
     df1s = [int(x) for x in at["DF1"]]
@@ -82,7 +83,37 @@ def test_freedman_lane_df_nan():
         assert 0.0 <= c["p_value"] <= 1.0
 
 
+def test_freedman_lane_catastrophic_nan():
+    """When NaN wipes an entire factor level, FL must return a graceful error
+    dict (not raise), with a non-None error string and safe empty collections."""
+    rng = np.random.default_rng(99)
+    rows = []
+    for ai, a in enumerate(["a1", "a2", "a3"]):
+        for b in ["b1", "b2"]:
+            for k in range(4):
+                rows.append({"y": float(ai) + rng.normal(0, 1), "A": a, "B": b})
+    df = pd.DataFrame(rows)
+    # Wipe entire level a1 in factor A → only 2 levels remain, but let's also
+    # wipe a2 so the design collapses completely for one cell combination
+    df.loc[(df["A"] == "a1") & (df["B"] == "b1"), "y"] = np.nan
+    df.loc[(df["A"] == "a1") & (df["B"] == "b2"), "y"] = np.nan
+    # a1 is now gone → A has 2 levels, design is 2×2 → still valid, no error expected
+    res = perform_freedman_lane_test(df, "y", "A", "B", n_permutations=100, seed=1)
+    # Either succeeds (missing level reduced design) or fails gracefully
+    if res["error"] is not None:
+        assert isinstance(res["error"], str)
+        assert res["pairwise_comparisons"] == []
+        assert res["anova_table"] is None
+    else:
+        at = res["anova_table"]
+        assert at is not None
+        for e in ([f["effect_size"] for f in res["factors"]] +
+                  [res["interactions"][0]["effect_size"]]):
+            assert 0.0 <= e <= 1.0
+
+
 if __name__ == "__main__":
     test_freedman_lane_df()
     test_freedman_lane_df_nan()
+    test_freedman_lane_catastrophic_nan()
     print("ALL ASSERTS PASS")

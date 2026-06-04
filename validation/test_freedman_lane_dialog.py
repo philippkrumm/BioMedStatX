@@ -17,6 +17,7 @@ def test_freedman_lane_dialog():
     df = pd.DataFrame(rows)
 
     res = perform_freedman_lane_test(df, "y", "A", "B", alpha=0.05, n_permutations=300, seed=1)
+    assert res["error"] is None, f"FL failed on clean data: {res['error']}"
     pA = res["factors"][0]["p_value"]; pB = res["factors"][1]["p_value"]; pAB = res["interactions"][0]["p_value"]
     assert pA < 0.05, "DGP sanity: A should be significant"
 
