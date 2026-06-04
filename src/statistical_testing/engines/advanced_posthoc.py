@@ -184,6 +184,14 @@ class AdvancedPostHocEngine:
             marginaleffects_error = None
             if test == "repeated_measures_anova" and within:
                 fallback_posthoc = StatisticalTester._run_rm_marginaleffects_posthoc(res, within[0], alpha=alpha)
+            elif (
+                test == "mixed_anova" and between and within
+                and df_original is not None
+                and res.get("model_class") == "Brunner-Langer ATS"
+            ):
+                fallback_posthoc = self._brunner_langer_dialog_posthoc(
+                    res, df_original, dv, between, within, subject, alpha
+                )
             elif test == "mixed_anova" and between and within:
                 fallback_posthoc = StatisticalTester._run_mixed_marginaleffects_posthoc(res, between, within, alpha=alpha)
             elif (
@@ -359,3 +367,131 @@ class AdvancedPostHocEngine:
         all_pairs = [(s[0], s[1]) for s in specs]
         selected_pairs = self._select_comparisons_dialog(all_pairs)
         return self._freedman_lane_compute(specs, selected_pairs, df_original, dv, between, alpha)
+
+    @staticmethod
+    def _brunner_langer_candidate_specs(res, df, between, within, alpha):
+        """Build significance-gated candidate comparisons for the Brunner-Langer
+        ATS post-hoc.
+
+        Between-factor level pairs (pooled over the within factor) and the
+        between-group simple effects at each within level are offered when the
+        respective between / interaction effect is significant; within-factor
+        level pairs are offered when the within effect is significant. Returns a
+        list of ``(label1, label2, kind, payload)`` specs, kind in
+        {"between", "within", "interaction"}.
+        """
+        from itertools import combinations as _comb
+
+        bf, wf = between[0], within[0]
+        b_levels = sorted(df[bf].dropna().unique())
+        w_levels = sorted(df[wf].dropna().unique())
+
+        sig_b = sig_w = sig_bw = False
+        for f in res.get("factors", []):
+            if f.get("p_value") is None:
+                continue
+            if f.get("factor") == bf:
+                sig_b = f["p_value"] < alpha
+            elif f.get("factor") == wf:
+                sig_w = f["p_value"] < alpha
+        for it in res.get("interactions", []):
+            if it.get("p_value") is not None and it["p_value"] < alpha:
+                sig_bw = True
+
+        specs = []
+        if sig_b and len(b_levels) >= 2:
+            for v1, v2 in _comb(b_levels, 2):
+                specs.append((f"{bf}={v1}", f"{bf}={v2}", "between", (v1, v2)))
+        if sig_w and len(w_levels) >= 2:
+            for v1, v2 in _comb(w_levels, 2):
+                specs.append((f"{wf}={v1}", f"{wf}={v2}", "within", (v1, v2)))
+        if sig_bw:
+            for w_val in w_levels:
+                for b1, b2 in _comb(b_levels, 2):
+                    specs.append((
+                        f"{bf}={b1}, {wf}={w_val}",
+                        f"{bf}={b2}, {wf}={w_val}",
+                        "interaction", (b1, b2, w_val),
+                    ))
+        return specs
+
+    @staticmethod
+    def _brunner_langer_compute(specs, selected_pairs, df, dv, between, within, subject, alpha):
+        """Run pairwise post-hoc on the selected Brunner-Langer specs.
+
+        Within-factor pairs use a paired Wilcoxon signed-rank test on the
+        subject-aligned wide matrix (same subjects across time); between-factor
+        and interaction (between groups at a fixed within level) pairs use
+        Mann-Whitney U. Reuses the omnibus helpers + Holm so the statistics match
+        the all-pairs path exactly.
+        """
+        from analysis.nonparametricanovas import (
+            _mwu_posthoc_comp,
+            _wilcoxon_posthoc_comp,
+            _apply_holm,
+        )
+
+        bf, wf = between[0], within[0]
+        selected_set = set(selected_pairs)
+
+        # Subject-aligned wide matrix for paired within comparisons.
+        wide = None
+        if subject is not None and any(s[2] == "within" for s in specs):
+            w_levels = sorted(df[wf].dropna().unique())
+            wide = (
+                df.pivot_table(index=subject, columns=wf, values=dv, aggfunc="mean")
+                .reindex(columns=w_levels)
+                .dropna()
+            )
+
+        raw = []
+        for label1, label2, kind, payload in specs:
+            if (label1, label2) not in selected_set:
+                continue
+            if kind == "between":
+                v1, v2 = payload
+                comp = _mwu_posthoc_comp(
+                    df[df[bf] == v1][dv].values, df[df[bf] == v2][dv].values, label1, label2, alpha
+                )
+            elif kind == "within":
+                v1, v2 = payload
+                if wide is None or v1 not in wide.columns or v2 not in wide.columns:
+                    comp = None
+                else:
+                    comp = _wilcoxon_posthoc_comp(
+                        wide[v1].values, wide[v2].values, label1, label2, alpha
+                    )
+            else:  # interaction: between groups at a fixed within level
+                b1, b2, w_val = payload
+                comp = _mwu_posthoc_comp(
+                    df[(df[bf] == b1) & (df[wf] == w_val)][dv].values,
+                    df[(df[bf] == b2) & (df[wf] == w_val)][dv].values,
+                    label1, label2, alpha,
+                )
+            if comp is not None:
+                raw.append(comp)
+
+        if not raw:
+            return {"pairwise_comparisons": [], "posthoc_test": "No comparisons selected"}
+
+        comps = _apply_holm(raw, alpha)
+        return {
+            "pairwise_comparisons": comps,
+            "posthoc_test": "Pairwise Wilcoxon / Mann-Whitney U (within / between simple effects, Holm-corrected)",
+        }
+
+    def _brunner_langer_dialog_posthoc(self, res, df_original, dv, between, within, subject, alpha):
+        """Dialog-driven pairwise post-hoc for the Brunner-Langer ATS fallback.
+
+        Builds the significance-gated candidate set, lets the user pick a subset
+        (all candidates when headless/cancelled), then computes Wilcoxon (within)
+        / Mann-Whitney U (between, interaction) + Holm.
+        """
+        specs = self._brunner_langer_candidate_specs(res, df_original, between, within, alpha)
+        if not specs:
+            return {"pairwise_comparisons": [], "posthoc_test": "No applicable post-hoc comparisons"}
+        all_pairs = [(s[0], s[1]) for s in specs]
+        selected_pairs = self._select_comparisons_dialog(all_pairs)
+        return self._brunner_langer_compute(
+            specs, selected_pairs, df_original, dv, between, within, subject, alpha
+        )

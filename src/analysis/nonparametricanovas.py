@@ -116,7 +116,16 @@ def _wilcoxon_posthoc_comp(arr1, arr2, label1, label2, alpha, warnings_list=None
         import warnings
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            stat, p_raw = sp_stats.wilcoxon(diffs, alternative='two-sided', zero_method='pratt', exact=True if len(diffs) <= 25 else False)
+            try:
+                stat, p_raw = sp_stats.wilcoxon(
+                    diffs, alternative='two-sided', zero_method='pratt',
+                    exact=True if n <= 25 else False,
+                )
+            except TypeError:
+                # scipy >= 1.17 removed `exact` kwarg; threshold handled internally
+                stat, p_raw = sp_stats.wilcoxon(
+                    diffs, alternative='two-sided', zero_method='pratt',
+                )
             if w and warnings_list is not None:
                 for warn in w:
                     msg = f"Wilcoxon Warning ({label1} vs {label2}): {str(warn.message)}"
