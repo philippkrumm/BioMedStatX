@@ -86,7 +86,7 @@ def perform_advanced_test_pipeline(
                     transformed_samples.get(group, []),
                     min_n=2,
                     label=str(group),
-                    allow_missing=False,
+                    allow_missing=True,
                 )
         except ValidationError as exc:
             err_msg = str(exc)

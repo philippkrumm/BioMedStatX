@@ -501,11 +501,9 @@ class UIDialogManager:
 
         # RadioButtons for post-hoc tests - options depend on context
         if progress_text and ("two_way_anova" in progress_text or "mixed_anova" in progress_text or "repeated_measures_anova" in progress_text):
-            # For advanced ANOVAs: only offer Tukey and Custom paired t-tests (no Dunnett)
             options = [
-                ("Tukey-HSD Test (compares all pairs)", "tukey"),
-                ("Custom paired t-tests (you select specific pairs, Holm-\u0160id\u00e1k)", "paired_custom"),
-                ("Custom paired t-tests (you select specific pairs, FDR Benjamini-Hochberg)", "paired_fdr"),
+                ("Tukey-HSD Test (all pairs, strict FWER control)", "tukey"),
+                ("Specific comparisons – strict correction (Holm-\u0160id\u00e1k)", "paired_custom"),
             ]
         else:
             # For One-Way ANOVA (Welch): offer unconditional robust options

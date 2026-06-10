@@ -164,7 +164,7 @@ class DecisionTreeVisualizer:
             plt.style.use('seaborn-v0_8-whitegrid')
 
             # Extract key information from results
-            test_name = results.get("test_name", results.get("test", ""))
+            test_name = results.get("test_name", results.get("test", "")) or ""
             test_type = results.get("test_recommendation", results.get("test_type", ""))
             transformation = results.get("transformation", "None")
             p_value = results.get("p_value", None)
@@ -214,13 +214,13 @@ class DecisionTreeVisualizer:
                     dependence_type = "dependent"
                 else:
                     dependence_type = "independent"
-            elif "repeated" in test_name.lower() or "rm" in test_name.lower() or "within" in test_name.lower():
+            elif test_name is not None and ("repeated" in test_name.lower() or "rm" in test_name.lower() or "within" in test_name.lower()):
                 # RM ANOVA and Mixed ANOVA are always dependent samples
                 dependence_type = "dependent"
-            elif "mixed" in test_name.lower():
+            elif test_name is not None and "mixed" in test_name.lower():
                 # Mixed ANOVA has both dependent and independent factors, but treat as dependent
                 dependence_type = "dependent"
-            elif "t-test" in test_name.lower() or "t test" in test_name.lower():
+            elif test_name is not None and ("t-test" in test_name.lower() or "t test" in test_name.lower()):
                 # Check for "paired" or only match "dependent" when surrounded by spaces/parentheses
                 if "paired" in test_name.lower() or " dependent" in test_name.lower() or "(dependent)" in test_name.lower():
                     dependence_type = "dependent"
@@ -1141,7 +1141,7 @@ class DecisionTreeVisualizer:
                 from visualization.flowchartvisualizer import FlowchartVisualizer
                 return FlowchartVisualizer.get_tree_json(results)
 
-            test_name = results.get("test_name", results.get("test", ""))
+            test_name = results.get("test_name", results.get("test", "")) or ""
             test_type = results.get("test_recommendation", results.get("test_type", ""))
             transformation = results.get("transformation", "None")
             p_value = results.get("p_value", None)

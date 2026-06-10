@@ -163,11 +163,17 @@ class AdvancedPostHocEngine:
         within = payload.get("within")
         alpha = float(payload.get("alpha", 0.05))
 
+        print(f"DEBUG POSTHOC: res keys={list(res.keys())}, model_class={res.get('model_class')}, existing_comps={len(res.get('pairwise_comparisons', []))}")
+        print(f"DEBUG POSTHOC: test={test}, between={between}, df_original={'set' if df_original is not None else 'None'}")
+
         if res.get("error") is not None:
+            print(f"DEBUG POSTHOC: early exit - error={res.get('error')}")
             return {}
 
         p_value = res.get("p_value")
+        print(f"DEBUG POSTHOC: p_value={p_value}, type={type(p_value)}")
         if not isinstance(p_value, (float, int)):
+            print(f"DEBUG POSTHOC: early exit - p_value not float/int")
             return {}
 
         if p_value >= alpha:
@@ -261,6 +267,7 @@ class AdvancedPostHocEngine:
         b_levels = sorted(df[factor_b].dropna().unique())
 
         sig_a = sig_b = sig_ab = False
+        print(f"DEBUG SPECS: factor_a={factor_a}, factor_b={factor_b}, factors={res.get('factors', [])}")
         for f in res.get("factors", []):
             if f.get("p_value") is None:
                 continue
@@ -271,6 +278,7 @@ class AdvancedPostHocEngine:
         for it in res.get("interactions", []):
             if it.get("p_value") is not None and it["p_value"] < alpha:
                 sig_ab = True
+        print(f"DEBUG SPECS: sig_a={sig_a}, sig_b={sig_b}, sig_ab={sig_ab}")
 
         specs = []
         if sig_a and len(a_levels) >= 2:

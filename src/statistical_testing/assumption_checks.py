@@ -272,7 +272,7 @@ class AssumptionCheckEngine:
         else:
             test_name = "Brown-Forsythe"
             try:
-                data_for_levene = [samples[g] for g in valid_groups]
+                data_for_levene = [[v for v in samples[g] if not (isinstance(v, float) and np.isnan(v))] for g in valid_groups]
                 logger.debug(f"DEBUG BROWN-FORSYTHE: Pre-transformation - Groups: {len(valid_groups)}, Data lengths: {[len(v) for v in data_for_levene]}")
                 try:
                     validated_levene_data = validate_levene_inputs(
@@ -350,6 +350,29 @@ class AssumptionCheckEngine:
                 add_note(str(shift_warning))
                 logger.warning(str(shift_warning))
 
+            # BoxCox: estimate one global lambda from all valid values across groups
+            _boxcox_lambda = None
+            if transformation_type == "boxcox":
+                _all_bc = []
+                for _g in valid_groups:
+                    for _v in samples[_g]:
+                        try:
+                            _fv = float(_v)
+                        except (TypeError, ValueError):
+                            continue
+                        if not (np.isnan(_fv) or np.isinf(_fv)):
+                            _all_bc.append(_fv + global_shift)
+                if len(_all_bc) >= 3 and min(_all_bc) > 0:
+                    try:
+                        _boxcox_lambda = float(boxcox_normmax(np.array(_all_bc)))
+                        test_info["boxcox_lambda"] = _boxcox_lambda
+                    except Exception as _e:
+                        add_note(f"Box-Cox global lambda estimation failed ({_e}); falling back to log10.")
+                        transformation_type = "log10"
+                else:
+                    add_note("Box-Cox: insufficient valid data globally; falling back to log10.")
+                    transformation_type = "log10"
+
             # Apply transformation
             for group in valid_groups:
                 values = samples[group]
@@ -362,39 +385,18 @@ class AssumptionCheckEngine:
                             test_info["log10_shifts"] = {}
                         test_info["log10_shifts"][group] = global_shift
                 elif transformation_type == "boxcox":
-                    shifted = [v + global_shift for v in values]
-                    # Pre-validate before attempting Box-Cox
-                    if len(values) < 3:
-                        _bc_reason = f"n={len(values)} < 3 required"
-                    elif len(set(values)) == 1:
-                        _bc_reason = "all values identical (zero variance)"
-                    elif any(np.isnan(v) or np.isinf(v) for v in values):
-                        _bc_reason = "NaN or Inf in data"
-                    elif min(shifted) <= 0:
-                        _bc_reason = "values ≤ 0 after shift"
-                    else:
-                        _bc_reason = None
-                    if _bc_reason:
-                        test_info["transformation_note"] = (
-                            f"Box-Cox not applicable for group '{group}': {_bc_reason}. "
-                            "Normality will be re-evaluated on original data."
-                        )
-                        logger.warning(test_info["transformation_note"])
-                        add_note(test_info["transformation_note"])
-                        transformed_samples[group] = list(values)
-                    else:
+                    transformed = []
+                    for v in values:
                         try:
-                            lambda_val = boxcox_normmax(shifted)
-                            transformed_samples[group] = list(boxcox(shifted, lambda_val))
-                            test_info["boxcox_lambda"] = lambda_val
-                        except Exception as e:
-                            test_info["transformation_note"] = (
-                                f"Box-Cox optimization failed for group '{group}' ({e}). "
-                                "Normality will be re-evaluated on original data."
-                            )
-                            logger.warning(test_info["transformation_note"])
-                            add_note(test_info["transformation_note"])
-                            transformed_samples[group] = list(values)
+                            fv = float(v)
+                        except (TypeError, ValueError):
+                            transformed.append(v)
+                            continue
+                        if np.isnan(fv) or np.isinf(fv):
+                            transformed.append(fv)
+                        else:
+                            transformed.append(float(boxcox(fv + global_shift, _boxcox_lambda)))
+                    transformed_samples[group] = transformed
                 elif transformation_type == "arcsin_sqrt":
                     max_val = max(values)
                     # Scale to 0-1 if needed
@@ -524,7 +526,7 @@ class AssumptionCheckEngine:
         else:
             test_name_tr = "Brown-Forsythe"
             try:
-                data_for_levene_tr = [transformed_samples[g] for g in valid_groups]
+                data_for_levene_tr = [[v for v in transformed_samples[g] if not (isinstance(v, float) and np.isnan(v))] for g in valid_groups]
                 logger.debug(f"DEBUG BROWN-FORSYTHE: Post-transformation - Groups: {len(valid_groups)}, Data lengths: {[len(v) for v in data_for_levene_tr]}")
                 try:
                     validated_levene_data_tr = validate_levene_inputs(

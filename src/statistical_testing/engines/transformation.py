@@ -57,17 +57,28 @@ class TransformationEngine:
                     shift = -min_val + 1 if min_val <= 0 else 0
                     df_transformed[dv] = np.log10(df[dv] + shift)
                 elif transformation_type == "boxcox":
-                    min_val = df[dv].min()
+                    min_val = df[dv].dropna().min()
                     shift = -min_val + 1 if min_val <= 0 else 0
-                    if shift > 0:
-                        df_transformed[dv] = df[dv] + shift
+                    shifted = df[dv] + shift
                     lambda_val = test_info.get("boxcox_lambda") if isinstance(test_info, Mapping) else None
                     if lambda_val is None:
+                        valid_bc = shifted.dropna()
+                        valid_bc = valid_bc[valid_bc > 0].values
                         try:
-                            lambda_val = stats.boxcox_normmax(df_transformed[dv])
+                            lambda_val = float(stats.boxcox_normmax(valid_bc)) if len(valid_bc) >= 3 else 0.0
                         except Exception:
-                            lambda_val = 0
-                    df_transformed[dv] = stats.boxcox(df_transformed[dv], lambda_val)
+                            lambda_val = 0.0
+                        if isinstance(test_info, Mapping):
+                            test_info["boxcox_lambda"] = lambda_val
+                        updates["boxcox_lambda"] = lambda_val
+                    # Apply BoxCox element-wise, preserving NaN
+                    import pandas as _pd
+                    mask = shifted.notna() & (shifted > 0)
+                    safe = shifted.where(mask, 1.0).values
+                    bc_vals = stats.boxcox(safe, lambda_val)
+                    df_transformed[dv] = _pd.Series(
+                        np.where(mask.values, bc_vals, np.nan), index=df.index
+                    )
                 elif transformation_type == "arcsin_sqrt":
                     min_val = df[dv].min()
                     max_val = df[dv].max()

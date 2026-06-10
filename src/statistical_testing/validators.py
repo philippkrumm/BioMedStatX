@@ -135,7 +135,7 @@ def ensure_equal_group_sizes(
 
 def validate_transformed_values(values: Sequence[float], *, transformation_name: str) -> np.ndarray:
     label = f"transformation '{transformation_name}'"
-    return validate_finite_values(values, label=label, allow_missing=False)
+    return validate_finite_values(values, label=label, allow_missing=True)
 
 
 def validate_group_count(groups: Iterable[str], *, min_groups: int = 2, label: str = "groups") -> List[str]:

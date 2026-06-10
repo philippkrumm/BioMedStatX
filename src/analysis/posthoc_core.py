@@ -1528,8 +1528,9 @@ class DunnTest(PostHocAnalyzer):
             result["error"] = "scikit-posthocs is not installed."
             return result
 
-        # 1) Get raw p-values matrix
-        data_array = [samples[g] for g in valid_groups]
+        # 1) Get raw p-values matrix (drop NaN per group)
+        clean = {g: [v for v in samples[g] if not (isinstance(v, float) and np.isnan(v))] for g in valid_groups}
+        data_array = [clean[g] for g in valid_groups]
         raw_p = sp.posthoc_dunn(data_array, p_adjust=None)  # no internal correction
 
         # 2) Flatten into list and correct with Holm-Šidák
@@ -1545,7 +1546,7 @@ class DunnTest(PostHocAnalyzer):
 
         # 3) Loop over pairs and compute effect & CI
         for (g1, g2), pval_adj, sig in zip(pairs, p_adj, reject):
-            x, y = samples[g1], samples[g2]
+            x, y = clean[g1], clean[g2]
             # Mann–Whitney U for effect‐size r
             U, _ = mannwhitneyu(x, y, alternative='two-sided')
             n1, n2 = len(x), len(y)

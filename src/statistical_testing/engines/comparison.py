@@ -200,7 +200,7 @@ class ComparisonEngine:
             return results
 
     def _run_kruskal_wallis(self, *, groups: list[str], samples: dict[str, Any], alpha: float, results: dict[str, Any]) -> dict[str, Any]:
-        teststat, pval = stats.kruskal(*[samples[g] for g in groups])
+        teststat, pval = stats.kruskal(*[samples[g] for g in groups], nan_policy='omit')
         results["test"] = "Kruskal-Wallis test"
         results["p_value"] = float(pval)
         results["statistic"] = float(teststat)
