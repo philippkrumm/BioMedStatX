@@ -44,11 +44,13 @@ def test_apply_transform_log10():
 
 
 def test_apply_transform_log10_handles_nonpositive():
-    # Values <= 0 must be shifted so min becomes 1
+    # No automatic shifting (c=0.0 always): values <= 0 become NaN so they
+    # are dropped via listwise deletion downstream. Positive values transform.
     vals = np.array([-2.0, 0.0, 3.0, 10.0, 20.0])
     result, _lam, shift = _apply_transform(vals, 'log10')
-    assert np.all(np.isfinite(result))
-    assert shift > 0.0
+    assert np.isnan(result[0]) and np.isnan(result[1])
+    np.testing.assert_allclose(result[2:], np.log10([3.0, 10.0, 20.0]))
+    assert shift == 0.0
 
 
 def test_apply_transform_sqrt():
@@ -60,10 +62,12 @@ def test_apply_transform_sqrt():
 
 
 def test_apply_transform_sqrt_handles_negative():
+    # No automatic shifting: negative values become NaN (listwise-deleted later).
     vals = np.array([-4.0, 0.0, 4.0, 9.0, 16.0])
     result, _lam, shift = _apply_transform(vals, 'sqrt')
-    assert np.all(np.isfinite(result))
-    assert shift > 0.0
+    assert np.isnan(result[0])
+    np.testing.assert_allclose(result[1:], [0.0, 2.0, 3.0, 4.0])
+    assert shift == 0.0
 
 
 def test_apply_transform_boxcox():

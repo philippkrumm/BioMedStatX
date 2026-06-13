@@ -115,21 +115,19 @@ def _apply_transform(vals: np.ndarray, name: str):
         return np.sqrt(v), None, 0.0
 
     if name == 'boxcox':
-        from scipy.stats import boxcox as _scipy_boxcox, boxcox_normmax
+        from scipy.stats import boxcox as _scipy_boxcox
+        from statistical_testing.validators import bounded_boxcox_lambda
         v[v <= 0] = np.nan
         # Only optimize over valid (positive) values
         valid_mask = ~np.isnan(v)
         if not np.any(valid_mask):
             return v, None, 0.0
-        
-        try:
-            lam = boxcox_normmax(v[valid_mask])
-            v[valid_mask] = _scipy_boxcox(v[valid_mask], lam)
-            return v, float(lam), 0.0
-        except Exception:
-            # Fall back to log (lam ≈ 0) when boxcox_normmax fails
-            v[valid_mask] = np.log(v[valid_mask])
-            return v, None, 0.0
+
+        # Reject a divergent (out-of-bounds) ML lambda and fall back to log
+        # (lambda=0) — boxcox(x, 0) == ln(x). Never clamp to a boundary.
+        lam, _reverted = bounded_boxcox_lambda(v[valid_mask])
+        v[valid_mask] = _scipy_boxcox(v[valid_mask], lam)
+        return v, float(lam), 0.0
 
 def _optimize_boxcox_for_regression(y: np.ndarray, x_matrix: np.ndarray):
     """Optimize Box-Cox lambda by maximizing the profile log-likelihood of OLS residuals.

@@ -14,6 +14,7 @@ from statistical_testing.decision_logic import select_comparison_test, strategy_
 from statistical_testing.validators import (
     GroupValidationError,
     ValidationError,
+    bounded_boxcox_lambda,
     validate_levene_inputs,
     validate_residuals_for_shapiro,
 )
@@ -363,12 +364,19 @@ class AssumptionCheckEngine:
                         if not (np.isnan(_fv) or np.isinf(_fv)):
                             _all_bc.append(_fv + global_shift)
                 if len(_all_bc) >= 3 and min(_all_bc) > 0:
-                    try:
-                        _boxcox_lambda = float(boxcox_normmax(np.array(_all_bc)))
-                        test_info["boxcox_lambda"] = _boxcox_lambda
-                    except Exception as _e:
-                        add_note(f"Box-Cox global lambda estimation failed ({_e}); falling back to log10.")
-                        transformation_type = "log10"
+                    # Guard against optimizer divergence on extremely skewed assay
+                    # data: reject an out-of-bounds lambda and fall back to log
+                    # (lambda=0) rather than potentiating the variance.
+                    _boxcox_lambda, _reverted = bounded_boxcox_lambda(np.array(_all_bc))
+                    test_info["boxcox_lambda"] = _boxcox_lambda
+                    if _reverted:
+                        _warn = (
+                            "Maximum-likelihood estimation of the Box-Cox parameter "
+                            "lambda diverged (out of bounds). Fell back to a log "
+                            "transformation (lambda = 0)."
+                        )
+                        add_note(_warn)
+                        test_info["transform_warning"] = _warn
                 else:
                     add_note("Box-Cox: insufficient valid data globally; falling back to log10.")
                     transformation_type = "log10"

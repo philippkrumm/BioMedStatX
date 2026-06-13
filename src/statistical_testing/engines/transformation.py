@@ -4,7 +4,7 @@ import numpy as np
 from scipy import stats
 
 from ..models import StatisticalResult
-from ..validators import ValidationError, validate_transformed_values
+from ..validators import ValidationError, validate_transformed_values, bounded_boxcox_lambda
 
 
 class TransformationEngine:
@@ -64,10 +64,16 @@ class TransformationEngine:
                     if lambda_val is None:
                         valid_bc = shifted.dropna()
                         valid_bc = valid_bc[valid_bc > 0].values
-                        try:
-                            lambda_val = float(stats.boxcox_normmax(valid_bc)) if len(valid_bc) >= 3 else 0.0
-                        except Exception:
-                            lambda_val = 0.0
+                        # Guard against optimizer divergence: reject out-of-bounds
+                        # lambda and fall back to log (lambda=0) rather than
+                        # potentiating the variance. See bounded_boxcox_lambda.
+                        lambda_val, reverted = bounded_boxcox_lambda(valid_bc)
+                        if reverted:
+                            updates["transform_warning"] = (
+                                "Maximum-likelihood estimation of the Box-Cox parameter "
+                                "lambda diverged (out of bounds). Fell back to a log "
+                                "transformation (lambda = 0)."
+                            )
                         if isinstance(test_info, Mapping):
                             test_info["boxcox_lambda"] = lambda_val
                         updates["boxcox_lambda"] = lambda_val

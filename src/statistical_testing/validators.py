@@ -138,6 +138,44 @@ def validate_transformed_values(values: Sequence[float], *, transformation_name:
     return validate_finite_values(values, label=label, allow_missing=True)
 
 
+def bounded_boxcox_lambda(data, bounds: tuple = (-3.0, 3.0)) -> tuple:
+    """Maximum-likelihood Box-Cox lambda with a divergence guard.
+
+    On extremely right-skewed assay data (e.g. luciferase signal-to-background),
+    ``scipy.stats.boxcox_normmax`` can diverge to |lambda| >> 1. Forcing such a
+    lambda potentiates the variance instead of stabilizing it, destroying the
+    homoscedasticity assumption of downstream parametric tests and producing
+    transformed values on the order of 1e16.
+
+    If the ML estimate falls outside ``bounds`` (default the strict interval
+    [-3, 3]) — or cannot be computed — the estimate is REJECTED and we
+    hard-fall-back to lambda = 0 (natural log), the established standard for
+    such data. Clamping to the boundary is methodologically invalid and is
+    never done.
+
+    Args:
+        data: 1-D array of strictly positive values (non-positive/NaN dropped).
+        bounds: (low, high) validity interval for the ML lambda.
+
+    Returns:
+        (lambda, reverted_to_log): ``reverted_to_log`` is True when the ML
+        estimate was rejected and lambda was forced to 0.0.
+    """
+    from scipy.stats import boxcox_normmax
+
+    arr = np.asarray(data, dtype=float)
+    arr = arr[np.isfinite(arr) & (arr > 0)]
+    if arr.size < 3:
+        return 0.0, True
+    try:
+        lam = float(boxcox_normmax(arr))
+    except Exception:
+        return 0.0, True
+    if not np.isfinite(lam) or lam < bounds[0] or lam > bounds[1]:
+        return 0.0, True
+    return lam, False
+
+
 def validate_group_count(groups: Iterable[str], *, min_groups: int = 2, label: str = "groups") -> List[str]:
     normalized_groups = [str(group) for group in groups]
     if len(normalized_groups) < min_groups:
