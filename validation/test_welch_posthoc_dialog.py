@@ -47,13 +47,17 @@ def _run_welch_oneway(posthoc_choice, control_group=None):
         df.to_excel(xlsx, index=False)
         d = next(x for x in DESIGNS if x["name"] == "one_way_anova_parametric").copy()
         ctx = build_analysis_context(d, ["A", "B", "C"])
+        out_base = ROOT / "validation" / "_tmp_welch_out"
         res = AnalysisManager.analyze(
             file_path=str(xlsx), group_col="Group", groups=["A", "B", "C"], sheet_name=0,
             value_cols=["Value"], dependent=False, skip_plots=True, save_plot=False,
-            error_type="sd", file_name=str(ROOT / "validation" / "_tmp_welch_out"),
+            error_type="sd", file_name=str(out_base),
             analysis_context=ctx,
         )
+        # Clean up the fixture and every report companion the exporter writes.
         xlsx.unlink(missing_ok=True)
+        for suffix in (".html", ".xlsx"):
+            out_base.with_suffix(suffix).unlink(missing_ok=True)
         return res, mgr
 
 
