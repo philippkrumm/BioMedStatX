@@ -145,6 +145,8 @@ Shapiro–Wilk tests normality of model residuals (normality is assumed if $N \g
 
 Skipping the transformation is always valid. The application then takes the nonparametric route — Mann–Whitney U, Kruskal–Wallis, Friedman — and applies it without further prompting.
 
+On very skewed data the Box–Cox $\lambda$ search can run away to a value so large it inflates the variance instead of taming it. The app guards against this: it checks the optimised $\lambda$ against the range $[-3, 3]$, and if $\lambda$ falls outside, it discards the estimate and uses a plain log transformation ($\lambda = 0$) instead. The report adds a note when this fallback happens.
+
 ---
 
 ## 8. Post-Hoc Comparisons
@@ -161,9 +163,11 @@ A significant main test with $\geq 3$ groups triggers a post-hoc selection promp
 | **Holm-\u0160id\u00e1k corrected pairwise t-tests** | User-selected pairs; sequential \u0160id\u00e1k correction |
 | **FDR-corrected pairwise t-tests** | User-selected pairs; Benjamini-Hochberg FDR (Available for Advanced ANOVAs) |
 
-**Nonparametric path** (applied without prompting when the nonparametric route is taken):
-- Dunn's test with Holm correction after Kruskal–Wallis.
-- Wilcoxon signed-rank with Holm correction after Friedman.
+**Nonparametric path:**
+- After **Kruskal–Wallis**, a prompt offers Dunn's test (all pairs, Holm correction; the default) or pairwise Mann–Whitney U on pairs you pick.
+- After **Friedman** and the advanced nonparametric fallbacks, the app applies pairwise Wilcoxon signed-rank with Holm correction directly, without a prompt.
+
+Cancelling a post-hoc prompt is a valid choice: the analysis keeps the main-test result and reports no pairwise comparisons. Pick it when only the overall effect matters.
 
 Results appear as significance letters or bracket annotations on the plot and as a comparison table in the HTML report.
 
@@ -536,6 +540,8 @@ $$\log\frac{P(Y=1)}{1 - P(Y=1)} = \beta_0 + \sum_{j=1}^{k} \beta_j X_j$$
 **Interpreting the Odds Ratio.** $\text{OR} > 1$: the predictor increases the probability of the event. $\text{OR} < 1$: it decreases the probability. $\text{OR} = 1$: no effect. An $\text{OR} = 2.5$ means the odds of the event are 2.5 times higher per unit increase in the predictor, holding everything else constant.
 
 **Firth correction.** Complete separation — when one predictor perfectly predicts the outcome — causes standard maximum likelihood to diverge. The application detects this (large SEs, $> 5$) and switches to Firth Penalized Likelihood regression automatically. The report notes which variant was used.
+
+Under Firth, the Wald confidence interval ($\hat{\beta} \pm 1.96\,\text{SE}$) is unreliable, because separation is the one case it cannot handle. The app instead reports penalized **profile-likelihood** intervals and penalized likelihood-ratio $p$-values, the same inference R's `logistf` uses. The odds-ratio table names the method it applied.
 
 ---
 
