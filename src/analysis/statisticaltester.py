@@ -595,13 +595,11 @@ class StatisticalTester:
         results["effect_size"] = r
         results["effect_size_type"] = "r"
         results["confidence_interval"] = (None, None)
-        try:
-            from statsmodels.stats.power import TTestIndPower
-            effect_size_corrected = r * 0.955
-            power_analysis = TTestIndPower()
-            results["power"] = float(power_analysis.power(effect_size=effect_size_corrected, nobs1=n1, ratio=n2/n1, alpha=alpha))
-        except Exception:
-            results["power"] = None
+        # No closed-form post-hoc power for the Wilcoxon/MWU rank test: the rank
+        # effect size r = |Z|/sqrt(N) is not Cohen's d, so feeding it into a
+        # t-test power routine yields a meaningless number. Report None and let
+        # the rank-biserial r above stand as the effect-size summary.
+        results["power"] = None
         results["test"] = test_name
         results["statistic"] = statistic
         results["p_value"] = p_value

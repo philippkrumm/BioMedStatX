@@ -53,14 +53,22 @@ def _is_continuous(df, col, threshold=10):
     return df[col].nunique() > threshold
 
 
-def _fisher_z_ci(r, n, alpha=0.05):
-    """95 % CI for a Pearson or Spearman r via Fisher z-transform."""
+def _fisher_z_ci(r, n, alpha=0.05, method="pearson"):
+    """CI for a Pearson or Spearman r via Fisher z-transform.
+
+    Pearson uses the standard SE = 1/sqrt(n-3). Spearman uses the
+    Bonett-Wright SE = sqrt((1 + r^2/2) / (n-3)), which is wider — the rank
+    statistic is less efficient, so the Pearson SE understates the CI width.
+    """
     if n < 4:
         return (None, None)
     try:
         r_clamped = float(np.clip(r, -0.9999, 0.9999))
         z = np.arctanh(r_clamped)
-        se = 1.0 / np.sqrt(n - 3)
+        if str(method).lower() == "spearman":
+            se = np.sqrt((1.0 + r_clamped**2 / 2.0) / (n - 3))
+        else:
+            se = 1.0 / np.sqrt(n - 3)
         z_crit = scipy_stats.norm.ppf(1 - alpha / 2)
         lo = float(np.tanh(z - z_crit * se))
         hi = float(np.tanh(z + z_crit * se))
@@ -351,7 +359,7 @@ class CorrelationModel:
 
         self.r = float(self.r)
         self.p = float(self.p)
-        self.ci = _fisher_z_ci(self.r, self.n, alpha)
+        self.ci = _fisher_z_ci(self.r, self.n, alpha, method=self._method_used)
 
         return self
 
