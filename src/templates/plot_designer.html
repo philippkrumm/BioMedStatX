@@ -1,0 +1,518 @@
+<section id="sec-plot-designer" class="section" data-reveal>
+  <div class="section-head">
+    <div>
+      <div class="section-kicker">Plot Designer</div>
+      <h2>Interactive figure builder</h2>
+      <p class="muted">Adjust style and export publication-ready SVG/PNG directly from the report.</p>
+    </div>
+  </div>
+
+  <style>
+    #plot-designer-shell { display: grid; grid-template-columns: minmax(340px, 420px) minmax(0, 1fr); gap: 20px; align-items: start; }
+    #plot-designer-panel, #plot-designer-canvas { border: 1px solid var(--line); border-radius: 16px; background: var(--surface-2); }
+    #plot-designer-panel { padding: 14px 14px 16px; display: flex; flex-direction: column; gap: 12px; max-height: 84vh; overflow: auto; }
+    #plot-designer-canvas { padding: 14px; display: flex; flex-direction: column; gap: 12px; position: sticky; top: 12px; z-index: 1; }
+
+    .pd-preset-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .pd-preset-row .pd-preset-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-right: 4px; }
+    .pd-preset-row button { border: 1px solid var(--line); border-radius: 999px; padding: 4px 11px; background: var(--surface); color: var(--ink); cursor: pointer; font-size: 0.78rem; letter-spacing: 0.01em; }
+    .pd-preset-row button:hover { background: rgba(15,118,110,0.08); border-color: var(--accent); }
+
+    #pd-tab-bar { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin: 0 -4px; padding: 0 4px; position: sticky; top: 0; background: var(--surface-2); z-index: 10; }
+    #pd-tab-bar button { appearance: none; background: transparent; border: 0; padding: 8px 12px 10px; font-size: 0.82rem; font-weight: 600; letter-spacing: 0.02em; color: var(--muted); cursor: pointer; position: relative; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+    #pd-tab-bar button:hover { color: var(--ink); }
+    #pd-tab-bar button.is-active { color: var(--ink); border-bottom-color: var(--accent); }
+    #pd-tab-bar button[data-status="dirty"]::after { content: ""; position: absolute; top: 6px; right: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); opacity: 0.8; }
+    #pd-tab-bar button[data-status="invalid"]::after { content: ""; position: absolute; top: 6px; right: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--danger); }
+
+    .pd-tabs-body { display: flex; flex-direction: column; gap: 10px; }
+    [data-tab-panel].is-hidden { display: none; }
+
+    .pd-group { border: 1px solid var(--line); border-radius: 12px; padding: 12px 12px 10px; background: var(--surface); }
+    .pd-group + .pd-group { margin-top: 10px; }
+    .pd-group h4 { margin: 0 0 10px 0; font-size: 0.78rem; font-weight: 600; letter-spacing: 0.02em; color: var(--muted); text-transform: none; }
+    .pd-row { display: grid; grid-template-columns: 1fr; gap: 4px; margin-bottom: 6px; }
+    .pd-row-inline { display: grid; grid-template-columns: repeat(2, minmax(160px, 1fr)); gap: 10px; }
+    .pd-row label { font-size: 0.8rem; color: var(--muted); }
+    .pd-row input:not([type="checkbox"]):not([type="range"]), .pd-row select { width: 100%; min-height: 36px; border: 1px solid var(--line); border-radius: 9px; padding: 7px 10px; background: #fff; color: var(--ink); font-size: 0.92rem; font-family: inherit; }
+    .pd-row input[type="number"] { font-family: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+    .pd-check input[type="checkbox"] { width: 16px; height: 16px; min-height: 0; margin: 0; accent-color: var(--accent); }
+    .pd-row input[type="range"] { width: 100%; min-height: 0; padding: 0; border: 0; border-radius: 0; background: transparent; accent-color: #5dae43; }
+    .pd-check { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; font-size: 0.88rem; }
+    .pd-row.is-disabled label, .pd-check.is-disabled { opacity: 0.5; }
+    .pd-row.is-disabled input:not([type="checkbox"]):not([type="range"]), .pd-row.is-disabled select { background: rgba(22,49,58,0.05); color: var(--muted); cursor: not-allowed; }
+    .pd-check.is-disabled input[type="checkbox"] { cursor: not-allowed; }
+    [data-plot-types].pd-hidden-by-type { display: none !important; }
+    .pd-button-row { display: flex; flex-wrap: wrap; gap: 6px; }
+    .pd-button-row button { border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; background: var(--surface); color: var(--ink); cursor: pointer; font-size: 0.78rem; }
+    .pd-button-row button:hover { background: rgba(15,118,110,.08); }
+
+    .pd-subgroup { border: 1px dashed var(--line); border-radius: 10px; padding: 8px 10px; margin-top: 8px; }
+    .pd-subgroup > summary { cursor: pointer; font-size: 0.78rem; font-weight: 600; color: var(--muted); letter-spacing: 0.02em; list-style: none; display: flex; align-items: center; gap: 6px; user-select: none; }
+    .pd-subgroup > summary::-webkit-details-marker { display: none; }
+    .pd-subgroup > summary::before { content: "›"; display: inline-block; transition: transform 0.15s ease; color: var(--accent); font-weight: 700; }
+    .pd-subgroup[open] > summary::before { transform: rotate(90deg); }
+    .pd-subgroup > *:not(summary) { margin-top: 8px; }
+
+    #pd-color-controls, #pd-pattern-controls, #pd-symbol-controls, #pd-pair-controls { display: grid; gap: 8px; }
+    .pd-color-item, .pd-encoding-item, .pd-pair-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+
+    #pd-plot { width: 100%; height: 680px; min-height: 460px; }
+    #pd-download-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 4px; border-top: 1px solid var(--line); }
+    #pd-download-bar button { border: 1px solid var(--line); border-radius: 10px; padding: 8px 14px; background: var(--surface); color: var(--ink); cursor: pointer; font-size: 0.88rem; font-weight: 500; }
+    #pd-download-bar button:hover { background: rgba(15,118,110,.08); border-color: var(--accent); }
+    #pd-download-bar #pd-download-svg { background: var(--accent); color: #fff; border-color: var(--accent); }
+    #pd-download-bar #pd-download-svg:hover { filter: brightness(1.05); }
+    #pd-warning { color: var(--warning); font-size: 0.85rem; min-height: 1rem; }
+    .pd-note { color: var(--muted); font-size: 0.78rem; margin-top: 4px; min-height: 1rem; }
+
+    @media (max-width: 1200px) {
+      #plot-designer-shell { grid-template-columns: 1fr; }
+      #plot-designer-panel { max-height: none; }
+      #plot-designer-canvas { position: static; }
+    }
+    @media (prefers-color-scheme: dark) {
+      .pd-row input:not([type="checkbox"]):not([type="range"]), .pd-row select { background: #1a2e33; color: var(--ink); }
+      .pd-group { background: rgba(255,255,255,0.02); }
+      #pd-tab-bar { background: var(--surface-2); }
+      #pd-download-bar #pd-download-svg { color: #0b1416; }
+    }
+  </style>
+
+  <div id="plot-designer-shell">
+    <aside id="plot-designer-panel">
+      <div class="pd-preset-row">
+        <span class="pd-preset-label">Preset</span>
+        <button type="button" data-preset="publication">Publication</button>
+        <button type="button" data-preset="poster">Poster</button>
+        <button type="button" data-preset="talk">Talk</button>
+      </div>
+
+      <nav id="pd-tab-bar" role="tablist">
+        <button type="button" data-tab="plot" class="is-active" role="tab">Plot</button>
+        <button type="button" data-tab="axes" role="tab">Axes</button>
+        <button type="button" data-tab="style" role="tab">Style</button>
+        <button type="button" data-tab="stats" role="tab">Stats</button>
+        <button type="button" data-tab="export" role="tab">Export</button>
+      </nav>
+
+      <div class="pd-tabs-body">
+
+        <section data-tab-panel="plot" role="tabpanel">
+          <div class="pd-group">
+            <h4>Plot Type</h4>
+            <div class="pd-row">
+              <label for="pd-plot-type">Type</label>
+              <select id="pd-plot-type">
+                <option value="Bar" selected>Bar</option>
+                <option value="Box">Box</option>
+                <option value="Violin">Violin</option>
+                <option value="Raincloud">Raincloud</option>
+                <option value="Forest">Forest</option>
+                <option value="Estimation">Estimation</option>
+              </select>
+            </div>
+            <label class="pd-check" data-plot-types="Bar,Box,Violin,Raincloud,Estimation"><input id="pd-show-points" type="checkbox" checked> Show points</label>
+            <div class="pd-row" id="pd-point-layout-row" data-plot-types="Bar,Box,Violin,Raincloud,Estimation">
+              <label for="pd-point-layout">Point layout</label>
+              <select id="pd-point-layout">
+                <option value="jitter" selected>Jitter</option>
+                <option value="beeswarm">Beeswarm</option>
+              </select>
+            </div>
+            <label class="pd-check" id="pd-paired-lines-wrap" data-plot-types="Bar,Box,Violin"><input id="pd-show-paired-lines" type="checkbox"> Show individual subject lines (Spaghetti)</label>
+            <div class="pd-row" id="pd-spaghetti-opacity-row" data-plot-types="Bar,Box,Violin">
+              <label for="pd-spaghetti-opacity">Individual line opacity</label>
+              <input id="pd-spaghetti-opacity" type="range" min="0.05" max="0.9" step="0.05" value="0.35">
+            </div>
+            <div id="pd-error-bar-section" data-plot-types="Bar">
+              <label class="pd-check"><input id="pd-show-error-bars" type="checkbox" checked> Show error bars</label>
+              <div class="pd-row">
+                <label for="pd-central-measure">Central measure</label>
+                <select id="pd-central-measure">
+                  <option value="mean" selected>Mean</option>
+                  <option value="median">Median</option>
+                </select>
+              </div>
+              <div class="pd-row">
+                <label for="pd-error-type">Error metric</label>
+                <select id="pd-error-type">
+                  <option value="sd" selected>SD</option>
+                  <option value="sem">SEM</option>
+                  <option value="ci95">95% CI</option>
+                  <option value="iqr">IQR</option>
+                  <option value="range">Range (Min-Max)</option>
+                </select>
+              </div>
+              <div class="pd-row">
+                <label for="pd-error-direction">Error bar direction</label>
+                <select id="pd-error-direction">
+                  <option value="both" selected>Both (top + bottom)</option>
+                  <option value="plus">Top only</option>
+                  <option value="minus">Bottom only</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <details class="pd-subgroup" open id="pd-grouping-section" data-plot-types="Bar,Box,Violin,Raincloud">
+            <summary>Grouped Mode (Two-Way)</summary>
+            <label class="pd-check"><input id="pd-group-enabled" type="checkbox"> Enable Grouped Mode</label>
+            <div class="pd-row is-disabled" id="pd-group-mode-row">
+              <label for="pd-group-mode">Mode</label>
+              <select id="pd-group-mode" disabled>
+                <option value="traces" selected>Nested (X-Axis: Major, Legend: Minor)</option>
+              </select>
+            </div>
+            <div id="pd-group-mapping-editor" style="margin-top:10px; display:none;">
+              <!-- Dynamically populated by JS -->
+            </div>
+          </details>
+        </section>
+
+        <section data-tab-panel="axes" role="tabpanel" class="is-hidden">
+          <div class="pd-group">
+            <h4>Axes & Legend</h4>
+            <label class="pd-check" data-plot-types="Bar,Box,Violin,Raincloud"><input id="pd-log-x" type="checkbox"> Log X</label>
+            <label class="pd-check" data-plot-types="Bar,Box,Violin,Raincloud"><input id="pd-log-y" type="checkbox"> Log Y</label>
+            <label class="pd-check"><input id="pd-minor-ticks" type="checkbox"> Show minor ticks</label>
+            <div class="pd-row-inline">
+              <div class="pd-row">
+                <label for="pd-grid-style">Grid</label>
+                <select id="pd-grid-style">
+                  <option value="none" selected>None</option>
+                  <option value="major">Major</option>
+                  <option value="minor">Minor</option>
+                  <option value="both">Major + minor</option>
+                </select>
+              </div>
+              <div class="pd-row"><label for="pd-grid-alpha">Grid alpha</label><input id="pd-grid-alpha" type="number" min="0.05" max="1" step="0.05" value="0.3"></div>
+            </div>
+            <div class="pd-row-inline">
+              <div class="pd-row"><label for="pd-axis-thickness">Axis thickness</label><input id="pd-axis-thickness" type="number" min="0.3" max="4" step="0.1" value="0.7"></div>
+              <div class="pd-row">
+                <label for="pd-tick-direction">Tick direction</label>
+                <select id="pd-tick-direction">
+                  <option value="out" selected>Outside</option>
+                  <option value="in">Inside</option>
+                  <option value="inout">Inside + outside</option>
+                </select>
+              </div>
+            </div>
+            <div class="pd-row" data-plot-types="Bar,Box,Violin,Raincloud,Estimation">
+              <label for="pd-x-tick-angle">X label angle</label>
+              <select id="pd-x-tick-angle">
+                <option value="0">0°</option>
+                <option value="45">45°</option>
+                <option value="90">90°</option>
+                <option value="-45">−45°</option>
+                <option value="-90">−90°</option>
+              </select>
+            </div>
+            <div class="pd-row" data-plot-types="Bar,Box,Violin,Raincloud">
+              <label for="pd-y-axis-format">Y format</label>
+              <select id="pd-y-axis-format">
+                <option value="auto" selected>Auto</option>
+                <option value="scientific">Scientific</option>
+                <option value="percentage">Percentage</option>
+                <option value="decimal">Decimal (2)</option>
+              </select>
+            </div>
+            <div class="pd-row-inline" data-plot-types="Bar,Box,Violin,Raincloud">
+              <div class="pd-row"><label for="pd-y-min">Y min (optional)</label><input id="pd-y-min" type="number" step="any" placeholder="auto"></div>
+              <div class="pd-row"><label for="pd-y-max">Y max (optional)</label><input id="pd-y-max" type="number" step="any" placeholder="auto"></div>
+            </div>
+            <label class="pd-check"><input id="pd-show-legend" type="checkbox" checked> Show legend</label>
+            <div class="pd-row">
+              <label for="pd-legend-orientation">Legend orientation</label>
+              <select id="pd-legend-orientation">
+                <option value="h">Horizontal</option>
+                <option value="v" selected>Vertical</option>
+              </select>
+            </div>
+            <div class="pd-row-inline">
+              <div class="pd-row"><label for="pd-legend-x">Legend X</label><input id="pd-legend-x" type="number" step="0.05" min="-1" max="2" value="1.02"></div>
+              <div class="pd-row"><label for="pd-legend-y">Legend Y</label><input id="pd-legend-y" type="number" step="0.05" min="-1" max="2" value="1.0"></div>
+            </div>
+            <div class="pd-row-inline">
+              <div class="pd-row">
+                <label for="pd-legend-xanchor">Legend X anchor</label>
+                <select id="pd-legend-xanchor">
+                  <option value="left" selected>Left</option>
+                  <option value="center">Center</option>
+                  <option value="right">Right</option>
+                </select>
+              </div>
+              <div class="pd-row">
+                <label for="pd-legend-yanchor">Legend Y anchor</label>
+                <select id="pd-legend-yanchor">
+                  <option value="top" selected>Top</option>
+                  <option value="middle">Middle</option>
+                  <option value="bottom">Bottom</option>
+                </select>
+              </div>
+            </div>
+            <div class="pd-row">
+              <label>Legend presets</label>
+              <div class="pd-button-row">
+                <button type="button" id="pd-legend-preset-inside-top-right">Inside top-right</button>
+                <button type="button" id="pd-legend-preset-outside-right">Outside right</button>
+                <button type="button" id="pd-legend-preset-bottom-horizontal">Bottom horizontal</button>
+              </div>
+            </div>
+
+            <details class="pd-subgroup" open data-plot-types="Bar,Box,Violin">
+              <summary>Reference lines</summary>
+              <label class="pd-check"><input id="pd-ref-zero" type="checkbox"> Baseline y = 0</label>
+              <label class="pd-check"><input id="pd-ref-unit" type="checkbox"> Unit line y = 1 (fold-change)</label>
+              <label class="pd-check"><input id="pd-ref-thresholds" type="checkbox"> Threshold lines from payload</label>
+              <div class="pd-row-inline">
+                <div class="pd-row">
+                  <label for="pd-ref-style">Reference line style</label>
+                  <select id="pd-ref-style">
+                    <option value="dash" selected>Dashed</option>
+                    <option value="dot">Dotted</option>
+                    <option value="dashdot">Dash-dot</option>
+                    <option value="solid">Solid</option>
+                  </select>
+                </div>
+                <div class="pd-row"><label for="pd-ref-width">Reference line width</label><input id="pd-ref-width" type="number" min="0.6" max="4" step="0.1" value="1.5"></div>
+              </div>
+              <div id="pd-ref-note" class="pd-note"></div>
+            </details>
+          </div>
+
+          <div class="pd-group" id="pd-node-labels-group" data-plot-types="Bar,Box,Violin,Raincloud,Estimation">
+            <h4>X-Axis Node Labels</h4>
+            <p class="pd-note" style="margin-top:0;margin-bottom:8px;">Pre-populated from group names — customize here.</p>
+            <div id="pd-node-label-controls"></div>
+          </div>
+        </section>
+
+        <section data-tab-panel="style" role="tabpanel" class="is-hidden">
+          <div class="pd-group">
+            <h4>Labels & Typography</h4>
+            <div class="pd-row"><label for="pd-title">Title</label><input id="pd-title" type="text" value=""></div>
+            <div class="pd-row"><label for="pd-x-label">X label</label><input id="pd-x-label" type="text" value="Groups"></div>
+            <div class="pd-row"><label for="pd-y-label">Y label</label><input id="pd-y-label" type="text" value="Values"></div>
+            <div class="pd-row">
+              <label for="pd-font-family">Font family</label>
+              <select id="pd-font-family">
+                <option value="Arial">Arial</option>
+                <option value="Helvetica">Helvetica</option>
+                <option value="Calibri">Calibri</option>
+                <option value="Segoe UI">Segoe UI</option>
+                <option value="Avenir Next">Avenir Next</option>
+                <option value="Times New Roman">Times New Roman</option>
+                <option value="Cambria">Cambria</option>
+                <option value="Georgia">Georgia</option>
+                <option value="Garamond">Garamond</option>
+                <option value="Palatino Linotype">Palatino Linotype</option>
+              </select>
+              <div id="pd-font-warning" class="pd-note"></div>
+            </div>
+            <div class="pd-row-inline">
+              <div class="pd-row"><label for="pd-title-size">Title size</label><input id="pd-title-size" type="number" min="8" max="42" value="16"></div>
+              <div class="pd-row"><label for="pd-axis-size">Axis size</label><input id="pd-axis-size" type="number" min="8" max="32" value="12"></div>
+            </div>
+            <div class="pd-row" data-plot-types="Bar,Box,Violin,Raincloud">
+              <label for="pd-alpha">Summary opacity</label>
+              <input id="pd-alpha" type="range" min="0.2" max="1" step="0.05" value="0.85">
+            </div>
+          </div>
+
+          <div class="pd-group" data-plot-types="Bar,Box,Violin,Raincloud,Estimation">
+            <h4>Colors</h4>
+            <div id="pd-color-controls"></div>
+          </div>
+
+          <div class="pd-group" data-plot-types="Bar,Box,Violin,Raincloud,Estimation">
+            <h4>Monochrome Encodings</h4>
+            <label class="pd-check" data-plot-types="Bar"><input id="pd-auto-pattern" type="checkbox"> Auto-pattern assignment</label>
+            <div class="pd-row" data-plot-types="Bar">
+              <label>Bar patterns</label>
+              <div id="pd-pattern-controls"></div>
+            </div>
+            <div class="pd-row">
+              <label>Point symbols</label>
+              <div id="pd-symbol-controls"></div>
+            </div>
+          </div>
+        </section>
+
+        <section data-tab-panel="stats" role="tabpanel" class="is-hidden">
+          <div class="pd-group" data-plot-types="Bar,Box,Violin,Raincloud,Estimation">
+            <h4>Significance</h4>
+            <label class="pd-check"><input id="pd-show-significance" type="checkbox" checked> Show brackets</label>
+            <div class="pd-row-inline">
+              <div class="pd-row">
+                <label for="pd-significance-line-width">Bracket line width</label>
+                <input id="pd-significance-line-width" type="number" min="0.8" max="4" step="0.1" value="1.7">
+              </div>
+              <div class="pd-row">
+                <label for="pd-significance-spacing">Bracket spacing</label>
+                <input id="pd-significance-spacing" type="number" min="0.7" max="2.2" step="0.1" value="1.0">
+              </div>
+            </div>
+            <div class="pd-row-inline">
+              <div class="pd-row">
+                <label for="pd-significance-size">Stars size</label>
+                <input id="pd-significance-size" type="number" min="10" max="36" step="1" value="14">
+              </div>
+              <div class="pd-row">
+                <label for="pd-significance-star-offset">Stars offset (px)</label>
+                <input id="pd-significance-star-offset" type="number" min="0" max="30" step="1" value="2">
+              </div>
+            </div>
+            <div id="pd-pair-controls"></div>
+          </div>
+        </section>
+
+        <section data-tab-panel="export" role="tabpanel" class="is-hidden">
+          <div class="pd-group">
+            <h4>Export</h4>
+            <div class="pd-row-inline">
+              <div class="pd-row"><label for="pd-export-width">Width (in)</label><input id="pd-export-width" type="number" min="3" max="24" step="0.5" value="8"></div>
+              <div class="pd-row"><label for="pd-export-height">Height (in)</label><input id="pd-export-height" type="number" min="3" max="24" step="0.5" value="6"></div>
+            </div>
+            <div class="pd-row">
+              <label for="pd-png-scale">PNG quality scale</label>
+              <select id="pd-png-scale">
+                <option value="1">1x (screen)</option>
+                <option value="2">2x</option>
+                <option value="3" selected>3x (~300 DPI)</option>
+                <option value="4">4x (~400 DPI)</option>
+              </select>
+            </div>
+            <p class="pd-note">SVG is vector (infinite resolution). PNG scale multiplies pixel density for raster output.</p>
+          </div>
+        </section>
+
+      </div>
+    </aside>
+
+    <div id="plot-designer-canvas">
+      <div id="pd-plot"></div>
+      <div id="pd-warning"></div>
+      <div id="pd-download-bar">
+        <button type="button" id="pd-download-svg">Download SVG</button>
+        <button type="button" id="pd-download-png">Download PNG</button>
+      </div>
+    </div>
+  </div>
+
+  <script id="pd-data-plot" type="application/json">{{ context.plot_data_json | safe }}</script>
+  <script id="pd-data-subject-trajectories" type="application/json">{{ context.plot_subject_trajectories_json | safe }}</script>
+  <script id="pd-data-reference-lines" type="application/json">{{ context.plot_reference_lines_json | safe }}</script>
+  <script id="pd-data-stats-summary" type="application/json">{{ context.stats_summary_json | safe }}</script>
+  <script id="pd-data-stats" type="application/json">{{ context.plot_stats_json | safe }}</script>
+  <script id="pd-data-pairs" type="application/json">{{ context.pairwise_data_json | safe }}</script>
+  <script id="pd-data-order" type="application/json">{{ context.group_order_json | safe }}</script>
+  <script id="pd-data-group-factor-map" type="application/json">{{ context.group_factor_map_json | safe }}</script>
+  <script>
+{% include "plot_designer.js" %}
+  </script>
+
+  <script>
+  (function () {
+    // Tab switching
+    var tabs = document.querySelectorAll("#pd-tab-bar [data-tab]");
+    var panels = document.querySelectorAll("[data-tab-panel]");
+    tabs.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var target = btn.dataset.tab;
+        tabs.forEach(function (t) { t.classList.toggle("is-active", t === btn); });
+        panels.forEach(function (p) { p.classList.toggle("is-hidden", p.dataset.tabPanel !== target); });
+      });
+    });
+
+    // Preset chips — dispatch events on existing controls so the pipeline stays single-source
+    var presets = {
+      publication: { "pd-font-family": "Arial",    "pd-title-size": 14, "pd-axis-size": 11, "pd-export-width": 6,  "pd-export-height": 4 },
+      poster:      { "pd-font-family": "Arial",    "pd-title-size": 22, "pd-axis-size": 16, "pd-export-width": 12, "pd-export-height": 8 },
+      talk:        { "pd-font-family": "Segoe UI", "pd-title-size": 18, "pd-axis-size": 14, "pd-export-width": 10, "pd-export-height": 6 }
+    };
+    document.querySelectorAll(".pd-preset-row [data-preset]").forEach(function (chip) {
+      chip.addEventListener("click", function () {
+        var map = presets[chip.dataset.preset];
+        if (!map) return;
+        Object.keys(map).forEach(function (id) {
+          var el = document.getElementById(id);
+          if (!el) return;
+          el.value = map[id];
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+      });
+    });
+
+    // Per-tab status dots — dirty if any owned control differs from default, invalid for y-min ≥ y-max
+    var tabOwners = {
+      plot:   ["pd-plot-type","pd-show-points","pd-show-paired-lines","pd-spaghetti-opacity","pd-show-error-bars","pd-central-measure","pd-error-type","pd-error-direction"],
+      axes:   ["pd-log-x","pd-log-y","pd-minor-ticks","pd-grid-style","pd-grid-alpha","pd-axis-thickness","pd-tick-direction","pd-x-tick-angle","pd-y-axis-format","pd-y-min","pd-y-max","pd-ref-zero","pd-ref-unit","pd-ref-thresholds","pd-ref-style","pd-ref-width","pd-show-legend","pd-legend-orientation","pd-legend-x","pd-legend-y","pd-legend-xanchor","pd-legend-yanchor"],
+      style:  ["pd-title","pd-x-label","pd-y-label","pd-font-family","pd-title-size","pd-axis-size","pd-alpha","pd-auto-pattern"],
+      stats:  ["pd-show-significance","pd-significance-line-width","pd-significance-spacing","pd-significance-size","pd-significance-star-offset"],
+      export: ["pd-export-width","pd-export-height","pd-png-scale"]
+    };
+
+    function controlValue(el) {
+      if (!el) return null;
+      if (el.type === "checkbox") return el.checked;
+      return el.value;
+    }
+
+    var defaults = {};
+    function snapshotDefaults() {
+      Object.keys(tabOwners).forEach(function (tab) {
+        tabOwners[tab].forEach(function (id) {
+          var el = document.getElementById(id);
+          defaults[id] = controlValue(el);
+        });
+      });
+    }
+
+    function tabIsInvalid(tab) {
+      if (tab !== "axes") return false;
+      var minEl = document.getElementById("pd-y-min");
+      var maxEl = document.getElementById("pd-y-max");
+      if (!minEl || !maxEl) return false;
+      if (minEl.value === "" || maxEl.value === "") return false;
+      var minV = parseFloat(minEl.value);
+      var maxV = parseFloat(maxEl.value);
+      if (!isFinite(minV) || !isFinite(maxV)) return false;
+      return minV >= maxV;
+    }
+
+    function tabIsDirty(tab) {
+      var owned = tabOwners[tab];
+      for (var i = 0; i < owned.length; i++) {
+        var id = owned[i];
+        var el = document.getElementById(id);
+        if (!el) continue;
+        if (controlValue(el) !== defaults[id]) return true;
+      }
+      return false;
+    }
+
+    function refreshStatus() {
+      tabs.forEach(function (btn) {
+        var t = btn.dataset.tab;
+        if (tabIsInvalid(t)) { btn.setAttribute("data-status", "invalid"); return; }
+        if (tabIsDirty(t))   { btn.setAttribute("data-status", "dirty");   return; }
+        btn.removeAttribute("data-status");
+      });
+    }
+
+    // Defer snapshot until the existing IIFE has run setControlDefaults()
+    window.setTimeout(function () {
+      snapshotDefaults();
+      refreshStatus();
+      var panel = document.getElementById("plot-designer-panel");
+      if (panel) {
+        panel.addEventListener("input", refreshStatus);
+        panel.addEventListener("change", refreshStatus);
+      }
+    }, 0);
+  })();
+  </script>
+</section>

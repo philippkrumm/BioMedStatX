@@ -13,6 +13,7 @@ This document explains how to contribute, the workflow we expect, coding style, 
 - Branch naming
 - Commit messages
 - Pull request (PR) structure and expectations
+- Internal UI design system
 - Code style and quality tools
 - Tests and testing expectations
 - Guidelines for adding new statistical functions
@@ -29,8 +30,20 @@ This document explains how to contribute, the workflow we expect, coding style, 
 3. Add the main repo as upstream:
    git remote add upstream https://github.com/philippkrumm/BioMedStatX.git
 4. Create a topic branch for your work (see Branch naming below).
+5. For GUI/visual changes, read docs/DEV_UI_DESIGN_SYSTEM.md before implementation.
 
 Always work in your fork and topic branches. Do not commit directly to the `main` (or `master`) branch.
+
+---
+
+## Internal UI design system
+
+For visual consistency across the desktop GUI and HTML report, use:
+
+- docs/DEV_UI_DESIGN_SYSTEM.md
+
+This document defines design principles, color/spacing direction, component behavior,
+and UI QA guardrails for contributors.
 
 ---
 
@@ -162,6 +175,16 @@ When adding statistical procedures (e.g., new tests, estimators, post-hoc analys
 
 - Update `docs/` when introducing user-facing behavior.
 - Add examples to the HowTo guide where appropriate.
+- If a feature is partial, experimental, or intentionally disabled, document that status explicitly in user-facing documentation instead of implying full support.
+
+## Known Functional Gaps
+
+- Automatic nonparametric fallback workflows for advanced ANOVA designs are not yet considered production-ready.
+- Contributions in this area should include:
+  - clear statistical rationale,
+  - reproducible validation cases,
+  - tests against trusted reference implementations or published examples,
+  - documentation updates describing exactly which designs are supported.
 
 ---
 

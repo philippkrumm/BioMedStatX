@@ -1,0 +1,340 @@
+"""
+test_correlation_transform.py
+
+Tests for the correlation transform & retest feature:
+  - _apply_transform() helper
+  - CorrelationModel.fit() with x_transform / y_transform
+  - Results dict has correct keys
+  - Transformation → Pearson path when transformed data is normal
+  - No transformation → Spearman path preserved
+"""
+import sys
+import tempfile
+import os
+from pathlib import Path
+import numpy as np
+import pandas as pd
+import pytest
+
+SRC = Path(__file__).resolve().parents[1] / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from analysis.correlation_models import CorrelationModel, _apply_transform
+
+
+# ---------------------------------------------------------------------------
+# _apply_transform helper
+# ---------------------------------------------------------------------------
+
+def test_apply_transform_none_returns_unchanged():
+    vals = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+    result, lam, shift = _apply_transform(vals, 'none')
+    np.testing.assert_array_equal(result, vals)
+    assert lam is None
+    assert shift == 0.0
+
+
+def test_apply_transform_log10():
+    vals = np.array([1.0, 10.0, 100.0, 1000.0, 10000.0])
+    result, lam, shift = _apply_transform(vals, 'log10')
+    np.testing.assert_allclose(result, [0.0, 1.0, 2.0, 3.0, 4.0])
+    assert lam is None
+    assert shift == 0.0
+
+
+def test_apply_transform_log10_handles_nonpositive():
+    # No automatic shifting (c=0.0 always): values <= 0 become NaN so they
+    # are dropped via listwise deletion downstream. Positive values transform.
+    vals = np.array([-2.0, 0.0, 3.0, 10.0, 20.0])
+    result, _lam, shift = _apply_transform(vals, 'log10')
+    assert np.isnan(result[0]) and np.isnan(result[1])
+    np.testing.assert_allclose(result[2:], np.log10([3.0, 10.0, 20.0]))
+    assert shift == 0.0
+
+
+def test_apply_transform_sqrt():
+    vals = np.array([0.0, 1.0, 4.0, 9.0, 16.0])
+    result, lam, shift = _apply_transform(vals, 'sqrt')
+    np.testing.assert_allclose(result, [0.0, 1.0, 2.0, 3.0, 4.0])
+    assert lam is None
+    assert shift == 0.0
+
+
+def test_apply_transform_sqrt_handles_negative():
+    # No automatic shifting: negative values become NaN (listwise-deleted later).
+    vals = np.array([-4.0, 0.0, 4.0, 9.0, 16.0])
+    result, _lam, shift = _apply_transform(vals, 'sqrt')
+    assert np.isnan(result[0])
+    np.testing.assert_allclose(result[1:], [0.0, 2.0, 3.0, 4.0])
+    assert shift == 0.0
+
+
+def test_apply_transform_boxcox():
+    rng = np.random.default_rng(42)
+    vals = rng.lognormal(mean=0, sigma=0.5, size=50)  # strictly positive, right-skewed
+    result, lam, _shift = _apply_transform(vals, 'boxcox')
+    assert result.shape == vals.shape
+    assert np.all(np.isfinite(result))
+    assert lam is None or isinstance(lam, float)
+
+
+def test_apply_transform_unknown_raises():
+    with pytest.raises(ValueError, match="Unknown transformation"):
+        _apply_transform(np.array([1.0, 2.0, 3.0]), 'magic')
+
+
+# ---------------------------------------------------------------------------
+# CorrelationModel with transforms
+# ---------------------------------------------------------------------------
+
+def _make_lognormal_df(n=80, seed=0):
+    """Both variables log-normal (non-normal raw, normal after log10)."""
+    rng = np.random.default_rng(seed)
+    x = rng.lognormal(0, 1, n)
+    y = 2.5 * x + rng.lognormal(0, 0.3, n)
+    return pd.DataFrame({'x': x, 'y': y})
+
+
+def test_no_transform_uses_spearman_for_lognormal():
+    df = _make_lognormal_df()
+    m = CorrelationModel()
+    m.fit(df, 'x', 'y', method='auto', x_transform='none', y_transform='none')
+    res = m.as_results_dict()
+    assert res['method'] == 'spearman', "Raw log-normal data should trigger Spearman"
+
+
+def test_log10_transform_switches_to_pearson():
+    """After log10 transformation both variables should be normal -> Pearson."""
+    df = _make_lognormal_df(n=80, seed=7)
+    m = CorrelationModel()
+    m.fit(df, 'x', 'y', method='auto', x_transform='log10', y_transform='log10')
+    res = m.as_results_dict()
+    assert res['method'] == 'pearson', (
+        f"After log10 transform both variables should be normal -> Pearson. "
+        f"Got method={res['method']!r}, normality_check={res.get('normality_check')}"
+    )
+
+
+def test_results_dict_has_transformation_key():
+    # seed=7 → post-log10 normality holds → Pearson path → transform metadata kept.
+    # (Spearman path deliberately resets transformation to 'none' since
+    # Spearman is rank-invariant — see fit().)
+    df = _make_lognormal_df(n=80, seed=7)
+    m = CorrelationModel()
+    m.fit(df, 'x', 'y', method='auto', x_transform='log10', y_transform='log10')
+    res = m.as_results_dict()
+    assert 'transformation' in res
+    assert res['transformation'] != 'none'
+
+
+def test_results_dict_has_pre_post_normality():
+    df = _make_lognormal_df()
+    m = CorrelationModel()
+    m.fit(df, 'x', 'y', method='auto', x_transform='log10', y_transform='log10')
+    res = m.as_results_dict()
+    nc = res.get('normality_check', {})
+    assert 'pre_transform' in nc, "normality_check must include pre_transform section"
+    assert 'post_transform' in nc, "normality_check must include post_transform section"
+
+
+def test_no_transform_results_has_none_transformation():
+    df = _make_lognormal_df()
+    m = CorrelationModel()
+    m.fit(df, 'x', 'y', method='auto', x_transform='none', y_transform='none')
+    res = m.as_results_dict()
+    assert res.get('transformation') in ('none', None, 'None')
+
+
+def test_sqrt_transform_runs_without_error():
+    df = _make_lognormal_df()
+    m = CorrelationModel()
+    m.fit(df, 'x', 'y', method='auto', x_transform='sqrt', y_transform='none')
+    res = m.as_results_dict()
+    assert 'r' in res
+
+
+def test_boxcox_transform_runs_without_error():
+    df = _make_lognormal_df()
+    m = CorrelationModel()
+    m.fit(df, 'x', 'y', method='auto', x_transform='boxcox', y_transform='none')
+    res = m.as_results_dict()
+    assert 'r' in res
+
+
+def test_original_df_not_mutated_by_transform():
+    """fit() must not modify the caller's DataFrame."""
+    df = _make_lognormal_df()
+    original_x = df['x'].copy()
+    m = CorrelationModel()
+    m.fit(df, 'x', 'y', method='auto', x_transform='log10', y_transform='log10')
+    pd.testing.assert_series_equal(df['x'], original_x)
+
+
+def test_backward_compat_no_transform_args():
+    """fit() without x_transform / y_transform must behave exactly as before."""
+    df = _make_lognormal_df()
+    m = CorrelationModel()
+    m.fit(df, 'x', 'y', method='auto')   # no transform kwargs
+    res = m.as_results_dict()
+    assert 'method' in res
+    assert 'r' in res
+
+
+# ---------------------------------------------------------------------------
+# Decision tree smoke tests — headless
+# ---------------------------------------------------------------------------
+
+def test_decision_tree_correlation_with_transform_renders():
+    """DecisionTreeVisualizer must produce a figure when transformation != 'none'."""
+    import matplotlib
+    matplotlib.use("Agg")  # headless
+    from visualization.decisiontreevisualizer import DecisionTreeVisualizer
+
+    mock_results = {
+        "model_type": "Correlation",
+        "method": "pearson",
+        "r": 0.72,
+        "p_value": 0.001,
+        "alpha": 0.05,
+        "transformation": "log10/log10",
+        "x_transform": "log10",
+        "y_transform": "log10",
+        "normality_check": {
+            "test": "Shapiro-Wilk (auto method selection)",
+            "pre_transform": {
+                "X": {"statistic": 0.85, "p_value": 0.02, "normal": False},
+                "Y": {"statistic": 0.87, "p_value": 0.03, "normal": False},
+                "both_normal": False,
+            },
+            "post_transform": {
+                "X": {"statistic": 0.97, "p_value": 0.42, "normal": True},
+                "Y": {"statistic": 0.96, "p_value": 0.38, "normal": True},
+                "both_normal": True,
+            },
+            "both_normal": True,
+        },
+    }
+
+    viz = DecisionTreeVisualizer()
+    fig = viz.create_association_tree(mock_results)
+    assert fig is not None, "Expected a matplotlib Figure, got None"
+
+
+def test_decision_tree_correlation_without_transform_renders():
+    """Original (no-transform) correlation tree still renders after refactor."""
+    import matplotlib
+    matplotlib.use("Agg")
+    from visualization.decisiontreevisualizer import DecisionTreeVisualizer
+
+    mock_results = {
+        "model_type": "Correlation",
+        "method": "spearman",
+        "r": 0.51,
+        "p_value": 0.04,
+        "alpha": 0.05,
+        "transformation": "none",
+        "x_transform": "none",
+        "y_transform": "none",
+        "normality_check": {
+            "test": "Shapiro-Wilk (auto method selection)",
+            "X": {"statistic": 0.83, "p_value": 0.01, "normal": False},
+            "Y": {"statistic": 0.88, "p_value": 0.02, "normal": False},
+            "both_normal": False,
+        },
+    }
+
+    viz = DecisionTreeVisualizer()
+    fig = viz.create_association_tree(mock_results)
+    assert fig is not None
+
+
+# ---------------------------------------------------------------------------
+# Integration — AnalysisManager end-to-end
+# ---------------------------------------------------------------------------
+
+from analysis.stats_functions import AnalysisManager
+
+
+def _corr_context(x_transform='none', y_transform='none'):
+    return {
+        "dv_columns":      ["y"],
+        "factor_columns":  ["x"],
+        "group_labels":    [],
+        "subject_column":  None,
+        "dependent":       False,
+        "inferred_test":   "correlation",
+        "x_variable":      "x",
+        "between_factors": [],
+        "within_factors":  [],
+        "additional_factors": [],
+        "selected_groups": [],
+        "covariates":      [],
+        "x_transform":     x_transform,
+        "y_transform":     y_transform,
+    }
+
+
+def test_analysis_manager_correlation_no_transform():
+    df = _make_lognormal_df(n=100)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        excel_path = os.path.join(tmpdir, "test_correlation.xlsx")
+        df.to_excel(excel_path, index=False, sheet_name="Data")
+
+        ctx = _corr_context()
+        mgr = AnalysisManager()
+        results = mgr.analyze(
+            file_path=excel_path,
+            group_col="x",
+            groups=[],
+            sheet_name=0,
+            value_cols=["y"],
+            skip_plots=True,
+            analysis_context=ctx,
+        )
+        assert results.get("model_type") == "Correlation"
+        assert results.get("method") in ("pearson", "spearman")
+
+
+def test_analysis_manager_correlation_log10_transform():
+    df = _make_lognormal_df(n=80, seed=7)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        excel_path = os.path.join(tmpdir, "test_correlation_log10.xlsx")
+        df.to_excel(excel_path, index=False, sheet_name="Data")
+
+        ctx = _corr_context(x_transform='log10', y_transform='log10')
+        mgr = AnalysisManager()
+        results = mgr.analyze(
+            file_path=excel_path,
+            group_col="x",
+            groups=[],
+            sheet_name=0,
+            value_cols=["y"],
+            skip_plots=True,
+            analysis_context=ctx,
+        )
+        assert results.get("model_type") == "Correlation"
+        assert results.get("x_transform") == "log10"
+        assert results.get("y_transform") == "log10"
+        # After log10, lognormal data should be normal -> Pearson
+        assert results.get("method") == "pearson"
+
+
+def test_analysis_manager_correlation_results_has_transformation_key():
+    df = _make_lognormal_df(n=100)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        excel_path = os.path.join(tmpdir, "test_correlation_transform.xlsx")
+        df.to_excel(excel_path, index=False, sheet_name="Data")
+
+        ctx = _corr_context(x_transform='sqrt', y_transform='none')
+        mgr = AnalysisManager()
+        results = mgr.analyze(
+            file_path=excel_path,
+            group_col="x",
+            groups=[],
+            sheet_name=0,
+            value_cols=["y"],
+            skip_plots=True,
+            analysis_context=ctx,
+        )
+        assert "transformation" in results

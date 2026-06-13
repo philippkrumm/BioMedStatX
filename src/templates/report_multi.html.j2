@@ -1,0 +1,427 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{ context.report_title }}</title>
+<style>
+:root{--surface:#fffdf8;--surface-2:#fff;--ink:#16313a;--muted:#566970;--line:rgba(22,49,58,.12);--accent:#0f766e;--info:#0369a1;--success:#1f7a5a;--warning:#b7791f;--danger:#9f3a38;--shadow:0 18px 40px rgba(22,49,58,.08)}*{box-sizing:border-box}html{font-size:16px}
+body{margin:0;font-family:"Segoe UI","Helvetica Neue",Arial,sans-serif;line-height:1.58;color:var(--ink);background:radial-gradient(circle at top left,rgba(15,118,110,.08),transparent 28%),linear-gradient(180deg,#f9f7f2 0,#f3efe8 100%)}h1,h2,h3{font-family:Georgia,"Times New Roman",serif;letter-spacing:-.02em;margin:0 0 .4rem}p,td,th{overflow-wrap:break-word;word-break:break-word;hyphens:auto;margin:0 0 1rem}
+.page{max-width:1560px;margin:0 auto;padding:1.75rem 1.6rem 3.5rem}.hero,.section,.dataset-card,.metric-card{background:var(--surface);border:1px solid var(--line);border-radius:24px;box-shadow:var(--shadow)}.hero{padding:2.125rem;background:linear-gradient(135deg,rgba(22,49,58,.98),rgba(15,118,110,.88));color:#f9fafb}.eyebrow,.section-kicker{font-size:.8rem;text-transform:uppercase;letter-spacing:.12em;color:var(--info)}.hero .eyebrow{color:rgba(249,250,251,.75)}
+.hero-grid,.metrics-grid,.decision-layout,.dataset-grid,.assumption-visual-grid{display:grid;gap:18px;min-width:0}.hero-grid>* ,.metrics-grid>* ,.decision-layout>* ,.dataset-grid>* ,.assumption-visual-grid>*{min-width:0}.hero-grid{grid-template-columns:1.6fr 1fr;align-items:end}.metrics-grid{grid-template-columns:repeat(auto-fit,minmax(250px,1fr));margin-top:20px}.hero-title{font-size:clamp(2rem,4vw,3.35rem)}.hero-subtitle{color:rgba(249,250,251,.84)}.metric-card{padding:1rem 1.1rem;color:var(--ink);min-height:7rem}.metric-label{font-size:.78rem;text-transform:uppercase;letter-spacing:.12em;color:var(--muted)}.metric-value{font-size:clamp(1.2rem,2vw,2rem);font-weight:700;margin-top:.5rem;font-variant-numeric:tabular-nums}
+.section{margin-top:22px;padding:1.5rem;opacity:0;transform:translateY(18px);transition:opacity .45s ease,transform .45s ease}.section.is-visible{opacity:1;transform:none}.section-head{display:flex;justify-content:space-between;gap:20px;align-items:end;margin-bottom:16px;flex-wrap:wrap}.badge{display:inline-flex;align-items:center;padding:.4rem .85rem;border-radius:999px;font-size:.84rem;font-weight:700;max-width:100%}.is-significant{background:rgba(31,122,90,.14);color:var(--success)}.is-danger{background:rgba(159,58,56,.14);color:var(--danger)}.is-neutral{background:rgba(22,49,58,.08);color:var(--ink)}.is-info{background:rgba(3,105,161,.12);color:var(--info)}.hero .badge.is-significant{background:rgba(52,211,153,.22);color:#bbf7d0}.hero .badge.is-danger{background:rgba(252,165,165,.22);color:#fecaca}.hero .badge.is-neutral{background:rgba(249,250,251,.15);color:#f9fafb}
+.table-shell{overflow-x:auto;border:1px solid var(--line);border-radius:18px;background:var(--surface-2)}table{width:100%;border-collapse:collapse;font-size:.96rem}th,td{padding:12px 14px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{background:rgba(22,49,58,.04);font-size:.82rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}tr:hover td{background:rgba(15,118,110,.05)}
+.decision-layout{grid-template-columns:minmax(0,.84fr) minmax(0,1.16fr)}.decision-track{position:relative;padding-left:24px}.decision-track:before{content:"";position:absolute;left:7px;top:8px;bottom:8px;width:2px;background:linear-gradient(180deg,rgba(15,118,110,.15),rgba(15,118,110,.55))}.decision-step{position:relative;padding:0 0 18px 18px;opacity:.55;transform:translateX(-6px);transition:opacity .3s ease,transform .3s ease}.decision-step.is-active{opacity:1;transform:none}.decision-step:before{content:"";position:absolute;left:-24px;top:7px;width:14px;height:14px;border-radius:50%;background:var(--surface);border:3px solid rgba(15,118,110,.35)}.decision-step.is-active:before{border-color:var(--accent);background:var(--accent)}
+.decision-tree-frame,.chart-card,.methods,.empty-state,.modal-panel{border:1px solid var(--line);border-radius:18px;background:var(--surface-2)}.decision-tree-frame{padding:0;height:560px;display:flex;flex-direction:column;overflow:hidden;position:relative}.decision-tree-frame.is-empty{height:auto;min-height:0}.decision-tree-frame img{width:100%;height:auto;max-height:780px;object-fit:contain}#tree-viewport{flex:1;overflow:hidden;cursor:grab;user-select:none;position:relative}#tree-viewport.is-dragging{cursor:grabbing}#tree-canvas{transform-origin:0 0;will-change:transform}#tree-toolbar{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--surface-2);border-radius:18px 18px 0 0}.tree-ctrl{font:inherit;font-size:.92rem;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--ink);padding:.38rem .82rem;cursor:pointer;line-height:1}.tree-ctrl:hover{background:var(--surface-2)}.tree-zoom-label{font-size:.9rem;color:var(--muted);min-width:44px;text-align:center}#tree-tooltip{position:absolute;pointer-events:none;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:.52rem .78rem;font-size:.92rem;color:var(--ink);box-shadow:var(--shadow);white-space:nowrap;opacity:0;transition:opacity .15s;z-index:10}.chart-card{padding:16px;margin-bottom:16px;min-width:0;overflow:hidden}.chart-card .js-plotly-plot,.chart-card .plotly-graph-div,.chart-card .plot-container,.chart-card .svg-container{width:100%!important;max-width:100%!important}.chart-card .main-svg{max-width:100%!important}.assumption-visual-grid{grid-template-columns:repeat(2,minmax(0,1fr));margin-top:1rem;align-items:start}@media(max-width:760px){.assumption-visual-grid{grid-template-columns:1fr}}.toolbar{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px}.toolbar input,.toolbar button,.tree-button,.modal-close{font:inherit;border-radius:12px;border:1px solid var(--line);background:#fff;color:var(--ink);padding:.75rem .95rem}.toolbar button,.tree-button,.modal-close{cursor:pointer}.methods{white-space:pre-wrap;font-family:"Cascadia Mono",Consolas,monospace;padding:16px;background:rgba(22,49,58,.03)}.dataset-grid{grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}.dataset-card{padding:20px;opacity:0;transform:translateY(16px);animation:riseIn .45s ease forwards}.muted{color:var(--muted)}.small{font-size:.92rem}.empty-state{padding:18px;color:var(--muted)}.footer-note{margin-top:26px;color:var(--muted);font-size:.92rem;text-align:center}.modal-backdrop{position:fixed;inset:0;background:rgba(6,10,12,.75);display:none;align-items:center;justify-content:center;padding:1.5rem;z-index:1000}.modal-backdrop.is-open{display:flex}.modal-panel{max-width:min(94vw,96rem);max-height:92vh;padding:1rem}.modal-panel img{display:block;max-width:100%;max-height:80vh;object-fit:contain}.modal-toolbar{display:flex;justify-content:space-between;align-items:center;gap:1rem;margin-bottom:.75rem}
+@keyframes riseIn{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}@keyframes treeIn{from{opacity:0}to{opacity:1}}#dyn-tree-host{width:100%;display:block}.num-cell{font-family:"Cascadia Mono",Consolas,"Courier New",monospace;font-variant-numeric:tabular-nums}.magnitude-large{background:rgba(31,122,90,.14);color:var(--success)}.magnitude-medium{background:rgba(183,121,31,.14);color:var(--warning)}.magnitude-small,.magnitude-negligible{background:rgba(22,49,58,.1);color:var(--muted)}#decision-path .decision-step::before{display:none}#decision-path .decision-step{padding:0;transform:none;opacity:1}
+@media (prefers-color-scheme:dark){:root{--surface:#0f1a1c;--surface-2:#162428;--ink:#e8f0f2;--muted:#8ba4ac;--line:rgba(232,240,242,.1);--accent:#2dd4bf;--info:#38bdf8;--success:#34d399;--warning:#fbbf24;--danger:#f87171;--shadow:0 18px 40px rgba(0,0,0,.35)}body{background:#0a1214}.hero{background:linear-gradient(135deg,rgba(10,18,20,.98),rgba(15,118,110,.6))}th{background:rgba(232,240,242,.06)}.toolbar input,.toolbar button,.tree-button,.modal-close{background:#1a2e33;color:#e8f0f2}}
+@media print{ #toc,.toolbar button,.tree-button,.modal-backdrop{display:none!important}.section{opacity:1!important;transform:none!important;page-break-inside:avoid}.hero{-webkit-print-color-adjust:exact;print-color-adjust:exact}.page{max-width:100%;padding:0}.decision-layout,.hero-grid{grid-template-columns:1fr}body{font-size:11pt;background:white;color:black}}
+#toc{position:fixed;right:1rem;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:10px;z-index:100}#toc a{width:10px;height:10px;border-radius:50%;background:var(--line);text-decoration:none;transition:background .2s,transform .2s;position:relative}#toc a.is-active{background:var(--accent);transform:scale(1.4)}#toc a[data-label]:hover::after{content:attr(data-label);position:absolute;right:1.6rem;top:50%;transform:translateY(-50%);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:.3rem .65rem;font-size:.78rem;white-space:nowrap;color:var(--ink);pointer-events:none;box-shadow:var(--shadow)}@media (max-width:1100px){ #toc{display:none}}@media (max-width:900px){.hero-grid,.decision-layout{grid-template-columns:1fr}}@media (prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important}.section,.dataset-card{opacity:1;transform:none}}
+.info-btn{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;margin-left:8px;border-radius:6px;border:none;background:#e6eff7;color:#2e5d82;font-size:11px;font-family:"Segoe UI","Helvetica Neue",Arial,sans-serif;font-style:normal;font-weight:700;line-height:1;cursor:pointer;vertical-align:middle;flex-shrink:0;padding:0;transition:background .15s,color .15s}
+.info-btn:hover,.info-btn[aria-expanded="true"]{background:var(--accent);color:#fff}
+.info-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.info-panel{overflow:hidden;max-height:0;opacity:0;margin-top:0;transition:max-height .35s cubic-bezier(.4,0,.2,1),opacity .25s ease,margin-top .25s ease}
+.info-panel.is-open{opacity:1;margin-top:8px}
+.info-panel-inner{padding:.7rem .95rem;border-left:3px solid var(--accent);border-radius:0 10px 10px 0;background:rgba(15,118,110,.05);font-size:.875rem;line-height:1.65;color:var(--ink);white-space:pre-wrap;overflow-wrap:break-word;word-break:break-word}
+@media(prefers-color-scheme:dark){.info-panel-inner{background:rgba(45,212,191,.06)}.is-info{background:rgba(56,189,248,.1)}}
+@media print{.info-btn{display:none!important}.info-panel.is-open{max-height:none!important}}
+</style>{{ mathjax_bundle | safe }}{{ plotly_bundle | safe }}</head><body><div class="page">
+<header class="hero"><div class="eyebrow">BioMedStatX Offline Scientific Report</div><div class="hero-grid"><div><h1 class="hero-title">{{ context.report_title }}</h1><p class="hero-subtitle">{{ context.subtitle }}</p>{% if mode == "single" %}<div class="metrics-grid"><article class="metric-card"><div class="metric-label">Selected Test</div><div class="metric-value">{{ context.hero.test_name }}</div></article><article class="metric-card"><div class="metric-label">p-value</div><div class="metric-value">{{ context.hero.p_value_display }}</div></article><article class="metric-card"><div class="metric-label">{{ context.hero.effect_label }}</div><div class="metric-value">{{ context.hero.effect_size_display }}</div>{% if context.hero.effect_magnitude %}<div style="margin-top:.5rem"><span class="badge magnitude-{{ context.hero.effect_magnitude }}" style="font-size:.75rem;padding:.2rem .6rem;text-transform:capitalize">{{ context.hero.effect_magnitude }}</span></div>{% endif %}</article></div>{% endif %}</div><div>{% if mode == "single" %}<div class="badge {{ context.hero.significance_class }}">{{ context.hero.significance_label }}</div><p style="margin-top:14px;">{{ context.hero.summary_note }}</p>{% else %}<div class="badge is-neutral">Overview Report</div><p style="margin-top:14px;">This companion report summarizes the main outcome of each dataset while preserving fully offline viewing.</p>{% endif %}</div></div></header>
+{% if mode == "single" %}<nav id="toc" aria-label="Sections"><a href="#sec-decision" data-label="Decision Path"></a><a href="#sec-results" data-label="Main Results"></a><a href="#sec-assumptions" data-label="Assumptions"></a><a href="#sec-descriptive" data-label="Descriptives"></a><a href="#sec-pairwise" data-label="Pairwise"></a><a href="#sec-charts" data-label="Charts"></a><a href="#sec-raw" data-label="Raw Data"></a><a href="#sec-methods" data-label="Methods"></a></nav>
+<section id="sec-decision" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Decision Path</div><h2 id="hd-decision">How BioMedStatX reached this decision<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-decision">i</button></h2><div class="info-panel" id="info-decision" role="region" aria-labelledby="hd-decision"><div class="info-panel-inner">{{ context.info_texts.decision }}</div></div></div></div><div id="decision-path" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px">{% for step in context.decision_path %}<div class="decision-step{% if step.active %} is-active{% endif %}" data-step="{{ loop.index0 }}" style="display:flex;align-items:center;gap:6px;padding:.35rem .8rem;border-radius:999px;border:1px solid var(--line);background:var(--surface-2);font-size:.82rem"><span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:{% if step.active %}var(--accent){% else %}var(--line){% endif %}"></span><span>{{ step.title }}</span></div>{% endfor %}</div><div class="decision-tree-frame{% if context.decision_tree_json == 'null' %} is-empty{% endif %}">{% if context.decision_tree_json != "null" %}<div id="tree-toolbar"><button class="tree-ctrl" id="tree-zoom-in">ï¼‹</button><button class="tree-ctrl" id="tree-zoom-out">ï¼</button><span class="tree-zoom-label" id="tree-zoom-pct">100%</span><button class="tree-ctrl" id="tree-reset">Reset</button><span style="flex:1"></span><button class="tree-ctrl" id="tree-replay" title="Replay path animation">&#9654; Replay</button><span class="small muted" style="margin-left:8px">Scroll to zoom Â· Drag to pan</span></div><div id="tree-viewport"><div id="tree-canvas"><div id="dyn-tree-host"></div></div><div id="tree-tooltip"></div></div>{% else %}<div class="empty-state">Decision tree was not available for this analysis.</div>{% endif %}</div></section>
+<section id="sec-results" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Statistical Engine</div><h2 id="hd-results">Main results<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-results">i</button></h2><div class="info-panel" id="info-results" role="region" aria-labelledby="hd-results"><div class="info-panel-inner">{{ context.info_texts.results }}</div></div></div></div><div class="table-shell"><table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>{% for row in context.statistical_rows %}<tr><td>{{ row.label }}{% if row.info %} <span class="info-btn" tabindex="0" role="button" aria-label="What is {{ row.label }}" title="{{ row.info }}" style="cursor:help">i</span>{% endif %}</td><td class="num-cell">{{ row.value }}{% if row.magnitude %} <span class="badge magnitude-{{ row.magnitude }}" style="font-size:.72rem;padding:.15rem .5rem;text-transform:capitalize;margin-left:6px">{{ row.magnitude }}</span>{% endif %}</td></tr>{% endfor %}</tbody></table></div></section>
+<section id="sec-assumptions" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Assumptions</div><h2 id="hd-assumptions">Model validity checks<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-assumptions">i</button></h2><div class="info-panel" id="info-assumptions" role="region" aria-labelledby="hd-assumptions"><div class="info-panel-inner">{{ context.info_texts.assumptions }}</div></div><p class="muted">{{ context.assumptions.interpretation }}</p>{% if context.assumptions.sphericity_correction_note %}<p class="muted" style="margin-top:.35rem;font-size:.88rem;color:var(--warning)">&#9888; {{ context.assumptions.sphericity_correction_note }}</p>{% endif %}{% if context.assumptions.transform_warning %}<p class="muted" style="margin-top:.35rem;font-size:.88rem;color:var(--warning)">&#9888; {{ context.assumptions.transform_warning }}</p>{% endif %}</div><div class="badge is-info">Transformation: {{ context.assumptions.transformation }}</div></div>{% if context.assumptions.rows %}<div class="table-shell"><table><thead><tr><th>Check</th><th>Statistic</th><th>p-value</th><th>Status</th></tr></thead><tbody>{% for row in context.assumptions.rows %}<tr class="{{ row.status_class }}"><td>{{ row.name }}</td><td class="num-cell">{{ row.statistic }}</td><td class="num-cell" style="{{ row.p_value_style }}">{{ row.p_value }}</td><td>{{ row.status_label }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state">No structured assumption summary was available for this result.</div>{% endif %}<div class="assumption-visual-grid">{% if context.assumptions.qq_plot_html %}<div class="chart-card"><div class="section-kicker">Q-Q Diagnostic{% if context.assumptions.qq_plot_transformed_html %} · Original scale{% endif %}</div><h3>Observed quantiles against the normal reference line</h3>{{ context.assumptions.qq_plot_html | safe }}</div>{% endif %}{% if context.assumptions.distribution_plot_html %}<div class="chart-card"><div class="section-kicker">Group Distribution View{% if context.assumptions.distribution_plot_transformed_html %} · Original scale{% endif %}</div><h3>Boxplots with jittered observations</h3>{{ context.assumptions.distribution_plot_html | safe }}</div>{% endif %}{% if context.assumptions.qq_plot_transformed_html %}<div class="chart-card"><div class="section-kicker">Q-Q Diagnostic · After {{ context.assumptions.transformation_label or 'transformation' }}</div><h3>Transformed-scale quantiles against the normal reference line</h3>{{ context.assumptions.qq_plot_transformed_html | safe }}</div>{% endif %}{% if context.assumptions.distribution_plot_transformed_html %}<div class="chart-card"><div class="section-kicker">Group Distribution · After {{ context.assumptions.transformation_label or 'transformation' }}</div><h3>Boxplots on the transformed scale</h3>{{ context.assumptions.distribution_plot_transformed_html | safe }}</div>{% endif %}{% if context.assumptions.residual_plot_html %}<div class="chart-card"><div class="section-kicker">Residual Structure</div><h3>Residuals versus fitted values</h3>{{ context.assumptions.residual_plot_html | safe }}</div>{% endif %}{% if not context.assumptions.qq_plot_html and not context.assumptions.distribution_plot_html and not context.assumptions.residual_plot_html %}<div class="empty-state">Visual assumption diagnostics were not available for this result structure.</div>{% endif %}</div></section>
+<section id="sec-descriptive" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Descriptive Statistics</div><h2 id="hd-descriptive">{{ context.descriptive.title or "Group-level summary" }}<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-descriptive">i</button></h2><div class="info-panel" id="info-descriptive" role="region" aria-labelledby="hd-descriptive"><div class="info-panel-inner">{{ context.info_texts.descriptive }}</div></div></div></div>{% if context.descriptive.rows %}<div class="table-shell"><table><thead><tr><th>{{ context.descriptive.group_col_label or "Group" }}</th><th>n</th><th>Mean</th><th>Median</th><th>SD</th><th>SEM</th><th>Min</th><th>Max</th></tr></thead><tbody>{% for row in context.descriptive.rows %}<tr><td>{{ row.group }}</td><td class="num-cell">{{ row.n }}</td><td class="num-cell">{{ row.mean }}</td><td class="num-cell">{{ row.median }}</td><td class="num-cell">{{ row.sd }}</td><td class="num-cell">{{ row.sem }}</td><td class="num-cell">{{ row.min }}</td><td class="num-cell">{{ row.max }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state">No descriptive summary could be derived from the available result payload.</div>{% endif %}</section>
+{% if context.pairwise_rows %}<section id="sec-pairwise" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Pairwise Comparisons</div><h2 id="hd-pairwise">Post-hoc findings<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-pairwise">i</button></h2><div class="info-panel" id="info-pairwise" role="region" aria-labelledby="hd-pairwise"><div class="info-panel-inner">{{ context.info_texts.pairwise }}</div></div></div></div><div class="table-shell"><table><thead><tr>{% if context.group_chart_div_id %}<th title="Show bracket in chart">Chart</th>{% endif %}<th>Comparison</th><th>Procedure</th><th>Statistic</th><th>p-value</th><th>Effect size</th><th>Interpretation</th></tr></thead><tbody>{% for row in context.pairwise_rows %}<tr class="{{ row.row_class }}">{% if context.group_chart_div_id %}<td style="text-align:center"><input type="checkbox" class="bracket-toggle" data-pair-id="{{ row.pair_id }}" {% if row.significant and row.stars %}checked{% endif %} aria-label="Show bracket for {{ row.comparison }}"></td>{% endif %}<td>{{ row.comparison }}</td><td>{{ row.test }}</td><td class="num-cell">{{ row.statistic }}</td><td class="num-cell" style="{{ row.p_value_style }}">{{ row.p_value }}</td><td class="num-cell">{{ row.effect_size }}{% if row.effect_magnitude %} <span class="badge magnitude-{{ row.effect_magnitude }}" style="font-size:.7rem;padding:.12rem .45rem;text-transform:capitalize;margin-left:4px">{{ row.effect_magnitude }}</span>{% endif %}</td><td>{{ "Significant" if row.significant else "Not significant" }}</td></tr>{% endfor %}</tbody></table></div></section>{% endif %}
+<section id="sec-charts" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Interactive Charts</div><h2 id="hd-charts">Visual evidence<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-charts">i</button></h2><div class="info-panel" id="info-charts" role="region" aria-labelledby="hd-charts"><div class="info-panel-inner">{{ context.info_texts.charts }}</div></div></div></div>{% if context.chart_blocks %}{% for chart in context.chart_blocks %}<div class="chart-card"><div class="section-kicker">{{ chart.title }}</div><h3>{{ chart.subtitle }}</h3>{{ chart.html | safe }}</div>{% endfor %}{% else %}<div class="empty-state">No interactive chart could be created from the current result structure.</div>{% endif %}</section>
+<section id="sec-raw" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Raw Data Vault</div><h2 id="hd-raw">Searchable raw values<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-raw">i</button></h2><div class="info-panel" id="info-raw" role="region" aria-labelledby="hd-raw"><div class="info-panel-inner">{{ context.info_texts.raw }}</div></div></div></div><div class="toolbar"><input id="raw-search" type="search" placeholder="Filter raw data"><button type="button" onclick="copyTable('raw-data-table')">Copy table</button><button type="button" onclick="downloadTableCSV('raw-data-table','biomedstatx_raw_data.csv')">Download CSV</button></div>{% if context.raw_data_table.rows %}<div class="table-shell"><table id="raw-data-table"><thead><tr>{% if context.raw_data_table.column_mode %}<th>#</th>{% for col in context.raw_data_table.columns %}<th>{{ col }}</th>{% endfor %}{% else %}<th>Group</th><th>Index</th><th>Raw value</th>{% if context.raw_data_table.has_transformed %}<th>Transformed value</th>{% endif %}{% endif %}</tr></thead><tbody>{% for row in context.raw_data_table.rows %}<tr>{% if context.raw_data_table.column_mode %}<td>{{ row.index }}</td>{% for col in context.raw_data_table.columns %}<td>{{ row[col] }}</td>{% endfor %}{% else %}<td>{{ row.group }}</td><td>{{ row.index }}</td><td>{{ row.raw_value }}</td>{% if context.raw_data_table.has_transformed %}<td>{{ row.transformed_value }}</td>{% endif %}{% endif %}</tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state">No raw data were embedded in this result structure.</div>{% endif %}</section>
+<section id="sec-methods" class="section" data-reveal><div class="section-head"><div><div class="section-kicker">Methods Snippet</div><h2 id="hd-methods">Reusable narrative text<button type="button" class="info-btn" aria-label="About this section" aria-expanded="false" aria-controls="info-methods">i</button></h2><div class="info-panel" id="info-methods" role="region" aria-labelledby="hd-methods"><div class="info-panel-inner">{{ context.info_texts.methods }}</div></div></div></div><div class="toolbar"><button type="button" onclick="copyText('methods-text')">Copy methods text</button></div><div id="methods-text" class="methods">{{ context.methods_text }}</div></section>
+{% else %}
+<style>
+.multi-accordion{display:flex;flex-direction:column;gap:14px;margin-top:4px}
+.acc-card{border:1px solid var(--line);border-radius:20px;background:var(--surface);box-shadow:var(--shadow);overflow:hidden;transition:box-shadow .2s}
+.acc-card:hover{box-shadow:0 22px 48px rgba(22,49,58,.12)}
+.acc-header{display:grid;grid-template-columns:1fr auto;align-items:center;gap:16px;padding:18px 20px;cursor:pointer;user-select:none}
+.acc-header:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.acc-left{display:flex;flex-direction:column;gap:6px;min-width:0}
+.acc-name{font-size:.78rem;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
+.acc-test{font-size:1.05rem;font-family:Georgia,"Times New Roman",serif;font-weight:600;color:var(--ink);margin:0}
+.acc-badges{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.acc-right{display:flex;align-items:center;gap:12px;flex-shrink:0}
+.acc-pval{font-family:"Cascadia Mono",Consolas,monospace;font-size:.95rem;color:var(--ink);white-space:nowrap}
+.acc-chevron{width:28px;height:28px;border-radius:50%;border:1px solid var(--line);background:var(--surface-2);display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:transform .28s ease,background .18s}
+.acc-chevron svg{width:14px;height:14px;stroke:var(--muted);fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;transition:stroke .18s}
+.acc-card.is-open .acc-chevron{transform:rotate(180deg);background:var(--accent)}
+.acc-card.is-open .acc-chevron svg{stroke:#fff}
+.acc-body{display:none;border-top:1px solid var(--line);padding:20px}
+.acc-card.is-open .acc-body{display:block}
+.acc-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+@media(max-width:820px){.acc-grid{grid-template-columns:1fr}}
+.acc-section-label{font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin-bottom:6px}
+.acc-stat-table{width:100%;border-collapse:collapse;font-size:.9rem}
+.acc-stat-table td{padding:5px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+.acc-stat-table td:first-child{color:var(--muted);white-space:nowrap;padding-right:16px}
+.acc-stat-table td:last-child{font-family:"Cascadia Mono",Consolas,monospace;font-variant-numeric:tabular-nums}
+.acc-path{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:4px}
+.acc-path-step{display:flex;align-items:center;gap:5px;padding:.28rem .65rem;border-radius:999px;border:1px solid var(--line);background:var(--surface-2);font-size:.78rem;color:var(--muted)}
+.acc-path-step.is-active{border-color:var(--accent);color:var(--accent);background:rgba(15,118,110,.07)}
+.acc-path-step .dot{width:7px;height:7px;border-radius:50%;background:currentColor;flex-shrink:0}
+.acc-methods{font-family:"Cascadia Mono",Consolas,monospace;font-size:.8rem;white-space:pre-wrap;line-height:1.55;padding:10px 12px;background:rgba(22,49,58,.03);border:1px solid var(--line);border-radius:10px;color:var(--ink);max-height:180px;overflow-y:auto}
+.acc-assumption-row.is-danger td:last-child{color:var(--danger)}
+.acc-assumption-row.is-success td:last-child{color:var(--success)}
+.multi-summary-bar{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:6px}
+.multi-summary-pill{padding:.3rem .75rem;border-radius:999px;font-size:.82rem;font-weight:600;border:1px solid var(--line)}
+.pill-sig{background:rgba(31,122,90,.1);color:var(--success);border-color:rgba(31,122,90,.25)}
+.pill-ns{background:rgba(22,49,58,.06);color:var(--muted)}
+</style>
+<section class="section is-visible">
+  <div class="section-head" style="margin-bottom:20px">
+    <div>
+      <div class="section-kicker">Dataset Overview</div>
+      <h2>{{ context.subtitle }}</h2>
+    </div>
+    <div class="multi-summary-bar">
+      {% set sig_count = context.dataset_cards | selectattr("significance_class","eq","is-significant") | list | length %}
+      <span class="multi-summary-pill pill-sig">{{ sig_count }} significant</span>
+      <span class="multi-summary-pill pill-ns">{{ context.dataset_cards | length - sig_count }} n.s.</span>
+    </div>
+  </div>
+
+  <div class="multi-accordion">
+  {% for card in context.dataset_cards %}
+  <div class="acc-card" id="{{ card.card_id }}">
+
+    {# â”€â”€ Summary header (always visible) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ #}
+    <div class="acc-header" role="button" tabindex="0" aria-expanded="false" aria-controls="body-{{ card.card_id }}" onclick="toggleAcc('{{ card.card_id }}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleAcc('{{ card.card_id }}')}">
+      <div class="acc-left">
+        <span class="acc-name">{{ card.dataset_name }}</span>
+        <div class="acc-badges">
+          <span class="badge {{ card.significance_class }}" style="font-size:.8rem;padding:.25rem .65rem">{{ card.significance_label }}</span>
+          {% if card.effect_magnitude %}<span class="badge magnitude-{{ card.effect_magnitude }}" style="font-size:.78rem;padding:.2rem .55rem;text-transform:capitalize">{{ card.effect_magnitude }} effect</span>{% endif %}
+          {% if card.p_fdr_display %}<span class="badge is-info" style="font-size:.76rem;padding:.18rem .5rem">FDR {{ card.p_fdr_display }}</span>{% endif %}
+        </div>
+      </div>
+      <div class="acc-right">
+        <span class="acc-pval">p = {{ card.p_value_display }}</span>
+        <div class="acc-chevron" aria-hidden="true"><svg viewBox="0 0 16 16"><polyline points="3,5 8,11 13,5"/></svg></div>
+      </div>
+    </div>
+
+    {# â”€â”€ Detail panel (collapsed by default) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ #}
+    <div class="acc-body" id="body-{{ card.card_id }}" role="region">
+
+      {# Decision path chips #}
+      {% if card.decision_path %}
+      <div style="margin-bottom:16px">
+        <div class="acc-section-label">Analysis path</div>
+        <div class="acc-path">
+          {% for step in card.decision_path %}<div class="acc-path-step{% if step.active %} is-active{% endif %}"><span class="dot"></span><span>{{ step.title }}</span></div>{% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      <div class="acc-grid">
+
+        {# Left: Scatter plot â€” lazy-loaded on first accordion open #}
+        <div>
+          <div class="acc-section-label">Scatter plot</div>
+          {% if card.scatter_html %}
+          {# Store chart markup in <template>; injected into DOM only when panel is first opened #}
+          <template id="ctpl-{{ card.card_id }}">{{ card.scatter_html | safe }}</template>
+          <div class="plot-lazy chart-card" data-tpl="ctpl-{{ card.card_id }}" style="padding:8px;margin-bottom:0;min-height:280px;display:flex;align-items:center;justify-content:center">
+            <span style="color:var(--muted);font-size:.82rem">Loading chartâ€¦</span>
+          </div>
+          {% else %}
+          <div class="empty-state" style="font-size:.88rem">No scatter plot available for this result.</div>
+          {% endif %}
+        </div>
+
+        {# Right: Stats table + Assumptions #}
+        <div style="display:flex;flex-direction:column;gap:16px">
+          {% if card.stat_rows %}
+          <div>
+            <div class="acc-section-label">Statistical results</div>
+            <table class="acc-stat-table">
+              {% for row in card.stat_rows %}<tr><td>{{ row.label }}</td><td>{{ row.value }}</td></tr>{% endfor %}
+            </table>
+          </div>
+          {% endif %}
+
+          {% if card.assumptions.rows %}
+          <div>
+            <div class="acc-section-label">Assumption checks</div>
+            <table class="acc-stat-table">
+              {% for row in card.assumptions.rows %}<tr class="acc-assumption-row {{ row.status_class }}"><td>{{ row.name }}</td><td>{{ row.p_value }}</td><td>{{ row.status_label }}</td></tr>{% endfor %}
+            </table>
+          </div>
+          {% endif %}
+        </div>
+
+      </div>{# /acc-grid #}
+
+      {# Methods text #}
+      {% if card.methods_text %}
+      <div style="margin-top:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div class="acc-section-label">Methods snippet</div>
+          <button type="button" style="font:inherit;font-size:.78rem;padding:.25rem .6rem;border-radius:8px;border:1px solid var(--line);background:var(--surface-2);cursor:pointer" onclick="copyText('methods-{{ card.card_id }}')">Copy</button>
+        </div>
+        <div id="methods-{{ card.card_id }}" class="acc-methods">{{ card.methods_text }}</div>
+      </div>
+      {% endif %}
+
+    </div>{# /acc-body #}
+  </div>{# /acc-card #}
+  {% endfor %}
+  </div>{# /multi-accordion #}
+</section>
+{% endif %}
+<div class="footer-note">{% if context.generated_warning %}{{ context.generated_warning }}{% else %}Generated by BioMedStatX as a fully offline HTML scientific report.{% endif %}</div></div>{% if mode == "single" and context.decision_tree_image %}<div class="modal-backdrop" id="tree-modal" aria-hidden="true"><div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="tree-modal-title"><div class="modal-toolbar"><div><div class="section-kicker">Decision Tree</div><h3 id="tree-modal-title">Expanded analysis routing view</h3></div><button type="button" class="modal-close" id="close-tree-modal">Close</button></div><img src="{{ context.decision_tree_image }}" alt="Expanded decision tree visualization"></div></div>{% endif %}
+<script>
+const reduceMotion=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;if(!reduceMotion&&'IntersectionObserver'in window){const observer=new IntersectionObserver((entries)=>{entries.forEach((entry)=>{if(entry.isIntersecting){entry.target.classList.add('is-visible');observer.unobserve(entry.target);}})},{threshold:.12});document.querySelectorAll('[data-reveal]').forEach((node)=>observer.observe(node));}else{document.querySelectorAll('[data-reveal]').forEach((node)=>node.classList.add('is-visible'));}
+const decisionSteps=Array.from(document.querySelectorAll('#decision-path .decision-step'));if(decisionSteps.length&&!reduceMotion){decisionSteps.forEach((step)=>step.classList.remove('is-active'));decisionSteps.forEach((step,index)=>setTimeout(()=>step.classList.add('is-active'),220*index));}
+{% if mode == "single" %}(function(){
+const TREE_DATA={{ context.decision_tree_json | safe }};
+const host=document.getElementById('dyn-tree-host');
+const viewport=document.getElementById('tree-viewport');
+const canvas=document.getElementById('tree-canvas');
+const tooltip=document.getElementById('tree-tooltip');
+if(!TREE_DATA||!host||!viewport)return;
+const ns='http://www.w3.org/2000/svg';
+function svgEl(tag,attrs){const e=document.createElementNS(ns,tag);Object.entries(attrs||{}).forEach(([k,v])=>e.setAttribute(k,String(v)));return e;}
+const nodes=TREE_DATA.nodes,edges=TREE_DATA.edges;
+const xs=nodes.map(n=>n.x),ys=nodes.map(n=>n.y);
+const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
+const PAD=96,SCALE=42;
+const Y_SCALE=SCALE*1.7;
+const MIN_FOCUS_SCALE=0.78;
+const nodeMetrics={};
+nodes.forEach(function(n){
+  const lines=String(n.label||"").split('\n');
+  const fs=n.isActive?13:11;
+  const lh=fs*1.3;
+  const maxChars=lines.reduce(function(acc,line){return Math.max(acc,String(line).length);},0);
+  const estTextW=maxChars*fs*0.57;
+  const nodeW=Math.max(130,Math.min(320,estTextW+32));
+  const nodeH=Math.max(52,Math.min(204,lines.length*lh+20));
+  nodeMetrics[n.id]={
+    width:nodeW,
+    height:nodeH,
+    rx:n.isSquare?5:16,
+    lines:lines,
+    fontSize:fs,
+    lineHeight:lh
+  };
+});
+let maxNodeHalfW=65,maxNodeHalfH=28;
+nodes.forEach(function(n){
+  const m=nodeMetrics[n.id];
+  if(!m)return;
+  maxNodeHalfW=Math.max(maxNodeHalfW,m.width/2);
+  maxNodeHalfH=Math.max(maxNodeHalfH,m.height/2);
+});
+const toSvg=(x,y)=>[(x-minX)*SCALE+PAD+maxNodeHalfW,(maxY-y)*Y_SCALE+PAD+maxNodeHalfH];
+const svgW=(maxX-minX)*SCALE+PAD*2+maxNodeHalfW*2,svgH=(maxY-minY)*Y_SCALE+PAD*2+maxNodeHalfH*2;
+const svg=svgEl('svg',{viewBox:'0 0 '+svgW+' '+svgH,width:svgW,height:svgH});
+const defs=svgEl('defs');
+['act','dim'].forEach(function(k){
+  const mk=svgEl('marker',{id:'mk-'+k,markerWidth:9,markerHeight:7,refX:8,refY:3.5,orient:'auto'});
+  const p=svgEl('polygon',{points:'0 0,9 3.5,0 7',fill:k==='act'?'#0f766e':'rgba(22,49,58,0.18)'});
+  mk.appendChild(p);defs.appendChild(mk);
+});
+svg.appendChild(defs);
+const nodeMap={};nodes.forEach(function(n){nodeMap[n.id]=n;});
+const activeEdges=edges.filter(function(e){return e.isActive;});
+function edgeKey(e){return String(e.source)+'->'+String(e.target);}
+function nodeSvgY(nodeId){
+    const n=nodeMap[nodeId];
+    if(!n)return Number.POSITIVE_INFINITY;
+    return toSvg(n.x,n.y)[1];
+}
+const activeBySource={};
+const activeInDegree={};
+activeEdges.forEach(function(e){
+    if(!activeBySource[e.source])activeBySource[e.source]=[];
+    activeBySource[e.source].push(e);
+    activeInDegree[e.target]=(activeInDegree[e.target]||0)+1;
+    if(activeInDegree[e.source]===undefined)activeInDegree[e.source]=0;
+});
+const startNodes=Object.keys(activeBySource)
+    .filter(function(nodeId){return !activeInDegree[nodeId];})
+    .sort(function(a,b){return nodeSvgY(a)-nodeSvgY(b);});
+const orderedActiveEdges=[];
+const seenActive={};
+function appendOutgoing(nodeId){
+    const outgoing=(activeBySource[nodeId]||[]).slice().sort(function(a,b){
+        const dy=nodeSvgY(a.target)-nodeSvgY(b.target);
+        if(dy!==0)return dy;
+        return String(a.target).localeCompare(String(b.target));
+    });
+    outgoing.forEach(function(e){
+        const key=edgeKey(e);
+        if(seenActive[key])return;
+        seenActive[key]=true;
+        orderedActiveEdges.push(e);
+        appendOutgoing(e.target);
+    });
+}
+startNodes.forEach(appendOutgoing);
+activeEdges.forEach(function(e){
+    const key=edgeKey(e);
+    if(!seenActive[key]){
+        seenActive[key]=true;
+        orderedActiveEdges.push(e);
+    }
+});
+const activeOrderIndex={};
+orderedActiveEdges.forEach(function(e,index){activeOrderIndex[edgeKey(e)]=index;});
+const animLines=[];
+function edgeAnchor(cx,cy,nx,ny,nodeW,nodeH,pad){
+  const halfW=nodeW/2+pad;
+  const halfH=nodeH/2+pad;
+  const denom=Math.max(Math.abs(nx)/halfW,Math.abs(ny)/halfH,1e-6);
+  return {x:cx+nx/denom,y:cy+ny/denom};
+}
+[false,true].forEach(function(isAct){
+  edges.forEach(function(e){
+    if(e.isActive!==isAct)return;
+    const s=nodeMap[e.source],t=nodeMap[e.target];if(!s||!t)return;
+    const sm=nodeMetrics[e.source]||{width:110,height:44};
+    const tm=nodeMetrics[e.target]||{width:110,height:44};
+    const sp=toSvg(s.x,s.y),tp=toSvg(t.x,t.y);
+    const x1=sp[0],y1=sp[1],x2=tp[0],y2=tp[1];
+    const dx=x2-x1,dy=y2-y1,len=Math.sqrt(dx*dx+dy*dy)||1;
+    const nx=dx/len,ny=dy/len;
+    const srcAnchor=edgeAnchor(x1,y1,nx,ny,sm.width,sm.height,4);
+    const trgAnchor=edgeAnchor(x2,y2,-nx,-ny,tm.width,tm.height,3);
+    const ex1=srcAnchor.x;
+    const ey1=srcAnchor.y;
+    const ex2=trgAnchor.x;
+    const ey2=trgAnchor.y;
+    const isAlt=(!isAct&&!!e.isAlternative);
+    const line=svgEl('line',{x1:ex1,y1:ey1,x2:ex2,y2:ey2,
+      stroke:isAct?'#0f766e':isAlt?'rgba(22,49,58,0.32)':'rgba(22,49,58,0.13)',
+      'stroke-width':isAct?2.8:isAlt?1.5:1.2,
+      'stroke-dasharray':isAlt?'6 4':'none',
+      'marker-end':isAct?'url(#mk-act)':'url(#mk-dim)'});
+    if(isAct&&!reduceMotion){
+      const el=Math.sqrt(Math.pow(ex2-ex1,2)+Math.pow(ey2-ey1,2));
+      line.setAttribute('stroke-dasharray',el);
+      line.setAttribute('stroke-dashoffset',el);
+            const ord=(activeOrderIndex[edgeKey(e)]!==undefined)?activeOrderIndex[edgeKey(e)]:activeEdges.indexOf(e);
+            animLines.push({line:line,len:el,ord:ord});
+    }
+    svg.appendChild(line);
+  });
+});
+nodes.forEach(function(n){
+  const p=toSvg(n.x,n.y),cx=p[0],cy=p[1];
+  const metric=nodeMetrics[n.id]||{width:130,height:52,rx:n.isSquare?5:16,lines:String(n.label||"").split('\n'),fontSize:n.isActive?13:11,lineHeight:(n.isActive?13:11)*1.3};
+  const g=svgEl('g',{});
+  const fill=n.isActive?'rgba(15,118,110,0.12)':'rgba(22,49,58,0.03)';
+  const stroke=n.isActive?'#0f766e':'rgba(22,49,58,0.20)';
+  const rect=svgEl('rect',{x:cx-metric.width/2,y:cy-metric.height/2,width:metric.width,height:metric.height,rx:metric.rx,fill:fill,stroke:stroke,'stroke-width':n.isActive?2.3:1.2});
+  g.appendChild(rect);
+  const lines=metric.lines;
+  const fs=metric.fontSize,lh=metric.lineHeight,totalH=lines.length*lh;
+  lines.forEach(function(ln,li){
+    const t=svgEl('text',{x:cx,y:cy-totalH/2+li*lh+lh*0.75,'text-anchor':'middle',
+      'font-family':'"Segoe UI","Helvetica Neue",Arial,sans-serif',
+      'font-size':fs,'font-weight':n.isActive?700:400,
+      fill:n.isActive?'#0f766e':'rgba(22,49,58,0.68)'});
+    t.textContent=ln;g.appendChild(t);
+  });
+  if(tooltip){
+    const lbl=n.label.replace(/\n/g,' Â· ');
+    g.addEventListener('mouseenter',function(){tooltip.textContent=lbl;tooltip.style.opacity='1';});
+    g.addEventListener('mousemove',function(ev){const vr=viewport.getBoundingClientRect();tooltip.style.left=(ev.clientX-vr.left+14)+'px';tooltip.style.top=(ev.clientY-vr.top-10)+'px';});
+    g.addEventListener('mouseleave',function(){tooltip.style.opacity='0';});
+  }
+  svg.appendChild(g);
+});
+host.appendChild(svg);
+function playAnimation(){
+  animLines.forEach(function(a){a.line.style.transition='none';a.line.setAttribute('stroke-dashoffset',a.len);});
+  setTimeout(function(){animLines.forEach(function(a){setTimeout(function(){a.line.style.transition='stroke-dashoffset .5s ease';a.line.setAttribute('stroke-dashoffset',0);},a.ord*180);});},80);
+}
+if(!reduceMotion&&animLines.length)setTimeout(playAnimation,500);
+const activeNodes=nodes.filter(function(n){return n.isActive;});
+function buildFocusRect(){
+    if(!activeNodes.length)return null;
+    let minFx=Number.POSITIVE_INFINITY,maxFx=Number.NEGATIVE_INFINITY;
+    let minFy=Number.POSITIVE_INFINITY,maxFy=Number.NEGATIVE_INFINITY;
+    activeNodes.forEach(function(n){
+        const p=toSvg(n.x,n.y),cx=p[0],cy=p[1];
+      const metric=nodeMetrics[n.id]||{width:110,height:44};
+      minFx=Math.min(minFx,cx-metric.width/2);maxFx=Math.max(maxFx,cx+metric.width/2);
+      minFy=Math.min(minFy,cy-metric.height/2);maxFy=Math.max(maxFy,cy+metric.height/2);
+    });
+    const focusPad=26;
+    minFx=minFx-focusPad;maxFx=maxFx+focusPad;
+    minFy=minFy-focusPad;maxFy=maxFy+focusPad;
+    minFx=Math.max(0,minFx);minFy=Math.max(0,minFy);
+    maxFx=Math.min(svgW,maxFx);maxFy=Math.min(svgH,maxFy);
+    return {x:minFx,y:minFy,w:Math.max(64,maxFx-minFx),h:Math.max(64,maxFy-minFy)};
+}
+const focusRect=buildFocusRect();
+function getDefaultView(vw,vh){
+    const margin=40;
+    if(focusRect){
+        const fit=Math.min((vw-margin)/focusRect.w,(vh-margin)/focusRect.h);
+        const s=Math.min(Math.max(fit,MIN_FOCUS_SCALE),4);
+        return {sc:s,tx:(vw-focusRect.w*s)/2-focusRect.x*s,ty:(vh-focusRect.h*s)/2-focusRect.y*s};
+    }
+    const s=Math.max(0.45,Math.min((vw-margin)/svgW,(vh-margin)/svgH,1));
+    return {sc:s,tx:(vw-svgW*s)/2,ty:(vh-svgH*s)/2};
+}
+const vw=viewport.clientWidth||800,vh=viewport.clientHeight||500;
+const initialView=getDefaultView(vw,vh);
+let sc=initialView.sc,tx=initialView.tx,ty=initialView.ty;
+function applyT(){canvas.style.transform='translate('+tx+'px,'+ty+'px) scale('+sc+')';const p=document.getElementById('tree-zoom-pct');if(p)p.textContent=Math.round(sc*100)+'%';}
+function clampPan(){var mg=80,cw=viewport.clientWidth||800,ch=viewport.clientHeight||500;tx=Math.max(mg-svgW*sc,Math.min(cw-mg,tx));ty=Math.max(mg-svgH*sc,Math.min(ch-mg,ty));}
+applyT();
+let drag=false,dragX=0,dragY=0,stx=0,sty=0;
+viewport.addEventListener('mousedown',function(e){drag=true;dragX=e.clientX;dragY=e.clientY;stx=tx;sty=ty;viewport.classList.add('is-dragging');});
+window.addEventListener('mousemove',function(e){if(!drag)return;tx=stx+(e.clientX-dragX);ty=sty+(e.clientY-dragY);clampPan();applyT();});
+window.addEventListener('mouseup',function(){drag=false;viewport.classList.remove('is-dragging');});
+viewport.addEventListener('wheel',function(e){e.preventDefault();var raw=e.deltaY*0.0012;var zoom=Math.exp(-Math.max(-0.12,Math.min(0.12,raw)));var nsc=Math.min(Math.max(sc*zoom,0.12),4);var r=viewport.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;var act=nsc/sc;tx=mx-(mx-tx)*act;ty=my-(my-ty)*act;sc=nsc;clampPan();applyT();},{passive:false});
+let t0=null;
+viewport.addEventListener('touchstart',function(e){if(e.touches.length===1)t0={x:e.touches[0].clientX,y:e.touches[0].clientY,tx:tx,ty:ty};},{passive:true});
+viewport.addEventListener('touchmove',function(e){if(e.touches.length===1&&t0){tx=t0.tx+(e.touches[0].clientX-t0.x);ty=t0.ty+(e.touches[0].clientY-t0.y);clampPan();applyT();}},{passive:true});
+function zoomC(f){var cw=viewport.clientWidth/2,ch=viewport.clientHeight/2;tx=cw-(cw-tx)*f;ty=ch-(ch-ty)*f;sc=Math.min(Math.max(sc*f,0.15),4);clampPan();applyT();}
+const zi=document.getElementById('tree-zoom-in'),zo=document.getElementById('tree-zoom-out'),rst=document.getElementById('tree-reset'),rpl=document.getElementById('tree-replay');
+if(zi)zi.addEventListener('click',function(){zoomC(1.25);});
+if(zo)zo.addEventListener('click',function(){zoomC(0.8);});
+if(rst)rst.addEventListener('click',function(){var vw2=viewport.clientWidth||800,vh2=viewport.clientHeight||500;var d=getDefaultView(vw2,vh2);sc=d.sc;tx=d.tx;ty=d.ty;applyT();});
+if(rpl)rpl.addEventListener('click',function(){playAnimation();});
+})();{% endif %}
+function toggleAcc(cardId){
+  const card=document.getElementById(cardId);
+  if(!card)return;
+  const isOpen=card.classList.toggle('is-open');
+  const header=card.querySelector('.acc-header');
+  if(header)header.setAttribute('aria-expanded',String(isOpen));
+  if(isOpen){
+    // Lazy-inject: move <template> content into DOM on first open
+    card.querySelectorAll('.plot-lazy[data-tpl]').forEach(function(placeholder){
+      const tplId=placeholder.getAttribute('data-tpl');
+      const tpl=document.getElementById(tplId);
+      if(!tpl)return;
+      const clone=document.importNode(tpl.content,true);
+      placeholder.replaceWith(clone);
+      tpl.remove();
+    });
+    // Relayout any already-initialised Plotly charts (e.g. second open)
+    setTimeout(function(){
+      card.querySelectorAll('.js-plotly-plot').forEach(function(el){
+        if(window.Plotly&&el._fullLayout)Plotly.relayout(el,{autosize:true});
+      });
+    },50);
+  }
+}
+function copyText(elementId){const node=document.getElementById(elementId);if(!node)return;const text=node.innerText||node.textContent||'';navigator.clipboard.writeText(text).catch(()=>{});}
+function tableToTSV(tableId){const table=document.getElementById(tableId);if(!table)return'';return Array.from(table.querySelectorAll('tr')).map((row)=>Array.from(row.querySelectorAll('th,td')).map((cell)=>(cell.innerText||'').replace(/\n/g,' ').trim()).join('\t')).join('\n');}
+function copyTable(tableId){const text=tableToTSV(tableId);if(text){navigator.clipboard.writeText(text).catch(()=>{});}}
+function downloadTableCSV(tableId,fileName){const table=document.getElementById(tableId);if(!table)return;const rows=Array.from(table.querySelectorAll('tr')).map((row)=>Array.from(row.querySelectorAll('th,td')).map((cell)=>{const value=(cell.innerText||'').replace(/\n/g,' ').trim().replace(/"/g,'""');return `"${value}"`;}).join(',')).join('\n');const blob=new Blob([rows],{type:'text/csv;charset=utf-8;'});const url=URL.createObjectURL(blob);const link=document.createElement('a');link.href=url;link.download=fileName;document.body.appendChild(link);link.click();document.body.removeChild(link);URL.revokeObjectURL(url);}
+const rawSearch=document.getElementById('raw-search');if(rawSearch){rawSearch.addEventListener('input',(event)=>{const needle=String(event.target.value||'').toLowerCase();document.querySelectorAll('#raw-data-table tbody tr').forEach((row)=>{row.style.display=row.innerText.toLowerCase().includes(needle)?'':'none';});});}
+(function(){function toggleInfo(btn){var p=document.getElementById(btn.getAttribute('aria-controls'));if(!p)return;var open=p.classList.toggle('is-open');btn.setAttribute('aria-expanded',open?'true':'false');if(open){p.style.maxHeight=p.scrollHeight+'px';}else{p.style.maxHeight='0';}}document.querySelectorAll('.info-btn').forEach(function(b){b.addEventListener('click',function(){toggleInfo(b);});b.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();toggleInfo(b);}});});}());
+const tocLinks=document.querySelectorAll('#toc a');if(tocLinks.length){const tocObserver=new IntersectionObserver((entries)=>{entries.forEach((entry)=>{const link=document.querySelector(`#toc a[href="#${entry.target.id}"]`);if(link)link.classList.toggle('is-active',entry.isIntersecting);});},{threshold:.25,rootMargin:'-10% 0px -65% 0px'});document.querySelectorAll('section[id]').forEach((sec)=>tocObserver.observe(sec));}
+const treeModal=document.getElementById('tree-modal');const openTreeButton=document.getElementById('open-tree-modal');const treePreviewTrigger=document.getElementById('tree-preview-trigger');const closeTreeButton=document.getElementById('close-tree-modal');function openTreeModal(){if(!treeModal)return;treeModal.classList.add('is-open');treeModal.setAttribute('aria-hidden','false');}function closeTreeModal(){if(!treeModal)return;treeModal.classList.remove('is-open');treeModal.setAttribute('aria-hidden','true');}if(openTreeButton){openTreeButton.addEventListener('click',openTreeModal);}if(treePreviewTrigger){treePreviewTrigger.addEventListener('click',openTreeModal);treePreviewTrigger.addEventListener('keydown',(event)=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();openTreeModal();}});}if(closeTreeButton){closeTreeButton.addEventListener('click',closeTreeModal);}if(treeModal){treeModal.addEventListener('click',(event)=>{if(event.target===treeModal){closeTreeModal();}});document.addEventListener('keydown',(event)=>{if(event.key==='Escape'){closeTreeModal();}});}
+{% if context.group_chart_div_id %}(function(){const BRACKET_DATA={{ context.bracket_data_json | safe }};const GROUP_ORDER={{ context.group_order_json | safe }};const CHART_DIV_ID="{{ context.group_chart_div_id }}";if(!BRACKET_DATA||!GROUP_ORDER||!CHART_DIV_ID)return;function getCheckedIds(){return new Set(Array.from(document.querySelectorAll('.bracket-toggle:checked')).map(cb=>parseInt(cb.dataset.pairId)));}function drawBrackets(){const chartDiv=document.getElementById(CHART_DIV_ID);const traces=chartDiv&&(chartDiv.data||chartDiv._fullData);if(!traces||!traces.length)return;const checkedIds=getCheckedIds();const groupToIdx={};GROUP_ORDER.forEach((name,i)=>{groupToIdx[name]=i;});const yVals=[];traces.forEach(trace=>{if(trace.y)trace.y.forEach(v=>{if(v!=null)yVals.push(v);});});if(!yVals.length)return;const yMin=Math.min(...yVals),yMax=Math.max(...yVals);const yRange=Math.max(Math.abs(yMax-yMin),1e-9);const step=yRange*0.13,tick=step*0.28;const active=BRACKET_DATA.filter(b=>checkedIds.has(b.pair_id)&&b.stars).map(b=>{let i1=groupToIdx[b.group1],i2=groupToIdx[b.group2];if(i1===undefined||i2===undefined)return null;if(i1>i2){[i1,i2]=[i2,i1];}return{...b,i1,i2};}).filter(Boolean);active.sort((a,b)=>(a.i2-a.i1)-(b.i2-b.i1)||a.i1-b.i1);const lineStyle={color:'rgba(22,49,58,0.65)',width:1.5};const shapes=[],annotations=[];active.forEach(({i1,i2,stars},level)=>{const y=yMax+step*(level+1);shapes.push({type:'line',x0:i1,x1:i2,y0:y,y1:y,xref:'x',yref:'y',line:lineStyle},{type:'line',x0:i1,x1:i1,y0:y-tick,y1:y,xref:'x',yref:'y',line:lineStyle},{type:'line',x0:i2,x1:i2,y0:y-tick,y1:y,xref:'x',yref:'y',line:lineStyle});annotations.push({x:(i1+i2)/2,y:y,text:'<b>'+stars+'</b>',showarrow:false,xref:'x',yref:'y',yshift:8,font:{size:13,color:'#16313a'}});});const newYMax=active.length?yMax+step*(active.length+1.8):yMax+yRange*0.05;Plotly.relayout(CHART_DIV_ID,{shapes:shapes,annotations:annotations,'yaxis.range':[yMin-yRange*0.05,newYMax]});}document.addEventListener('change',e=>{if(e.target.classList.contains('bracket-toggle'))drawBrackets();});function tryDraw(n){const d=document.getElementById(CHART_DIV_ID);const t=d&&(d.data||d._fullData);if(t&&t.length){drawBrackets();}else if(n>0){setTimeout(()=>tryDraw(n-1),250);}}tryDraw(30);})();{% endif %}
+</script></body></html>

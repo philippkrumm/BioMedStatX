@@ -1,0 +1,20 @@
+[tool.pyright]
+include = ["src"]
+extraPaths = ["src"]
+typeCheckingMode = "basic"
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "src"
+explicit_package_bases = true
+
+[tool.pyrefly]
+search_path = ["src"]
+project_includes = ["src", "tests", "validation"]
+
+[tool.pytest.ini_options]
+# Default suite = tests/ (fast, no external deps). The validation/ suite is run
+# manually (`pytest validation/`) because several scripts shell out to R.
+# Headless Qt is forced in conftest.py (QT_QPA_PLATFORM=offscreen).
+testpaths = ["tests"]
+addopts = "-q --strict-markers"

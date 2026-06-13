@@ -1,0 +1,884 @@
+/* ============================================================
+   BioMedStatX — UI Overhaul (Refactoring UI principles)
+   Spacing scale: 4 / 8 / 12 / 16 / 24 / 32 / 48
+   Color philosophy: saturation for hierarchy, not borders
+   ============================================================ */
+
+/* ── ROOT ── */
+QMainWindow,
+QWidget#widMainContainer {
+    background: #f0f4f8;
+    color: #16313a;
+}
+
+QWidget#autoPilotRoot {
+    background: #eef5fb;
+    color: #17324d;
+    font-family: "Segoe UI", "Avenir Next", sans-serif;
+    font-size: 13px;
+}
+
+/* ── MENU BAR ── */
+QMenuBar {
+    background: #f0f4f8;
+    color: #16313a;
+    border-bottom: 1px solid #dce8f2;
+    padding: 4px 8px;
+    font-size: 13px;
+}
+
+QMenuBar::item:selected {
+    background: #d4efec;
+    border-radius: 6px;
+}
+
+QMenu {
+    background: #ffffff;
+    border: 1px solid #d0e4f0;
+    border-radius: 8px;
+    padding: 4px;
+}
+
+QMenu::item {
+    padding: 8px 24px;
+    border-radius: 4px;
+    color: #16313a;
+}
+
+QMenu::item:selected {
+    background: #e5f5f3;
+}
+
+QMenu::separator {
+    height: 1px;
+    background: #e2edf5;
+    margin: 4px 8px;
+}
+
+/* ── PANELS (AutoPilot) ── */
+QFrame#dashboardPanel,
+QFrame#decisionTreePanel,
+QFrame#resultCockpit {
+    background: #ffffff;
+    border: none;
+    border-radius: 18px;
+}
+
+/* ── GROUPBOXES (main window) ── */
+QGroupBox#grpDataSource,
+QGroupBox#grpDataConfig,
+QGroupBox#grpAvailableGroups,
+QGroupBox#grpPlotConfigs,
+QGroupBox#grpPlotPreview {
+    background: #ffffff;
+    border: none;
+    border-radius: 14px;
+    margin-top: 20px;
+    padding: 8px 16px 16px 16px;
+}
+
+QGroupBox#grpDataSource::title,
+QGroupBox#grpDataConfig::title,
+QGroupBox#grpAvailableGroups::title,
+QGroupBox#grpPlotConfigs::title,
+QGroupBox#grpPlotPreview::title {
+    subcontrol-origin: margin;
+    left: 12px;
+    padding: 0 4px;
+    color: #5a7c84;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+/* ── TYPOGRAPHY ── */
+QLabel#heroTitle {
+    font-size: 28px;
+    font-weight: 700;
+    color: #0d2830;
+}
+
+QLabel#heroSubtitle,
+QLabel#panelDescription,
+QLabel#mappingBucketPlaceholder,
+QLabel#columnCardPreview,
+QLabel#columnCardMeta {
+    color: #6b7c84;
+}
+
+QLabel#panelTitle,
+QLabel#sectionLabel {
+    color: #15323a;
+    font-weight: 700;
+}
+
+QLabel#panelTitle {
+    font-size: 17px;
+}
+
+QLabel#sectionLabel {
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+QLabel#analysisStatusBadge {
+    background: #d4efec;
+    color: #0369a1;
+    border: none;
+    border-radius: 12px;
+    padding: 8px 16px;
+    font-weight: 600;
+}
+
+/* ── PIPELINE ── */
+QFrame#pipelineStepChip {
+    background: #f4f8fb;
+    border: none;
+    border-radius: 16px;
+}
+
+QFrame#pipelineStepChip[state="active"],
+QFrame#pipelineStepChip[state="running"] {
+    background: #d4eeeb;
+    border: none;
+}
+
+QFrame#pipelineStepChip[state="completed"] {
+    background: #dcf5eb;
+    border: none;
+}
+
+QLabel#pipelineStepIcon {
+    font-size: 16px;
+    font-weight: 700;
+    color: #0f5270;
+    padding-top: 2px;
+}
+
+QLabel#pipelineStepTitle,
+QLabel#pipelineConnector {
+    color: #52708f;
+    font-weight: 600;
+}
+
+/* ── BUTTONS ── */
+
+/* Base (utility/secondary) */
+QPushButton {
+    background: transparent;
+    border: 1px solid #c4daea;
+    border-radius: 8px;
+    padding: 8px 16px;
+    color: #2a5272;
+    font-weight: 600;
+    font-size: 13px;
+}
+
+QPushButton:hover {
+    background: #e5f5f3;
+    border-color: #5bbdb5;
+}
+
+QPushButton:pressed {
+    background: #d4eaf8;
+}
+
+QPushButton:disabled {
+    background: transparent;
+    color: #9ab3c5;
+    border-color: #dce8f2;
+}
+
+/* Primary action — Start all analyses */
+QPushButton#primaryButton,
+QPushButton#btnAnalyzeAll {
+    background: #0f766e;
+    color: #ffffff;
+    border: none;
+    border-radius: 8px;
+    padding: 12px 24px;
+    font-weight: 700;
+    font-size: 14px;
+}
+
+QPushButton#primaryButton:hover,
+QPushButton#btnAnalyzeAll:hover {
+    background: #0d6b63;
+}
+
+QPushButton#primaryButton:pressed,
+QPushButton#btnAnalyzeAll:pressed {
+    background: #0a5c55;
+}
+
+/* Compact info button on bucket / card title rows */
+QPushButton#bucketInfoButton {
+    background: #e6eff7;
+    color: #2e5d82;
+    border: none;
+    border-radius: 6px;
+    font-family: "Segoe UI", "Avenir Next", sans-serif;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 0px;
+    min-width: 18px;
+    max-width: 18px;
+    min-height: 18px;
+    max-height: 18px;
+}
+
+QPushButton#bucketInfoButton:hover {
+    background: #0f766e;
+    color: #ffffff;
+}
+
+/* Ghost secondary */
+QPushButton#btnAnalyzeSelected,
+QPushButton#btnMultiDatasetAnalyze {
+    background: transparent;
+    border: 1px solid #c4daea;
+    color: #0f766e;
+    font-weight: 600;
+}
+
+QPushButton#btnAnalyzeSelected:hover,
+QPushButton#btnMultiDatasetAnalyze:hover {
+    background: #e5f5f3;
+}
+
+/* Danger */
+QPushButton#btnRemovePlot {
+    background: transparent;
+    border: 1px solid #f0c8c8;
+    color: #b83030;
+    font-weight: 600;
+}
+
+QPushButton#btnRemovePlot:hover {
+    background: #fdf0f0;
+    border-color: #d87070;
+}
+
+/* ── CARDS ── */
+QFrame#columnCard {
+    background: #f6fbfe;
+    border: none;
+    border-radius: 12px;
+}
+
+QFrame#columnCard:hover {
+    background: #e5f5f3;
+}
+
+QFrame#columnCard[assigned="true"] {
+    background: #e8f4f2;
+    border: 1px dashed #7eb8ae;
+}
+
+QFrame#columnCard[assigned="true"] QLabel {
+    color: #8aabA4;
+}
+
+QLabel#columnCardTitle {
+    color: #16313a;
+    font-weight: 700;
+}
+
+/* ── MAPPING ── */
+QFrame#mappingBucket {
+    background: #f4f8fb;
+    border: 2px dashed #b0cfe0;
+    border-radius: 16px;
+}
+
+QFrame#mappingBucket[dragHover="true"] {
+    background: #e0f1fb;
+    border: 2px dashed #4db5ac;
+}
+
+QLabel#mappingBucketTitle {
+    color: #1a4567;
+    font-weight: 700;
+}
+
+QFrame#bucketChip {
+    background: #d4efec;
+    border: none;
+    border-radius: 12px;
+}
+
+QLabel#bucketChipLabel {
+    color: #0e4064;
+    font-weight: 600;
+}
+
+QToolButton#bucketChipRemove {
+    background: transparent;
+    border: none;
+    color: #3a6a8a;
+    font-weight: 700;
+}
+
+/* ── RESULT CARDS ── */
+QFrame#resultCard {
+    background: #f6fbfe;
+    border: none;
+    border-radius: 16px;
+}
+
+QLabel#resultCardTitle {
+    color: #5a7c84;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+QLabel#resultCardValue {
+    color: #0d2830;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+/* ── FILE PATH ── */
+QLabel#filePathLabel,
+QLabel#lblFilePath {
+    color: #16313a;
+    padding: 8px 12px;
+    background: #f4f8fb;
+    border: none;
+    border-radius: 8px;
+}
+
+/* ── EMPTY STATES ── */
+QLabel#lblEmptyState {
+    color: #8aacbf;
+    font-size: 12px;
+    font-style: italic;
+    padding: 16px;
+}
+
+QLabel#lblCombineStatus {
+    color: #8aacbf;
+    font-size: 12px;
+    font-style: italic;
+}
+
+/* ── DECISION TREE ── */
+QLabel#decisionTreeImage {
+    background: #f4f8fb;
+    border: none;
+    border-radius: 16px;
+    color: #7a94a8;
+    padding: 16px;
+}
+
+QPushButton#decisionTreeMaximizeButton {
+    padding: 8px 12px;
+}
+
+QFrame#decisionTreeOverlay {
+    background: rgba(10, 22, 36, 0.95);
+}
+
+QFrame#decisionTreeOverlay QLabel#panelTitle {
+    color: #e4f2ff;
+}
+
+QFrame#decisionTreeOverlay QLabel#panelDescription {
+    color: #b8d0e6;
+}
+
+QScrollArea#decisionTreeOverlayScroll {
+    background: #0d2236;
+    border: none;
+    border-radius: 14px;
+}
+
+QLabel#decisionTreeOverlayImage {
+    background: #112840;
+    border: none;
+    border-radius: 12px;
+    color: #8aafc5;
+    padding: 12px;
+}
+
+/* ── TABLE ── */
+QHeaderView::section {
+    background: #e5f5f3;
+    color: #16313a;
+    border: none;
+    border-bottom: 2px solid #c4daea;
+    padding: 8px 12px;
+    font-weight: 700;
+    font-size: 12px;
+    letter-spacing: 0.03em;
+}
+
+QTableWidget {
+    background: #ffffff;
+    border: none;
+    border-radius: 12px;
+    gridline-color: #ecf3f9;
+    alternate-background-color: #f7fbff;
+}
+
+/* ── FORM ELEMENTS ── */
+QRadioButton {
+    color: #16313a;
+    spacing: 8px;
+}
+
+QComboBox {
+    background: #ffffff;
+    border: 1px solid #c4daea;
+    border-radius: 8px;
+    padding: 8px 12px;
+    color: #16313a;
+    min-height: 16px;
+}
+
+QComboBox:hover {
+    border-color: #4db5ac;
+}
+
+QComboBox:focus {
+    border-color: #0f766e;
+}
+
+QComboBox::drop-down {
+    border: none;
+    padding-right: 8px;
+    width: 20px;
+}
+
+QScrollArea {
+    background: #f4f8fb;
+    border: none;
+    border-radius: 12px;
+}
+
+QLineEdit {
+    background: #ffffff;
+    border: 1px solid #c4daea;
+    border-radius: 8px;
+    padding: 8px 12px;
+    color: #16313a;
+}
+
+QLineEdit:focus {
+    border-color: #0f766e;
+}
+
+QSpinBox,
+QDoubleSpinBox {
+    background: #ffffff;
+    border: 1px solid #c4daea;
+    border-radius: 8px;
+    padding: 8px 12px;
+    color: #16313a;
+}
+
+/* ── LIST WIDGETS ── */
+QListWidget {
+    background: #f4f8fb;
+    border: none;
+    border-radius: 10px;
+    padding: 4px;
+    outline: none;
+}
+
+QListWidget::item {
+    padding: 8px 12px;
+    border-radius: 6px;
+    color: #16313a;
+}
+
+QListWidget::item:selected {
+    background: #0f766e;
+    color: #ffffff;
+}
+
+QListWidget::item:hover:!selected {
+    background: #d4efec;
+}
+
+/* ── DIALOGS ── */
+QDialog,
+QMessageBox {
+    background: #f0f4f8;
+    color: #16313a;
+    font-family: "Segoe UI", "Avenir Next", sans-serif;
+    font-size: 13px;
+}
+
+QDialog QLabel,
+QMessageBox QLabel {
+    color: #16313a;
+}
+
+QDialog QGroupBox,
+QMessageBox QGroupBox {
+    background: #ffffff;
+    border: none;
+    border-radius: 12px;
+    margin-top: 20px;
+    padding: 8px 16px 16px 16px;
+}
+
+QDialog QGroupBox::title,
+QMessageBox QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 12px;
+    padding: 0 4px;
+    color: #5a7c84;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+}
+
+QDialog QDialogButtonBox,
+QMessageBox QDialogButtonBox {
+    margin-top: 10px;
+}
+
+QDialog QPushButton,
+QMessageBox QPushButton {
+    min-width: 92px;
+}
+
+QDialog QCheckBox,
+QMessageBox QCheckBox {
+    color: #16313a;
+    spacing: 8px;
+}
+
+QDialog QCheckBox::indicator,
+QMessageBox QCheckBox::indicator {
+    width: 14px;
+    height: 14px;
+    border: 1px solid #9eb8cb;
+    border-radius: 4px;
+    background: #ffffff;
+}
+
+QDialog QCheckBox::indicator:checked,
+QMessageBox QCheckBox::indicator:checked {
+    border-color: #0f766e;
+    background: #0f766e;
+}
+
+QLabel#lblDialogDescription {
+    color: #5a7c84;
+}
+
+QLabel#lblSignificanceHint,
+QLabel#lblMutedHint {
+    color: #6b7c84;
+    font-style: italic;
+}
+
+QLabel#lblSectionHeading {
+    color: #16313a;
+    font-weight: 700;
+}
+
+QLabel#lblCriticalWarning {
+    color: #9f3a38;
+    font-weight: 700;
+}
+
+QDialog QListWidget,
+QMessageBox QListWidget {
+    background: #f4f8fb;
+    border: none;
+    border-radius: 10px;
+    padding: 4px;
+    outline: none;
+}
+
+QDialog#plotConfigDialog,
+QDialog#plotAestheticsDialog,
+QDialog#debugLogWindow {
+    background: #f0f4f8;
+    color: #16313a;
+    font-family: "Segoe UI", "Avenir Next", sans-serif;
+    font-size: 13px;
+}
+
+QWidget#debugLogWindow {
+    background: #f0f4f8;
+    border: none;
+    border-radius: 12px;
+}
+
+QTextEdit#debugConsoleText {
+    background: #0d2236;
+    border: 1px solid #1e3a56;
+    border-radius: 10px;
+    color: #d9e8f5;
+    padding: 8px;
+}
+
+QDialog#plotConfigDialog QGroupBox,
+QDialog#plotAestheticsDialog QGroupBox,
+QDialog#debugLogWindow QGroupBox {
+    background: #ffffff;
+    border: none;
+    border-radius: 12px;
+    margin-top: 20px;
+    padding: 8px 16px 16px 16px;
+}
+
+QDialog#plotConfigDialog QGroupBox::title,
+QDialog#plotAestheticsDialog QGroupBox::title,
+QDialog#debugLogWindow QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 12px;
+    padding: 0 4px;
+    color: #5a7c84;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+}
+
+QDialog#plotConfigDialog QLineEdit,
+QDialog#plotConfigDialog QListWidget,
+QDialog#plotConfigDialog QComboBox,
+QDialog#plotAestheticsDialog QLineEdit,
+QDialog#plotAestheticsDialog QListWidget,
+QDialog#plotAestheticsDialog QComboBox,
+QDialog#plotAestheticsDialog QSpinBox,
+QDialog#plotAestheticsDialog QDoubleSpinBox,
+QDialog#debugLogWindow QPlainTextEdit {
+    background: #f4f8fb;
+    border: 1px solid #c4daea;
+    border-radius: 8px;
+    padding: 8px 12px;
+    color: #16313a;
+}
+
+QDialog#plotAestheticsDialog QTabWidget::pane {
+    border: none;
+    border-radius: 8px;
+    background: #ffffff;
+}
+
+QDialog#plotAestheticsDialog QTabBar::tab {
+    background: #e5f5f3;
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+    padding: 8px 16px;
+    color: #4a6580;
+    font-weight: 600;
+}
+
+QDialog#plotAestheticsDialog QTabBar::tab:selected {
+    background: #ffffff;
+    color: #0f766e;
+    border-bottom: 2px solid #0f766e;
+    font-weight: 700;
+}
+
+QDialog#plotAestheticsDialog QTabBar::tab:hover:!selected {
+    background: #d4efec;
+    color: #16313a;
+}
+
+QDialog#graphVisualizationHelpDialog,
+QDialog#statsExcelHelpDialog,
+QDialog#gettingStartedHelpDialog,
+QDialog#subjectWithinFactorDialog,
+QDialog#posthocSelectionDialog,
+QDialog#nonparamPosthocDialog,
+QDialog#pairSelectionDialog,
+QDialog#controlGroupDialog,
+QDialog#transformationSelectionDialog,
+QDialog#comparisonSelectionDialog,
+QDialog#groupSelectionDialog,
+QDialog#columnSelectionDialog,
+QDialog#pairwiseComparisonDialog,
+QDialog#twoWayAnovaDialog,
+QDialog#outlierDetectionDialog,
+QDialog#exploratoryMatrixDialog,
+QDialog#rangeSelectionDialog {
+    background: #f0f4f8;
+}
+
+QTextBrowser#helpDialogBrowser {
+    background: #f7fbff;
+    border: 1px solid #d7e6f1;
+    border-radius: 10px;
+    padding: 8px;
+    color: #16313a;
+}
+
+/* --- Help Hub --- */
+QDialog#helpHubDialog {
+    background: #f0f4f8;
+}
+
+QLabel#helpHubHeader {
+    color: #16313a;
+    font-size: 16px;
+    font-weight: 700;
+    padding: 2px 4px 6px 4px;
+}
+
+QFrame#helpNavPanel,
+QFrame#helpContentPanel {
+    background: #ffffff;
+    border: none;
+    border-radius: 12px;
+}
+
+QLineEdit#helpNavSearch {
+    background: #f7fbff;
+    border: 1px solid #c4daea;
+    border-radius: 8px;
+    padding: 8px 10px;
+    color: #16313a;
+}
+
+QListWidget#helpNavList {
+    background: #f7fbff;
+    border: none;
+    border-radius: 10px;
+    padding: 4px;
+}
+
+QLabel#helpRecipeTitle {
+    color: #15323a;
+    font-size: 18px;
+    font-weight: 700;
+    padding: 0px 2px 4px 2px;
+}
+
+QTextBrowser#helpRecipeBrowser {
+    background: #f7fbff;
+    border: 1px solid #d7e6f1;
+    border-radius: 10px;
+    padding: 8px;
+    color: #16313a;
+}
+
+QPushButton#btnCopyExampleData {
+    background: #0f766e;
+    color: #ffffff;
+    border: none;
+    border-radius: 8px;
+    font-weight: 700;
+    padding: 8px 14px;
+}
+
+QPushButton#btnCopyExampleData:hover {
+    background: #0d6b63;
+}
+
+QLabel#helpCopyFeedback {
+    color: #2f7a57;
+    font-size: 12px;
+    font-weight: 600;
+    min-height: 18px;
+}
+
+/* --- SheetSelectionDialog --- */
+QTableWidget#sheetTable {
+    background: #ffffff;
+    font-family: "Cascadia Mono", "Consolas", monospace;
+    font-size: 12px;
+    gridline-color: #ecf3f9;
+    border: 1px solid #c4daea;
+    border-radius: 6px;
+}
+
+QTableWidget#sheetTable QHeaderView::section {
+    background: #e5f5f3;
+    color: #16313a;
+    border: none;
+    border-bottom: 1px solid #c4daea;
+    padding: 3px 6px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+QFrame#groupColorSwatch {
+    border-radius: 3px;
+    min-width: 12px;
+    min-height: 12px;
+    max-width: 12px;
+    max-height: 12px;
+}
+
+QToolButton#hintDismiss {
+    background: transparent;
+    border: none;
+    color: #6b7c84;
+    font-size: 14px;
+    padding: 0px 2px;
+}
+
+QToolButton#hintDismiss:hover {
+    color: #16313a;
+}
+
+QPushButton#secondaryButton {
+    background: transparent;
+    border: 1px solid #c4daea;
+    border-radius: 8px;
+    padding: 7px 14px;
+    color: #0f766e;
+    font-weight: 600;
+    font-size: 13px;
+}
+
+QPushButton#secondaryButton:hover {
+    background: #e5f5f3;
+    border-color: #5bbdb5;
+}
+
+QPushButton#secondaryButton:pressed {
+    background: #d4efec;
+}
+
+QLabel#hintLabel {
+    color: #5a7c8a;
+    font-size: 12px;
+    background: #e8f4f8;
+    border: 1px solid #c4daea;
+    border-radius: 6px;
+    padding: 6px 10px;
+}
+
+QWidget#rangeDialogPanel {
+    background: #ffffff;
+    border: 1px solid #c4daea;
+    border-radius: 8px;
+}
+
+QDialog#rangeSelectionDialog QRadioButton {
+    color: #16313a;
+    spacing: 8px;
+    font-size: 13px;
+}
+
+QDialog#rangeSelectionDialog QRadioButton::indicator {
+    width: 14px;
+    height: 14px;
+    border: 2px solid #9eb8cb;
+    border-radius: 7px;
+    background: #ffffff;
+}
+
+QDialog#rangeSelectionDialog QRadioButton::indicator:checked {
+    border-color: #0f766e;
+    background: #0f766e;
+}
+
+QDialog#rangeSelectionDialog QRadioButton::indicator:hover {
+    border-color: #4db5ac;
+}
