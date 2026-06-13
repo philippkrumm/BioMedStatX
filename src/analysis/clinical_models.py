@@ -37,11 +37,12 @@ def _sanitize_columns(df, columns):
 
 
 class ANCOVAModel:
-    """ANCOVA via statsmodels OLS with Type II SS.
+    """ANCOVA via statsmodels OLS with Type III SS (Sum contrasts).
 
-    Type II SS is used because it provides higher power than Type III when
-    no significant Factor x Covariate interactions exist (typical in clinical data).
-    The regression slope homogeneity check validates this assumption.
+    Type III SS with Sum-to-zero contrasts gives interpretable main effects in
+    unbalanced designs even when the factor interaction is present ("C1 fix").
+    The regression slope homogeneity check validates the ANCOVA assumption
+    that factor and covariate do not interact.
     """
 
     def __init__(self):
@@ -117,25 +118,43 @@ class ANCOVAModel:
         return results
 
     def adjusted_means(self):
-        """Compute estimated marginal means (adjusted for covariates)."""
+        """Compute estimated marginal means (adjusted for covariates).
+
+        True EMMs (R emmeans / SPSS EMMEANS): predictions are averaged over a
+        balanced reference grid — every level of the OTHER between-factors
+        weighted equally, covariates fixed at their grand mean. Averaging over
+        the empirical rows instead would weight the other factors by their
+        observed (possibly unbalanced) distribution and bias the contrasts.
+        """
+        from itertools import product as _product
+
         if self.result is None:
             return {}
 
         means = {}
+        cov_means = {c: self._df[c].mean() for c in self._covariates}
+
         for factor in self._between_factors:
             levels = self._df[factor].unique()
+            other_factors = [f for f in self._between_factors if f != factor]
+            other_levels = [self._df[f].unique() for f in other_factors]
             adjusted = {}
-            cov_means = {c: self._df[c].mean() for c in self._covariates}
 
             for level in levels:
                 subset = self._df[self._df[factor] == level]
-                prediction_data = subset.copy()
-                for c, m in cov_means.items():
-                    prediction_data[c] = m
+                # Balanced reference grid: {level} x all combinations of the
+                # other factors' levels, covariates at grand mean.
+                grid_rows = []
+                for combo in _product(*other_levels) if other_factors else [()]:
+                    row = {factor: level}
+                    row.update(dict(zip(other_factors, combo)))
+                    row.update(cov_means)
+                    grid_rows.append(row)
+                grid = pd.DataFrame(grid_rows)
                 try:
-                    predicted = self.result.predict(prediction_data)
+                    predicted = self.result.predict(grid)
                     adjusted[str(level)] = {
-                        "adjusted_mean": float(predicted.mean()),
+                        "adjusted_mean": float(np.mean(predicted)),
                         "n": len(subset),
                         "raw_mean": float(subset[self._dv].mean()),
                         "raw_sd": float(subset[self._dv].std()),
