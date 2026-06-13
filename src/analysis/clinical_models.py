@@ -649,6 +649,7 @@ class LogisticRegressionModel:
         self._firth_coefs = None
         self._firth_bse = None
         self._firth_cov = None
+        self._firth_plr_pvals = {}
 
         if not self.result.converged or has_large_se:
             # Fallback to Firth Penalized Likelihood
@@ -658,55 +659,116 @@ class LogisticRegressionModel:
                 self._firth_coefs = coefs
                 self._firth_bse = bse
                 self._firth_cov = cov
+                # Penalized likelihood-ratio p-values (logistf default inference;
+                # Wald is unreliable in the separation settings Firth targets).
+                self._firth_plr_pvals = {}
+                for idx, param in enumerate(self.result.params.index):
+                    if param == "Intercept":
+                        continue
+                    try:
+                        self._firth_plr_pvals[str(param)] = self._firth_plr_pvalue(
+                            model.exog, model.endog, coefs, idx
+                        )
+                    except Exception:
+                        pass  # odds_ratios falls back to Wald for this parameter
             except Exception as e:
                 print(f"WARNING: Firth solver failed/did not converge: {e}. Keeping standard logit results.")
 
         return self
 
-    def _fit_firth_logistic(self, X, y, max_iter=100, tol=1e-6):
-        """Fit Firth Penalized Likelihood Logistic Regression using Newton-Raphson."""
+    @staticmethod
+    def _penalized_loglik(X, y, beta):
+        """Firth-penalized log-likelihood: ll + 0.5*log|X'WX| (Jeffreys prior)."""
+        pi = 1.0 / (1.0 + np.exp(-np.dot(X, beta)))
+        pi = np.clip(pi, 1e-12, 1.0 - 1e-12)
+        ll = float(np.sum(y * np.log(pi) + (1.0 - y) * np.log(1.0 - pi)))
+        w = pi * (1.0 - pi)
+        xtwx = np.dot(X.T, w[:, None] * X)
+        sign, logdet = np.linalg.slogdet(xtwx)
+        if sign <= 0:
+            return -np.inf
+        return ll + 0.5 * float(logdet)
+
+    def _fit_firth_logistic(self, X, y, max_iter=100, tol=1e-6, fixed_zero=None,
+                            fixed_values=None):
+        """Fit Firth Penalized Likelihood Logistic Regression using Newton-Raphson.
+
+        fixed_zero: optional set of column indices constrained to beta_j = 0
+        (used by the penalized likelihood-ratio test).
+        fixed_values: optional dict {col_index: value} constraining beta_j to an
+        arbitrary value (used by the profile-likelihood CI). The Jeffreys penalty
+        is always computed from the FULL design matrix, as in R's logistf.
+        """
         n, p = X.shape
         beta = np.zeros(p)
-        
+        fixed = set(fixed_zero or ())
+        if fixed_values:
+            for j, val in fixed_values.items():
+                beta[j] = val
+                fixed.add(j)
+        free = np.array([j for j in range(p) if j not in fixed], dtype=int)
+
+        converged = False
         for iteration in range(max_iter):
             pi = 1.0 / (1.0 + np.exp(-np.dot(X, beta)))
             pi = np.clip(pi, 1e-12, 1.0 - 1e-12)
-            
+
             w = pi * (1.0 - pi)
             xtwx = np.dot(X.T, w[:, None] * X)
             try:
                 xtwx_inv = np.linalg.inv(xtwx)
             except np.linalg.LinAlgError:
                 xtwx_inv = np.linalg.pinv(xtwx)
-                
-            # Hat matrix diagonal
-            h = np.zeros(n)
-            for i in range(n):
-                h[i] = w[i] * np.dot(X[i], np.dot(xtwx_inv, X[i]))
-                
-            score = np.zeros(p)
-            for j in range(p):
-                score[j] = np.sum((y - pi + h * (0.5 - pi)) * X[:, j])
-                
-            if np.all(np.abs(score) < tol):
+
+            # Hat matrix diagonal (full model — the penalty term needs it)
+            h = np.einsum('ij,jk,ik->i', X, xtwx_inv, X) * w
+
+            # Firth-modified score
+            score = np.dot(X.T, (y - pi + h * (0.5 - pi)))
+
+            if np.all(np.abs(score[free]) < tol):
+                converged = True
                 break
-                
-            step = np.dot(xtwx_inv, score)
-            
-            # Step halving line search
+
+            # Newton step restricted to free parameters
+            if len(free) == p:
+                step_free = np.dot(xtwx_inv, score)
+            else:
+                sub = xtwx[np.ix_(free, free)]
+                try:
+                    step_free = np.linalg.solve(sub, score[free])
+                except np.linalg.LinAlgError:
+                    step_free = np.dot(np.linalg.pinv(sub), score[free])
+
+            step = np.zeros(p)
+            if len(free) == p:
+                step = step_free
+            else:
+                step[free] = step_free
+
+            # Step-halving line search on the penalized log-likelihood
+            pll_old = self._penalized_loglik(X, y, beta)
             step_len = 1.0
-            for _ in range(5):
+            for _ in range(10):
                 beta_new = beta + step_len * step
-                pi_new = 1.0 / (1.0 + np.exp(-np.dot(X, beta_new)))
-                if not np.any(np.isnan(pi_new)):
-                    beta = beta_new
+                if self._penalized_loglik(X, y, beta_new) >= pll_old:
                     break
                 step_len *= 0.5
-            else:
-                beta += step
-        else:
+            beta = beta + step_len * step
+
+            # Secondary convergence criterion: parameter change negligible
+            if np.max(np.abs(step_len * step)) < tol:
+                converged = True
+                break
+
+        if not converged:
+            # Accept if the score is small on a practical scale (quasi-separation
+            # flattens the likelihood; logistf behaves the same way).
+            if np.all(np.abs(score[free]) < 1e-3):
+                converged = True
+        if not converged:
             raise RuntimeError("Firth solver did not converge within max iterations.")
-            
+
         # Recompute standard errors
         pi = 1.0 / (1.0 + np.exp(-np.dot(X, beta)))
         pi = np.clip(pi, 1e-12, 1.0 - 1e-12)
@@ -716,9 +778,61 @@ class LogisticRegressionModel:
             cov = np.linalg.inv(xtwx)
         except np.linalg.LinAlgError:
             cov = np.linalg.pinv(xtwx)
-            
+
         bse = np.sqrt(np.diag(cov))
         return beta, bse, cov
+
+    def _firth_plr_pvalue(self, X, y, beta_full, j):
+        """Penalized likelihood-ratio test p-value for H0: beta_j = 0.
+
+        PLR = 2*[pl(beta_hat) - max_{beta_j=0} pl(beta)] ~ chi2(1),
+        the default inference in R's logistf (Heinze & Schemper 2002).
+        """
+        from scipy.stats import chi2
+        pll_full = self._penalized_loglik(X, y, beta_full)
+        beta_constrained, _, _ = self._fit_firth_logistic(X, y, fixed_zero={j})
+        pll_constrained = self._penalized_loglik(X, y, beta_constrained)
+        stat = max(2.0 * (pll_full - pll_constrained), 0.0)
+        return float(chi2.sf(stat, 1))
+
+    def _firth_profile_ci(self, X, y, beta_full, j, alpha=0.05):
+        """Penalized profile-likelihood CI for beta_j (logistf default).
+
+        The (1-alpha) interval is the set of values c with
+        2*[pl(beta_hat) - max_{beta_j=c} pl(beta)] <= chi2(1, 1-alpha).
+        Each bound is the c where that deviance gap equals the critical value;
+        found by expanding outward from beta_hat_j then bracketing with brentq.
+        More reliable than the Wald interval under (quasi-)separation.
+        """
+        from scipy.stats import chi2
+        from scipy.optimize import brentq
+
+        pll_hat = self._penalized_loglik(X, y, beta_full)
+        crit = float(chi2.ppf(1 - alpha, 1))
+
+        def deviance_gap(value):
+            beta_c, _, _ = self._fit_firth_logistic(X, y, fixed_values={j: value})
+            pll_c = self._penalized_loglik(X, y, beta_c)
+            return 2.0 * (pll_hat - pll_c) - crit
+
+        point = float(beta_full[j])
+        se = None
+        if self._firth_bse is not None:
+            se_j = self._firth_bse[j]
+            if np.isfinite(se_j) and se_j > 0:
+                se = float(se_j)
+        step = max(se or 1.0, 0.5)
+
+        def find_bound(direction):
+            c_in = point
+            c_out = point + direction * step
+            for _ in range(60):
+                if deviance_gap(c_out) > 0:
+                    return float(brentq(deviance_gap, c_in, c_out, xtol=1e-6))
+                c_in, c_out = c_out, c_out + direction * step
+            return float("nan")
+
+        return find_bound(-1), find_bound(+1)
 
     def predict(self):
         """Get predicted probabilities from the model (handles Firth adjustment)."""
@@ -740,24 +854,47 @@ class LogisticRegressionModel:
         rows = []
         if self._model_variant == "Firth Penalized Likelihood" and self._firth_coefs is not None:
             from scipy.stats import norm
+            z_crit = float(norm.ppf(0.975))
+            plr_pvals = getattr(self, "_firth_plr_pvals", {}) or {}
             for idx, param in enumerate(self.result.params.index):
                 if param == "Intercept":
                     continue
                 coef = self._firth_coefs[idx]
                 se = self._firth_bse[idx]
                 z_val = coef / se if se > 0 else 0.0
-                p_val = 2 * (1 - norm.cdf(abs(z_val)))
-                ci_lower = coef - 1.96 * se
-                ci_upper = coef + 1.96 * se
+                p_wald = 2 * (1 - norm.cdf(abs(z_val)))
+                # Prefer the penalized LR p-value (logistf default); Wald only
+                # as fallback when the constrained refit failed.
+                p_plr = plr_pvals.get(str(param))
+                # Penalized profile-likelihood CI (logistf default); Wald only
+                # as fallback when the profiling root-search fails. Wald is
+                # unreliable in the separation settings Firth targets.
+                ci_method = "Profile likelihood"
+                try:
+                    lo, hi = self._firth_profile_ci(
+                        self.result.model.exog, self.result.model.endog,
+                        self._firth_coefs, idx, alpha=0.05,
+                    )
+                    if not (np.isfinite(lo) and np.isfinite(hi)):
+                        raise ValueError("profile CI did not bracket")
+                    ci_lower, ci_upper = lo, hi
+                except Exception:
+                    ci_lower = coef - z_crit * se
+                    ci_upper = coef + z_crit * se
+                    ci_method = "Wald"
                 rows.append({
                     "parameter": str(param),
                     "odds_ratio": float(np.exp(coef)),
                     "ci_lower": float(np.exp(ci_lower)),
                     "ci_upper": float(np.exp(ci_upper)),
+                    "ci_method": ci_method,
                     "coefficient": float(coef),
                     "std_err": float(se),
                     "z_value": float(z_val),
-                    "p_value": float(p_val),
+                    "p_value": float(p_plr) if p_plr is not None else float(p_wald),
+                    "p_value_method": (
+                        "PLR (penalized likelihood ratio)" if p_plr is not None else "Wald"
+                    ),
                 })
         else:
             conf = self.result.conf_int()

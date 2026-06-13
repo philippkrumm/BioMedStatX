@@ -48,9 +48,22 @@ class _AssociationMixin:
             f"<tbody>{rows_html}</tbody>"
             "</table></div>"
         )
+        subtitle = "Exponentiated coefficients with 95% confidence intervals. Bold OR = p &lt; 0.05."
+        # Surface the inference method when it deviates from the standard Wald
+        # logit (e.g. Firth penalized likelihood) so the reader knows how the
+        # CIs and p-values were derived.
+        ci_method = next((r.get("ci_method") for r in or_table if r.get("ci_method")), None)
+        p_method = next((r.get("p_value_method") for r in or_table if r.get("p_value_method")), None)
+        if ci_method or p_method:
+            parts = []
+            if ci_method:
+                parts.append(f"CI: {ci_method}")
+            if p_method:
+                parts.append(f"p-value: {p_method}")
+            subtitle += " · " + "; ".join(parts) + "."
         return {
             "title": "Odds Ratios",
-            "subtitle": "Exponentiated coefficients with 95% confidence intervals. Bold OR = p &lt; 0.05.",
+            "subtitle": subtitle,
             "html": html,
             "div_id": "biomedstatx-or-table",
         }
