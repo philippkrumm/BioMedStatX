@@ -455,11 +455,14 @@ class _SummariesMixin:
             row["status_label"] = _icons.get(row["status_class"], "") + row["status_label"]
         _trafo_label = str(results.get("transformation") or "").strip()
         _has_transform = _trafo_label.lower() not in ("", "none", "identity", "no transformation")
+        _test_info = results.get("test_info") if isinstance(results.get("test_info"), dict) else {}
+        transform_warning = results.get("transform_warning") or _test_info.get("transform_warning")
         return {
             "rows": rows,
             "transformation": _trafo_label or "None",
             "interpretation": _SummariesMixin._build_assumption_interpretation(results, rows),
             "sphericity_correction_note": sphericity_correction_note,
+            "transform_warning": transform_warning,
             "qq_plot_html": _SummariesMixin._build_assumption_visuals(results),
             "qq_plot_transformed_html": _SummariesMixin._build_assumption_visuals(results, source="transformed") if _has_transform else None,
             "distribution_plot_html": _SummariesMixin._build_distribution_dashboard_chart(results),

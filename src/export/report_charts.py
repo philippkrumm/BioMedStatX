@@ -319,7 +319,7 @@ class _ChartsMixin:
                 plot_bgcolor="#fffdf8",
                 margin=dict(l=56, r=20, t=36, b=64),
                 font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
-                xaxis=dict(title=factor_x),
+                xaxis=dict(title=factor_x, automargin=True),
                 yaxis=dict(title="Cell Mean"),
                 legend=dict(title=dict(text=factor_line), orientation="h", x=0.01, y=1.1),
                 annotations=[dict(
@@ -440,6 +440,7 @@ class _ChartsMixin:
                     tickvals=list(range(len(levels_sorted))),
                     ticktext=levels_sorted,
                     title=within_factor,
+                    automargin=True,
                 ),
                 yaxis=dict(title="Observed values"),
                 legend=dict(orientation="h", x=0.01, y=1.1),
@@ -556,7 +557,7 @@ class _ChartsMixin:
                 plot_bgcolor="#fffdf8",
                 margin=dict(l=56, r=20, t=36, b=60),
                 font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
-                xaxis=dict(title=factor_within),
+                xaxis=dict(title=factor_within, automargin=True),
                 yaxis=dict(title="Group mean"),
                 legend=dict(title=dict(text=factor_between), orientation="h", x=0.01, y=1.1),
             )
@@ -753,6 +754,7 @@ class _ChartsMixin:
                 plot_bgcolor="#fffdf8",
                 margin=dict(l=40, r=20, t=24, b=56),
                 font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
+                xaxis=dict(automargin=True),
                 yaxis_title="Observed values",
                 showlegend=False,
             )
