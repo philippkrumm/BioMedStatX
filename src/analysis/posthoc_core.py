@@ -1364,6 +1364,11 @@ class GamesHowellTest(PostHocAnalyzer):
             from itertools import combinations as _combinations
             stats_mod = get_scipy_stats()
 
+            # k = number of groups entering the comparison family; the
+            # studentized-range distribution needs it for FWER control.
+            comparable = [g for g in valid_groups if len(samples[g]) >= 2]
+            k = len(comparable)
+
             for g1, g2 in _combinations(valid_groups, 2):
                 x1 = np.array(samples[g1], dtype=float)
                 x2 = np.array(samples[g2], dtype=float)
@@ -1384,16 +1389,20 @@ class GamesHowellTest(PostHocAnalyzer):
                     (v1 / n1) ** 2 / (n1 - 1) + (v2 / n2) ** 2 / (n2 - 1)
                 )
                 t_stat = mean_diff / se
-                p_val = float(2 * stats_mod.t.sf(abs(t_stat), df_w))
+                # Games-Howell: p from the studentized-range distribution with
+                # q = sqrt(2)*|t| and Welch df (controls FWER across k groups).
+                q_stat = np.sqrt(2.0) * abs(t_stat)
+                p_val = float(stats_mod.studentized_range.sf(q_stat, k, df_w))
 
                 # Hedges' g (bias-corrected Cohen's d)
                 sp = np.sqrt(((n1 - 1) * v1 + (n2 - 1) * v2) / (n1 + n2 - 2))
                 correction = 1 - 3 / (4 * (n1 + n2 - 2) - 1)
                 hedges_g = float((mean_diff / sp) * correction) if sp > 0 else None
 
-                # CI for the mean difference
-                t_crit = float(stats_mod.t.ppf(1 - alpha / 2, df_w))
-                ci = (float(mean_diff - t_crit * se), float(mean_diff + t_crit * se))
+                # Simultaneous CI for the mean difference (same q distribution)
+                q_crit = float(stats_mod.studentized_range.ppf(1 - alpha, k, df_w))
+                half_width = (q_crit / np.sqrt(2.0)) * se
+                ci = (float(mean_diff - half_width), float(mean_diff + half_width))
 
                 PostHocAnalyzer.add_comparison(
                     result,
@@ -1428,80 +1437,49 @@ class DunnettTest(PostHocAnalyzer):
         result["control_group"] = control_group
 
         try:
-            sp = get_scikit_posthocs()
-            all_data = []
-            group_labels = []
-            for group in valid_groups:
-                values = samples[group]
-                all_data.extend(values)
-                group_labels.extend([str(group)] * len(values))
-            df = pd.DataFrame({"value": all_data, "group": group_labels})
+            scipy_stats = get_scipy_stats()
 
-            dunnett_result = sp.posthoc_dunnett(df, val_col="value", group_col="group", control=str(control_group))
+            control_data = np.asarray(samples[control_group], dtype=float)
+            group_pairs = [g for g in valid_groups if str(g) != str(control_group)]
+            treatment_data = [np.asarray(samples[g], dtype=float) for g in group_pairs]
 
-            group_means = {str(g): np.mean(samples[g]) for g in valid_groups}
-            group_n = {str(g): len(samples[g]) for g in valid_groups}
-            group_std = {str(g): np.std(samples[g], ddof=1) for g in valid_groups}
+            # scipy.stats.dunnett fits the joint multivariate-t once and returns
+            # BOTH the FWER-adjusted p-values and the simultaneous confidence
+            # intervals from the same distribution — so p-values and CIs stay
+            # mutually consistent (a significant contrast always has a CI that
+            # excludes 0). confidence_level matches alpha.
+            dunnett_result = scipy_stats.dunnett(
+                *treatment_data, control=control_data
+            )
+            ci = dunnett_result.confidence_interval(confidence_level=1 - alpha)
 
-            p_vals = []
-            group_pairs = []
-            mean_diffs = []
-            ci_lowers = []
-            ci_uppers = []
-            effect_sizes = []
-
-            k = len(valid_groups) - 1  # Number of comparisons with control
-            alpha_sidak = 1 - (1 - alpha) ** (1 / k) if k > 0 else alpha
-
-            for group in valid_groups:
-                if str(group) == str(control_group):
-                    continue
-                # Robust matrix lookup (row/col swap if needed)
-                try:
-                    p_val = float(dunnett_result.loc[str(group), str(control_group)])
-                except KeyError:
-                    try:
-                        p_val = float(dunnett_result.loc[str(control_group), str(group)])
-                    except Exception:
-                        p_val = 1.0
-                p_vals.append(p_val)
-                group_pairs.append(group)
-
-                mean_diff = group_means[str(group)] - group_means[str(control_group)]
-                n1 = group_n[str(group)]
-                n2 = group_n[str(control_group)]
-                s1 = group_std[str(group)]
-                s2 = group_std[str(control_group)]
-                pooled_std = np.sqrt(((n1 - 1) * (s1 ** 2) + (n2 - 1) * (s2 ** 2)) / (n1 + n2 - 2))
-                se_diff = pooled_std * np.sqrt(1 / n1 + 1 / n2)
-                df_val = n1 + n2 - 2
-                t = get_scipy_stats().t
-                t_crit = t.ppf(1 - alpha_sidak / 2, df_val)
-                ci_lower = mean_diff - t_crit * se_diff
-                ci_upper = mean_diff + t_crit * se_diff
-                effect_size = mean_diff / pooled_std if pooled_std > 0 else 0
-
-                mean_diffs.append(mean_diff)
-                ci_lowers.append(ci_lower)
-                ci_uppers.append(ci_upper)
-                effect_sizes.append(effect_size)
-
-            multipletests = get_statsmodels_multitest()
-            reject, p_adj, _, _ = multipletests(p_vals, alpha=alpha, method='holm-sidak')
+            control_std = np.std(control_data, ddof=1)
+            n_ctrl = len(control_data)
 
             for i, group in enumerate(group_pairs):
+                g_data = treatment_data[i]
+                mean_diff = float(np.mean(g_data) - np.mean(control_data))
+                # Cohen's d via pooled SD (effect-size summary only)
+                n_g = len(g_data)
+                s_g = np.std(g_data, ddof=1)
+                pooled_std = np.sqrt(
+                    ((n_g - 1) * s_g ** 2 + (n_ctrl - 1) * control_std ** 2)
+                    / (n_g + n_ctrl - 2)
+                )
+                effect_size = mean_diff / pooled_std if pooled_std > 0 else 0.0
+
                 PostHocAnalyzer.add_comparison(
                     result,
                     group1=group,
                     group2=control_group,
                     test="Dunnett",
-                    p_value=p_adj[i],
-                    statistic=None,
+                    p_value=float(dunnett_result.pvalue[i]),
+                    statistic=float(dunnett_result.statistic[i]),
                     corrected=True,
-                    correction_method="Holm-Šidák",
-                    effect_size=effect_sizes[i],
+                    correction_method="Dunnett",
+                    effect_size=effect_size,
                     effect_size_type="cohen_d",
-                    confidence_interval=(float(ci_lowers[i]), float(ci_uppers[i])),
+                    confidence_interval=(float(ci.low[i]), float(ci.high[i])),
                     alpha=alpha
                 )
 
