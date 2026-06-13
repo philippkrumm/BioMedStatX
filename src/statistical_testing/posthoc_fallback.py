@@ -596,7 +596,11 @@ class PosthocFallbackEngine:
                 posthoc_choice = "tukey"  # Fallback to Tukey if control selection fails
 
         try:
-            is_parametric = test_recommendation == "parametric"
+            # Welch is a parametric family for post-hoc purposes: Tukey,
+            # Games-Howell and Dunnett are all parametric tests. Treating "welch"
+            # as non-parametric routed games_howell/dunnett to the empty
+            # non-parametric factory branch ("No suitable test").
+            is_parametric = test_recommendation in ("parametric", "welch")
 
             # Create the appropriate test
             if posthoc_choice == "dependent":

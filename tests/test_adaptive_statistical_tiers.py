@@ -130,8 +130,14 @@ def test_rm_anova_sphericity_corrected_p_value_overrides_main_p():
     assert results.get("p_value") == results.get("corrected_p_value"), "results[p_value] was not updated to corrected_p_value"
     assert "Greenhouse-Geisser" in results.get("correction_used", ""), "Expected GG correction to be applied"
 
-def test_welch_anova_posthoc_is_games_howell():
-    import pandas as pd
+def test_welch_anova_defers_posthoc_to_dialog():
+    """The Welch ANOVA compute function must NOT pre-select a post-hoc itself.
+
+    Post-hoc selection is the user's choice (dialog in analysis_core), with
+    Games-Howell as the dialog default. The main-test function therefore returns
+    the ANOVA result with an empty pairwise_comparisons array so the downstream
+    dialog can drive the choice (see validation/test_welch_posthoc_dialog.py).
+    """
     import numpy as np
     from analysis.statisticaltester import StatisticalTester
     np.random.seed(42)
@@ -141,10 +147,10 @@ def test_welch_anova_posthoc_is_games_howell():
         "B": list(np.random.normal(15, 5, 15)),
         "C": list(np.random.normal(20, 10, 15)),
     }
-    results = {}
-    results = StatisticalTester._welch_anova_test(results, valid_groups, samples_to_use, alpha=0.05)
-    assert results.get("posthoc_test") == "Games-Howell Test", f"Expected Games-Howell Test, got {results.get("posthoc_test")}"
-    assert all(c["test"] == "Games-Howell" for c in results.get("pairwise_comparisons", [])), "Not all comparisons are Games-Howell"
+    results = StatisticalTester._welch_anova_test({}, valid_groups, samples_to_use, alpha=0.05)
+    assert results.get("test") == "Welch's ANOVA"
+    # No post-hoc is forced by the compute function.
+    assert results.get("pairwise_comparisons") == []
 
 def test_friedman_posthoc_is_conover_iman():
     import pandas as pd

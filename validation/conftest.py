@@ -45,7 +45,15 @@ def patch_dialogs():
     Also suppresses QApplication creation attempts.
     """
     mock_manager = MagicMock()
-    mock_manager.select_posthoc_test_dialog.return_value = "tukey"
+
+    # The parametric post-hoc dialog now also fires for the Welch one-way path
+    # (Games-Howell default). Mirror each context's real default so headless
+    # runs keep their expected post-hoc: Games-Howell for the Welch one-way
+    # (signalled by default_method="games_howell"), Tukey for advanced ANOVAs.
+    def _posthoc_choice(*args, **kwargs):
+        return "games_howell" if kwargs.get("default_method") == "games_howell" else "tukey"
+
+    mock_manager.select_posthoc_test_dialog.side_effect = _posthoc_choice
     mock_manager.select_nonparametric_posthoc_dialog.return_value = "dunn"
     mock_manager.select_control_group_dialog.return_value = None
     mock_manager.select_custom_pairs_dialog.return_value = []

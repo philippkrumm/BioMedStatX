@@ -872,25 +872,19 @@ class StatisticalTester:
             results["p_value"] = p_value
             results["statistic"] = F_value
             results["effect_size"] = cohens_f
-            results["effect_size_type"] = "Cohen's "
+            results["effect_size_type"] = "Cohen's f"
             results["df1"] = df1
             results["df2"] = df2
             results["anova_table"] = welch_results
             
             # Post-hoc: Games-Howell if significant
-            if p_value < alpha:
-                try:
-                    logger.debug("DEBUG: Performing Games-Howell post-hoc tests")
-                    gh_result = GamesHowellTest.perform_test(valid_groups, samples_to_use, alpha=alpha)
-                    results["posthoc_test"] = "Games-Howell Test"
-                    results["pairwise_comparisons"] = gh_result.get("pairwise_comparisons", [])
-                except Exception as ph_err:
-                    logger.debug(f"DEBUG: Post-hoc Games-Howell failed: {str(ph_err)}")
-                    results["posthoc_test"] = "No post-hoc tests performed (error)"
-                    results["pairwise_comparisons"] = []
-            else:
+            # Post-hoc selection is handled downstream (analysis_core) via the
+            # user dialog — the main test no longer pre-selects Games-Howell, so
+            # the user can choose Games-Howell / Dunnett / custom, or decline.
+            # Games-Howell is supplied as the dialog DEFAULT, not forced here.
+            results["pairwise_comparisons"] = []
+            if p_value >= alpha:
                 results["posthoc_test"] = "No post-hoc tests performed (not significant)"
-                results["pairwise_comparisons"] = []
             
             return results
         except Exception as e:

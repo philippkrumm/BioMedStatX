@@ -965,7 +965,12 @@ class AnalysisManager:
 
                 test_name = test_results.get('test', '').lower()
 
-                # Check if post-hoc tests have already been performed
+                # The main test no longer pre-fills post-hoc, so a significant
+                # multi-group result always reaches the dialog here (symmetry
+                # across parametric / non-parametric paths). Games-Howell is the
+                # DEFAULT for the Welch one-way dialog; cancelling means the user
+                # declines post-hoc (no fallback is forced).
+                _is_welch_oneway = 'welch' in test_name and 'anova' in test_name
                 if not test_results.get('pairwise_comparisons'):
                     # Let the perform_refactored_posthoc_testing function handle dialog selection for all tests
                     if 'kruskal' in test_name or 'friedman' in test_name or test_recommendation == 'non_parametric':
@@ -982,13 +987,12 @@ class AnalysisManager:
                         # Show dialog for parametric tests
                         posthoc_choice = UIDialogManager.select_posthoc_test_dialog(
                             progress_text=kwargs.get('dialog_progress', None),
-                            column_name=kwargs.get('dialog_column', None)
+                            column_name=kwargs.get('dialog_column', None),
+                            default_method="games_howell" if _is_welch_oneway else None,
                         )
                         if posthoc_choice and posthoc_choice != "none":
                             control_group = None
-                            if posthoc_choice == "dunnett":
-                                control_group = UIDialogManager.select_control_group_dialog(valid_groups)
-                            elif posthoc_choice == "paired_custom":
+                            if posthoc_choice == "paired_custom":
                                 # Handle paired custom directly here to avoid double dialog
                                 pairs = UIDialogManager.select_custom_pairs_dialog(valid_groups)
                                 if pairs:
@@ -1041,11 +1045,24 @@ class AnalysisManager:
                                         "error": None
                                     }
                             else:
-                                # For other parametric post-hoc tests, use the refactored function
+                                # Dunnett needs a control group first; then this
+                                # plus games_howell/tukey all run via the refactored
+                                # post-hoc function.
+                                if posthoc_choice == "dunnett":
+                                    control_group = UIDialogManager.select_control_group_dialog(valid_groups)
                                 posthoc_results = StatisticalTester.perform_refactored_posthoc_testing(
                                     valid_groups, transformed_samples, test_recommendation,
                                     alpha=0.05, posthoc_choice=posthoc_choice, control_group=control_group
                                 )
+                        else:
+                            # User cancelled the dialog (or chose "none"): no
+                            # fallback is forced — the user declined post-hoc, so
+                            # the report omits pairwise comparisons.
+                            posthoc_results = {
+                                "posthoc_test": "No post-hoc tests performed (declined by user)",
+                                "pairwise_comparisons": [],
+                                "error": None,
+                            }
                     # Process results uniformly - ONLY ONCE here!
                     if posthoc_results:                      
                         if posthoc_choice == "dunnett" and "control_group" in posthoc_results:

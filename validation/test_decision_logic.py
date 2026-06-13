@@ -66,12 +66,13 @@ def test_select_comparison_test_paired_mapping():
 
 
 def test_select_comparison_test_multi_group_mapping():
-    # normal + homoscedastic -> one_way_anova
+    # Welch-by-default ("A1 fix"): normal multi-group always maps to welch_anova
+    # regardless of homoscedasticity, mirroring the two-group welch_ttest default.
     assert (
         select_comparison_test(
             is_normal=True, is_homoscedastic=True, is_paired=False, group_count=3
         )
-        == "one_way_anova"
+        == "welch_anova"
     )
 
     # normal + heteroscedastic -> welch_anova
