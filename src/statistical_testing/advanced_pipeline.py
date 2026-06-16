@@ -13,7 +13,11 @@ from .engines.finalization import FinalizationEngine
 from .engines.recommendation import RecommendationEngine
 from .engines.reporting import ReportingEngine
 from .engines.transformation import TransformationEngine
-from .validators import ValidationError, validate_minimum_n, validate_test_design
+from .validators import (
+    ValidationError,
+    validate_samples_for_test,
+    validate_test_design,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -80,25 +84,27 @@ def perform_advanced_test_pipeline(
             transformed_samples = {k: v.copy() for k, v in samples.items()}
 
         valid_groups = [g for g in groups if g in transformed_samples and len(transformed_samples[g]) > 0]
-        try:
-            for group in valid_groups:
-                validate_minimum_n(
-                    transformed_samples.get(group, []),
-                    min_n=2,
-                    label=str(group),
-                    allow_missing=True,
-                )
-        except ValidationError as exc:
-            err_msg = str(exc)
-            logger.warning(err_msg)
-            result = {
-                "test_info": test_info,
-                "recommendation": recommendation,
-                "error": err_msg,
-                "test": None,
-                "p_value": None,
-            }
-            return StatisticalTester._standardize_results(result)
+        # Data-quality pre-flight on the extracted cells (same gate as the simple
+        # path): block Inf / zero-variance / empty / too-few-cell designs cleanly
+        # instead of feeding a rank-deficient cell matrix to the model and only
+        # catching the resulting inf/NaN afterwards. dependent=False applies the
+        # per-cell degeneracy checks without the simple paired-difference logic;
+        # min_n_block=2 keeps the established advanced-cell minimum (RM cells can
+        # be small) while still adding the degeneracy detection that was missing.
+        _quality = validate_samples_for_test(
+            transformed_samples, valid_groups, dependent=False, min_n_block=2,
+        )
+        if _quality.blocking_issue is not None:
+            issue = _quality.blocking_issue
+            logger.warning("Advanced pre-flight blocked: %s", issue.message)
+            blocked = StatisticalTester.make_blocked_result(
+                issue.message, code=issue.code,
+                details={"groups": [str(g) for g in valid_groups], "test": test},
+                warnings=_quality.warnings,
+            )
+            blocked["test_info"] = test_info
+            blocked["recommendation"] = recommendation
+            return blocked
 
         print("DEBUG: valid_groups =", valid_groups)
         print("DEBUG: recommendation =", recommendation)
