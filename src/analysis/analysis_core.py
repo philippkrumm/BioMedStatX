@@ -541,6 +541,30 @@ class AnalysisManager:
                 analysis_context = kwargs.get('analysis_context', {})
                 subject_column = kwargs.get('subject_column') or analysis_context.get('subject_column')
 
+                # --- Data-quality pre-flight (blocking) ---
+                # Clinical models bypass the group-based chokepoint, so a constant /
+                # empty / Inf / overflow outcome or covariate would otherwise fit a
+                # meaningless or singular model. Gate the continuous DV (skip the
+                # categorical logistic outcome) and every covariate.
+                from statistical_testing.validators import validate_outcome
+                _cm_issue = None
+                if clinical_test != 'logistic_regression':
+                    _cm_issue = validate_outcome(df[value_cols[0]], label=value_cols[0])
+                if _cm_issue is None:
+                    for _cov in covariates:
+                        if _cov in df.columns:
+                            _ci = validate_outcome(df[_cov], label=_cov)
+                            if _ci is not None:
+                                _cm_issue = _ci
+                                break
+                if _cm_issue is not None:
+                    analysis_log += f"\nAnalysis blocked (data quality): {_cm_issue.message}\n"
+                    _blocked = StatisticalTester.make_blocked_result(
+                        _cm_issue.message, code=_cm_issue.code, details={"model": clinical_test},
+                    )
+                    _blocked["analysis_log"] = analysis_log
+                    return _blocked
+
                 # --- Data Health Scan (runs before model fit, non-blocking) ---
                 _model_type_map = {
                     'ancova': 'ANCOVA', 'two_way_ancova': 'ANCOVA',

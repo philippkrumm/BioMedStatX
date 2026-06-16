@@ -105,3 +105,26 @@ def test_nonfinite_block_converts_inf_statistic():
     assert T.nonfinite_block({"test": "t-test", "p_value": 0.04, "statistic": 2.1}) is None
     # already blocked -> not double-wrapped
     assert T.nonfinite_block({"blocked": True, "p_value": float("inf")}) is None
+
+
+def test_clinical_model_constant_dv_is_blocked(dummy_file, tmp_path):
+    """Clinical models (ANCOVA/LMM/regression) bypass the group chokepoint. A
+    constant outcome must be blocked at the clinical pre-flight (VAR_ZERO) rather
+    than fitting a meaningless/singular model."""
+    import numpy as np
+    rng = np.random.default_rng(4)
+    rows = []
+    for g in ("A", "B"):
+        for _ in range(8):
+            rows.append({"Grp": g, "Cov": float(rng.normal(0, 1)), "Val": 7.0})  # constant DV
+    df = pd.DataFrame(rows)
+    ctx = {"injected_df": df, "factor_columns": ["Grp"], "dv_columns": ["Val"],
+           "group_labels": ["A", "B"], "covariates": ["Cov"], "between_factors": ["Grp"],
+           "mode": "single"}
+    result = AnalysisManager.analyze(
+        file_path=dummy_file, group_col="Grp", groups=["A", "B"], value_cols=["Val"],
+        test="ancova", covariates=["Cov"], save_plot=False, skip_plots=True,
+        file_name=str(tmp_path / "out"), analysis_context=ctx,
+    )
+    assert result.get("blocked") is True
+    assert result.get("block_code") == "VAR_ZERO"

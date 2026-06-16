@@ -410,3 +410,25 @@ def validate_samples_for_test(
                 return issue("VAR_DIFF_ZERO", a=a, b=b)
 
     return SampleQualityReport(blocking_issue=None, warnings=warnings)
+
+
+def validate_outcome(values, *, label="outcome", min_n_block=MIN_N_BLOCK):
+    """Single-vector degeneracy gate for regression-style models (ANCOVA, LMM,
+    logistic/linear/beta regression, correlation) whose data shape doesn't fit
+    the group-based gate. Returns the first blocking ValidationIssue or None.
+    Catches a constant / empty / too-small / Inf / overflow outcome or predictor
+    that would make the fit meaningless or singular."""
+    arr = _coerce_quality_array(values)
+    if np.isinf(arr).any():
+        return ValidationIssue(code="INF_VALUES", message=BLOCK_MESSAGES["INF_VALUES"].format(group=label))
+    valid = arr[~np.isnan(arr)]
+    if valid.size == 0:
+        return ValidationIssue(code="EMPTY_GROUP", message=BLOCK_MESSAGES["EMPTY_GROUP"].format(group=label))
+    if valid.size < min_n_block:
+        return ValidationIssue(code="N_BELOW_MIN",
+                               message=BLOCK_MESSAGES["N_BELOW_MIN"].format(group=label, n=int(valid.size), min_n=min_n_block))
+    if float(np.max(np.abs(valid))) >= _max_safe_abs(valid.size):
+        return ValidationIssue(code="NUM_OVERFLOW", message=BLOCK_MESSAGES["NUM_OVERFLOW"].format(group=label))
+    if np.allclose(valid, valid[0], rtol=VAR_RTOL, atol=VAR_ATOL):
+        return ValidationIssue(code="VAR_ZERO", message=BLOCK_MESSAGES["VAR_ZERO"].format(group=label))
+    return None
