@@ -249,7 +249,10 @@ class AnalysisManager:
         samples = {}
         for group_name in groups_to_use:
             subset = working_df[working_df[display_group_col] == group_name]
-            samples[group_name] = subset[primary_dv].dropna().tolist()
+            # Coerce to numeric so whitespace-only / non-numeric cells become NaN
+            # and are dropped, instead of leaking strings into the test as a fake
+            # categorical value (would crash scipy/pingouin downstream).
+            samples[group_name] = pd.to_numeric(subset[primary_dv], errors="coerce").dropna().tolist()
 
         local_kwargs = dict(kwargs)
         inferred_test = analysis_context.get("inferred_test")
@@ -295,7 +298,7 @@ class AnalysisManager:
                                   title, x_label, y_label, file_name, save_plot, skip_plots,
                                   error_type, additional_factors, show_individual_lines, **kwargs):
         """
-        Multiple dataset analysis with unified Excel output
+        Multiple dataset analysis with a unified HTML report
         """
         all_results = {}
         failed_datasets = {}
@@ -380,19 +383,19 @@ class AnalysisManager:
             except Exception as e:
                 print(f"Warning: FDR correction failed: {str(e)}")
 
-        # Create combined Excel output
+        # Create combined HTML report
         if all_results:
             base_name = file_name if file_name else "multi_dataset_analysis"
-            excel_path = f"{base_name}_combined_results.xlsx"
-            
+            report_path = f"{base_name}_combined_results.html"
+
             try:
                 ExportDispatcher = get_export_dispatcher()
-                export_result = ExportDispatcher.export_multi_dataset_results(all_results, excel_path)
+                export_result = ExportDispatcher.export_multi_dataset_results(all_results, report_path)
                 if export_result.get("warning"):
                     print(f"WARNING: {export_result['warning']}")
-                print(f"Combined results saved to: {excel_path}")
+                print(f"Combined results saved to: {report_path}")
             except Exception as e:
-                print(f"Error creating combined Excel file: {str(e)}")
+                print(f"Error creating combined HTML report: {str(e)}")
         
         # Return summary
         return {
@@ -400,7 +403,7 @@ class AnalysisManager:
             "successful_datasets": list(all_results.keys()),
             "failed_datasets": failed_datasets,
             "results": all_results,
-            "combined_excel": excel_path if all_results else None,
+            "combined_report": report_path if all_results else None,
             "summary": {
                 "total_datasets": len(selected_datasets),
                 "successful": len(all_results),
@@ -504,9 +507,16 @@ class AnalysisManager:
             if not filtered_samples:
                 raise ValueError(f"None of the specified groups were found in the data. Available groups: {list(samples.keys())}")
 
-            for group, values in filtered_samples.items():
-                if len(values) < 1:
-                    raise ValueError(f"Group '{group}' contains no data.")
+            empty_groups = [group for group, values in filtered_samples.items() if len(values) < 1]
+            if empty_groups:
+                from statistical_testing.validators import BLOCK_MESSAGES
+                reason = BLOCK_MESSAGES["EMPTY_GROUP"].format(group=empty_groups[0])
+                analysis_log += f"\nAnalysis blocked (data quality): {reason}\n"
+                blocked = StatisticalTester.make_blocked_result(
+                    reason, code="EMPTY_GROUP", details={"empty_groups": empty_groups},
+                )
+                blocked["analysis_log"] = analysis_log
+                return blocked
 
             analysis_log += "Data imported successfully.\n"
             if not _is_continuous_analysis:
@@ -717,21 +727,20 @@ class AnalysisManager:
                     file_base = file_name
                 else:
                     file_base = "_".join(map(str, groups))
-                excel_file = f"{file_base}_results.xlsx"
+                report_file = f"{file_base}_results.html"
 
                 original_dir = os.getcwd()
                 export_result = {}
                 try:
-                    output_dir = os.path.dirname(os.path.abspath(excel_file))
+                    output_dir = os.path.dirname(os.path.abspath(report_file))
                     if output_dir:
                         os.makedirs(output_dir, exist_ok=True)
                     ExportDispatcher = get_export_dispatcher()
-                    export_result = ExportDispatcher.export_analysis_results(results, excel_file, analysis_log)
+                    export_result = ExportDispatcher.export_analysis_results(results, report_file, analysis_log)
                     if export_result.get("warning"):
                         print(f"WARNING: {export_result['warning']}")
-                    
-                    # No excel path anymore, ignore excel path mapping
-                    analysis_log += f"\nResults were saved to {excel_file} (HTML instead of Excel).\n"
+
+                    analysis_log += f"\nResults were saved to {report_file}.\n"
                 except Exception as export_error:
                     print(f"Error exporting: {export_error}")
                 finally:
@@ -739,6 +748,26 @@ class AnalysisManager:
 
                 results["analysis_log"] = analysis_log
                 return results
+
+            # Central data-quality pre-flight gate. Catches NaN/Inf, zero-variance,
+            # overflow risk, constant paired differences, too-few-groups, n<min —
+            # turning pathological input into a clean labeled block instead of a
+            # crash or a silently-wrong result (e.g. zero-variance Welch -> p=1.0).
+            # Advanced df-based designs are validated in their own pipeline.
+            if kwargs.get('test') not in ['mixed_anova', 'two_way_anova', 'repeated_measures_anova']:
+                from statistical_testing.validators import validate_samples_for_test
+                _quality = validate_samples_for_test(filtered_samples, groups, dependent=dependent)
+                if _quality.blocking_issue is not None:
+                    _reason = _quality.blocking_issue.message
+                    analysis_log += f"\nAnalysis blocked (data quality): {_reason}\n"
+                    _blocked = StatisticalTester.make_blocked_result(
+                        _reason,
+                        code=_quality.blocking_issue.code,
+                        details={"groups": [str(g) for g in groups]},
+                        warnings=_quality.warnings,
+                    )
+                    _blocked["analysis_log"] = analysis_log
+                    return _blocked
 
             # For advanced tests that use prepare_advanced_test, skip the normality check here
             # as it will be handled in the advanced test flow
@@ -1090,7 +1119,7 @@ class AnalysisManager:
 
 
             # Make sure normality and variance test results are explicitly set (only if available)
-            # Convert new test_info structure to the expected format for Excel export
+            # Convert new test_info structure to the expected format for report export
             if test_info:
                 print(f"DEBUG TEST_INFO STRUCTURE: {test_info}")
                 print(f"DEBUG TEST_INFO KEYS: {list(test_info.keys())}")
@@ -1161,7 +1190,17 @@ class AnalysisManager:
 
             # Merge important transformation and test info into results
             results.update(test_results)
-            
+
+            # Universal safety net: advanced engines (LMM, RM/Mixed/Two-Way ANOVA,
+            # ANCOVA) bypass the per-sample chokepoint and can emit a non-finite
+            # statistic / p-value on a degenerate design without raising. Block it
+            # instead of presenting a mathematically-meaningless result as valid.
+            _nf_block = StatisticalTester.nonfinite_block(results)
+            if _nf_block is not None:
+                analysis_log += f"\nAnalysis blocked (non-finite result): {_nf_block['block_reason']}\n"
+                _nf_block["analysis_log"] = analysis_log
+                return _nf_block
+
             # Store normality_tests and variance_test before they get overwritten
             preserved_normality = results.get("normality_tests", {})
             preserved_variance = results.get("variance_test", {})
@@ -1264,8 +1303,6 @@ class AnalysisManager:
             else:
                 file_base = "_".join(map(str, groups))
 
-            excel_file = f"{file_base}_results.xlsx"
-            
             results['groups'] = groups
             results['raw_data'] = {g: filtered_samples[g][:] for g in groups}
             if results.get('transformation', 'None') != 'None':
@@ -1285,27 +1322,26 @@ class AnalysisManager:
             if "variance_test" not in results:
                 results["variance_homogeneity_test"] = test_info.get("variance_test", {}) if test_info else {}    
 
-            # Add debug statements before Excel export
-            print("DEBUG: Assumption tests before Excel export:")
+            # Add debug statements before report export
+            print("DEBUG: Assumption tests before report export:")
             print("  Normality tests:", results.get("normality_tests", {}))
             print("  Variance tests:", results.get("variance_test", {}))
             print("  Test recommendation:", test_recommendation)
-                
-            # Export to Excel
+
+            # Export the HTML report
             original_dir = os.getcwd()
-            print(f"DEBUG: Directory before Excel export: {original_dir}")
-            
-            # Use absolute path for Excel file
+            print(f"DEBUG: Directory before report export: {original_dir}")
+
+            # Use absolute path for the report file
             from analysis.stats_functions import get_output_path
-            excel_file = get_output_path(file_base, "xlsx") 
-            
+            report_file = get_output_path(file_base, "html")
+
             ExportDispatcher = get_export_dispatcher()
-            export_result = ExportDispatcher.export_analysis_results(results, excel_file, analysis_log)
+            export_result = ExportDispatcher.export_analysis_results(results, report_file, analysis_log)
             if export_result.get("warning"):
                 print(f"WARNING: {export_result['warning']}")
-            
-            # No excel path anymore, ignore excel path mapping
-            analysis_log += f"\nResults were saved to {excel_file} (HTML instead of Excel).\n"
+
+            analysis_log += f"\nResults were saved to {report_file}.\n"
             
             # Ensure we're back in the original directory
             if os.getcwd() != original_dir:
@@ -1411,13 +1447,13 @@ class AnalysisManager:
                 analysis_log += f"  {file_base}.png\n"
                 get_matplotlib_pyplot().close(fig)
                 results["_file_paths"] = {
-                    "excel": os.path.abspath(excel_file),
+                    "report": os.path.abspath(report_file),
                     "pd": os.path.abspath(f"{file_base}.pd"),
                     "png": os.path.abspath(f"{file_base}.png")
                 }
             else:
                 results["_file_paths"] = {
-                    "excel": os.path.abspath(excel_file)
+                    "report": os.path.abspath(report_file)
                 }
             # Special visualization for dependent data
             if dependent and not skip_plots:
