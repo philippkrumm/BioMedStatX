@@ -1121,7 +1121,7 @@ class ResultCockpitWidget(QFrame):
                 "Variance Homogeneity",
                 info_text=(
                     "Tests whether groups have equal variance (homoscedasticity).\n\n"
-                    "Levene's test is robust to non-normality.\n"
+                    "Brown-Forsythe (median-centered Levene) is robust to non-normality.\n"
                     "p > 0.05 → equal variances → standard ANOVA / t-test.\n"
                     "p ≤ 0.05 → unequal variances → Welch's correction or "
                     "non-parametric test."
@@ -1304,6 +1304,27 @@ class ResultCockpitWidget(QFrame):
         self.configure_plot_button.setEnabled(enable_plot)
         self.open_output_button.setEnabled(enable_output)
         self._animate_cards()
+
+    def show_block(self, reason, warnings=None):
+        """Render a data-quality BLOCK instead of result cards. Used when the
+        analysis was refused (zero variance, NaN, too-few-groups, ...). Shows the
+        reason prominently and blanks every metric card so no misleading numbers
+        are displayed."""
+        headline = "⚠ Analysis blocked — data quality"
+        detail = str(reason)
+        if warnings:
+            detail += "\n\nNotes:\n" + "\n".join(f"• {w}" for w in warnings)
+        self.subtitle.setText(f"{headline}\n\n{detail}")
+        blank = "—"
+        for card in self.metric_cards.values():
+            card.set_value(blank)
+        for card in self.inference_cards.values():
+            card.set_value(blank)
+        for card in self.context_cards.values():
+            card.set_value(blank)
+        self.configure_plot_button.setEnabled(False)
+        self.open_output_button.setEnabled(False)
+        self._clear_card_effects()
 
     def _animate_cards(self):
         # Animation disabled: QSequentialAnimationGroup crashes on macOS 26 Tahoe
@@ -1886,29 +1907,50 @@ class SheetSelectionDialog(QDialog):
                 return
             self._remove_cells_from_groups(overlaps)
 
-        # Assign to group_name and merge with touching ranges (same group)
-        for nr in new_ranges:
-            touching_ranges = []
-            non_touching_ranges = []
-            for r in self._selection_map[group_name]:
-                touch = not (nr["rows"][1] < r["rows"][0] - 1 or nr["rows"][0] > r["rows"][1] + 1 or
-                             nr["cols"][1] < r["cols"][0] - 1 or nr["cols"][0] > r["cols"][1] + 1)
-                if touch:
-                    touching_ranges.append(r)
-                else:
-                    non_touching_ranges.append(r)
-            
-            if touching_ranges:
-                combined_cells = _cells_in_ranges(touching_ranges + [nr])
-                fake_indexes = [_FakeIdx(r, c) for r, c in combined_cells]
-                merged = _selected_indexes_to_ranges(fake_indexes)
-                self._selection_map[group_name] = non_touching_ranges + merged
-            else:
+        # Assign to group_name. In technical mode each range is averaged into one
+        # value, so ranges must stay SEPARATE (one block = one replicate mean) —
+        # merging touching blocks would collapse N biological replicates into one.
+        # In biological mode adjacent blocks are merged into a single pool.
+        if self._replicate_type == "technical":
+            for nr in new_ranges:
                 self._selection_map[group_name].append(nr)
+        else:
+            for nr in new_ranges:
+                touching_ranges = []
+                non_touching_ranges = []
+                for r in self._selection_map[group_name]:
+                    touch = not (nr["rows"][1] < r["rows"][0] - 1 or nr["rows"][0] > r["rows"][1] + 1 or
+                                 nr["cols"][1] < r["cols"][0] - 1 or nr["cols"][0] > r["cols"][1] + 1)
+                    if touch:
+                        touching_ranges.append(r)
+                    else:
+                        non_touching_ranges.append(r)
+
+                if touching_ranges:
+                    combined_cells = _cells_in_ranges(touching_ranges + [nr])
+                    fake_indexes = [_FakeIdx(r, c) for r, c in combined_cells]
+                    merged = _selected_indexes_to_ranges(fake_indexes)
+                    self._selection_map[group_name] = non_touching_ranges + merged
+                else:
+                    self._selection_map[group_name].append(nr)
 
         self._rebuild_group_list()
         self._recolor_table()
         self._update_preview()
+        self._advance_assign_combo(group_name)
+
+    def _advance_assign_combo(self, after_group):
+        """After assigning to a group, preselect the next group in the combo so
+        the user can keep clicking 'Assign to:' for consecutive groups. Stops at
+        the last group (no wrap); the user can still pick any group manually.
+
+        Skipped in technical mode: there the user assigns several replicate blocks
+        to the SAME group in a row, so the combo should stay put."""
+        if self._replicate_type == "technical":
+            return
+        idx = self._assign_combo.findText(after_group)
+        if idx >= 0 and idx + 1 < self._assign_combo.count():
+            self._assign_combo.setCurrentIndex(idx + 1)
 
     def _remove_cells_from_groups(self, conflicts):
         """

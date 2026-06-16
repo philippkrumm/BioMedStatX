@@ -256,18 +256,26 @@ class InteractiveDecisionTreeWidget(QGraphicsView):
         bg_color = QColor("#0f1a1c") if is_dark else QColor("#ffffff")
         self.setBackgroundBrush(QBrush(bg_color))
         
-        self.placeholder_item = self.scene.addText(text, QFont("Segoe UI", 10))
+        # Wrap to a readable width and render at the font's true size (top-aligned)
+        # instead of fitInView'ing a single ultra-wide line, which shrinks long
+        # block reasons to an illegible speck centered in the canvas.
+        self.placeholder_item = self.scene.addText("", QFont("Segoe UI", 13))
+        self.placeholder_item.setTextWidth(440)
+        self.placeholder_item.setPlainText(text)
         self.placeholder_item.setDefaultTextColor(QColor("#8ba4ac") if is_dark else QColor("#6b7c84"))
-        
+
+        self.resetTransform()
         rect = self.placeholder_item.boundingRect()
-        self.placeholder_item.setPos(-rect.width() / 2.0, -rect.height() / 2.0)
-        self.setSceneRect(-rect.width() / 2.0 - 50, -rect.height() / 2.0 - 50, rect.width() + 100, rect.height() + 100)
-        self.fitInView(self.sceneRect(), Qt.KeepAspectRatio)
+        self.placeholder_item.setPos(0, 0)
+        self.setSceneRect(0, 0, rect.width(), rect.height())
+        self.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
 
     def set_tree_data(self, tree_json):
         self.scene.clear()
         self.tree_data = tree_json
         self.user_interacted = False
+        # Restore default centering for the actual tree (placeholder uses AlignTop).
+        self.setAlignment(Qt.AlignCenter)
         
         if not tree_json or "nodes" not in tree_json or not tree_json["nodes"]:
             self.show_placeholder("No decision tree data available.")

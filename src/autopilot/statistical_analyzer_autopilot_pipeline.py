@@ -1484,16 +1484,23 @@ def _ap_format_effect_size_metric(self, results):
     labels = {
         "cohen_d": "Cohen's d",
         "hedges_g": "Hedges' g",
+        "cohen_f": "Cohen's f",
+        "cohen's f": "Cohen's f",
         "r": "r (rank correlation)",
         "eta_squared": "Eta-squared",
         "partial_eta_squared": "Partial eta-squared",
         "epsilon_squared": "Epsilon-squared",
         "kendall_w": "Kendall's W",
         "rank_biserial_r": "Rank-biserial r",
-        "ICC": "ICC",
-        "AUC": "AUC",
+        "icc": "ICC",
+        "auc": "AUC",
     }
-    type_label = labels.get(effect_size_type, effect_size_type.replace("_", " ").title() if effect_size_type else "Effect size")
+    # Match case-insensitively so plain-text types (e.g. "Cohen's f") resolve to
+    # a clean label instead of being mangled by .title() ("Cohen'S F").
+    type_label = labels.get(
+        str(effect_size_type).lower() if effect_size_type else None,
+        effect_size_type if effect_size_type else "Effect size",
+    )
     return f"{type_label} = {effect_size:.4f}"
 
 
@@ -1693,6 +1700,9 @@ def _ap_determine_and_run_test(self):
         if context["mode"] == "single":
             file_base_override = os.path.splitext(ap_file_path)[0]
             result = self._execute_single_analysis(context, context["dv_columns"][0], output_dir, skip_plots=True, file_base_override=file_base_override)
+            if result.get("blocked"):
+                self._handle_blocked_result(result)
+                return
             self._render_result_summary(
                 context,
                 result,
@@ -1709,8 +1719,8 @@ def _ap_determine_and_run_test(self):
                 QApplication.processEvents()
                 all_results[dv_column] = self._execute_single_analysis(per_dv_context, dv_column, output_dir, skip_plots=True)
 
-            combined_excel = ap_file_path
-            export_result = ExportDispatcher.export_multi_dataset_results(all_results, combined_excel)
+            combined_report = ap_file_path
+            export_result = ExportDispatcher.export_multi_dataset_results(all_results, combined_report)
             if export_result.get("warning"):
                 print(f"WARNING: {export_result['warning']}")
 
@@ -1719,19 +1729,36 @@ def _ap_determine_and_run_test(self):
             lead_context = dict(context)
             lead_context["dv_columns"] = [lead_dv]
             lead_context["current_dv"] = lead_dv
+            if lead_result.get("blocked"):
+                self._handle_blocked_result(lead_result)
+                self.current_multi_results = all_results
+                return
             self._render_result_summary(
                 lead_context,
                 lead_result,
                 output_dir,
-                subtitle=f"Multi-dataset analysis completed for {len(all_results)} dependent variables. Combined Excel: {os.path.basename(combined_excel)}"
+                subtitle=f"Multi-dataset analysis completed for {len(all_results)} dependent variables. Combined report: {os.path.basename(combined_report)}"
             )
             self.current_multi_results = all_results
-            self.current_analysis_result["combined_excel"] = combined_excel
+            self.current_analysis_result["combined_report"] = combined_report
 
     except Exception as exc:
         self._set_workflow_state("map", "Analysis failed")
         self.decision_tree_panel.show_placeholder(f"Analysis failed: {exc}")
         QMessageBox.critical(self, "Analysis Error", str(exc))
+
+
+def _ap_handle_blocked_result(self, result):
+    """Surface a data-quality block: clear cockpit cards, show the reason in the
+    cockpit + decision-tree panel, and stop short of rendering a (non-existent)
+    result. No confetti, no Open-Output."""
+    reason = result.get("block_reason") or result.get("error") or "Analysis could not be performed."
+    warnings = result.get("warnings") or []
+    self.result_cockpit.show_block(reason, warnings)
+    self.decision_tree_panel.show_placeholder(reason)
+    self._set_workflow_state("map", "Analysis blocked")
+    self.current_analysis_result = result
+    self.current_multi_results = getattr(self, "current_multi_results", {}) or {}
 
 
 def _ap_configure_plot_from_result(self):
@@ -2035,6 +2062,7 @@ class AutopilotMixin:
     _format_context_sample_overview = _ap_format_context_sample_overview
     _format_context_analysis_scope = _ap_format_context_analysis_scope
     _render_result_summary = _ap_render_result_summary
+    _handle_blocked_result = _ap_handle_blocked_result
     determine_and_run_test = _ap_determine_and_run_test
     configure_plot_from_result = _ap_configure_plot_from_result
     open_current_output_folder = _ap_open_current_output_folder
