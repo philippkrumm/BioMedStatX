@@ -156,3 +156,139 @@ def test_golden_emmeans_ancova():
         assert grp in app_adj_means, f"Missing adjusted mean for {grp}"
         app_mean = app_adj_means[grp]["adjusted_mean"]
         _assert_close(f"{grp} emmean", app_mean, r_mean["emmean"])
+
+
+def _map_r_term_to_sm_term(r_term, sm_terms):
+    """Simple heuristic to match R term names to statsmodels term names."""
+    if r_term == "(Intercept)":
+        return "Intercept"
+    
+    # E.g. groupATrt -> C(groupA)[T.Trt]
+    # groupATrt:timeT2 -> C(groupA)[T.Trt]:C(time)[T.T2]
+    import re
+    # Extract factor names and levels, e.g., groupATrt -> factor groupA, level Trt
+    # Just do a naive match: the sm_term must contain all the alphanumeric parts of r_term
+    parts = re.split(r'[:\*]', r_term)
+    
+    best_match = None
+    for sm_term in sm_terms:
+        if sm_term == "Intercept":
+            continue
+            
+        # We check if all parts are somewhat represented in sm_term
+        # e.g., 'groupATrt' -> 'groupA' and 'Trt' in sm_term
+        # For covar, it's just 'covar'
+        match_all = True
+        for part in parts:
+            if part == "covar":
+                if "covar" not in sm_term:
+                    match_all = False
+            else:
+                # part is like groupATrt
+                # Try to find the factor name and level
+                if "groupA" in part:
+                    lvl = part.replace("groupA", "")
+                    if "groupA" not in sm_term or lvl not in sm_term:
+                        match_all = False
+                elif "time" in part:
+                    lvl = part.replace("time", "")
+                    if "time" not in sm_term or lvl not in sm_term:
+                        match_all = False
+        
+        if match_all:
+            if best_match is None or len(sm_term) < len(best_match):
+                best_match = sm_term
+                
+    return best_match
+
+def test_golden_lme4_lmm():
+    result = StatisticalTester.perform_advanced_test(
+        df=_DF,
+        test="lmm",
+        dv="y_mixed",
+        subject="subj",
+        between=["groupA"],
+        within=["time"],
+        covariates=["covar"],
+        random_slope=None,
+        force_parametric=True
+    )
+    assert result.get("error") is None
+    
+    r_lmm = _RESULTS["lme4_lmm"]
+    app_coefs = {r["parameter"]: r for r in result.get("fixed_effects_table", [])}
+    
+    for r_term, r_vals in r_lmm.items():
+        if r_term == "(Intercept)":
+            continue
+            
+        sm_term = _map_r_term_to_sm_term(r_term, list(app_coefs.keys()))
+        assert sm_term is not None, f"Could not map R term '{r_term}' to app terms: {list(app_coefs.keys())}"
+        
+        # Test Estimate and SE (lme4 REML=TRUE should match smf.mixedlm reml=TRUE)
+        _assert_close(f"{r_term} Estimate", app_coefs[sm_term]["coefficient"], r_vals["Estimate"], tol=0.01)
+        _assert_close(f"{r_term} SE", app_coefs[sm_term]["std_err"], r_vals["SE"], tol=0.01)
+
+
+def test_golden_glm_logistic():
+    # Remove duplicates to match R's standard Logit data
+    df_subj = _DF.drop_duplicates("subj").copy()
+    
+    result = StatisticalTester.perform_advanced_test(
+        df=df_subj,
+        test="logistic_regression",
+        dv="y_logit_std",
+        subject=None,
+        between=["groupA"],
+        within=[],
+        covariates=["covar"],
+        force_parametric=True
+    )
+    assert result.get("error") is None
+    
+    r_glm = _RESULTS["glm_logistic"]
+    app_coefs = {r["parameter"]: r for r in result.get("odds_ratios", [])}
+    
+    for r_term, r_vals in r_glm.items():
+        if r_term == "(Intercept)":
+            continue
+            
+        sm_term = _map_r_term_to_sm_term(r_term, list(app_coefs.keys()))
+        assert sm_term is not None, f"Could not map R term '{r_term}' to app terms: {list(app_coefs.keys())}"
+        
+        _assert_close(f"{r_term} Estimate", app_coefs[sm_term]["coefficient"], r_vals["Estimate"], tol=0.01)
+        _assert_close(f"{r_term} SE", app_coefs[sm_term]["std_err"], r_vals["SE"], tol=0.01)
+        _assert_close(f"{r_term} p", app_coefs[sm_term]["p_value"], r_vals["p"], tol=0.01)
+
+
+def test_golden_logistf_firth():
+    df_subj = _DF.drop_duplicates("subj").copy()
+    
+    result = StatisticalTester.perform_advanced_test(
+        df=df_subj,
+        test="logistic_regression",
+        dv="y_logit_sep", # Perfectly separated by groupA
+        subject=None,
+        between=["groupA"],
+        within=[],
+        covariates=["covar"],
+        force_parametric=True
+    )
+    assert result.get("error") is None
+    # Ensure Firth was used
+    assert result.get("model_variant") == "Firth Penalized Likelihood"
+    
+    r_firth = _RESULTS["logistf_firth"]
+    app_coefs = {r["parameter"]: r for r in result.get("odds_ratios", [])}
+    
+    for r_term, r_vals in r_firth.items():
+        if r_term == "(Intercept)":
+            continue
+            
+        sm_term = _map_r_term_to_sm_term(r_term, list(app_coefs.keys()))
+        assert sm_term is not None, f"Could not map R term '{r_term}' to app terms: {list(app_coefs.keys())}"
+        
+        _assert_close(f"{r_term} Estimate", app_coefs[sm_term]["coefficient"], r_vals["Estimate"], tol=0.01)
+        # R's logistf doesn't return regular standard errors for parameters effectively, but we extracted sqrt(diag(var))
+        # Let's compare p-values (Profile Likelihood Ratio from our custom implementation vs logistf)
+        _assert_close(f"{r_term} p-value", app_coefs[sm_term]["p_value"], r_vals["p"], tol=0.02)
