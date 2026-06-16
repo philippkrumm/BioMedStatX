@@ -39,6 +39,9 @@ def perform_advanced_test_pipeline(
     file_name=None,
     manual_transform=None,
     analysis_log=None,
+    posthoc_method_callback=None,
+    control_group_callback=None,
+    custom_pairs_callback=None,
 ):
     # Late import avoids module-cycle issues while keeping behavior unchanged.
     from analysis.statisticaltester import StatisticalTester
@@ -204,6 +207,9 @@ def perform_advanced_test_pipeline(
                         "between": between,
                         "within": within,
                         "alpha": alpha,
+                        "posthoc_method_callback": posthoc_method_callback,
+                        "control_group_callback": control_group_callback,
+                        "custom_pairs_callback": custom_pairs_callback,
                     }
                 )
                 advanced_posthoc_updates = dict(advanced_posthoc_result.metadata or {})
@@ -346,6 +352,9 @@ def perform_advanced_test_pipeline(
                     "between": between,
                     "within": within,
                     "alpha": alpha,
+                    "posthoc_method_callback": posthoc_method_callback,
+                    "control_group_callback": control_group_callback,
+                    "custom_pairs_callback": custom_pairs_callback,
                 }
             )
             nonparam_posthoc_updates = dict(nonparam_posthoc_result.metadata or {})

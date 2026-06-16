@@ -420,6 +420,31 @@ class _StatRowsMixin:
                 p = factor.get("p_value")
                 eta = factor.get("effect_size")
 
+                corr_suffix = ""
+                if ftype == "within":
+                    # RM ANOVA
+                    spher_corr = results.get("sphericity_corrections")
+                    if spher_corr and spher_corr.get("needed"):
+                        rec = spher_corr.get("recommended_correction")
+                        if rec and rec in spher_corr:
+                            c_data = spher_corr[rec]
+                            df1 = c_data.get("corrected_df1", df1)
+                            df2 = c_data.get("corrected_df2", df2)
+                            p = c_data.get("p_value", p)
+                            corr_suffix = " (GG)" if "greenhouse" in rec else " (HF)"
+                    
+                    # Mixed ANOVA
+                    within_corr = results.get("within_sphericity_corrections")
+                    if within_corr and within_corr.get("needed"):
+                        me = within_corr.get("main_effect", {})
+                        rec = me.get("recommended_correction")
+                        if rec and rec in me:
+                            c_data = me[rec]
+                            df1 = c_data.get("corrected_df1", df1)
+                            df2 = c_data.get("corrected_df2", df2)
+                            p = c_data.get("p_value", p)
+                            corr_suffix = " (GG)" if "greenhouse" in rec else " (HF)"
+
                 label = name
                 if ftype == "between":
                     label += " (between-subject)"
@@ -429,11 +454,13 @@ class _StatRowsMixin:
                 parts = []
                 if F is not None:
                     if df1 is not None and df2 is not None:
-                        parts.append(f"F({df1:.0f}, {df2:.0f}) = {F:.4f}")
+                        df1_str = f"{df1:.0f}" if isinstance(df1, int) or float(df1).is_integer() else f"{df1:.2f}"
+                        df2_str = f"{df2:.0f}" if isinstance(df2, int) or float(df2).is_integer() else f"{df2:.2f}"
+                        parts.append(f"F({df1_str}, {df2_str}) = {F:.4f}")
                     else:
                         parts.append(f"F = {F:.4f}")
                 if p is not None:
-                    parts.append(_FormattingMixin._format_p_value(p))
+                    parts.append(_FormattingMixin._format_p_value(p) + corr_suffix)
                 if eta is not None:
                     try:
                         parts.append(f"η²p = {float(eta):.4f}")
@@ -450,15 +477,32 @@ class _StatRowsMixin:
                 df2 = inter.get("df2")
                 p = inter.get("p_value")
                 eta = inter.get("effect_size")
+                
+                corr_suffix = ""
+                within_corr = results.get("within_sphericity_corrections")
+                if within_corr and within_corr.get("needed") and inter_factors:
+                    inters = within_corr.get("interactions", {})
+                    for k, v in inters.items():
+                        if all(str(f) in k for f in inter_factors):
+                            rec = v.get("recommended_correction")
+                            if rec and rec in v:
+                                c_data = v[rec]
+                                df1 = c_data.get("corrected_df1", df1)
+                                df2 = c_data.get("corrected_df2", df2)
+                                p = c_data.get("p_value", p)
+                                corr_suffix = " (GG)" if "greenhouse" in rec else " (HF)"
+                            break
 
                 parts = []
                 if F is not None:
                     if df1 is not None and df2 is not None:
-                        parts.append(f"F({df1:.0f}, {df2:.0f}) = {F:.4f}")
+                        df1_str = f"{df1:.0f}" if isinstance(df1, int) or float(df1).is_integer() else f"{df1:.2f}"
+                        df2_str = f"{df2:.0f}" if isinstance(df2, int) or float(df2).is_integer() else f"{df2:.2f}"
+                        parts.append(f"F({df1_str}, {df2_str}) = {F:.4f}")
                     else:
                         parts.append(f"F = {F:.4f}")
                 if p is not None:
-                    parts.append(_FormattingMixin._format_p_value(p))
+                    parts.append(_FormattingMixin._format_p_value(p) + corr_suffix)
                 if eta is not None:
                     try:
                         parts.append(f"η²p = {float(eta):.4f}")
@@ -466,6 +510,7 @@ class _StatRowsMixin:
                         pass
 
                 rows.append({"label": name + " (interaction)", "value": " | ".join(parts)})
+
         else:
             # Fallback: single primary effect summary (RM-ANOVA single factor)
             for label, key in [

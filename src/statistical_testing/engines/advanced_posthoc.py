@@ -75,19 +75,28 @@ class AdvancedPostHocEngine:
 
             all_comparisons = list(combinations(group_names, 2))
 
+            posthoc_method_callback = payload.get("posthoc_method_callback")
+            control_group_callback = payload.get("control_group_callback")
+            custom_pairs_callback = payload.get("custom_pairs_callback")
+
             posthoc_method = "paired_custom"
             control_group = None
             try:
                 default_method = "paired_custom" if test == "two_way_anova" else "tukey"
-                posthoc_method = UIDialogManager.select_posthoc_test_dialog(
-                    parent=None, progress_text=f"({test})", column_name=dv, default_method=default_method
-                )
+                if posthoc_method_callback:
+                    posthoc_method = posthoc_method_callback(test, dv, default_method)
+                else:
+                    posthoc_method = default_method
                 if posthoc_method is None:
                     posthoc_method = "paired_custom"
+                
                 if posthoc_method == "dunnett":
-                    control_group = UIDialogManager.select_control_group_dialog(parent=None, groups=group_names)
+                    if control_group_callback:
+                        control_group = control_group_callback(group_names)
+                    elif group_names:
+                        control_group = group_names[0]
             except Exception as exc:
-                logger.warning("Could not show post-hoc method dialog: %s", exc)
+                logger.warning("Could not run posthoc_method_callback: %s", exc)
                 posthoc_method = "paired_custom"
 
             if posthoc_method == "dunnett" and control_group:
@@ -96,20 +105,12 @@ class AdvancedPostHocEngine:
                 selected_comparisons = all_comparisons
             elif posthoc_method == "paired_custom":
                 try:
-                    from ui.dialogs.comparison_selection_dialog import ComparisonSelectionDialog
-                    import sys
-                    from PyQt5.QtWidgets import QApplication
-
-                    app = QApplication.instance()
-                    if app is None:
-                        app = QApplication(sys.argv)
-                    dialog = ComparisonSelectionDialog(all_comparisons, checked_by_default=False)
-                    if dialog.exec_() == dialog.Accepted:
-                        selected_comparisons = dialog.get_selected_comparisons()
+                    if custom_pairs_callback:
+                        selected_comparisons = custom_pairs_callback(all_comparisons, False)
                     else:
-                        selected_comparisons = []
+                        selected_comparisons = all_comparisons
                 except Exception as exc:
-                    logger.warning("Could not show comparison selection dialog: %s", exc)
+                    logger.warning("Could not run custom_pairs_callback: %s", exc)
                     selected_comparisons = all_comparisons
             else:
                 selected_comparisons = all_comparisons
@@ -196,7 +197,8 @@ class AdvancedPostHocEngine:
                 and res.get("model_class") == "Brunner-Langer ATS"
             ):
                 fallback_posthoc = self._brunner_langer_dialog_posthoc(
-                    res, df_original, dv, between, within, subject, alpha
+                    res, df_original, dv, between, within, subject, alpha,
+                    payload.get("custom_pairs_callback")
                 )
             elif test == "mixed_anova" and between and within:
                 fallback_posthoc = StatisticalTester._run_mixed_marginaleffects_posthoc(res, between, within, alpha=alpha)
@@ -205,7 +207,7 @@ class AdvancedPostHocEngine:
                 and df_original is not None
                 and res.get("model_class") == "Freedman-Lane Permutation"
             ):
-                fallback_posthoc = self._freedman_lane_dialog_posthoc(res, df_original, dv, between, alpha)
+                fallback_posthoc = self._freedman_lane_dialog_posthoc(res, df_original, dv, between, alpha, payload.get("custom_pairs_callback"))
 
             updates: dict[str, Any] = {}
             warnings_list = list(res.get("warnings", []))
@@ -298,27 +300,19 @@ class AdvancedPostHocEngine:
         return specs
 
     @staticmethod
-    def _select_comparisons_dialog(all_pairs):
-        """Show the ComparisonSelectionDialog and return the chosen pairs.
+    def _select_comparisons_dialog(all_pairs, custom_pairs_callback=None):
+        """Invoke custom_pairs_callback or return all_pairs if not provided.
 
         Headless / cancelled / error -> return ``all_pairs`` unchanged, preserving
         the non-interactive all-candidates behaviour.
         """
         try:
-            import sys
-            from PyQt5.QtWidgets import QApplication
-            from ui.dialogs.comparison_selection_dialog import ComparisonSelectionDialog
-
-            app = QApplication.instance()
-            if app is None:
-                app = QApplication(sys.argv)
-            dialog = ComparisonSelectionDialog(all_pairs, checked_by_default=True)
-            if dialog.exec_() == dialog.Accepted:
-                chosen = dialog.get_selected_comparisons()
+            if custom_pairs_callback:
+                chosen = custom_pairs_callback(all_pairs, True)
                 return chosen if chosen else all_pairs
             return all_pairs
         except Exception as exc:
-            logger.warning("Could not show Freedman-Lane comparison dialog: %s", exc)
+            logger.warning("Could not run custom_pairs_callback: %s", exc)
             return all_pairs
 
     @staticmethod
@@ -363,7 +357,7 @@ class AdvancedPostHocEngine:
             "posthoc_test": "Pairwise Mann-Whitney U (marginal / cell simple effects, Holm-corrected)",
         }
 
-    def _freedman_lane_dialog_posthoc(self, res, df_original, dv, between, alpha):
+    def _freedman_lane_dialog_posthoc(self, res, df_original, dv, between, alpha, custom_pairs_callback=None):
         """Dialog-driven pairwise MWU post-hoc for the Freedman-Lane fallback.
 
         Builds the significance-gated candidate set, lets the user pick a subset
@@ -373,7 +367,7 @@ class AdvancedPostHocEngine:
         if not specs:
             return {"pairwise_comparisons": [], "posthoc_test": "No applicable post-hoc comparisons"}
         all_pairs = [(s[0], s[1]) for s in specs]
-        selected_pairs = self._select_comparisons_dialog(all_pairs)
+        selected_pairs = self._select_comparisons_dialog(all_pairs, custom_pairs_callback)
         return self._freedman_lane_compute(specs, selected_pairs, df_original, dv, between, alpha)
 
     @staticmethod
@@ -488,7 +482,7 @@ class AdvancedPostHocEngine:
             "posthoc_test": "Pairwise Wilcoxon / Mann-Whitney U (within / between simple effects, Holm-corrected)",
         }
 
-    def _brunner_langer_dialog_posthoc(self, res, df_original, dv, between, within, subject, alpha):
+    def _brunner_langer_dialog_posthoc(self, res, df_original, dv, between, within, subject, alpha, custom_pairs_callback=None):
         """Dialog-driven pairwise post-hoc for the Brunner-Langer ATS fallback.
 
         Builds the significance-gated candidate set, lets the user pick a subset
@@ -499,7 +493,7 @@ class AdvancedPostHocEngine:
         if not specs:
             return {"pairwise_comparisons": [], "posthoc_test": "No applicable post-hoc comparisons"}
         all_pairs = [(s[0], s[1]) for s in specs]
-        selected_pairs = self._select_comparisons_dialog(all_pairs)
+        selected_pairs = self._select_comparisons_dialog(all_pairs, custom_pairs_callback)
         return self._brunner_langer_compute(
             specs, selected_pairs, df_original, dv, between, within, subject, alpha
         )

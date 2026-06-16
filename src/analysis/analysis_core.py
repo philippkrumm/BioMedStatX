@@ -844,6 +844,34 @@ class AnalysisManager:
                         analysis_log += "\nAnalysis continues with warning, results may be unreliable."
                         
 
+            # Define UI callbacks for advanced post-hoc engine to preserve headless compute
+            def _posthoc_cb(test_name, dv_col, def_method):
+                from analysis.stats_functions import UIDialogManager
+                return UIDialogManager.select_posthoc_test_dialog(
+                    parent=None, progress_text=f"({test_name})", column_name=dv_col, default_method=def_method
+                )
+
+            def _control_cb(group_list):
+                from analysis.stats_functions import UIDialogManager
+                return UIDialogManager.select_control_group_dialog(parent=None, groups=group_list)
+
+            def _custom_pairs_cb(all_pairs, checked_default=False):
+                try:
+                    import sys
+                    from PyQt5.QtWidgets import QApplication
+                    from ui.dialogs.comparison_selection_dialog import ComparisonSelectionDialog
+                    app = QApplication.instance()
+                    if app is None:
+                        app = QApplication(sys.argv)
+                    dialog = ComparisonSelectionDialog(all_pairs, checked_by_default=checked_default)
+                    if dialog.exec_() == dialog.Accepted:
+                        chosen = dialog.get_selected_comparisons()
+                        return chosen if chosen else all_pairs
+                    return all_pairs
+                except Exception as exc:
+                    logger.warning("Could not show custom pairs dialog: %s", exc)
+                    return all_pairs
+
             # Perform the appropriate statistical test - only call ONCE
             if kwargs.get('test') == 'mixed_anova':
                 additional_factors = kwargs.get('additional_factors', [])
@@ -873,7 +901,10 @@ class AnalysisManager:
                     test_info=prep["test_info"],
                     transform_fn=None,
                     force_parametric=kwargs.get('force_parametric', False),
-                    file_name=file_name
+                    file_name=file_name,
+                    posthoc_method_callback=_posthoc_cb,
+                    control_group_callback=_control_cb,
+                    custom_pairs_callback=_custom_pairs_cb
                 )
                 # Get the transformation type from the test_info
                 requested_transform = prep["test_info"].get("transformation", "None")
@@ -908,7 +939,10 @@ class AnalysisManager:
                     test_info=prep["test_info"],
                     transform_fn=None,
                     force_parametric=kwargs.get('force_parametric', False),
-                    file_name=file_name
+                    file_name=file_name,
+                    posthoc_method_callback=_posthoc_cb,
+                    control_group_callback=_control_cb,
+                    custom_pairs_callback=_custom_pairs_cb
                 )
                 # Get the transformation type from the test_info
                 requested_transform = prep["test_info"].get("transformation", "None")
@@ -948,7 +982,10 @@ class AnalysisManager:
                     test_info=prep["test_info"],
                     transform_fn=None,
                     force_parametric=kwargs.get('force_parametric', False),
-                    file_name=file_name
+                    file_name=file_name,
+                    posthoc_method_callback=_posthoc_cb,
+                    control_group_callback=_control_cb,
+                    custom_pairs_callback=_custom_pairs_cb
                 )
                 # Get the transformation type from the test_info
                 requested_transform = prep["test_info"].get("transformation", "None")

@@ -160,6 +160,7 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
             "decision_path_json": json.dumps(decision_path, ensure_ascii=False),
             "statistical_rows": metrics,
             "assumptions": assumptions,
+            "sphericity_correction_note": assumptions.get("sphericity_correction_note"),
             "descriptive": descriptive,
             "pairwise_rows": pairwise,
             "bracket_data_json": json.dumps(bracket_data, ensure_ascii=False),
@@ -234,6 +235,7 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
                 "pairwise_count": len(r.get("pairwise_comparisons") or []),
                 "summary_note": hero["summary_note"],
                 "assumptions": assumptions,
+                "sphericity_correction_note": assumptions.get("sphericity_correction_note"),
                 # detail fields
                 "stat_rows": stat_rows,
                 "decision_path": decision_path,

@@ -1244,7 +1244,10 @@ class StatisticalTester:
         df, test, dv, subject, between=None, within=None, alpha=0.05,
         transformed_samples=None, recommendation=None, test_info=None,
         transform_fn=None, force_parametric=False, file_name=None, manual_transform=None,
-        analysis_log=None  # Add this parameter
+        analysis_log=None,
+        posthoc_method_callback=None,
+        control_group_callback=None,
+        custom_pairs_callback=None
     ):
         return perform_advanced_test_pipeline(
             df=df,
@@ -1262,6 +1265,9 @@ class StatisticalTester:
             file_name=file_name,
             manual_transform=manual_transform,
             analysis_log=analysis_log,
+            posthoc_method_callback=posthoc_method_callback,
+            control_group_callback=control_group_callback,
+            custom_pairs_callback=custom_pairs_callback,
         )
 
     @staticmethod
@@ -1560,7 +1566,8 @@ class StatisticalTester:
                     else:
                         results.setdefault("warnings", []).append(f"No result for factor '{factor}' found in Mixed-ANOVA.")
                 
-                interaction_name = f"{rm_factor} * {between_factor}"
+                # In Pingouin, the interaction source is always literally "Interaction"
+                interaction_name = "Interaction"
                 mask_int = aov["Source"] == interaction_name
                 if mask_int.any():
                     row = aov.loc[mask_int].iloc[0]
