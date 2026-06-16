@@ -205,8 +205,8 @@ class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
         graph_vis_action.triggered.connect(self.show_graph_visualization_help)
         help_menu.addAction(graph_vis_action)
 
-        # New: Statistical Tests & Excel Export help
-        stats_excel_action = QAction('Statistical Tests && Excel Export', self)
+        # New: Statistical Tests & HTML Report help
+        stats_excel_action = QAction('Statistical Tests && HTML Report', self)
         stats_excel_action.triggered.connect(self.show_statistical_tests_excel_help)
         help_menu.addAction(stats_excel_action)
 
@@ -332,13 +332,13 @@ class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
         from PyQt5.QtWidgets import QDialog, QVBoxLayout, QTextBrowser, QPushButton
         dlg = QDialog(self)
         _configure_dialog(dlg, object_name="statsExcelHelpDialog")
-        dlg.setWindowTitle("Statistical Tests & Excel Export")
+        dlg.setWindowTitle("Statistical Tests & HTML Report")
         dlg.resize(900, 600)
         layout = QVBoxLayout(dlg)
         browser = QTextBrowser()
         browser.setObjectName("helpDialogBrowser")
         browser.setHtml("""
-            <h3>Statistical Tests & Excel Export</h3>
+            <h3>Statistical Tests & HTML Report</h3>
             <ul>
                 <li><b>How does the program select the test?</b>
                     <ul>
@@ -373,12 +373,12 @@ class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
                         <li>Key statistics (means, standard deviations, test statistics) are clearly displayed.</li>
                     </ul>
                 </li>
-                <li><b>Excel Export:</b>
+                <li><b>HTML Report Export:</b>
                     <ul>
-                        <li>Results are written to an Excel workbook with separate worksheets for each analysis.</li>
-                        <li>Sheet names reflect the test or plot type (e.g. "ANOVA Results", "Pairwise Comparisons").</li>
-                        <li>Each sheet contains clear columns: group names, means, test statistics, p-values, and significance markers.</li>
-                        <li>Open the exported file in Excel to review, print, or share results. Use the tabs to switch between analyses.</li>
+                        <li>Results are written to a self-contained HTML report covering each analysis.</li>
+                        <li>Sections reflect the test or plot type (e.g. "ANOVA Results", "Pairwise Comparisons").</li>
+                        <li>Each section shows group names, means, test statistics, p-values, and significance markers.</li>
+                        <li>Open the report in any web browser to review, print, or share results.</li>
                     </ul>
                 </li>
             </ul>

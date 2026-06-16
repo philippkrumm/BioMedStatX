@@ -322,8 +322,8 @@ class ColumnSelectionDialog(QDialog):
         layout.addWidget(label)
         
         # NEW OPTION: Multi-dataset analysis
-        self.multi_dataset_check = QCheckBox("Separate analysis per dataset with shared Excel file")
-        self.multi_dataset_check.setToolTip("Analyzes each dataset separately, but combines all results in a shared Excel file")
+        self.multi_dataset_check = QCheckBox("Separate analysis per dataset with shared HTML report")
+        self.multi_dataset_check.setToolTip("Analyzes each dataset separately, but combines all results in a shared HTML report")
         layout.addWidget(self.multi_dataset_check)
         
         # Checkboxes for each column
@@ -731,7 +731,7 @@ class OutlierDetectionDialog(QDialog):
         # File path selection
         file_layout = QHBoxLayout()
         file_label = QLabel("Output File:")
-        self.file_path_label = QLabel("outlier_analysis_results.xlsx")
+        self.file_path_label = QLabel("outlier_analysis_results.html")
         browse_button = QPushButton("Browse...")
         browse_button.clicked.connect(self.browse_output_file)
         
@@ -771,11 +771,13 @@ class OutlierDetectionDialog(QDialog):
         """Browse for output file location"""
         file_path, _ = QFileDialog.getSaveFileName(
             self, 
-            "Save Outlier Analysis Results", 
-            "outlier_analysis_results.xlsx",
-            "Excel Files (*.xlsx);;All Files (*)"
+            "Save Outlier Analysis Results",
+            "outlier_analysis_results.html",
+            "HTML Report (*.html);;All Files (*)"
         )
         if file_path:
+            if not file_path.lower().endswith(".html"):
+                file_path += ".html"
             self.file_path_label.setText(file_path)
     
     def get_config(self):
@@ -819,7 +821,7 @@ class ExploratoryMatrixDialog(QDialog):
 
     Lets the user select variables, choose correlation method and missing-data
     handling, apply multiple-testing correction, and optionally stratify by a
-    categorical column.  Results are exported to Excel.
+    categorical column.  Results are exported as an HTML report.
     """
 
     def __init__(self, df, output_dir=None, parent=None):
@@ -939,11 +941,11 @@ class ExploratoryMatrixDialog(QDialog):
                              stratify_by=stratify_by)
             results = matrix_model.as_results_dict()
 
-            # Export to Excel
+            # Export as HTML report
             import os
             from export.export_dispatcher import ExportDispatcher
             out_file = os.path.join(self.output_dir,
-                                    "exploratory_correlation_matrix.xlsx")
+                                    "exploratory_correlation_matrix.html")
             results["pairwise_comparisons"] = []
             export_result = ExportDispatcher.export_analysis_results(results, out_file)
             if export_result.get("warning"):
