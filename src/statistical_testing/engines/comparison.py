@@ -140,6 +140,8 @@ class ComparisonEngine:
                 raise ValueError("Pingouin ANOVA returned empty table")
 
             row_between = aov.iloc[0]
+            df1 = row_between["DF"] if "DF" in row_between.index else None
+            results["df1"] = int(df1) if pd.notnull(df1) else (len(groups) - 1)
             if len(aov) > 1:
                 row_residual = aov.iloc[1]
                 df2 = row_residual["DF"]
@@ -168,6 +170,8 @@ class ComparisonEngine:
             results["test"] = "One-way ANOVA (SciPy)"
             results["p_value"] = float(pval)
             results["statistic"] = float(teststat)
+            results["df1"] = len(groups) - 1
+            results["df2"] = sum(len(samples[g]) for g in groups) - len(groups)
 
             all_data = np.concatenate([samples[g] for g in groups])
             grand_mean = np.mean(all_data)
