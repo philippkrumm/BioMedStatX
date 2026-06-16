@@ -7,6 +7,9 @@ from scipy.stats import t
 
 from core.lazy_imports import get_seaborn
 
+import logging
+logger = logging.getLogger(__name__)
+
 OUTLIER_IMPORTS_AVAILABLE = True
 try:
     import matplotlib.pyplot as plt
@@ -35,8 +38,8 @@ class OutlierDetector:
         value_col : str
             Name of the values column
         """
-        print(f"DEBUG: Initializing OutlierDetector with columns: group_col={group_col}, value_col={value_col}")
-        print(f"DEBUG: DataFrame shape: {df.shape}, columns: {df.columns.tolist()}")
+        logger.debug(f"DEBUG: Initializing OutlierDetector with columns: group_col={group_col}, value_col={value_col}")
+        logger.debug(f"DEBUG: DataFrame shape: {df.shape}, columns: {df.columns.tolist()}")
         
         if not OUTLIER_IMPORTS_AVAILABLE:
             raise ImportError("Required packages for outlier detection are not available. "
@@ -379,7 +382,7 @@ class OutlierDetector:
             os.makedirs(out_dir, exist_ok=True)
         export_single(self, output_path)
         self.debug_log.append(f"Results saved to: {output_path}")
-        print(f"Outlier report saved to: {output_path}")
+        logger.info(f"Outlier report saved to: {output_path}")
         return output_path
 
     def get_summary(self):
@@ -451,10 +454,10 @@ class OutlierDetector:
         """
         Run outlier detection on multiple datasets (columns) and create a combined HTML report.
         """
-        print(f"DEBUG: Current working directory before export: {os.getcwd()}")
-        print("DEBUG: Starting multi-dataset outlier detection")
-        print(f"DEBUG: Datasets to analyze: {dataset_columns}")
-        print(f"DEBUG: Group column: {group_col}")
+        logger.debug(f"DEBUG: Current working directory before export: {os.getcwd()}")
+        logger.debug("DEBUG: Starting multi-dataset outlier detection")
+        logger.debug(f"DEBUG: Datasets to analyze: {dataset_columns}")
+        logger.debug(f"DEBUG: Group column: {group_col}")
         
         all_results = {}
         failed_datasets = {}
@@ -465,7 +468,7 @@ class OutlierDetector:
         try:
             # Analyze each dataset
             for i, dataset_col in enumerate(dataset_columns):
-                print(f"DEBUG: Analyzing dataset {i+1}/{len(dataset_columns)}: {dataset_col}")
+                logger.debug(f"DEBUG: Analyzing dataset {i+1}/{len(dataset_columns)}: {dataset_col}")
                 
                 try:
                     # Create detector for this dataset
@@ -477,11 +480,11 @@ class OutlierDetector:
                     
                     # Run requested tests
                     if run_grubbs:
-                        print(f"DEBUG: Running Grubbs test for {dataset_col}")
+                        logger.debug(f"DEBUG: Running Grubbs test for {dataset_col}")
                         detector.run_grubbs(alpha=grubbs_alpha, iterate=iterate)
                     
                     if run_modz:
-                        print(f"DEBUG: Running Modified Z-Score test for {dataset_col}")
+                        logger.debug(f"DEBUG: Running Modified Z-Score test for {dataset_col}")
                         detector.run_mod_z_score(threshold=modz_threshold, iterate=iterate)
                     
                     # Store results
@@ -490,17 +493,17 @@ class OutlierDetector:
                         'summary': detector.get_summary()
                     }
                     
-                    print(f"DEBUG: Successfully analyzed {dataset_col}")
+                    logger.debug(f"DEBUG: Successfully analyzed {dataset_col}")
                     
                 except Exception as e:
                     error_msg = f"Error analyzing {dataset_col}: {str(e)}"
                     failed_datasets[dataset_col] = error_msg
-                    print(f"DEBUG: ERROR: {error_msg}")
+                    logger.debug(f"DEBUG: ERROR: {error_msg}")
                         
             # Write the combined HTML report
             from export.outlier_html_exporter import export_multi
             export_multi(all_results, failed_datasets, dataset_columns, output_path)
-            print(f"DEBUG: Combined results saved to: {output_path}")
+            logger.debug(f"DEBUG: Combined results saved to: {output_path}")
 
             # Return summary
             return {
@@ -518,5 +521,5 @@ class OutlierDetector:
             
         except Exception as e:
             error_msg = f"Critical error in multi-dataset analysis: {str(e)}"
-            print(f"DEBUG: CRITICAL ERROR: {error_msg}")
+            logger.debug(f"DEBUG: CRITICAL ERROR: {error_msg}")
             raise RuntimeError(error_msg)

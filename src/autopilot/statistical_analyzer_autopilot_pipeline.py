@@ -54,6 +54,9 @@ from autopilot.statistical_analyzer_autopilot_ui import (
 from analysis.statisticaltester import StatisticalTester
 from analysis.stats_functions import AnalysisManager
 
+import logging
+logger = logging.getLogger(__name__)
+
 DEFAULT_COLORS = ["#0f766e", "#1f7a5a", "#b7791f", "#9f3a38", "#1d4ed8", "#7c3aed"]
 DEFAULT_HATCHES = ["/", "\\", "|", "-", "+", "x", "o", ".", "*", ""]
 
@@ -844,7 +847,7 @@ def _ap_on_mapping_changed(self):
         is_corr_family = context.get("is_corr_family", False)
     except Exception as _ctx_err:
         import traceback
-        print(f"DEBUG _ap_on_mapping_changed context error: {_ctx_err}")
+        logger.debug(f"DEBUG _ap_on_mapping_changed context error: {_ctx_err}")
         traceback.print_exc()
         # Fallback: check directly whether the single factor looks continuous
         try:
@@ -1339,7 +1342,7 @@ def _ap_execute_single_analysis(self, context, dv_column, output_dir, skip_plots
                 with open(html_path, "w", encoding="utf-8") as _fh:
                     _fh.write(html_content)
             except Exception as _exc:
-                print(f"WARNING: Could not inject provenance into HTML: {_exc}")
+                logger.warning(f"WARNING: Could not inject provenance into HTML: {_exc}")
 
     return result
 
@@ -1722,7 +1725,7 @@ def _ap_determine_and_run_test(self):
             combined_report = ap_file_path
             export_result = ExportDispatcher.export_multi_dataset_results(all_results, combined_report)
             if export_result.get("warning"):
-                print(f"WARNING: {export_result['warning']}")
+                logger.warning(f"WARNING: {export_result['warning']}")
 
             lead_dv = context["dv_columns"][0]
             lead_result = all_results[lead_dv]

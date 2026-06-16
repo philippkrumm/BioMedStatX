@@ -34,11 +34,14 @@ from PyQt5.QtWidgets import (
 
 from analysis.stats_functions import OUTLIER_IMPORTS_AVAILABLE
 
+import logging
+logger = logging.getLogger(__name__)
+
 try:
     from core.help_content import HELP_RECIPES
 except ImportError as e:
     HELP_RECIPES = []
-    print(f"Warning: help content not available: {e}")
+    logger.info(f"Warning: help content not available: {e}")
 
 
 def _configure_dialog(dialog, object_name=None, remove_context_help=True):
@@ -949,7 +952,7 @@ class ExploratoryMatrixDialog(QDialog):
             results["pairwise_comparisons"] = []
             export_result = ExportDispatcher.export_analysis_results(results, out_file)
             if export_result.get("warning"):
-                print(f"WARNING: {export_result['warning']}")
+                logger.warning(f"WARNING: {export_result['warning']}")
 
             self._status_label.setText(
                 f"Done! Saved to:\n{out_file}"

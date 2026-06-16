@@ -57,6 +57,9 @@ from PyQt5.QtWidgets import QApplication
 import time
 from contextlib import contextmanager
 
+import logging
+logger = logging.getLogger(__name__)
+
 @contextmanager
 def working_directory(path):
     """Context manager for safely changing directories"""
@@ -67,7 +70,7 @@ def working_directory(path):
     finally:
         os.chdir(previous_dir)
 
-print(f"DEBUG: RUNNING FILE VERSION FROM {time.time()} - {os.path.abspath(__file__)}")
+logger.debug(f"DEBUG: RUNNING FILE VERSION FROM {time.time()} - {os.path.abspath(__file__)}")
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
@@ -186,11 +189,11 @@ class AssumptionVisualizer:
             fig.savefig(temp_path, dpi=300, bbox_inches=None, facecolor='white', pad_inches=0.2)
             plt.close(fig)
             
-            print(f"DEBUG: Generated normality plot: {temp_path}")
+            logger.debug(f"DEBUG: Generated normality plot: {temp_path}")
             return temp_path
             
         except Exception as e:
-            print(f"DEBUG: Error creating normality plot: {str(e)}")
+            logger.debug(f"DEBUG: Error creating normality plot: {str(e)}")
             import traceback
             traceback.print_exc()
             return None
@@ -295,11 +298,11 @@ class AssumptionVisualizer:
             fig.savefig(temp_path, dpi=300, bbox_inches=None, facecolor='white', pad_inches=0.2)
             plt.close(fig)
             
-            print(f"DEBUG: Generated homoscedasticity plot: {temp_path}")
+            logger.debug(f"DEBUG: Generated homoscedasticity plot: {temp_path}")
             return temp_path
             
         except Exception as e:
-            print(f"DEBUG: Error creating homoscedasticity plot: {str(e)}")
+            logger.debug(f"DEBUG: Error creating homoscedasticity plot: {str(e)}")
             import traceback
             traceback.print_exc()
             return None
@@ -336,7 +339,7 @@ class AssumptionVisualizer:
             # Get original data
             raw_data = results.get('raw_data', results.get('original_data', {}))
             if not raw_data:
-                print("DEBUG: No raw data found for assumption plots")
+                logger.debug("DEBUG: No raw data found for assumption plots")
                 return plot_paths
             
             # Get transformation info
@@ -348,39 +351,39 @@ class AssumptionVisualizer:
             
             # Generate BEFORE transformation plots
             if raw_data_filtered:
-                print(f"DEBUG: Generating BEFORE plots for {len(raw_data_filtered)} groups: {list(raw_data_filtered.keys())}")
+                logger.debug(f"DEBUG: Generating BEFORE plots for {len(raw_data_filtered)} groups: {list(raw_data_filtered.keys())}")
                 plot_paths['normality_before'] = AssumptionVisualizer.create_normality_plot(
                     raw_data_filtered, " - Before Transformation" if transformation and transformation.lower() != 'none' else "",
                     results=results
                 )
-                print(f"DEBUG: Q-Q plot BEFORE path: {plot_paths['normality_before']}")
+                logger.debug(f"DEBUG: Q-Q plot BEFORE path: {plot_paths['normality_before']}")
                 
                 plot_paths['homoscedasticity_before'] = AssumptionVisualizer.create_homoscedasticity_plot(
                     raw_data_filtered, " - Before Transformation" if transformation and transformation.lower() != 'none' else ""
                 )
-                print(f"DEBUG: Boxplot BEFORE path: {plot_paths['homoscedasticity_before']}")
+                logger.debug(f"DEBUG: Boxplot BEFORE path: {plot_paths['homoscedasticity_before']}")
             else:
-                print("DEBUG: No valid raw data found after filtering")
+                logger.debug("DEBUG: No valid raw data found after filtering")
             
             # Generate AFTER transformation plots (if transformation was applied)
             if transformed_data and transformation and transformation.lower() != 'none':
                 transformed_filtered = {k: v for k, v in transformed_data.items() if str(k).lower() not in ['group', 'sample', '']}
                 if transformed_filtered:
-                    print(f"DEBUG: Generating AFTER plots for {len(transformed_filtered)} groups: {list(transformed_filtered.keys())}")
+                    logger.debug(f"DEBUG: Generating AFTER plots for {len(transformed_filtered)} groups: {list(transformed_filtered.keys())}")
                     plot_paths['normality_after'] = AssumptionVisualizer.create_normality_plot(
                         transformed_filtered, " - After Transformation", transformation, results=results
                     )
                     plot_paths['homoscedasticity_after'] = AssumptionVisualizer.create_homoscedasticity_plot(
                         transformed_filtered, " - After Transformation", transformation
                     )
-                    print(f"DEBUG: Q-Q plot AFTER path: {plot_paths['normality_after']}")
-                    print(f"DEBUG: Boxplot AFTER path: {plot_paths['homoscedasticity_after']}")
+                    logger.debug(f"DEBUG: Q-Q plot AFTER path: {plot_paths['normality_after']}")
+                    logger.debug(f"DEBUG: Boxplot AFTER path: {plot_paths['homoscedasticity_after']}")
             
             
             return plot_paths
             
         except Exception as e:
-            print(f"DEBUG: Error generating assumption plots: {str(e)}")
+            logger.debug(f"DEBUG: Error generating assumption plots: {str(e)}")
             import traceback
             traceback.print_exc()
             return plot_paths
@@ -434,7 +437,7 @@ class DataImporter:
                 samples[group] = combined_values
         else:  # if combine_columns=False
             if len(value_cols) > 1:
-                print("Warning: Multiple value columns specified, but combine_columns=False. Only the first column will be used.")
+                logger.info("Warning: Multiple value columns specified, but combine_columns=False. Only the first column will be used.")
             
             for group in groups:
                 values = df[df[group_col] == group][value_cols[0]].dropna().tolist()

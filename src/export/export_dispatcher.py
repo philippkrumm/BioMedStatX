@@ -1,6 +1,9 @@
 import os
 from pathlib import Path
 
+import logging
+logger = logging.getLogger(__name__)
+
 
 class ExportDispatcher:
     @staticmethod
@@ -14,7 +17,7 @@ class ExportDispatcher:
             from visualization.decisiontreevisualizer import DecisionTreeVisualizer
             tree_path = DecisionTreeVisualizer.generate_and_save_for_excel(results)
         except Exception as exc:
-            print(f"WARNING EXPORT DISPATCHER: Decision tree pre-generation failed: {exc}")
+            logger.warning(f"WARNING EXPORT DISPATCHER: Decision tree pre-generation failed: {exc}")
 
         html_result = None
         warning = None
@@ -30,7 +33,7 @@ class ExportDispatcher:
                     warning = f"HTML report export failed for '{html_path.name}'."
             except Exception as exc:
                 warning = f"HTML report export failed for '{html_path.name}': {exc}"
-                print(f"WARNING EXPORT DISPATCHER: {warning}")
+                logger.warning(f"WARNING EXPORT DISPATCHER: {warning}")
         finally:
             if tree_path and os.path.exists(tree_path):
                 try:
@@ -59,7 +62,7 @@ class ExportDispatcher:
                 warning = f"HTML overview export failed for '{html_path.name}'."
         except Exception as exc:
             warning = f"HTML overview export failed for '{html_path.name}': {exc}"
-            print(f"WARNING EXPORT DISPATCHER: {warning}")
+            logger.warning(f"WARNING EXPORT DISPATCHER: {warning}")
 
         return {
             "html_path": html_result,

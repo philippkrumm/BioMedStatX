@@ -14,6 +14,9 @@ import re
 import numpy as np
 import pandas as pd
 
+import logging
+logger = logging.getLogger(__name__)
+
 
 def _sanitize_columns(df, columns):
     """Rename columns with special characters so patsy can parse them.
@@ -222,7 +225,7 @@ class ANCOVAModel:
                             "ci_upper": float(fit_centered.conf_int().loc[param, 1]),
                         })
             except Exception as e:
-                print(f"Error in simple slopes at {label}: {e}")
+                logger.error(f"Error in simple slopes at {label}: {e}")
 
         # 2. Johnson-Neyman Interval
         jn_result = None
@@ -296,7 +299,7 @@ class ANCOVAModel:
                             "covariate_max": cov_max,
                         }
             except Exception as e:
-                print(f"Error calculating Johnson-Neyman: {e}")
+                logger.error(f"Error calculating Johnson-Neyman: {e}")
                 
         return {
             "simple_slopes": simple_slopes,
@@ -466,7 +469,7 @@ class LinearMixedModel:
                         self.result = fit_ri
                         self._random_structure_chosen = "Random Intercept Only"
             except Exception as e:
-                print(f"LMM fit with random slope failed/did not converge: {e}. Falling back to Random Intercept only.")
+                logger.info(f"LMM fit with random slope failed/did not converge: {e}. Falling back to Random Intercept only.")
                 self.result = fit_ri
                 self._random_structure_chosen = "Random Intercept Only (Fallback)"
 
@@ -691,7 +694,7 @@ class LogisticRegressionModel:
                     except Exception:
                         pass  # odds_ratios falls back to Wald for this parameter
             except Exception as e:
-                print(f"WARNING: Firth solver failed/did not converge: {e}. Keeping standard logit results.")
+                logger.warning(f"WARNING: Firth solver failed/did not converge: {e}. Keeping standard logit results.")
 
         return self
 
@@ -1021,7 +1024,7 @@ class LogisticRegressionModel:
                 "calibration_curve": calibration_curve
             }
         except Exception as e:
-            print(f"Error in calibration_analysis: {e}")
+            logger.error(f"Error in calibration_analysis: {e}")
             return {
                 "brier_score": None,
                 "calibration_slope": None,

@@ -7,6 +7,9 @@ import sys
 import importlib
 from typing import Any, Dict, Optional
 
+import logging
+logger = logging.getLogger(__name__)
+
 class LazyImportManager:
     """Manages lazy loading of heavy modules to improve startup performance"""
     
@@ -136,13 +139,13 @@ def get_statsmodels_multitest():
             # Return format: (reject, pvals_corrected, alphacSidak, alphacBonf)
             return reject, pvals_corrected, alpha, alphacBonf
         
-        print("\n" + "="*80)
-        print("⚠️  WARNING: STATSMODELS IS NOT AVAILABLE!")
-        print("="*80)
-        print("The program will now use a simple Bonferroni fallback.")
-        print("For improved statistical corrections, install statsmodels:")
-        print("   pip install statsmodels")
-        print("="*80 + "\n")
+        logger.info("\n" + "="*80)
+        logger.info("⚠️  WARNING: STATSMODELS IS NOT AVAILABLE!")
+        logger.info("="*80)
+        logger.info("The program will now use a simple Bonferroni fallback.")
+        logger.info("For improved statistical corrections, install statsmodels:")
+        logger.info("   pip install statsmodels")
+        logger.info("="*80 + "\n")
         return multipletests_fallback
 
 # Pre-populate commonly used imports at startup if desired

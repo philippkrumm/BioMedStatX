@@ -35,6 +35,9 @@ from __future__ import annotations
 import os
 import tempfile
 
+import logging
+logger = logging.getLogger(__name__)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -132,7 +135,7 @@ class FlowchartVisualizer:
         except Exception as exc:
             import traceback
             traceback.print_exc()
-            print(f"WARNING FlowchartVisualizer.get_tree_json: {exc}")
+            logger.warning(f"WARNING FlowchartVisualizer.get_tree_json: {exc}")
             return None
 
     @staticmethod
@@ -281,7 +284,7 @@ class FlowchartVisualizer:
         except Exception as exc:
             import traceback
             traceback.print_exc()
-            print(f"FlowchartVisualizer.visualize error: {exc}")
+            logger.info(f"FlowchartVisualizer.visualize error: {exc}")
             return None
 
     @staticmethod
@@ -292,7 +295,7 @@ class FlowchartVisualizer:
                 base_path = tmp.name.replace(".png", "")
             return FlowchartVisualizer.visualize(results, output_path=base_path)
         except Exception as exc:
-            print(f"FlowchartVisualizer.generate_and_save_for_excel error: {exc}")
+            logger.info(f"FlowchartVisualizer.generate_and_save_for_excel error: {exc}")
             return None
 
     # ------------------------------------------------------------------

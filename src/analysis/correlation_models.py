@@ -15,6 +15,9 @@ import numpy as np
 import pandas as pd
 from scipy import stats as scipy_stats
 
+import logging
+logger = logging.getLogger(__name__)
+
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -582,7 +585,7 @@ class SimpleLinearRegressionModel:
                 self.result = self.result.get_robustcov_results(cov_type='HC3')
                 self._cov_type = "HC3"
             except Exception as exc:
-                print(f"WARNING: Failed to apply HC3 covariance: {exc}")
+                logger.warning(f"WARNING: Failed to apply HC3 covariance: {exc}")
 
         return self
 

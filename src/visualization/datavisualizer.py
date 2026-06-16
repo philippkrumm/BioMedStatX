@@ -9,6 +9,9 @@ import os
 from scipy.stats import ttest_ind, mannwhitneyu
 from matplotlib.ticker import ScalarFormatter, FuncFormatter
 
+import logging
+logger = logging.getLogger(__name__)
+
 def _lazy_get_output_path():
     try:
         from analysis.stats_functions import get_output_path
@@ -51,7 +54,7 @@ class FontManager:
         fallbacks = ['Arial', 'DejaVu Sans', 'Helvetica', 'sans-serif']
         for fallback in fallbacks:
             if fallback in available_fonts:
-                print(f"Font '{font_family}' not found, using '{fallback}' instead")
+                logger.info(f"Font '{font_family}' not found, using '{fallback}' instead")
                 return fallback
                 
         return 'sans-serif'  # Letzter Fallback
@@ -105,7 +108,7 @@ class FontManager:
                 plt.rcParams['font.family'] = validated_font
                 
         except Exception as e:
-            print(f"Warning: Could not apply font '{font_family}': {e}")
+            logger.info(f"Warning: Could not apply font '{font_family}': {e}")
             # Fallback: Versuche Standard-Font
             try:
                 plt.rcParams['font.family'] = 'Arial'
@@ -178,7 +181,7 @@ class StylingManager:
                     sns.set_palette(palette)
                 
         except Exception as e:
-            print(f"Warning: Seaborn styling failed: {e}")
+            logger.info(f"Warning: Seaborn styling failed: {e}")
     
     @staticmethod
     def _apply_manual_overrides(ax, config):
@@ -235,7 +238,7 @@ class StylingManager:
             ax.spines['left'].set_position(('outward', offset_points))
             ax.spines['bottom'].set_position(('outward', offset_points))
         except Exception as e:
-            print(f"Warning: Could not apply axis offset: {e}")
+            logger.info(f"Warning: Could not apply axis offset: {e}")
     
     @staticmethod
     def _apply_final_styling(ax, config):
@@ -267,7 +270,7 @@ class StylingManager:
             if y_minor:
                 ax.yaxis.set_minor_locator(AutoMinorLocator())
         except Exception as e:
-            print(f"Warning: Could not set minor ticks: {e}")
+            logger.info(f"Warning: Could not set minor ticks: {e}")
 
 
 class DataVisualizer:
@@ -611,19 +614,6 @@ class DataVisualizer:
                    ha='center', va='bottom', fontsize=font_size, 
                    color=bracket_color, fontweight='bold', fontname='Arial')
 
-    @staticmethod  
-    def _add_pairwise_comparisons_legacy(ax, groups, compare, pairwise_results, df=None, line_height=0.1, font_size=14):
-        """
-        Legacy wrapper für Backward-Kompatibilität
-        """
-        config = {
-            'bracket_line_width': 2.0,
-            'bracket_font_size': font_size,
-            'bracket_vertical_fraction': 0.25,
-            'bracket_spacing': line_height,
-            'bracket_color': '#000000'  # Always black
-        }
-        DataVisualizer.add_significance_brackets_advanced(ax, groups, compare, pairwise_results, config, df)
     """Advanced data visualization class with extensive customization options"""
     
     # Default colors for plots
@@ -854,11 +844,11 @@ class DataVisualizer:
             ]):
                 show_letters = False
                 show_bars = True
-                print(f"DEBUG: Using bars for test: {test_name}")
+                logger.debug(f"DEBUG: Using bars for test: {test_name}")
             else:
                 show_letters = True
                 show_bars = False
-                print(f"DEBUG: Using letters for test: {test_name}")
+                logger.debug(f"DEBUG: Using letters for test: {test_name}")
         
         # Fallback auf posthoc_method falls pairwise_results test nicht erkannt wurde
         elif posthoc_method is not None and isinstance(posthoc_method, str):
@@ -869,16 +859,16 @@ class DataVisualizer:
             ]):
                 show_letters = False
                 show_bars = True
-                print(f"DEBUG: Using bars for posthoc_method: {posthoc_method}")
+                logger.debug(f"DEBUG: Using bars for posthoc_method: {posthoc_method}")
             else:
                 show_letters = True
                 show_bars = False
-                print(f"DEBUG: Using letters for posthoc_method: {posthoc_method}")
+                logger.debug(f"DEBUG: Using letters for posthoc_method: {posthoc_method}")
         else:
             # Kein Post-hoc Test: Standard Letters
             show_letters = True
             show_bars = False
-            print("DEBUG: No post-hoc method detected, using letters")
+            logger.debug("DEBUG: No post-hoc method detected, using letters")
         if show_letters and show_significance_letters:
             DataVisualizer._add_significance_letters(
                 ax, df, groups, samples, test_recommendation,
@@ -1073,11 +1063,11 @@ class DataVisualizer:
             ]):
                 show_letters = False
                 show_bars = True
-                print(f"DEBUG: Using bars for test: {test_name}")
+                logger.debug(f"DEBUG: Using bars for test: {test_name}")
             else:
                 show_letters = True
                 show_bars = False
-                print(f"DEBUG: Using letters for test: {test_name}")
+                logger.debug(f"DEBUG: Using letters for test: {test_name}")
         
         # Fallback auf posthoc_method falls pairwise_results test nicht erkannt wurde
         elif posthoc_method is not None and isinstance(posthoc_method, str):
@@ -1088,16 +1078,16 @@ class DataVisualizer:
             ]):
                 show_letters = False
                 show_bars = True
-                print(f"DEBUG: Using bars for posthoc_method: {posthoc_method}")
+                logger.debug(f"DEBUG: Using bars for posthoc_method: {posthoc_method}")
             else:
                 show_letters = True
                 show_bars = False
-                print(f"DEBUG: Using letters for posthoc_method: {posthoc_method}")
+                logger.debug(f"DEBUG: Using letters for posthoc_method: {posthoc_method}")
         else:
             # Kein Post-hoc Test: Standard Letters
             show_letters = True
             show_bars = False
-            print("DEBUG: No post-hoc method detected, using letters")
+            logger.debug("DEBUG: No post-hoc method detected, using letters")
         if show_letters and show_significance_letters:
             DataVisualizer._add_significance_letters(
                 ax, df, groups, samples, test_recommendation,
@@ -1304,11 +1294,11 @@ class DataVisualizer:
             ]):
                 show_letters = False
                 show_bars = True
-                print(f"DEBUG: Using bars for test: {test_name}")
+                logger.debug(f"DEBUG: Using bars for test: {test_name}")
             else:
                 show_letters = True
                 show_bars = False
-                print(f"DEBUG: Using letters for test: {test_name}")
+                logger.debug(f"DEBUG: Using letters for test: {test_name}")
         
         # Fallback auf posthoc_method falls pairwise_results test nicht erkannt wurde
         elif posthoc_method is not None and isinstance(posthoc_method, str):
@@ -1319,16 +1309,16 @@ class DataVisualizer:
             ]):
                 show_letters = False
                 show_bars = True
-                print(f"DEBUG: Using bars for posthoc_method: {posthoc_method}")
+                logger.debug(f"DEBUG: Using bars for posthoc_method: {posthoc_method}")
             else:
                 show_letters = True
                 show_bars = False
-                print(f"DEBUG: Using letters for posthoc_method: {posthoc_method}")
+                logger.debug(f"DEBUG: Using letters for posthoc_method: {posthoc_method}")
         else:
             # Kein Post-hoc Test: Standard Letters
             show_letters = True
             show_bars = False
-            print("DEBUG: No post-hoc method detected, using letters")
+            logger.debug("DEBUG: No post-hoc method detected, using letters")
         if show_letters and show_significance_letters:
             DataVisualizer._add_significance_letters(
                 ax, df, groups, samples, test_recommendation,
@@ -1597,7 +1587,7 @@ class DataVisualizer:
                 ax.spines['left'].set_position(('outward', axis_offset_points))
                 ax.spines['bottom'].set_position(('outward', axis_offset_points))
             except Exception as e:
-                print(f"Warning: Could not offset raincloud axes: {e}")
+                logger.info(f"Warning: Could not offset raincloud axes: {e}")
         
         # Set axis limits - for horizontal plot, x_limits controls value range
         if x_limits:
@@ -1842,7 +1832,7 @@ class DataVisualizer:
                 ax.spines['left'].set_position(('outward', axis_offset_points))
                 ax.spines['bottom'].set_position(('outward', axis_offset_points))
             except Exception as e:
-                print(f"Warning: Could not offset axes in _format_axes: {e}")
+                logger.info(f"Warning: Could not offset axes in _format_axes: {e}")
 
         if axis_break_enabled:
             try:
@@ -1850,7 +1840,7 @@ class DataVisualizer:
                     break_mid = axis_break_start + (axis_break_end - axis_break_start) / 2.0
                     DataVisualizer.add_broken_axis(ax, break_mid)
             except Exception as e:
-                print(f"Warning: Could not render axis break marker: {e}")
+                logger.info(f"Warning: Could not render axis break marker: {e}")
     
     @staticmethod
     def _add_labels(ax, x_label, y_label, title, x_size, y_size, title_size, tick_size, rotation):
@@ -1945,14 +1935,14 @@ class DataVisualizer:
     @staticmethod
     def _save_plot(fig, file_name, groups, formats, dpi):
         """Save plot in multiple formats with absolute paths"""
-        print(f"DEBUG PLOT: _save_plot called")
-        print(f"DEBUG PLOT: Current working directory: {os.getcwd()}")
-        print(f"DEBUG PLOT: file_name = {file_name}")
-        print(f"DEBUG PLOT: formats = {formats}")
+        logger.debug(f"DEBUG PLOT: _save_plot called")
+        logger.debug(f"DEBUG PLOT: Current working directory: {os.getcwd()}")
+        logger.debug(f"DEBUG PLOT: file_name = {file_name}")
+        logger.debug(f"DEBUG PLOT: formats = {formats}")
         
         if file_name is None:
             file_name = "_".join(map(str, groups))
-            print(f"DEBUG PLOT: Generated file_name = {file_name}")
+            logger.debug(f"DEBUG PLOT: Generated file_name = {file_name}")
         
         # Store original directory
         original_dir = os.getcwd()
@@ -1961,24 +1951,24 @@ class DataVisualizer:
         for fmt in formats:
             if fmt == 'pdf':
                 pdf_path = get_output_path(file_name, "pdf")
-                print(f"DEBUG: Attempting to save PDF to: {pdf_path}")
+                logger.debug(f"DEBUG: Attempting to save PDF to: {pdf_path}")
                 fig.savefig(pdf_path, dpi=dpi, bbox_inches='tight', format='pdf')
-                print(f"DEBUG: PDF file exists after save: {os.path.exists(pdf_path)}")
+                logger.debug(f"DEBUG: PDF file exists after save: {os.path.exists(pdf_path)}")
             elif fmt == 'svg':
                 svg_path = get_output_path(file_name, "svg")
-                print(f"DEBUG: Attempting to save SVG to: {svg_path}")
+                logger.debug(f"DEBUG: Attempting to save SVG to: {svg_path}")
                 fig.savefig(svg_path, bbox_inches='tight', format='svg')
-                print(f"DEBUG: SVG file exists after save: {os.path.exists(svg_path)}")
+                logger.debug(f"DEBUG: SVG file exists after save: {os.path.exists(svg_path)}")
             elif fmt == 'png':
                 png_path = get_output_path(file_name, "png")
-                print(f"DEBUG: Attempting to save PNG to: {png_path}")
+                logger.debug(f"DEBUG: Attempting to save PNG to: {png_path}")
                 fig.savefig(png_path, dpi=dpi, bbox_inches='tight', format='png')
-                print(f"DEBUG: PNG file exists after save: {os.path.exists(png_path)}")
+                logger.debug(f"DEBUG: PNG file exists after save: {os.path.exists(png_path)}")
         
         # Restore original directory if it changed
         if os.getcwd() != original_dir:
             os.chdir(original_dir)
-            print(f"DEBUG PLOT: Restored original directory: {original_dir}")
+            logger.debug(f"DEBUG PLOT: Restored original directory: {original_dir}")
 
     @staticmethod
     def _control_ticks_for_many_groups(ax, groups, plot_type):
@@ -2040,7 +2030,7 @@ class DataVisualizer:
                         is_dunnett = True
                         break
         
-        print(f"DEBUG: is_dunnett = {is_dunnett}, control_group = {control_group}")
+        logger.debug(f"DEBUG: is_dunnett = {is_dunnett}, control_group = {control_group}")
         
         # Special handling for Dunnett test
         if is_dunnett and control_group:
@@ -2191,8 +2181,8 @@ class DataVisualizer:
         """Add significance letters with enhanced formatting"""
         try:
             # Debug output
-            print(f"DEBUG: _add_significance_letters called with {len(groups)} groups")
-            print(f"DEBUG: pairwise_results = {pairwise_results}")
+            logger.debug(f"DEBUG: _add_significance_letters called with {len(groups)} groups")
+            logger.debug(f"DEBUG: pairwise_results = {pairwise_results}")
 
             # Always use post-hoc results if available and non-empty
             if pairwise_results is not None:
@@ -2213,17 +2203,17 @@ class DataVisualizer:
                         sort_by=means_dict
                     )
                 else:
-                    print("WARNING: pairwise_results provided but empty; falling back to simple method.")
+                    logger.warning("WARNING: pairwise_results provided but empty; falling back to simple method.")
                     letters = DataVisualizer.get_significance_letters(
                         samples, groups, test_recommendation=test_recommendation
                     )
             else:
-                print("WARNING: pairwise_results is None; falling back to simple method. If post-hoc results are expected, check upstream logic.")
+                logger.warning("WARNING: pairwise_results is None; falling back to simple method. If post-hoc results are expected, check upstream logic.")
                 letters = DataVisualizer.get_significance_letters(
                     samples, groups, test_recommendation=test_recommendation
                 )
 
-            print(f"DEBUG: Generated letters = {letters}")
+            logger.debug(f"DEBUG: Generated letters = {letters}")
             
             y_max = df['Value'].max()
             y_offset = height_offset * y_max
@@ -2244,7 +2234,7 @@ class DataVisualizer:
             # Place letters with enhanced styling
             for i, group in enumerate(groups):
                 letter = letters[group]
-                print(f"DEBUG: Adding letter '{letter}' to group '{group}' at position {i}")
+                logger.debug(f"DEBUG: Adding letter '{letter}' to group '{group}' at position {i}")
                 ax.text(i, bar_heights[i] + y_offset, letter,
                        horizontalalignment='center', 
                        verticalalignment='bottom',
@@ -2255,7 +2245,7 @@ class DataVisualizer:
                                 edgecolor="gray",
                                 alpha=0.8))
         except Exception as e:
-            print(f"Error adding significance letters: {str(e)}")
+            logger.error(f"Error adding significance letters: {str(e)}")
             import traceback
             traceback.print_exc()
 
@@ -2265,29 +2255,29 @@ class DataVisualizer:
         """Add significance letters for horizontal raincloud plots"""
         try:
             # Debug output
-            print(f"DEBUG: _add_significance_letters_raincloud called with {len(groups)} groups")
-            print(f"DEBUG: pairwise_results = {pairwise_results}")
+            logger.debug(f"DEBUG: _add_significance_letters_raincloud called with {len(groups)} groups")
+            logger.debug(f"DEBUG: pairwise_results = {pairwise_results}")
             
             # Always use post-hoc results if available and non-empty
             if pairwise_results is not None:
                 if len(pairwise_results) > 0:
-                    print("DEBUG: Using post-hoc results for raincloud significance letters")
+                    logger.debug("DEBUG: Using post-hoc results for raincloud significance letters")
                     means_dict = {group: np.mean(samples[group]) for group in groups}
                     letters = DataVisualizer.get_significance_letters_from_posthoc(
                         groups, pairwise_results, alpha=0.05, sweep=True, sort_by=means_dict
                     )
                 else:
-                    print("WARNING: pairwise_results provided but empty; falling back to simple method.")
+                    logger.warning("WARNING: pairwise_results provided but empty; falling back to simple method.")
                     letters = DataVisualizer.get_significance_letters(
                         samples, groups, test_recommendation=test_recommendation
                     )
             else:
-                print("WARNING: pairwise_results is None; falling back to simple method. If post-hoc results are expected, check upstream logic.")
+                logger.warning("WARNING: pairwise_results is None; falling back to simple method. If post-hoc results are expected, check upstream logic.")
                 letters = DataVisualizer.get_significance_letters(
                     samples, groups, test_recommendation=test_recommendation
                 )
             
-            print(f"DEBUG: Generated raincloud letters = {letters}")
+            logger.debug(f"DEBUG: Generated raincloud letters = {letters}")
             
             # For horizontal raincloud, find the rightmost x position
             x_positions = []
@@ -2320,7 +2310,7 @@ class DataVisualizer:
                                     edgecolor="gray",
                                     alpha=0.8))
         except Exception as e:
-            print(f"Error adding raincloud significance letters: {str(e)}")
+            logger.error(f"Error adding raincloud significance letters: {str(e)}")
 
     @staticmethod
     def set_global_font(family="Arial", main_text_family="Times New Roman", use_latex=False):
@@ -2878,7 +2868,7 @@ class DataVisualizer:
             if left < right and bottom < top:
                 fig.subplots_adjust(left=left, right=right, bottom=bottom, top=top)
         except Exception as e:
-            print(f"Warning: Could not apply padding: {e}")
+            logger.info(f"Warning: Could not apply padding: {e}")
 
     @staticmethod
     def _apply_grayscale_preview(ax):

@@ -37,15 +37,15 @@ try:
     UPDATE_AVAILABLE = True
 except ImportError:
     UPDATE_AVAILABLE = False
-    print("Warning: Updater module not available")
+    logger.info("Warning: Updater module not available")
 try:
     from core.help_content import HELP_RECIPES
 except ImportError as e:
     HELP_RECIPES = []
-    print(f"Warning: help content not available: {e}")
+    logger.info(f"Warning: help content not available: {e}")
 
 import traceback
-print(f"DEBUG: RUNNING FILE VERSION FROM {time.time()} - {os.path.abspath(__file__)}")
+logger.debug(f"DEBUG: RUNNING FILE VERSION FROM {time.time()} - {os.path.abspath(__file__)}")
 
 def resource_path(relative_path):
     """Get absolute path to resource, works for dev and for PyInstaller"""
@@ -84,6 +84,9 @@ from ui.dialogs.statistical_analyzer_dialogs import (
     OutlierDetectionDialog,
 )
 
+import logging
+logger = logging.getLogger(__name__)
+
 from autopilot.statistical_analyzer_autopilot_pipeline import (
     AutopilotMixin,
     _load_auto_pilot_stylesheet,
@@ -120,11 +123,11 @@ class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
 
             if icon_path:
                 self.setWindowIcon(QIcon(icon_path))
-                print(f"SUCCESS: Window icon set from {icon_path}")
+                logger.info(f"SUCCESS: Window icon set from {icon_path}")
             else:
-                print("WARNING: Icon file not found (checked .ico and .png variants)")
+                logger.warning("WARNING: Icon file not found (checked .ico and .png variants)")
         except Exception as e:
-            print(f"ERROR: Could not set window icon: {e}")
+            logger.error(f"ERROR: Could not set window icon: {e}")
 
         # Data attributes
         self.file_path = None
@@ -553,13 +556,13 @@ class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
 
     def closeEvent(self, event):
         """Cleanup temporäre Daten beim Schließen des Programms"""
-        print("DEBUG: Cleaning up temporary plot appearance settings...")
+        logger.debug("DEBUG: Cleaning up temporary plot appearance settings...")
         self.temp_plot_appearance_settings = None
         try:
             if hasattr(self, 'decision_tree_panel') and self.decision_tree_panel is not None:
                 self.decision_tree_panel.cleanup()
         except Exception as close_exc:
-            print(f"DEBUG: Decision tree cleanup warning during close: {close_exc}")
+            logger.debug(f"DEBUG: Decision tree cleanup warning during close: {close_exc}")
         super().closeEvent(event)
 
     def run_outlier_detection(self):
@@ -704,7 +707,7 @@ def _install_global_excepthook():
                 f.write(f"\n=== {datetime.datetime.now()} ===\n{msg}\n")
         except Exception:
             pass
-        print(msg, file=sys.stderr)
+        logger.info("%s %s", msg, file=sys.stderr)
         # Show dialog if a QApplication exists
         try:
             if QApplication.instance():
@@ -726,6 +729,10 @@ if __name__ == "__main__":
         import os
         os.environ["QT_LOGGING_RULES"] = "qt.core.qobject.timer=false"
 
+        # Configure logging: clean console (WARNING+), full DEBUG to biomedstatx.log.
+        from core.logging_setup import setup_logging
+        setup_logging()
+
         # Enforce high-DPI behavior before QApplication is created.
         if hasattr(Qt, "AA_EnableHighDpiScaling"):
             QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
@@ -737,10 +744,10 @@ if __name__ == "__main__":
         # Apply stylesheet if available
         try:
             stylesheet = _load_auto_pilot_stylesheet()
-            print("Stylesheet loaded successfully" if stylesheet else "No stylesheet found")
+            logger.info("Stylesheet loaded successfully" if stylesheet else "No stylesheet found")
         except:
             stylesheet = ""
-            print("No stylesheet found")
+            logger.info("No stylesheet found")
 
         app = _CrashSafeApp(sys.argv)
         app.setStyleSheet(stylesheet)
@@ -748,5 +755,5 @@ if __name__ == "__main__":
         window.show()
         sys.exit(app.exec_())
     except Exception as e:
-        print(f"Error starting application: {str(e)}")
+        logger.error(f"Error starting application: {str(e)}")
         traceback.print_exc()

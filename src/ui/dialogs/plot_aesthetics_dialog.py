@@ -14,6 +14,9 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtGui import QColor, QPalette
 
+import logging
+logger = logging.getLogger(__name__)
+
 # LOW: constants to avoid magic numbers scattered throughout
 _WIDGET_MIN_H = 25       # minimum widget height for consistent UI sizing
 _SCREEN_HIGH_RES = 2560  # 4K / Retina displays
@@ -36,7 +39,7 @@ SCIENTIFIC_FONT_FAMILIES = [
 try:
     from visualization.plot_preview import PlotPreviewWidget
 except ImportError:
-    print("Warning: Could not import PlotPreviewWidget")
+    logger.info("Warning: Could not import PlotPreviewWidget")
     PlotPreviewWidget = None
 
 class ColorButton(QPushButton):
@@ -210,7 +213,7 @@ class TypographyTab(QWidget):
 
         # Keep plotting typography focused on a curated scientific shortlist.
         font_families = SCIENTIFIC_FONT_FAMILIES.copy()
-        print(f"Loaded curated font shortlist ({len(font_families)} entries) for UI")
+        logger.info(f"Loaded curated font shortlist ({len(font_families)} entries) for UI")
 
         self.font_family_combo.addItems(font_families)
         current_font = self.config.get('font_family', 'Arial')
@@ -222,7 +225,7 @@ class TypographyTab(QWidget):
             else:
                 # Find closest match or use first available
                 self.font_family_combo.setCurrentText(font_families[0])
-                print(f"Font '{current_font}' not available, using '{font_families[0]}'")
+                logger.info(f"Font '{current_font}' not available, using '{font_families[0]}'")
         except:
             self.font_family_combo.setCurrentText(font_families[0])
 
@@ -1728,7 +1731,7 @@ class PlotAestheticsDialog(QDialog):
                 if hasattr(self.preview, 'flush_events'):
                     self.preview.flush_events()
             except Exception as e:
-                print(f"Warning: Could not force redraw: {e}")
+                logger.info(f"Warning: Could not force redraw: {e}")
     
     def update_raincloud_tab_visibility(self):
         """Zeigt/versteckt den Raincloud Tab basierend auf dem Plot Type"""
@@ -1875,8 +1878,8 @@ if __name__ == "__main__":
     dialog = PlotAestheticsDialog(test_groups, test_samples)
     if dialog.exec_() == QDialog.Accepted:
         config = dialog.get_config()
-        print("User configuration:")
+        logger.info("User configuration:")
         for key, value in config.items():
-            print(f"  {key}: {value}")
+            logger.info(f"  {key}: {value}")
     
     sys.exit(app.exec_())

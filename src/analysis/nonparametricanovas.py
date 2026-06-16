@@ -1,4 +1,6 @@
 # --- Minimal test for posthoc_marginaleffects ---
+
+import logging
 # (Moved to end of file to ensure all symbols are defined)
 # --- Utility: Modern post hoc analysis using marginaleffects ---
 def posthoc_marginaleffects(
@@ -43,8 +45,8 @@ def posthoc_marginaleffects(
     >>> model = GLMMMixedANOVA().fit(df, dv="Value", between=["FactorA"], within=["FactorB"], subject="Subject")
     >>> res = model.result
     >>> out = posthoc_marginaleffects(res, by=["FactorA", "FactorB"], variables="FactorB", plot=True)
-    >>> print(out["marginal_means"])
-    >>> print(out["comparisons"])
+    >>> logger.info(out["marginal_means"])
+    >>> logger.info(out["comparisons"])
 
     Notes
     -----
@@ -493,7 +495,7 @@ def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05, n_permu
         F_A,  df_A,  df2_A,  p_perm_A,  p_par_A,  eta2_A  = _f_obs_and_perm(formula_additive, formula_no_a)
         F_B,  df_B,  df2_B,  p_perm_B,  p_par_B,  eta2_B  = _f_obs_and_perm(formula_additive, formula_no_b)
         F_AB, df_AB, df2_AB, p_perm_AB, p_par_AB, eta2_AB = _f_obs_and_perm(formula_full,     formula_no_inter)
-        print(f"DEBUG FL: F_A={F_A:.3f} p_A={p_perm_A:.4f}, F_B={F_B:.3f} p_B={p_perm_B:.4f}, F_AB={F_AB:.3f} p_AB={p_perm_AB:.4f}, alpha={alpha}")
+        logger.debug(f"DEBUG FL: F_A={F_A:.3f} p_A={p_perm_A:.4f}, F_B={F_B:.3f} p_B={p_perm_B:.4f}, F_AB={F_AB:.3f} p_AB={p_perm_AB:.4f}, alpha={alpha}")
 
         # --- Descriptive stats ---
         descriptive = {}

@@ -7,6 +7,8 @@ import pandas as pd
 
 from core.lazy_imports import get_scipy_stats, get_statsmodels_multitest, get_matplotlib_pyplot
 
+logger = logging.getLogger(__name__)
+
 
 
 
@@ -146,11 +148,11 @@ class AnalysisManager:
                 dataset_name=None, additional_factors=None, show_individual_lines=True, 
                 **kwargs):
         
-        print("DEBUG ANALYZE: AnalysisManager.analyze called")
-        print(f"DEBUG ANALYZE: Current working directory: {os.getcwd()}")
-        print(f"DEBUG ANALYZE: file_path = {file_path}")
-        print(f"DEBUG ANALYZE: file_name = {file_name}")
-        print(f"DEBUG ANALYZE: save_plot = {save_plot}, skip_plots = {skip_plots}")
+        logger.debug("DEBUG ANALYZE: AnalysisManager.analyze called")
+        logger.debug(f"DEBUG ANALYZE: Current working directory: {os.getcwd()}")
+        logger.debug(f"DEBUG ANALYZE: file_path = {file_path}")
+        logger.debug(f"DEBUG ANALYZE: file_name = {file_name}")
+        logger.debug(f"DEBUG ANALYZE: save_plot = {save_plot}, skip_plots = {skip_plots}")
         # Single dataset analysis (existing functionality)
         if selected_datasets is None or len(selected_datasets) <= 1:
             # Use existing single dataset logic
@@ -303,11 +305,11 @@ class AnalysisManager:
         all_results = {}
         failed_datasets = {}
         
-        print(f"Starting analysis of {len(selected_datasets)} datasets...")
+        logger.info(f"Starting analysis of {len(selected_datasets)} datasets...")
         
         # Analyze each selected dataset
         for i, dataset_name in enumerate(selected_datasets):
-            print(f"Analyzing dataset {i+1}/{len(selected_datasets)}: {dataset_name}")
+            logger.info(f"Analyzing dataset {i+1}/{len(selected_datasets)}: {dataset_name}")
             
             try:
                 # Analyze single dataset
@@ -341,15 +343,15 @@ class AnalysisManager:
                 
                 if "error" in result:
                     failed_datasets[dataset_name] = result["error"]
-                    print(f"ERROR analyzing {dataset_name}: {result['error']}")
+                    logger.error(f"ERROR analyzing {dataset_name}: {result['error']}")
                 else:
                     all_results[dataset_name] = result
-                    print(f"Successfully analyzed {dataset_name}")
+                    logger.info(f"Successfully analyzed {dataset_name}")
                     
             except Exception as e:
                 error_msg = f"Exception during analysis: {str(e)}"
                 failed_datasets[dataset_name] = error_msg
-                print(f"ERROR analyzing {dataset_name}: {error_msg}")
+                logger.error(f"ERROR analyzing {dataset_name}: {error_msg}")
         
         # Apply FDR correction (Benjamini-Hochberg) across all primary p-values
         if len(all_results) >= 2:
@@ -363,7 +365,7 @@ class AnalysisManager:
                     _, p_adj, _, _ = multipletests(valid_ps, method='fdr_bh')
                     for rank, ds_idx in enumerate(valid_indices):
                         all_results[dataset_names_ordered[ds_idx]]["p_value_fdr"] = float(p_adj[rank])
-                    print(f"FDR correction applied across {len(valid_indices)} datasets.")
+                    logger.info(f"FDR correction applied across {len(valid_indices)} datasets.")
                     # Trace: FDR-Korrektur (2e) — write into first dataset's trace
                     try:
                         from core.methodology_trace import MethodologyTrace as _MT
@@ -381,7 +383,7 @@ class AnalysisManager:
                     except Exception:
                         pass  # FDR trace is non-critical
             except Exception as e:
-                print(f"Warning: FDR correction failed: {str(e)}")
+                logger.info(f"Warning: FDR correction failed: {str(e)}")
 
         # Create combined HTML report
         if all_results:
@@ -392,10 +394,10 @@ class AnalysisManager:
                 ExportDispatcher = get_export_dispatcher()
                 export_result = ExportDispatcher.export_multi_dataset_results(all_results, report_path)
                 if export_result.get("warning"):
-                    print(f"WARNING: {export_result['warning']}")
-                print(f"Combined results saved to: {report_path}")
+                    logger.warning(f"WARNING: {export_result['warning']}")
+                logger.info(f"Combined results saved to: {report_path}")
             except Exception as e:
-                print(f"Error creating combined HTML report: {str(e)}")
+                logger.error(f"Error creating combined HTML report: {str(e)}")
         
         # Return summary
         return {
@@ -762,11 +764,11 @@ class AnalysisManager:
                     ExportDispatcher = get_export_dispatcher()
                     export_result = ExportDispatcher.export_analysis_results(results, report_file, analysis_log)
                     if export_result.get("warning"):
-                        print(f"WARNING: {export_result['warning']}")
+                        logger.warning(f"WARNING: {export_result['warning']}")
 
                     analysis_log += f"\nResults were saved to {report_file}.\n"
                 except Exception as export_error:
-                    print(f"Error exporting: {export_error}")
+                    logger.error(f"Error exporting: {export_error}")
                 finally:
                     os.chdir(original_dir)
 
@@ -824,8 +826,8 @@ class AnalysisManager:
                     formula=formula,
                     model_type=model_type
                 )
-            print(f"DEBUG: Test recommendation is '{test_recommendation}'")
-            print(f"DEBUG: Test info transformation: '{test_info.get('transformation') if test_info else 'N/A'}'")
+            logger.debug(f"DEBUG: Test recommendation is '{test_recommendation}'")
+            logger.debug(f"DEBUG: Test info transformation: '{test_info.get('transformation') if test_info else 'N/A'}'")
 
             # Write test recommendation to log (only if we have one)
             if test_recommendation:
@@ -838,7 +840,7 @@ class AnalysisManager:
                     error_message = "Error validating dependent data:\n" + "\n".join(validation["messages"])
                     analysis_log += f"\n{error_message}\n"
                     if not kwargs.get('force_continue', False):
-                        print(f"WARNING: {error_message}")
+                        logger.warning(f"WARNING: {error_message}")
                         analysis_log += "\nAnalysis continues with warning, results may be unreliable."
                         
 
@@ -875,8 +877,8 @@ class AnalysisManager:
                 )
                 # Get the transformation type from the test_info
                 requested_transform = prep["test_info"].get("transformation", "None")
-                print(f"DEBUG: Requested transformation: {requested_transform}")
-                print(f"DEBUG: Applied transformation: {results.get('transformation')}")
+                logger.debug(f"DEBUG: Requested transformation: {requested_transform}")
+                logger.debug(f"DEBUG: Applied transformation: {results.get('transformation')}")
                 # For consistency with the rest of the code, assign results to test_results
                 test_results = results
                 # Also extract the test_info and other variables for the rest of the code
@@ -910,8 +912,8 @@ class AnalysisManager:
                 )
                 # Get the transformation type from the test_info
                 requested_transform = prep["test_info"].get("transformation", "None")
-                print(f"DEBUG: Requested transformation: {requested_transform}")
-                print(f"DEBUG: Applied transformation: {results.get('transformation')}")
+                logger.debug(f"DEBUG: Requested transformation: {requested_transform}")
+                logger.debug(f"DEBUG: Applied transformation: {results.get('transformation')}")
                 # For consistency with the rest of the code, assign results to test_results
                 test_results = results
                 # Also extract the test_info and other variables for the rest of the code
@@ -950,8 +952,8 @@ class AnalysisManager:
                 )
                 # Get the transformation type from the test_info
                 requested_transform = prep["test_info"].get("transformation", "None")
-                print(f"DEBUG: Requested transformation: {requested_transform}")
-                print(f"DEBUG: Applied transformation: {results.get('transformation')}")
+                logger.debug(f"DEBUG: Requested transformation: {requested_transform}")
+                logger.debug(f"DEBUG: Applied transformation: {results.get('transformation')}")
                 # For consistency with the rest of the code, assign results to test_results
                 test_results = results
                 # Also extract the test_info and other variables for the rest of the code
@@ -1012,9 +1014,9 @@ class AnalysisManager:
             if test_results is not None and test_results.get('p_value') is not None and test_results['p_value'] < 0.05 and len(groups) > 2:
                 # Significant result: perform post-hoc tests
                 valid_groups = [g for g in groups if g in transformed_samples and len(transformed_samples[g]) > 0]
-                print("DEBUG: valid_groups after filter:", valid_groups)
-                print("DEBUG: transformed_samples:", {g: len(transformed_samples[g]) for g in transformed_samples})
-                print("DEBUG: original_samples:", {g: len(filtered_samples[g]) for g in filtered_samples})
+                logger.debug("DEBUG: valid_groups after filter: %s", valid_groups)
+                logger.debug("DEBUG: transformed_samples: %s", {g: len(transformed_samples[g]) for g in transformed_samples})
+                logger.debug("DEBUG: original_samples: %s", {g: len(filtered_samples[g]) for g in filtered_samples})
 
                 test_name = test_results.get('test', '').lower()
 
@@ -1027,7 +1029,7 @@ class AnalysisManager:
                 if not test_results.get('pairwise_comparisons'):
                     # Let the perform_refactored_posthoc_testing function handle dialog selection for all tests
                     if 'kruskal' in test_name or 'friedman' in test_name or test_recommendation == 'non_parametric':
-                        print("DEBUG: Significant non-parametric test (section 2), calling perform_refactored_posthoc_testing without preset posthoc_choice")
+                        logger.debug("DEBUG: Significant non-parametric test (section 2), calling perform_refactored_posthoc_testing without preset posthoc_choice")
                         posthoc_results = StatisticalTester.perform_refactored_posthoc_testing(
                             valid_groups,
                             transformed_samples,
@@ -1124,31 +1126,31 @@ class AnalysisManager:
                             import copy
                             test_results['pairwise_comparisons'] = copy.deepcopy(posthoc_results['pairwise_comparisons'])
       
-                            print("DEBUG: Copied pairwise_comparisons from posthoc_results to test_results")
-                            print(f"DEBUG: Same object? {posthoc_results.get('pairwise_comparisons', None) is test_results.get('pairwise_comparisons', None)}")
+                            logger.debug("DEBUG: Copied pairwise_comparisons from posthoc_results to test_results")
+                            logger.debug(f"DEBUG: Same object? {posthoc_results.get('pairwise_comparisons', None) is test_results.get('pairwise_comparisons', None)}")
 
                         test_results["posthoc_test"] = posthoc_results.get("posthoc_test")
 
                         # Add debug print to verify
-                        print(f"DEBUG: posthoc_results['pairwise_comparisons'] length: {len(posthoc_results.get('pairwise_comparisons', []))}")
+                        logger.debug(f"DEBUG: posthoc_results['pairwise_comparisons'] length: {len(posthoc_results.get('pairwise_comparisons', []))}")
 
                     # INSERT DEBUG OUTPUTS HERE
-                    print(f"DEBUG: Pairwise comparisons after post-hoc: {len(test_results.get('pairwise_comparisons', []))}")
+                    logger.debug(f"DEBUG: Pairwise comparisons after post-hoc: {len(test_results.get('pairwise_comparisons', []))}")
                     
             # After post-hoc processing, before test_results.update:
-            print(f"DEBUG: Post-hoc results: {posthoc_results.keys() if posthoc_results else None}")
+            logger.debug(f"DEBUG: Post-hoc results: {posthoc_results.keys() if posthoc_results else None}")
             if posthoc_results and 'error' in posthoc_results and posthoc_results['error']:
-                print(f"DEBUG: Post-hoc ERROR: {posthoc_results['error']}")
-            print(f"DEBUG: test_results pairwise_comparisons: {len(test_results.get('pairwise_comparisons', []))} items")        
+                logger.debug(f"DEBUG: Post-hoc ERROR: {posthoc_results['error']}")
+            logger.debug(f"DEBUG: test_results pairwise_comparisons: {len(test_results.get('pairwise_comparisons', []))} items")        
 
 
             # Make sure normality and variance test results are explicitly set (only if available)
             # Convert new test_info structure to the expected format for report export
             if test_info:
-                print(f"DEBUG TEST_INFO STRUCTURE: {test_info}")
-                print(f"DEBUG TEST_INFO KEYS: {list(test_info.keys())}")
+                logger.debug(f"DEBUG TEST_INFO STRUCTURE: {test_info}")
+                logger.debug(f"DEBUG TEST_INFO KEYS: {list(test_info.keys())}")
                 if "pre_transformation" in test_info:
-                    print(f"DEBUG PRE_TRANSFORMATION: {test_info['pre_transformation']}")
+                    logger.debug(f"DEBUG PRE_TRANSFORMATION: {test_info['pre_transformation']}")
                 
                 # Convert new residuals-based test info to compatible format
                 normality_tests_compat = {}
@@ -1187,7 +1189,7 @@ class AnalysisManager:
                         "p_value": pre_var.get("p_value"),
                         "equal_variance": pre_var.get("equal_variance", False)
                     })
-                    print(f"DEBUG VARIANCE_TEST_COMPAT: {variance_test_compat}")
+                    logger.debug(f"DEBUG VARIANCE_TEST_COMPAT: {variance_test_compat}")
                 
                 if transformation_applied and "post_transformation" in test_info and "variance" in test_info["post_transformation"]:
                     post_var = test_info["post_transformation"]["variance"]
@@ -1200,13 +1202,13 @@ class AnalysisManager:
                 results["normality_tests"] = normality_tests_compat
                 results["variance_test"] = variance_test_compat
                 
-                print(f"DEBUG FINAL normality_tests: {results['normality_tests']}")
-                print(f"DEBUG FINAL variance_test: {results['variance_test']}")
+                logger.debug(f"DEBUG FINAL normality_tests: {results['normality_tests']}")
+                logger.debug(f"DEBUG FINAL variance_test: {results['variance_test']}")
                 
                 # Add test_info for complete information
                 results["test_info"] = test_info
             else:
-                print("DEBUG: test_info is None or empty!")
+                logger.debug("DEBUG: test_info is None or empty!")
 
             # Make sure test_type/recommendation is set (only if available):
             if test_recommendation:
@@ -1263,7 +1265,7 @@ class AnalysisManager:
                 results["variance_test"] = {}
 
             # Nach results.update(test_results):
-            print(f"DEBUG: results pairwise_comparisons: {len(results.get('pairwise_comparisons', []))} items")            
+            logger.debug(f"DEBUG: results pairwise_comparisons: {len(results.get('pairwise_comparisons', []))} items")            
 
             if test_info and "boxcox_lambda" in test_info:
                 results["boxcox_lambda"] = test_info["boxcox_lambda"]
@@ -1347,14 +1349,14 @@ class AnalysisManager:
                 results["variance_homogeneity_test"] = test_info.get("variance_test", {}) if test_info else {}    
 
             # Add debug statements before report export
-            print("DEBUG: Assumption tests before report export:")
-            print("  Normality tests:", results.get("normality_tests", {}))
-            print("  Variance tests:", results.get("variance_test", {}))
-            print("  Test recommendation:", test_recommendation)
+            logger.debug("DEBUG: Assumption tests before report export:")
+            logger.info("  Normality tests: %s", results.get("normality_tests", {}))
+            logger.info("  Variance tests: %s", results.get("variance_test", {}))
+            logger.info("  Test recommendation: %s", test_recommendation)
 
             # Export the HTML report
             original_dir = os.getcwd()
-            print(f"DEBUG: Directory before report export: {original_dir}")
+            logger.debug(f"DEBUG: Directory before report export: {original_dir}")
 
             # Use absolute path for the report file
             from analysis.stats_functions import get_output_path
@@ -1363,23 +1365,23 @@ class AnalysisManager:
             ExportDispatcher = get_export_dispatcher()
             export_result = ExportDispatcher.export_analysis_results(results, report_file, analysis_log)
             if export_result.get("warning"):
-                print(f"WARNING: {export_result['warning']}")
+                logger.warning(f"WARNING: {export_result['warning']}")
 
             analysis_log += f"\nResults were saved to {report_file}.\n"
             
             # Ensure we're back in the original directory
             if os.getcwd() != original_dir:
                 os.chdir(original_dir)
-                print(f"DEBUG: Restored original directory: {original_dir}")
+                logger.debug(f"DEBUG: Restored original directory: {original_dir}")
 
             # Create the plot, if not skipped
             if not skip_plots:
-                print(f"DEBUG: Current working directory before export: {os.getcwd()}")
+                logger.debug(f"DEBUG: Current working directory before export: {os.getcwd()}")
                 pairwise_comparisons = results.get('pairwise_comparisons', None)
                 
                 # Get plot type from kwargs, default to 'Bar'
                 plot_type = kwargs.get('plot_type', 'Bar')
-                print(f"DEBUG: Creating plot of type: {plot_type}")
+                logger.debug(f"DEBUG: Creating plot of type: {plot_type}")
                 
                 # Create a clean kwargs dict without parameters that plotting methods don't accept
                 # Only exclude parameters that definitely don't exist in plot methods
@@ -1454,7 +1456,7 @@ class AnalysisManager:
                         file_name=file_base, legend_colors=colors, **plot_kwargs)
                 else:
                     # Fallback to bar plot for unknown plot types
-                    print(f"WARNING: Unknown plot type '{plot_type}', falling back to Bar plot")
+                    logger.warning(f"WARNING: Unknown plot type '{plot_type}', falling back to Bar plot")
                     plot_kwargs['show_points'] = plot_kwargs.get('show_points', True)
                     plot_kwargs['point_size'] = plot_kwargs.get('point_size', 80)
                     plot_kwargs['point_alpha'] = plot_kwargs.get('point_alpha', 0.8)
@@ -1498,7 +1500,7 @@ class AnalysisManager:
                     analysis_log += f"  {line_plot_base}.png\n"
                 except Exception as e:
                     analysis_log += f"\nError creating line plot for dependent data: {str(e)}\n"
-                    print(f"Error creating line plot: {str(e)}")
+                    logger.error(f"Error creating line plot: {str(e)}")
             if results.get('transformation', 'None') != 'None':
                 results['transformed_data'] = transformed_samples
 
@@ -1630,7 +1632,7 @@ class AnalysisManager:
         except Exception as e:
             error_message = str(e) if str(e) else "Unknown error occurred"
             analysis_log += f"\nERROR: {error_message}\n"
-            print(f"Error during analysis: {error_message}")
+            logger.error(f"Error during analysis: {error_message}")
             import traceback
             traceback.print_exc()
             return {"error": error_message, "analysis_log": analysis_log}       
@@ -1639,7 +1641,7 @@ def get_output_path(file_base, ext):
     """Get an absolute path to save output files on desktop."""
     if os.path.isabs(file_base):
         abs_path = os.path.abspath(f"{file_base}.{ext}")
-        print(f"DEBUG: get_output_path returns absolute path from absolute base: {abs_path}")
+        logger.debug(f"DEBUG: get_output_path returns absolute path from absolute base: {abs_path}")
         return abs_path
 
     desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
@@ -1649,6 +1651,6 @@ def get_output_path(file_base, ext):
     
     out_path = os.path.join(desktop_path, f"{file_base}.{ext}")
     abs_path = os.path.abspath(out_path)
-    print(f"DEBUG: get_output_path returns absolute path: {abs_path}")
+    logger.debug(f"DEBUG: get_output_path returns absolute path: {abs_path}")
     return abs_path
 

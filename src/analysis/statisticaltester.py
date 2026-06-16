@@ -1533,11 +1533,11 @@ class StatisticalTester:
 
         try:
             if has_pingouin:
-                print("DEBUG: DataFrame columns:", df.columns)
-                print("DEBUG: Unique values for within factor:", df[within[0]].unique())
-                print("DEBUG: Unique values for subject:", df[subject].unique())
-                print("DEBUG: First few rows of df:\n", df.head())
-                print("DEBUG: Using Pingouin for Mixed ANOVA")
+                logger.debug("DEBUG: DataFrame columns: %s", df.columns)
+                logger.debug("DEBUG: Unique values for within factor: %s", df[within[0]].unique())
+                logger.debug("DEBUG: Unique values for subject: %s", df[subject].unique())
+                logger.debug("DEBUG: First few rows of df:\n %s", df.head())
+                logger.debug("DEBUG: Using Pingouin for Mixed ANOVA")
                 aov = pg.mixed_anova(data=df, dv=dv, within=rm_factor, between=between_factor, subject=subject)
                 p_col = "p_unc" if "p_unc" in aov.columns else "p-unc" if "p-unc" in aov.columns else None
                 if p_col is None:
@@ -1734,7 +1734,7 @@ class StatisticalTester:
                 )
                 results.update(within_sphericity_results)
             else:
-                print("DEBUG: Using statsmodels for Mixed ANOVA")
+                logger.debug("DEBUG: Using statsmodels for Mixed ANOVA")
                 # Fallback with statsmodels
                 
                 # Sanitize column names for statsmodels compatibility
@@ -1954,11 +1954,11 @@ class StatisticalTester:
 
         try:
             if has_pingouin:
-                print("DEBUG: DataFrame columns:", df.columns)
-                print("DEBUG: Unique values for within factor:", df[within[0]].unique())
-                print("DEBUG: Unique values for subject:", df[subject].unique())
-                print("DEBUG: First few rows of df:\n", df.head())
-                print("DEBUG: Using Pingouin for RM ANOVA")    
+                logger.debug("DEBUG: DataFrame columns: %s", df.columns)
+                logger.debug("DEBUG: Unique values for within factor: %s", df[within[0]].unique())
+                logger.debug("DEBUG: Unique values for subject: %s", df[subject].unique())
+                logger.debug("DEBUG: First few rows of df:\n %s", df.head())
+                logger.debug("DEBUG: Using Pingouin for RM ANOVA")    
                 if len(within) == 1:
                     factor = within[0]
                     # Add correction=True to apply corrections for sphericity violation
@@ -1966,8 +1966,8 @@ class StatisticalTester:
                     p_col = "p_unc" if "p_unc" in aov.columns else "p-unc" if "p-unc" in aov.columns else None
                     if p_col is None:
                         raise KeyError("No pingouin p-value column found in RM ANOVA table")
-                    print("DEBUG: ANOVA result:", aov)
-                    print("DEBUG: Results structure:", results)
+                    logger.debug("DEBUG: ANOVA result: %s", aov)
+                    logger.debug("DEBUG: Results structure: %s", results)
                     results["anova_table"] = aov.copy()
                     row = aov.iloc[0]
                     error_row = aov[aov["Source"] == "Error"].iloc[0]
@@ -2088,7 +2088,7 @@ class StatisticalTester:
                         "test": "Repeated Measures ANOVA (multiple factors)"
                     })
             else:
-                print("DEBUG: Using statsmodels for RM ANOVA")
+                logger.debug("DEBUG: Using statsmodels for RM ANOVA")
                 # Only simple fallback for one factor
                 if len(within) != 1:
                     results["error"] = "Multiple within factors only possible with pingouin"
@@ -2387,8 +2387,8 @@ class StatisticalTester:
             else: # Fallback to statsmodels
                 import statsmodels.api as sm
                 from statsmodels.formula.api import ols
-                print("DEBUG: WARNING! Two-Way ANOVA uses statsmodels fallback!")
-                print("DEBUG: Pingouin not installed or import failed.")
+                logger.debug("DEBUG: WARNING! Two-Way ANOVA uses statsmodels fallback!")
+                logger.debug("DEBUG: Pingouin not installed or import failed.")
 
                 # Sanitize column names for statsmodels compatibility
                 sanitized_df, column_mapping = StatisticalTester._sanitize_column_names_for_statsmodels(

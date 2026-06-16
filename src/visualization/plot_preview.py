@@ -9,6 +9,9 @@ matplotlib.use('Qt5Agg')
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 
+import logging
+logger = logging.getLogger(__name__)
+
 # Import the DataVisualizer class
 try:
     from visualization.datavisualizer import DataVisualizer
@@ -19,7 +22,7 @@ except ImportError:
         DataVisualizer = get_data_visualizer()
     except ImportError:
         # Final fallback if import does not work
-        print("Warning: Could not import DataVisualizer")
+        logger.info("Warning: Could not import DataVisualizer")
         DataVisualizer = None
 
 class PlotPreviewWidget(FigureCanvasQTAgg):
@@ -202,9 +205,9 @@ class PlotPreviewWidget(FigureCanvasQTAgg):
             for i, group in enumerate(self.groups):
                 colors_dict[group] = DEFAULT_COLORS[i % len(DEFAULT_COLORS)]
             config['colors'] = colors_dict
-            print(f"DEBUG: PlotPreviewWidget set fallback colors: {colors_dict}")
+            logger.debug(f"DEBUG: PlotPreviewWidget set fallback colors: {colors_dict}")
         else:
-            print(f"DEBUG: PlotPreviewWidget using provided colors: {config.get('colors', {})}")
+            logger.debug(f"DEBUG: PlotPreviewWidget using provided colors: {config.get('colors', {})}")
         
         try:
             # Clear and redraw
@@ -225,7 +228,7 @@ class PlotPreviewWidget(FigureCanvasQTAgg):
             self.flush_events()
             
         except Exception as e:
-            print(f"Error in plot update: {str(e)}")
+            logger.error(f"Error in plot update: {str(e)}")
             self.ax.clear()
             self.ax.text(0.5, 0.5, f'Error while drawing:\n{str(e)}', 
                          ha='center', va='center', transform=self.ax.transAxes,

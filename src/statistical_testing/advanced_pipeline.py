@@ -74,8 +74,8 @@ def perform_advanced_test_pipeline(
         if transformed_samples is None or recommendation is None:
             logger.debug("DEBUG: Using existing test results from prepare_advanced_test")
 
-        print("DEBUG: transformed_samples =", transformed_samples)
-        print("DEBUG: samples =", samples)
+        logger.debug("DEBUG: transformed_samples = %s", transformed_samples)
+        logger.debug("DEBUG: samples = %s", samples)
         if transformed_samples is None:
             fallback_warning = ValidationError(
                 "transformed_samples missing; falling back to untransformed samples copy."
@@ -106,8 +106,8 @@ def perform_advanced_test_pipeline(
             blocked["recommendation"] = recommendation
             return blocked
 
-        print("DEBUG: valid_groups =", valid_groups)
-        print("DEBUG: recommendation =", recommendation)
+        logger.debug("DEBUG: valid_groups = %s", valid_groups)
+        logger.debug("DEBUG: recommendation = %s", recommendation)
 
         transformation_result = TransformationEngine().execute(
             {
@@ -125,7 +125,7 @@ def perform_advanced_test_pipeline(
         transformation_type = transformation_updates.get("transformation_type")
         if transformation_updates.get("error"):
             msg = str(transformation_updates["error"])
-            print(msg)
+            logger.info(msg)
             result = {
                 "test_info": test_info,
                 "recommendation": recommendation,

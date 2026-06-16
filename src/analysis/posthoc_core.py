@@ -10,6 +10,9 @@ from core.lazy_imports import (
     get_scikit_posthocs,
 )
 
+import logging
+logger = logging.getLogger(__name__)
+
 
 def get_stats_module():
     """Get scipy.stats — delegates to canonical lazy_imports loader."""
@@ -108,26 +111,26 @@ class TwoWayPostHocAnalyzer(PostHocAnalyzer):
         """
         result = PostHocAnalyzer.create_result_template("Two-Way ANOVA Post-hoc Tests")
         try:
-            print(f"DEBUG POSTHOC: selected_comparisons = {selected_comparisons}")
+            logger.debug(f"DEBUG POSTHOC: selected_comparisons = {selected_comparisons}")
             # Use the same normalization function for group pairs (must match dialog)
             def normalize_pair(pair):
                 # Sort and strip, but also ensure both elements are formatted identically to dialog
                 return tuple(sorted([s.strip() for s in pair]))
             normalized_selected = set(normalize_pair(pair) for pair in selected_comparisons) if selected_comparisons else None
-            print(f"DEBUG POSTHOC: normalized_selected = {normalized_selected}")
+            logger.debug(f"DEBUG POSTHOC: normalized_selected = {normalized_selected}")
             available_pairs = set()
             get_pingouin_module()
             has_pingouin = True
         except ImportError:
             has_pingouin = False
         except Exception as e:
-            print(f"DEBUG POSTHOC: Exception during normalization: {e}")
+            logger.debug(f"DEBUG POSTHOC: Exception during normalization: {e}")
             has_pingouin = False
         try:
             if has_pingouin:
-                print(f"DEBUG POSTHOC: DataFrame columns: {df.columns.tolist()}")
-                print(f"DEBUG POSTHOC: DataFrame head:\n{df.head()}")
-                print(f"DEBUG POSTHOC: factors = {factors}, dv = {dv}")
+                logger.debug(f"DEBUG POSTHOC: DataFrame columns: {df.columns.tolist()}")
+                logger.debug(f"DEBUG POSTHOC: DataFrame head:\n{df.head()}")
+                logger.debug(f"DEBUG POSTHOC: factors = {factors}, dv = {dv}")
                 # Manual post-hoc for interaction: generate all interaction group pairs
                 ttest_ind = get_scipy_stats().ttest_ind
                 # Build all interaction group labels
@@ -141,7 +144,7 @@ class TwoWayPostHocAnalyzer(PostHocAnalyzer):
                         if len(values) > 0:
                             interaction_groups.append(label)
                             group_to_values[label] = values
-                print(f"DEBUG POSTHOC: interaction_groups = {interaction_groups}")
+                logger.debug(f"DEBUG POSTHOC: interaction_groups = {interaction_groups}")
                 # Generate all possible pairs
                 all_pairs = list(combinations(interaction_groups, 2))
                 # If selected_comparisons is provided, filter to only those pairs
@@ -149,7 +152,7 @@ class TwoWayPostHocAnalyzer(PostHocAnalyzer):
                     filtered_pairs = [pair for pair in all_pairs if normalize_pair(pair) in normalized_selected]
                 else:
                     filtered_pairs = all_pairs
-                print(f"DEBUG POSTHOC: filtered_pairs = {filtered_pairs}")
+                logger.debug(f"DEBUG POSTHOC: filtered_pairs = {filtered_pairs}")
                 # Perform t-tests for each pair
                 pvals = []
                 stats_list = []
@@ -186,7 +189,7 @@ class TwoWayPostHocAnalyzer(PostHocAnalyzer):
                             
                             # Use the control_group directly - it's already the exact group name the user selected
                             control_label = control_group
-                            print(f"DEBUG: Using control_group directly: '{control_label}'")
+                            logger.debug(f"DEBUG: Using control_group directly: '{control_label}'")
                             
                             # Perform Dunnett test
                             dunnett_result = sp.posthoc_dunnett(dunnett_df, val_col="value", group_col="group", control=control_label)
@@ -213,7 +216,7 @@ class TwoWayPostHocAnalyzer(PostHocAnalyzer):
                             dunnett_pvals = []
                             dunnett_stats = []
                             control_label = control_group  # Use control_group directly
-                            print(f"DEBUG: Dunnett fallback using control_group: '{control_label}'")
+                            logger.debug(f"DEBUG: Dunnett fallback using control_group: '{control_label}'")
                             
                             for i, (g1, g2, stat, pval, vals1, vals2) in enumerate(stats_list):
                                 if g1 == control_label or g2 == control_label:
@@ -275,14 +278,14 @@ class TwoWayPostHocAnalyzer(PostHocAnalyzer):
                         confidence_interval=ci,
                         alpha=alpha
                     )
-                print(f"DEBUG POSTHOC: Added {len(stats_list)} comparisons to results.")
+                logger.debug(f"DEBUG POSTHOC: Added {len(stats_list)} comparisons to results.")
                 # After all, print available pairs and warn if any selected pair is not present
                 available_pairs = set(normalize_pair((g1, g2)) for g1, g2, *_ in stats_list)
-                print(f"DEBUG POSTHOC: available_pairs = {available_pairs}")
+                logger.debug(f"DEBUG POSTHOC: available_pairs = {available_pairs}")
                 if normalized_selected is not None:
                     missing = normalized_selected - available_pairs
                     if missing:
-                        print(f"WARNING: The following selected pairs were not found in the available post-hoc comparisons: {missing}")
+                        logger.warning(f"WARNING: The following selected pairs were not found in the available post-hoc comparisons: {missing}")
                 pairwise_tukeyhsd = get_pairwise_tukeyhsd()
                 # Create interaction group for Tukey HSD
                 df['interaction_group'] = df[factors[0]].astype(str) + "_" + df[factors[1]].astype(str)
@@ -311,7 +314,7 @@ class TwoWayPostHocAnalyzer(PostHocAnalyzer):
                     # Normalize for matching
                     norm_pair = normalize_pair((comp['group1'], comp['group2']))
                     match = (normalized_selected is not None and norm_pair in normalized_selected)
-                    print(f"DEBUG POSTHOC: fallback comparing {comp['group1']} vs {comp['group2']} | normalized: {norm_pair} | match: {match}")
+                    logger.debug(f"DEBUG POSTHOC: fallback comparing {comp['group1']} vs {comp['group2']} | normalized: {norm_pair} | match: {match}")
                     if normalized_selected is not None and not match:
                         continue
                     PostHocAnalyzer.add_comparison(
@@ -390,8 +393,8 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
             between_factor = between[0]
             within_factor = within[0]
             
-            print(f"DEBUG MIXED POSTHOC: selected_comparisons = {selected_comparisons}")
-            print(f"DEBUG MIXED POSTHOC: between_factor = {between_factor}, within_factor = {within_factor}")
+            logger.debug(f"DEBUG MIXED POSTHOC: selected_comparisons = {selected_comparisons}")
+            logger.debug(f"DEBUG MIXED POSTHOC: between_factor = {between_factor}, within_factor = {within_factor}")
             
             # Normalize comparison pairs function (consistent with other ANOVAs)
             def normalize_pair(pair):
@@ -406,13 +409,13 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
             else:
                 normalized_selected = None
             
-            print(f"DEBUG MIXED POSTHOC: normalized_selected = {normalized_selected}")
+            logger.debug(f"DEBUG MIXED POSTHOC: normalized_selected = {normalized_selected}")
             
             # Validate mixed design data structure
             between_levels = sorted(df[between_factor].unique())
             within_levels = sorted(df[within_factor].unique())
             
-            print(f"DEBUG MIXED POSTHOC: between_levels = {between_levels}, within_levels = {within_levels}")
+            logger.debug(f"DEBUG MIXED POSTHOC: between_levels = {between_levels}, within_levels = {within_levels}")
             
             # Check for complete mixed design (all subjects should have all within-factor levels)
             subject_within_counts = df.groupby([subject, between_factor])[within_factor].nunique()
@@ -420,7 +423,7 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
             incomplete_cases = subject_within_counts[subject_within_counts < expected_within_measures]
             
             if len(incomplete_cases) > 0:
-                print(f"WARNING: {len(incomplete_cases)} subject-between-factor combinations have incomplete within-factor data")
+                logger.warning(f"WARNING: {len(incomplete_cases)} subject-between-factor combinations have incomplete within-factor data")
             
             # Build interaction group labels and classify comparison types
             interaction_groups = []
@@ -442,7 +445,7 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
                             'data': group_data
                         }
             
-            print(f"DEBUG MIXED POSTHOC: interaction_groups = {interaction_groups}")
+            logger.debug(f"DEBUG MIXED POSTHOC: interaction_groups = {interaction_groups}")
             
             # Collect all pairwise comparisons and classify them
             available_pairs = set()
@@ -464,7 +467,7 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
                     group1_data, group2_data, between_factor, within_factor
                 )
                 
-                print(f"DEBUG MIXED POSTHOC: Comparing {group1_label} vs {group2_label}, type: {comparison_type}")
+                logger.debug(f"DEBUG MIXED POSTHOC: Comparing {group1_label} vs {group2_label}, type: {comparison_type}")
                 
                 # Perform appropriate statistical test based on comparison type
                 if comparison_type == "within_subject":
@@ -610,11 +613,11 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
             }
             
             # Diagnostic information
-            print(f"DEBUG MIXED POSTHOC: available_pairs = {available_pairs}")
+            logger.debug(f"DEBUG MIXED POSTHOC: available_pairs = {available_pairs}")
             if normalized_selected is not None:
                 missing = normalized_selected - available_pairs
                 if missing:
-                    print(f"WARNING: The following selected pairs were not found: {missing}")
+                    logger.warning(f"WARNING: The following selected pairs were not found: {missing}")
             
             # Set posthoc_test for visualization
             method_name_map = {
@@ -629,7 +632,7 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
             
         except Exception as e:
             result["error"] = f"Error in Mixed ANOVA post-hoc tests: {str(e)}"
-            print(f"ERROR MIXED POSTHOC: {str(e)}")
+            logger.error(f"ERROR MIXED POSTHOC: {str(e)}")
             import traceback
             traceback.print_exc()
             return result
@@ -761,7 +764,7 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
                             'within_level': within_level
                         }
             
-            print(f"DEBUG POSTHOC: interaction_groups = {interaction_groups}")
+            logger.debug(f"DEBUG POSTHOC: interaction_groups = {interaction_groups}")
             
             # Handle selected comparisons
             def normalize_pair(pair):
@@ -772,7 +775,7 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
                 normalized_selected = set()
                 for pair in selected_comparisons:
                     normalized_selected.add(normalize_pair(pair))
-                print(f"DEBUG POSTHOC: normalized_selected = {normalized_selected}")
+                logger.debug(f"DEBUG POSTHOC: normalized_selected = {normalized_selected}")
             
             # Generate all possible pairs and filter by user selection
             all_pairs = list(combinations(interaction_groups, 2))
@@ -782,7 +785,7 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
             else:
                 filtered_pairs = all_pairs
             
-            print(f"DEBUG POSTHOC: filtered_pairs = {filtered_pairs}")
+            logger.debug(f"DEBUG POSTHOC: filtered_pairs = {filtered_pairs}")
             
             # Import required functions
             ttest_rel = get_scipy_stats().ttest_rel
@@ -927,7 +930,7 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
                 else:
                     ci = (None, None)
                 
-                print(f"DEBUG POSTHOC: Adding comparison {g1} vs {g2} (test: {test_type})")
+                logger.debug(f"DEBUG POSTHOC: Adding comparison {g1} vs {g2} (test: {test_type})")
                 PostHocAnalyzer.add_comparison(
                     result,
                     group1=g1,
@@ -944,11 +947,11 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
                 )
             
             # After all, print available pairs and warn if any selected pair is not present
-            print(f"DEBUG POSTHOC: available_pairs = {available_pairs}")
+            logger.debug(f"DEBUG POSTHOC: available_pairs = {available_pairs}")
             if normalized_selected is not None:
                 missing = normalized_selected - available_pairs
                 if missing:
-                    print(f"WARNING: The following selected pairs were not found in the available post-hoc comparisons: {missing}")
+                    logger.warning(f"WARNING: The following selected pairs were not found in the available post-hoc comparisons: {missing}")
             
             # Set the posthoc_test value for decision tree visualization
             method_name_map = {
@@ -983,7 +986,7 @@ class RMAnovaPostHocAnalyzer(PostHocAnalyzer):
         result = PostHocAnalyzer.create_result_template("RM ANOVA Post-hoc Tests")
         
         try:
-            print(f"DEBUG RM POSTHOC: selected_comparisons = {selected_comparisons}")
+            logger.debug(f"DEBUG RM POSTHOC: selected_comparisons = {selected_comparisons}")
             
             # Normalize comparison pairs function (consistent with other ANOVAs)
             def normalize_pair(pair):
@@ -998,7 +1001,7 @@ class RMAnovaPostHocAnalyzer(PostHocAnalyzer):
             else:
                 normalized_selected = None
             
-            print(f"DEBUG RM POSTHOC: normalized_selected = {normalized_selected}")
+            logger.debug(f"DEBUG RM POSTHOC: normalized_selected = {normalized_selected}")
             
             # Get within-subject factor and levels
             within_factor = within[0]
@@ -1010,13 +1013,13 @@ class RMAnovaPostHocAnalyzer(PostHocAnalyzer):
             incomplete_subjects = subject_counts[subject_counts < expected_measures]
             
             if len(incomplete_subjects) > 0:
-                print(f"WARNING: {len(incomplete_subjects)} subjects have incomplete data")
+                logger.warning(f"WARNING: {len(incomplete_subjects)} subjects have incomplete data")
             
             # Get complete cases only for robust within-subject analysis
             complete_subjects = subject_counts[subject_counts == expected_measures].index
             df_complete = df[df[subject].isin(complete_subjects)].copy()
             
-            print(f"DEBUG RM POSTHOC: Complete subjects: {len(complete_subjects)}, Total levels: {expected_measures}")
+            logger.debug(f"DEBUG RM POSTHOC: Complete subjects: {len(complete_subjects)}, Total levels: {expected_measures}")
             
             # Import required modules
             scipy_stats = get_scipy_stats()
@@ -1046,7 +1049,7 @@ class RMAnovaPostHocAnalyzer(PostHocAnalyzer):
                 data2 = data2_df[dv].values
                 
                 if len(data1) != len(data2) or len(data1) < 3:
-                    print(f"WARNING: Insufficient paired data for {level1} vs {level2}")
+                    logger.warning(f"WARNING: Insufficient paired data for {level1} vs {level2}")
                     continue
                 
                 # Perform paired t-test (appropriate for within-subject design)
@@ -1192,11 +1195,11 @@ class RMAnovaPostHocAnalyzer(PostHocAnalyzer):
             }
             
             # Diagnostic information
-            print(f"DEBUG RM POSTHOC: available_pairs = {available_pairs}")
+            logger.debug(f"DEBUG RM POSTHOC: available_pairs = {available_pairs}")
             if normalized_selected is not None:
                 missing = normalized_selected - available_pairs
                 if missing:
-                    print(f"WARNING: The following selected pairs were not found: {missing}")
+                    logger.warning(f"WARNING: The following selected pairs were not found: {missing}")
             
             # Set posthoc_test for visualization
             method_name_map = {
@@ -1211,7 +1214,7 @@ class RMAnovaPostHocAnalyzer(PostHocAnalyzer):
             
         except Exception as e:
             result["error"] = f"Error in RM ANOVA post-hoc tests: {str(e)}"
-            print(f"ERROR RM POSTHOC: {str(e)}")
+            logger.error(f"ERROR RM POSTHOC: {str(e)}")
             import traceback
             traceback.print_exc()
             return result
@@ -1735,9 +1738,9 @@ class PostHocFactory:
             
             # Add validation to ensure we're getting valid results
             if posthoc and 'pairwise_comparisons' in posthoc:
-                print(f"DEBUG: Found {len(posthoc['pairwise_comparisons'])} rm-anova post-hoc comparisons")
+                logger.debug(f"DEBUG: Found {len(posthoc['pairwise_comparisons'])} rm-anova post-hoc comparisons")
             else:
-                print("DEBUG: No valid rm-anova post-hoc results found!")
+                logger.debug("DEBUG: No valid rm-anova post-hoc results found!")
                 
             # Explicitly pass through the posthoc results without modification
             return posthoc

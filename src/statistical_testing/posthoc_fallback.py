@@ -561,13 +561,13 @@ class PosthocFallbackEngine:
                     logger.debug(f"DEBUG: Parametric post-hoc dialog returned: {posthoc_choice}")
                     if posthoc_choice is None:
                         posthoc_choice = default_method
-                        print(f"DEBUG: Parametric post-hoc dialog cancelled, defaulting to {default_method}")
+                        logger.debug(f"DEBUG: Parametric post-hoc dialog cancelled, defaulting to {default_method}")
                 except Exception as e:
                     logger.debug(f"DEBUG: Error showing parametric post-hoc dialog: {e}")
                     posthoc_choice = default_method
             else:
                 # NEW: Dialog for non-parametric post-hoc tests
-                print("DEBUG: About to show non-parametric post-hoc dialog")
+                logger.debug("DEBUG: About to show non-parametric post-hoc dialog")
                 try:
                     posthoc_choice = ui_dialog_manager.select_nonparametric_posthoc_dialog(
                         parent=None, progress_text=None, column_name=None
@@ -576,7 +576,7 @@ class PosthocFallbackEngine:
                     # If dialog was cancelled or returned None, default to Dunn
                     if posthoc_choice is None:
                         posthoc_choice = "dunn"
-                        print("DEBUG: Non-parametric post-hoc dialog cancelled, defaulting to Dunn test")
+                        logger.debug("DEBUG: Non-parametric post-hoc dialog cancelled, defaulting to Dunn test")
                 except Exception as e:
                     logger.debug(f"DEBUG: Error showing non-parametric post-hoc dialog: {e}")
                     import traceback
@@ -589,7 +589,7 @@ class PosthocFallbackEngine:
                 control_group = ui_dialog_manager.select_control_group_dialog(valid_groups)
                 logger.debug(f"DEBUG: Control group selected for Dunnett test: {control_group}")
                 if control_group is None:
-                    print("DEBUG: No control group selected, defaulting to Tukey HSD")
+                    logger.debug("DEBUG: No control group selected, defaulting to Tukey HSD")
                     posthoc_choice = "tukey"
             except Exception as e:
                 logger.debug(f"DEBUG: Error selecting control group: {e}")
@@ -716,14 +716,14 @@ class PosthocFallbackEngine:
 
     @staticmethod
     def process_results(results):
-        print("Processing results:")
-        print(f"Keys in results: {list(results.keys())}")
+        logger.info("Processing results:")
+        logger.info(f"Keys in results: {list(results.keys())}")
         if 'interactions' in results:
-            print(f"Interaction effect p-value: {results['interactions'][0]['p_value'] if results['interactions'] else 'No interaction found'}")
+            logger.info(f"Interaction effect p-value: {results['interactions'][0]['p_value'] if results['interactions'] else 'No interaction found'}")
         if 'pairwise_comparisons' in results and results['pairwise_comparisons']:
-            print("Pairwise comparisons found:")
+            logger.info("Pairwise comparisons found:")
             for comparison in results['pairwise_comparisons']:
-                print(f"{comparison['group1']} vs {comparison['group2']}: p = {comparison['p_value']}")
+                logger.info(f"{comparison['group1']} vs {comparison['group2']}: p = {comparison['p_value']}")
         else:
-            print("No pairwise comparisons found.")
+            logger.info("No pairwise comparisons found.")
 
