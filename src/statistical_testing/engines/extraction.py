@@ -54,13 +54,43 @@ class ExtractionEngine:
                 groups = list(samples.keys())
                 ensure_equal_group_sizes(samples, groups, min_n=MIN_N_BLOCK)
 
-            elif test == "two_way_anova":
+            elif test == "two_way_anova" or test == "two_way_ancova":
                 fA, fB = between
                 for a_val in df[fA].unique():
                     for b_val in df[fB].unique():
                         group_label = f"{fA}={a_val}, {fB}={b_val}"
                         subset = df[(df[fA] == a_val) & (df[fB] == b_val)]
                         samples[group_label] = subset[dv].tolist()
+                groups = list(samples.keys())
+
+            elif test == "ancova" or test == "logistic_regression":
+                if between:
+                    fA = between[0]
+                    for a_val in df[fA].unique():
+                        group_label = f"{fA}={a_val}"
+                        subset = df[df[fA] == a_val]
+                        samples[group_label] = subset[dv].tolist()
+                groups = list(samples.keys())
+
+            elif test == "lmm":
+                # For LMM, the groups for visualization/assumptions are typically the combinations of all fixed categorical effects.
+                fixed = (between or []) + (within or [])
+                if not fixed:
+                    samples["all"] = df[dv].tolist()
+                elif len(fixed) == 1:
+                    fA = fixed[0]
+                    for a_val in df[fA].unique():
+                        group_label = f"{fA}={a_val}"
+                        subset = df[df[fA] == a_val]
+                        samples[group_label] = subset[dv].tolist()
+                else:
+                    # Just use the first two for extraction grouping
+                    fA, fB = fixed[0], fixed[1]
+                    for a_val in df[fA].unique():
+                        for b_val in df[fB].unique():
+                            group_label = f"{fA}={a_val}, {fB}={b_val}"
+                            subset = df[(df[fA] == a_val) & (df[fB] == b_val)]
+                            samples[group_label] = subset[dv].tolist()
                 groups = list(samples.keys())
 
             else:

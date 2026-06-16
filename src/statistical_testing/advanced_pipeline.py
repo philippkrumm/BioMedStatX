@@ -30,6 +30,8 @@ def perform_advanced_test_pipeline(
     subject,
     between=None,
     within=None,
+    covariates=None,
+    random_slope=None,
     alpha=0.05,
     transformed_samples=None,
     recommendation=None,
@@ -175,7 +177,19 @@ def perform_advanced_test_pipeline(
                     alpha,
                     test_info=test_info,
                 )
-            else:
+            elif test in ("ancova", "two_way_ancova"):
+                res = StatisticalTester._run_ancova_logged(
+                    df_transformed, dv, between, covariates, alpha, test_info=test_info
+                )
+            elif test == "lmm":
+                res = StatisticalTester._run_lmm_logged(
+                    df_transformed, dv, subject, between, within, covariates, random_slope, alpha, test_info=test_info
+                )
+            elif test == "logistic_regression":
+                res = StatisticalTester._run_logistic_regression_logged(
+                    df_transformed, dv, between, covariates, alpha, test_info=test_info
+                )
+            elif test == "two_way_anova":
                 res = StatisticalTester._run_two_way_anova_logged(
                     df_transformed,
                     dv,
@@ -183,6 +197,8 @@ def perform_advanced_test_pipeline(
                     alpha,
                     test_info=test_info,
                 )
+            else:
+                res = {"error": f"Unknown test type: {test}"}
             res.update(result)
             assumption_bridge_result = AssumptionBridgeEngine().execute(
                 {

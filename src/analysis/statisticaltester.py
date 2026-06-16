@@ -1241,7 +1241,7 @@ class StatisticalTester:
         
     @staticmethod
     def perform_advanced_test(
-        df, test, dv, subject, between=None, within=None, alpha=0.05,
+        df, test, dv, subject, between=None, within=None, covariates=None, random_slope=None, alpha=0.05,
         transformed_samples=None, recommendation=None, test_info=None,
         transform_fn=None, force_parametric=False, file_name=None, manual_transform=None,
         analysis_log=None,
@@ -1256,6 +1256,8 @@ class StatisticalTester:
             subject=subject,
             between=between,
             within=within,
+            covariates=covariates,
+            random_slope=random_slope,
             alpha=alpha,
             transformed_samples=transformed_samples,
             recommendation=recommendation,
@@ -1495,6 +1497,54 @@ class StatisticalTester:
         )
     
     @staticmethod
+    def _run_ancova_logged(df, dv, between, covariates, alpha=0.05, test_info=None):
+        def _test_func(df, dv, subject=None, between=None, within=None, alpha=0.05):
+            return StatisticalTester._run_ancova(df, dv, between, covariates, alpha)
+        return StatisticalTester._run_any_parametric_test(
+            df=df,
+            dv=dv,
+            subject=None,
+            between=between,
+            within=covariates, # Use within to pass covariates temporarily for extraction compatibility if needed, or modify _run_any_parametric_test
+            alpha=alpha,
+            test_func=_test_func,
+            extract_raw=StatisticalTester._extract_raw_data_ancova,
+            test_info=test_info
+        )
+
+    @staticmethod
+    def _run_lmm_logged(df, dv, subject, between, within, covariates, random_slope, alpha=0.05, test_info=None):
+        def _test_func(df, dv, subject=None, between=None, within=None, alpha=0.05):
+            return StatisticalTester._run_lmm(df, dv, subject, between, within, covariates, random_slope, alpha)
+        return StatisticalTester._run_any_parametric_test(
+            df=df,
+            dv=dv,
+            subject=subject,
+            between=between,
+            within=within,
+            alpha=alpha,
+            test_func=_test_func,
+            extract_raw=StatisticalTester._extract_raw_data_mixed_anova, # Similar extraction
+            test_info=test_info
+        )
+
+    @staticmethod
+    def _run_logistic_regression_logged(df, dv, between, covariates, alpha=0.05, test_info=None):
+        def _test_func(df, dv, subject=None, between=None, within=None, alpha=0.05):
+            return StatisticalTester._run_logistic_regression(df, dv, between, covariates)
+        return StatisticalTester._run_any_parametric_test(
+            df=df,
+            dv=dv,
+            subject=None,
+            between=between,
+            within=covariates,
+            alpha=alpha,
+            test_func=_test_func,
+            extract_raw=StatisticalTester._extract_raw_data_ancova,
+            test_info=test_info
+        )
+
+    @staticmethod
     def _extract_raw_data_two_way_anova(df, dv, between, within, subject):
         raw = {}
         a, b = between
@@ -1504,6 +1554,47 @@ class StatisticalTester:
                 raw[key] = df[(df[a] == a_val) & (df[b] == b_val)][dv].tolist()
         return raw
         
+    @staticmethod
+    def _extract_raw_data_ancova(df, dv, between, within, subject):
+        raw = {}
+        if between:
+            a = between[0]
+            for a_val in df[a].unique():
+                key = f"{a}={a_val}"
+                raw[key] = df[df[a] == a_val][dv].tolist()
+        return raw
+
+    @staticmethod
+    def _run_ancova(df, dv, between, covariates, alpha=0.05):
+        from analysis.clinical_models import ANCOVAModel
+        try:
+            model = ANCOVAModel()
+            model.fit(df, dv=dv, between_factors=between, covariates=covariates or [], alpha=alpha)
+            return StatisticalTester._standardize_results(model.as_results_dict())
+        except Exception as e:
+            return {"error": str(e), "test": "ANCOVA"}
+
+    @staticmethod
+    def _run_lmm(df, dv, subject, between, within, covariates, random_slope, alpha=0.05):
+        from analysis.clinical_models import LinearMixedModel
+        try:
+            model = LinearMixedModel()
+            fixed_effects = (between or []) + (within or [])
+            model.fit(df, dv=dv, fixed_effects=fixed_effects, random_intercept=subject, covariates=covariates or [], random_slope=random_slope)
+            return StatisticalTester._standardize_results(model.as_results_dict())
+        except Exception as e:
+            return {"error": str(e), "test": "Linear Mixed Model"}
+
+    @staticmethod
+    def _run_logistic_regression(df, dv, between, covariates):
+        from analysis.clinical_models import LogisticRegressionModel
+        try:
+            model = LogisticRegressionModel()
+            model.fit(df, dv=dv, predictors=between, covariates=covariates or [])
+            return StatisticalTester._standardize_results(model.as_results_dict())
+        except Exception as e:
+            return {"error": str(e), "test": "Logistic Regression"}
+
     @staticmethod
     def _run_mixed_anova(df, dv, subject, between, within, alpha=0.05):
         """

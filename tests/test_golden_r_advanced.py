@@ -118,15 +118,16 @@ def test_golden_afex_mixed_anova():
 
 def test_golden_emmeans_ancova():
     # Model: y_ancova ~ groupA + covar
-    from analysis.clinical_models import ANCOVAModel
-    model = ANCOVAModel()
-    model.fit(
+    result = StatisticalTester.perform_advanced_test(
         df=_DF,
+        test="ancova",
         dv="y_ancova",
-        between_factors=["groupA"],
-        covariates=["covar"]
+        subject=None,
+        between=["groupA"],
+        within=[],
+        covariates=["covar"],
+        force_parametric=True
     )
-    result = model.as_results_dict()
     assert result.get("error") is None
     
     r_ancova_main = _RESULTS["ancova_main"]

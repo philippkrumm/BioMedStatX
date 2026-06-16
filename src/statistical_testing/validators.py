@@ -263,6 +263,8 @@ def validate_test_design(
     elif test_name == "two_way_anova":
         if len(between) != 2:
             raise ModelDesignError("Two-Way ANOVA requires two between factors.")
+    elif test_name in ("ancova", "two_way_ancova", "lmm", "logistic_regression"):
+        pass # The specialized model classes will perform their own specific validation
     else:
         raise ModelDesignError(f"Unknown/invalid test type: {test_name}")
 
