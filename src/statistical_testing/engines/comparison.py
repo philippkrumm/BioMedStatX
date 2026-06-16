@@ -12,7 +12,7 @@ from ..validators import (
     validate_balanced_design,
     validate_group_count,
     validate_minimum_n,
-    MIN_N_HARD,
+    MIN_N_BLOCK,
 )
 
 
@@ -101,7 +101,7 @@ class ComparisonEngine:
         try:
             validate_group_count(groups, min_groups=3, label="comparison_engine_multi_groups")
             for group in groups:
-                validate_minimum_n(samples.get(group, []), min_n=MIN_N_HARD, label=str(group), allow_missing=False)
+                validate_minimum_n(samples.get(group, []), min_n=MIN_N_BLOCK, label=str(group), allow_missing=False)
         except ValidationError as exc:
             return self._failed(str(exc), strategy=strategy)
 

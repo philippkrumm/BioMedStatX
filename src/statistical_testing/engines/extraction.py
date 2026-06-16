@@ -1,7 +1,7 @@
 from typing import Any, Mapping
 
 from ..models import StatisticalResult
-from ..validators import ValidationError, ensure_equal_group_sizes, MIN_N_HARD
+from ..validators import ValidationError, ensure_equal_group_sizes, MIN_N_BLOCK
 
 
 class ExtractionEngine:
@@ -52,7 +52,7 @@ class ExtractionEngine:
                 for lvl in df[w_factor].unique():
                     samples[lvl] = df[df[w_factor] == lvl][dv].tolist()
                 groups = list(samples.keys())
-                ensure_equal_group_sizes(samples, groups, min_n=MIN_N_HARD)
+                ensure_equal_group_sizes(samples, groups, min_n=MIN_N_BLOCK)
 
             elif test == "two_way_anova":
                 fA, fB = between

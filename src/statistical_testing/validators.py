@@ -1,10 +1,30 @@
+import itertools
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Mapping, Sequence
 
 import numpy as np
+import pandas as pd
 
-MIN_N_HARD = 5    # Absolute minimum before blocking or critical warnings
+MIN_N_BLOCK = 3   # Absolute minimum to run a test at all (variance/df need n>=3)
+MIN_N_HARD = 5    # Small-sample warning threshold (n<5 => low power, interpret with caution)
 MIN_N_SMALL = 20  # Threshold for forcing robust defaults (exact methods, non-parametric)
+
+# Relative+absolute tolerance for constancy (zero-variance) detection. A static
+# global epsilon is unusable across arbitrary biomed scales (proportions 0-1,
+# fluorescence ~1e6, cell counts), so np.allclose-style rtol/atol is used.
+VAR_RTOL = 1e-05
+VAR_ATOL = 1e-08
+# Flag a design as severely unbalanced when the largest group is this many times
+# the smallest (warning only, not blocking).
+IMBALANCE_RATIO = 10.0
+
+
+def _max_safe_abs(n: int) -> float:
+    """Safe per-element magnitude bound for a variance / sum-of-squares over n
+    points. Variance sums n squared terms, so the safe bound is
+    sqrt(float64_max / n), NOT sqrt(float64_max) — otherwise adding n near-limit
+    squares overflows the global float64 max (~1.79e308)."""
+    return float(np.sqrt(np.finfo(np.float64).max / max(int(n), 1)))
 
 class ValidationError(Exception):
     """Base class for statistical input validation failures."""
@@ -32,6 +52,11 @@ class GroupValidationError(ValidationError):
 
 class ModelDesignError(ValidationError):
     """Raised when model design parameters are invalid for a chosen test."""
+
+
+class DataQualityError(ValidationError):
+    """Raised when a sample fails a pre-flight data-quality check (zero variance,
+    overflow risk, constant paired differences, etc.)."""
 
 
 @dataclass(frozen=True)
@@ -275,3 +300,113 @@ def validate_samples(samples: Dict[str, Sequence[float]], min_group_size: int = 
             issues.append(ValidationIssue(code="invalid_group", message=str(exc)))
 
     return issues
+
+
+# ---------------------------------------------------------------------------
+# Pre-flight sample quality gate (central chokepoint)
+# ---------------------------------------------------------------------------
+
+# Block code -> human-readable message template. Wording lives here so the UI
+# and the HTML report stay consistent with a single source of truth.
+BLOCK_MESSAGES: Dict[str, str] = {
+    "INF_VALUES": "Group '{group}' contains infinite (+/-Inf) values — cannot run a test.",
+    "EMPTY_GROUP": "Group '{group}' has no usable numeric values after removing missing data.",
+    "N_BELOW_MIN": "Group '{group}' has only n={n} usable value(s); a test needs at least n={min_n}.",
+    "NUM_OVERFLOW": "Group '{group}' has values too large for a numerically stable variance / sum-of-squares calculation.",
+    "VAR_ZERO": "Group '{group}' has (near) zero variance — all values are effectively identical, so a test is undefined.",
+    "TOO_FEW_GROUPS": "At least 2 groups with usable data are required, found {n_groups}.",
+    "PAIRED_SIZE_MISMATCH": "Paired/repeated-measures analysis requires equal group sizes; observed: {detail}.",
+    "VAR_DIFF_ZERO": "Paired differences between '{a}' and '{b}' are (near) constant — the test statistic is undefined (singular covariance).",
+}
+
+
+@dataclass(frozen=True)
+class SampleQualityReport:
+    """Result of the pre-flight gate. ``blocking_issue`` is the first hard-stop
+    reason (or None when the data may proceed). ``warnings`` are non-blocking
+    notes (small samples, severe imbalance)."""
+    blocking_issue: "ValidationIssue | None"
+    warnings: List[str]
+
+    @property
+    def ok(self) -> bool:
+        return self.blocking_issue is None
+
+
+def _coerce_quality_array(values: Sequence[Any]) -> np.ndarray:
+    """Coerce arbitrary cell values to a float array. Whitespace-only strings and
+    non-numeric text become NaN (never raise); +/-Inf is preserved so the Inf
+    guard can see it before NaN-dropping."""
+    series = pd.to_numeric(pd.Series(list(values), dtype="object"), errors="coerce")
+    return series.to_numpy(dtype=float)
+
+
+def validate_samples_for_test(
+    samples: Mapping[str, Sequence[Any]],
+    groups: Iterable[str],
+    *,
+    dependent: bool = False,
+    min_n_block: int = MIN_N_BLOCK,
+) -> SampleQualityReport:
+    """Central pre-flight gate. Returns the first blocking issue (if any) plus
+    soft warnings, WITHOUT raising. Run before any statistical test so that
+    pathological inputs become a clean labeled block instead of a crash or a
+    silently-wrong result (e.g. zero-variance Welch -> p=1.0)."""
+    normalized = [str(group) for group in groups]
+    warnings: List[str] = []
+    valid_by_group: Dict[str, np.ndarray] = {}
+
+    def issue(code: str, **fmt) -> SampleQualityReport:
+        return SampleQualityReport(
+            blocking_issue=ValidationIssue(code=code, message=BLOCK_MESSAGES[code].format(**fmt)),
+            warnings=warnings,
+        )
+
+    for group in normalized:
+        raw = samples.get(group, [])
+        arr = _coerce_quality_array(raw)
+
+        if np.isinf(arr).any():
+            return issue("INF_VALUES", group=group)
+
+        valid = arr[~np.isnan(arr)]
+        if valid.size == 0:
+            return issue("EMPTY_GROUP", group=group)
+        if valid.size < min_n_block:
+            return issue("N_BELOW_MIN", group=group, n=int(valid.size), min_n=min_n_block)
+        if float(np.max(np.abs(valid))) >= _max_safe_abs(valid.size):
+            return issue("NUM_OVERFLOW", group=group)
+        if np.allclose(valid, valid[0], rtol=VAR_RTOL, atol=VAR_ATOL):
+            return issue("VAR_ZERO", group=group)
+
+        valid_by_group[group] = valid
+        if valid.size < MIN_N_HARD:
+            warnings.append(
+                f"Group '{group}' is a small sample (n={int(valid.size)} < {MIN_N_HARD}); "
+                "statistical power is low — interpret with caution."
+            )
+
+    usable = list(valid_by_group)
+    if len(usable) < 2:
+        return issue("TOO_FEW_GROUPS", n_groups=len(usable))
+
+    sizes = {group: int(valid_by_group[group].size) for group in usable}
+    if max(sizes.values()) >= IMBALANCE_RATIO * min(sizes.values()):
+        warnings.append(
+            "Severely unbalanced group sizes "
+            f"({', '.join(f'{g}: {n}' for g, n in sizes.items())}); "
+            "power and assumption checks may be affected."
+        )
+
+    if dependent:
+        if len(set(sizes.values())) != 1:
+            detail = ", ".join(f"{g}: {n}" for g, n in sizes.items())
+            return issue("PAIRED_SIZE_MISMATCH", detail=detail)
+        # RM-ANOVA (k>=3) needs an invertible covariance matrix: a constant
+        # difference between ANY pair makes it singular, so check all pairs.
+        for a, b in itertools.combinations(usable, 2):
+            diff = valid_by_group[a] - valid_by_group[b]
+            if np.allclose(diff, diff[0], rtol=VAR_RTOL, atol=VAR_ATOL):
+                return issue("VAR_DIFF_ZERO", a=a, b=b)
+
+    return SampleQualityReport(blocking_issue=None, warnings=warnings)

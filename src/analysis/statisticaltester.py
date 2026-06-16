@@ -27,6 +27,7 @@ from statistical_testing.validators import (
     validate_paired_data,
     validate_test_design,
     MIN_N_HARD,
+    MIN_N_BLOCK,
 )
 
 # LOW-1: module-level logger (use logging.getLogger in each method for context)
@@ -39,6 +40,54 @@ CI_LEVEL = 0.95
 MIN_GROUP_SIZE = 2
 
 class StatisticalTester:
+    @staticmethod
+    def make_blocked_result(reason, *, code, details=None, warnings=None):
+        """Build a standardized 'blocked' result for a data-quality pre-flight
+        failure. Callers (analysis_core) return this instead of running a test so
+        the UI/report can surface a clear reason rather than a crash or a
+        silently-wrong number. ``blocked=True`` is the detection flag."""
+        blocked = {
+            "test": "Not performed",
+            "blocked": True,
+            "block_reason": reason,
+            "block_code": code,
+            "error": reason,
+            "p_value": None,
+            "statistic": None,
+            "pairwise_comparisons": [],
+            "warnings": list(warnings or []),
+            "data_quality": details or {},
+        }
+        return StatisticalTester._standardize_results(blocked)
+
+    @staticmethod
+    def nonfinite_block(results):
+        """Safety net for advanced engines (LMM, RM/Mixed/Two-Way ANOVA, ANCOVA)
+        that can emit a non-finite statistic / p-value on a degenerate design
+        (zero variance, collinear covariate, rank-deficient model) WITHOUT raising.
+        Returns a standardized block if `results` carries such a value and is not
+        already blocked, else None. Keeps the silent-wrong-number from reaching
+        the UI/report."""
+        if not isinstance(results, dict) or results.get("blocked"):
+            return None
+
+        def _nonfinite(x):
+            return (isinstance(x, (int, float)) and not isinstance(x, bool)
+                    and not bool(np.isfinite(x)))
+
+        if not (_nonfinite(results.get("p_value")) or _nonfinite(results.get("statistic"))):
+            return None
+
+        reason = (
+            f"{results.get('test') or 'The test'} produced a non-finite result "
+            "(infinite or undefined). This indicates a degenerate design — e.g. "
+            "zero variance, perfectly collinear covariates, or a rank-deficient "
+            "model — for which the test is not defined."
+        )
+        return StatisticalTester.make_blocked_result(
+            reason, code="NON_FINITE_RESULT", details={"test": results.get("test")},
+        )
+
     @staticmethod
     def _standardize_results(results):
         """
@@ -126,8 +175,8 @@ class StatisticalTester:
                 n = grp_stats.get("n", 0) if isinstance(grp_stats, dict) else 0
                 if 0 < n < MIN_N_HARD:
                     standardized.setdefault("warnings", []).append(
-                        f"CRITICAL: N={n} for group '{group}' is below minimum (MIN_N_HARD={MIN_N_HARD}). "
-                        "Results have near-zero statistical power and should not be interpreted."
+                        f"WARNING: N={n} for group '{group}' is a small sample (< {MIN_N_HARD}). "
+                        "Statistical power is low; interpret results with caution."
                     )
 
         return standardized
@@ -263,10 +312,10 @@ class StatisticalTester:
         data1, data2 = samples_to_use[g1], samples_to_use[g2]
         try:
             if dependent:
-                validate_paired_data(data1, data2, group_a_label=str(g1), group_b_label=str(g2), min_n=MIN_N_HARD)
+                validate_paired_data(data1, data2, group_a_label=str(g1), group_b_label=str(g2), min_n=MIN_N_BLOCK)
             else:
-                validate_minimum_n(data1, min_n=MIN_N_HARD, label=str(g1), allow_missing=False)
-                validate_minimum_n(data2, min_n=MIN_N_HARD, label=str(g2), allow_missing=False)
+                validate_minimum_n(data1, min_n=MIN_N_BLOCK, label=str(g1), allow_missing=False)
+                validate_minimum_n(data2, min_n=MIN_N_BLOCK, label=str(g2), allow_missing=False)
         except ValidationError as validation_error:
             results["test"] = "Error during test"
             results["error"] = str(validation_error)
@@ -406,7 +455,7 @@ class StatisticalTester:
             data2,
             group_a_label=str(g1),
             group_b_label=str(g2),
-            min_n=MIN_N_HARD,
+            min_n=MIN_N_BLOCK,
         )
         statistic, p_value = stats.ttest_rel(data1_arr, data2_arr)
         test_name = "Paired t-test"
@@ -458,7 +507,7 @@ class StatisticalTester:
             data2,
             group_a_label=str(g1),
             group_b_label=str(g2),
-            min_n=MIN_N_HARD,
+            min_n=MIN_N_BLOCK,
         )
         import warnings
         with warnings.catch_warnings(record=True) as w:
@@ -512,8 +561,8 @@ class StatisticalTester:
     
     @staticmethod
     def _independent_ttest(results, g1, g2, data1, data2, alpha, equal_var=True):
-        data1_arr = validate_minimum_n(data1, min_n=MIN_N_HARD, label=str(g1), allow_missing=False)
-        data2_arr = validate_minimum_n(data2, min_n=MIN_N_HARD, label=str(g2), allow_missing=False)
+        data1_arr = validate_minimum_n(data1, min_n=MIN_N_BLOCK, label=str(g1), allow_missing=False)
+        data2_arr = validate_minimum_n(data2, min_n=MIN_N_BLOCK, label=str(g2), allow_missing=False)
         n1, n2 = len(data1_arr), len(data2_arr)
         statistic, p_value = stats.ttest_ind(data1_arr, data2_arr, equal_var=equal_var)
         test_name = "t-test (independent)"
@@ -580,8 +629,8 @@ class StatisticalTester:
 
     @staticmethod
     def _mannwhitney_test(results, g1, g2, data1, data2, alpha):
-        data1_arr = validate_minimum_n(data1, min_n=MIN_N_HARD, label=str(g1), allow_missing=False)
-        data2_arr = validate_minimum_n(data2, min_n=MIN_N_HARD, label=str(g2), allow_missing=False)
+        data1_arr = validate_minimum_n(data1, min_n=MIN_N_BLOCK, label=str(g1), allow_missing=False)
+        data2_arr = validate_minimum_n(data2, min_n=MIN_N_BLOCK, label=str(g2), allow_missing=False)
         n1, n2 = len(data1_arr), len(data2_arr)
         from statistical_testing.validators import MIN_N_SMALL
         _mwu_method = 'exact' if (n1 + n2) < MIN_N_SMALL else 'asymptotic'
@@ -620,7 +669,7 @@ class StatisticalTester:
             validate_group_count(valid_groups, min_groups=3, label="multi_group_tests")
             if isinstance(samples_to_use, dict):
                 for group in valid_groups:
-                    validate_minimum_n(samples_to_use.get(group, []), min_n=MIN_N_HARD, label=str(group), allow_missing=False)
+                    validate_minimum_n(samples_to_use.get(group, []), min_n=MIN_N_BLOCK, label=str(group), allow_missing=False)
         except ValidationError as validation_error:
             results["test"] = "Error during test"
             results["error"] = str(validation_error)
@@ -665,7 +714,7 @@ class StatisticalTester:
             logger.debug("DEBUG DECISION: using Welch ANOVA path")
             welch_result = StatisticalTester._welch_anova_test(results, valid_groups, samples_to_use, alpha)
             if welch_result is not None:
-                return welch_result
+                return StatisticalTester._standardize_results(welch_result)
             else:
                 logger.debug("DEBUG DECISION: Welch ANOVA returned None, falling back to regular ANOVA")
                 # Fall through to regular ANOVA
