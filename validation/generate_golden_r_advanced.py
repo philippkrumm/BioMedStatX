@@ -26,6 +26,8 @@ suppressMessages({
   library(car)
   library(afex)
   library(emmeans)
+  library(lme4)
+  library(logistf)
 })
 
 args <- commandArgs(trailingOnly=TRUE)
@@ -108,6 +110,52 @@ for(i in 1:nrow(emm_df)) {
 }
 results$ancova_emmeans <- emm_list
 
+# 4. LMM (lme4)
+# Model: y_mixed ~ groupA * time + covar + (1|subj)
+# REML=TRUE is default for lmer
+m_lmer <- lmer(y_mixed ~ groupA * time + covar + (1|subj), data=d, REML=TRUE)
+lmer_sum <- summary(m_lmer)
+lmer_coefs <- lmer_sum$coefficients
+lmer_eff <- list()
+for(rn in rownames(lmer_coefs)) {
+    lmer_eff[[rn]] <- list(
+        Estimate = unname(lmer_coefs[rn, "Estimate"]),
+        SE = unname(lmer_coefs[rn, "Std. Error"])
+    )
+}
+results$lme4_lmm <- lmer_eff
+
+# Create a dataset without repeated measures for Logistic Regression
+d_subj <- d[!duplicated(d$subj), ]
+
+# 5. Logistic Regression (Standard)
+# Model: y_logit_std ~ groupA + covar
+m_glm <- glm(y_logit_std ~ groupA + covar, data=d_subj, family=binomial)
+glm_sum <- summary(m_glm)
+glm_coefs <- glm_sum$coefficients
+glm_eff <- list()
+for(rn in rownames(glm_coefs)) {
+    glm_eff[[rn]] <- list(
+        Estimate = unname(glm_coefs[rn, "Estimate"]),
+        SE = unname(glm_coefs[rn, "Std. Error"]),
+        p = unname(glm_coefs[rn, "Pr(>|z|)"])
+    )
+}
+results$glm_logistic <- glm_eff
+
+# 6. Logistic Regression (Firth)
+# Model: y_logit_sep ~ groupA + covar
+m_logistf <- logistf(y_logit_sep ~ groupA + covar, data=d_subj)
+logistf_eff <- list()
+for(rn in names(m_logistf$coefficients)) {
+    logistf_eff[[rn]] <- list(
+        Estimate = unname(m_logistf$coefficients[rn]),
+        SE = unname(sqrt(diag(m_logistf$var))[rn]),
+        p = unname(m_logistf$prob[rn])
+    )
+}
+results$logistf_firth <- logistf_eff
+
 cat(toJSON(results, auto_unbox=TRUE, digits=10))
 '''
 
@@ -120,12 +168,13 @@ def build_dataset():
         groupB = "Low" if s % 2 == 0 else "High"
         covar = rng.normal(50, 10)
         
-        # Responses for different tests to ensure signals
         y_car = 10 + (5 if groupA == "Trt" else 0) + (3 if groupB == "High" else 0) + rng.normal(0, 2)
         y_ancova = 10 + (4 if groupA == "Trt" else 0) + 0.5 * covar + rng.normal(0, 2)
+        y_logit_std = 1 if (covar > 50 and rng.random() > 0.3) else 0
+        y_logit_sep = 1 if groupA == "Trt" else 0  # Perfect separation for Firth
         
         for ti, time in enumerate(["T1", "T2", "T3"]):
-            y_mixed = 10 + (2 if groupA == "Trt" else 0) + ti * 2 + (ti * 1.5 if groupA == "Trt" else 0) + rng.normal(0, 1) + rng.normal(0, 0.5) # subj random effect
+            y_mixed = 10 + (2 if groupA == "Trt" else 0) + ti * 2 + (ti * 1.5 if groupA == "Trt" else 0) + 0.5 * covar + rng.normal(0, 1) + rng.normal(0, 0.5) # subj random effect
             rows.append({
                 "subj": f"S{s}",
                 "groupA": groupA,
@@ -134,7 +183,9 @@ def build_dataset():
                 "time": time,
                 "y_car": float(y_car),
                 "y_ancova": float(y_ancova),
-                "y_mixed": float(y_mixed)
+                "y_mixed": float(y_mixed),
+                "y_logit_std": int(y_logit_std),
+                "y_logit_sep": int(y_logit_sep)
             })
     return pd.DataFrame(rows)
 

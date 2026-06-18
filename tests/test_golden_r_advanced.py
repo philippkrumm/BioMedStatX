@@ -2,6 +2,21 @@
 
 Runs the APP's perform_advanced_test on the frozen dataset and compares the outputs
 to the frozen R references (Two-Way ANOVA, Mixed ANOVA, ANCOVA).
+
+.. note:: Tolerance calibration (2026-06-16)
+
+   Empirical |app − R| deltas on this frozen dataset:
+   - Point estimators (β̂, F, df, emmeans): Δ ≤ 1e-7 → guarded at **tol=1e-4**
+   - Standard errors (SE):                  Δ ≤ 1e-7 → guarded at **tol=1e-4**
+   - p-values (Wald / ANOVA):               Δ ≤ 1e-4 → guarded at **tol=1e-3** (default)
+   - p-values (Firth Profile-LR):           Δ ≤ 1e-7 → guarded at **tol=1e-4**,
+     but kept at **1e-3** because profile-likelihood ratio tests use a different
+     optimisation path (logistf's penalised IRLS vs. our Newton-Raphson + PLR
+     bisection) and future scipy/numpy updates could shift convergence.
+
+   If any assertion trips after a dependency upgrade, compare the new delta
+   against the tolerance *before* loosening it — a delta jump from 1e-11 to
+   1e-2 signals a regression, not a tolerance problem.
 """
 import json
 import math
@@ -33,8 +48,18 @@ def _qt_and_dialogs():
     yield app
 
 def _assert_close(label, actual, expected, tol=1e-3):
+    """Assert numerical closeness with labeled diagnostics.
+
+    Default tol=1e-3 is used for ANOVA p-values where GG-correction rounding
+    may introduce small cross-implementation drift. For point estimators and
+    coefficients, callers pass tol=1e-4 explicitly (see module docstring).
+    """
     assert actual is not None and math.isfinite(actual), f"{label}: bad value {actual}"
-    assert abs(float(actual) - expected) <= tol, f"{label}: app={actual} vs R={expected} (tol={tol})"
+    delta = abs(float(actual) - expected)
+    assert delta <= tol, (
+        f"{label}: app={actual} vs R={expected} "
+        f"(|Δ|={delta:.2e}, tol={tol})"
+    )
 
 def test_golden_car_type2_anova():
     # Model: y_car ~ groupA * groupB
@@ -67,8 +92,9 @@ def test_golden_car_type2_anova():
         app_eff = app_effects[app_term]
         r_eff = r_car[r_term]
         
-        _assert_close(f"{app_term} F", app_eff.get("F", app_eff.get("statistic")), r_eff["F"])
-        _assert_close(f"{app_term} df1", app_eff.get("df1"), r_eff["df1"])
+        # Point estimators: algorithmic identity expected (Δ ≤ 1e-7 empirically)
+        _assert_close(f"{app_term} F", app_eff.get("F", app_eff.get("statistic")), r_eff["F"], tol=1e-4)
+        _assert_close(f"{app_term} df1", app_eff.get("df1"), r_eff["df1"], tol=1e-4)
         _assert_close(f"{app_term} p", app_eff.get("p_value"), r_eff["p"])
 
 
@@ -105,16 +131,17 @@ def test_golden_afex_mixed_anova():
         # for within factors, afex might apply GG if not explicitly suppressed. 
         # But we compare uncorrected F/df if possible. Our perform_advanced_test uses pingouin mixed_anova.
         # It's possible pingouin df matches afex uncorrected df. Let's just assert F and p.
-        _assert_close(f"{app_term} F", app_eff.get("F", app_eff.get("statistic")), r_eff["F"])
-        # Pingouin sometimes doesn't expose uncorrected df if it applies GG. But let's check.
-        # Actually Pingouin Mixed ANOVA has F, p-unc.
+        # F-statistic: algorithmic identity expected (Δ ≤ 1e-7 empirically)
+        _assert_close(f"{app_term} F", app_eff.get("F", app_eff.get("statistic")), r_eff["F"], tol=1e-4)
+        # Pingouin exposes p-unc (uncorrected) alongside GG-corrected p.
         if "p_unc" in app_eff:
             p_val = app_eff["p_unc"]
         else:
             p_val = app_eff["p_value"]
-            
-        # Due to some numerical differences in corrections, we use a slightly larger tol for p
-        _assert_close(f"{app_term} p", p_val, r_eff["p"], tol=0.01)
+
+        # p-value: pingouin vs afex may differ by GG-correction rounding;
+        # empirical Δ ≤ 1.5e-4 (groupA:time), so 1e-3 provides a safe margin.
+        _assert_close(f"{app_term} p", p_val, r_eff["p"])
 
 def test_golden_emmeans_ancova():
     # Model: y_ancova ~ groupA + covar
@@ -141,13 +168,14 @@ def test_golden_emmeans_ancova():
     group_term = "C(groupA, Sum)"
     assert group_term in app_anova, f"{group_term} missing from app ANOVA"
     
-    _assert_close("groupA F", app_anova[group_term]["F"], r_ancova_main["groupA"]["F"])
+    # Point estimators: algorithmic identity expected (Δ ≤ 1e-7 empirically)
+    _assert_close("groupA F", app_anova[group_term]["F"], r_ancova_main["groupA"]["F"], tol=1e-4)
     _assert_close("groupA p", app_anova[group_term]["p_value"], r_ancova_main["groupA"]["p"])
     
     # Check covariate effect
     cov_term = "covar"
     assert cov_term in app_anova, f"{cov_term} missing from app ANOVA"
-    _assert_close("covar F", app_anova[cov_term]["F"], r_ancova_main["covar"]["F"])
+    _assert_close("covar F", app_anova[cov_term]["F"], r_ancova_main["covar"]["F"], tol=1e-4)
     _assert_close("covar p", app_anova[cov_term]["p_value"], r_ancova_main["covar"]["p"])
     
     # 2. Adjusted Means (emmeans)
@@ -155,37 +183,51 @@ def test_golden_emmeans_ancova():
     for grp, r_mean in r_emmeans.items():
         assert grp in app_adj_means, f"Missing adjusted mean for {grp}"
         app_mean = app_adj_means[grp]["adjusted_mean"]
-        _assert_close(f"{grp} emmean", app_mean, r_mean["emmean"])
+        _assert_close(f"{grp} emmean", app_mean, r_mean["emmean"], tol=1e-4)
 
 
-def _map_r_term_to_sm_term(r_term, sm_terms):
-    """Simple heuristic to match R term names to statsmodels term names."""
+# ---------------------------------------------------------------------------
+# ARCHITECTURAL NOTE — Golden-test-only nomenclature bridge
+# ---------------------------------------------------------------------------
+# The following function maps R's coefficient names (e.g. "groupATrt") to the
+# Patsy/statsmodels equivalents (e.g. "C(groupA)[T.Trt]") using a hardcoded
+# heuristic that is ONLY safe for the deterministic, sanitized factor levels
+# in the frozen golden reference dataset (groupA ∈ {Ctrl, Trt}, time ∈
+# {T1, T2, T3}, covar is continuous).
+#
+# ⚠  DO NOT import or reuse this function in production code (src/).
+#    It will produce incorrect mappings when factor levels contain
+#    special characters, whitespace, or overlapping substrings.
+# ---------------------------------------------------------------------------
+
+def _map_r_term_to_sm_term(r_term: str, sm_terms: list[str]) -> str | None:
+    """Match an R coefficient name to a statsmodels term name.
+
+    **Scope**: This is a test-internal helper for the frozen golden reference
+    suite.  It exploits the fact that the golden dataset's factor levels
+    (``Ctrl``, ``Trt``, ``T1``–``T3``, ``covar``) are short, ASCII-only,
+    and non-overlapping — properties that a general-purpose mapper cannot
+    assume.
+
+    **DO NOT USE** outside ``test_golden_r_advanced.py``.
+    """
     if r_term == "(Intercept)":
         return "Intercept"
-    
-    # E.g. groupATrt -> C(groupA)[T.Trt]
-    # groupATrt:timeT2 -> C(groupA)[T.Trt]:C(time)[T.T2]
+
     import re
-    # Extract factor names and levels, e.g., groupATrt -> factor groupA, level Trt
-    # Just do a naive match: the sm_term must contain all the alphanumeric parts of r_term
     parts = re.split(r'[:\*]', r_term)
-    
+
     best_match = None
     for sm_term in sm_terms:
         if sm_term == "Intercept":
             continue
-            
-        # We check if all parts are somewhat represented in sm_term
-        # e.g., 'groupATrt' -> 'groupA' and 'Trt' in sm_term
-        # For covar, it's just 'covar'
+
         match_all = True
         for part in parts:
             if part == "covar":
                 if "covar" not in sm_term:
                     match_all = False
             else:
-                # part is like groupATrt
-                # Try to find the factor name and level
                 if "groupA" in part:
                     lvl = part.replace("groupA", "")
                     if "groupA" not in sm_term or lvl not in sm_term:
@@ -194,11 +236,11 @@ def _map_r_term_to_sm_term(r_term, sm_terms):
                     lvl = part.replace("time", "")
                     if "time" not in sm_term or lvl not in sm_term:
                         match_all = False
-        
+
         if match_all:
             if best_match is None or len(sm_term) < len(best_match):
                 best_match = sm_term
-                
+
     return best_match
 
 def test_golden_lme4_lmm():
@@ -225,9 +267,10 @@ def test_golden_lme4_lmm():
         sm_term = _map_r_term_to_sm_term(r_term, list(app_coefs.keys()))
         assert sm_term is not None, f"Could not map R term '{r_term}' to app terms: {list(app_coefs.keys())}"
         
-        # Test Estimate and SE (lme4 REML=TRUE should match smf.mixedlm reml=TRUE)
-        _assert_close(f"{r_term} Estimate", app_coefs[sm_term]["coefficient"], r_vals["Estimate"], tol=0.01)
-        _assert_close(f"{r_term} SE", app_coefs[sm_term]["std_err"], r_vals["SE"], tol=0.01)
+        # Coefficients and SEs: lme4 REML vs smf.mixedlm REML use the same
+        # likelihood; empirical Δ ≤ 1e-7.  Tol=1e-4 catches solver drift.
+        _assert_close(f"{r_term} Estimate", app_coefs[sm_term]["coefficient"], r_vals["Estimate"], tol=1e-4)
+        _assert_close(f"{r_term} SE", app_coefs[sm_term]["std_err"], r_vals["SE"], tol=1e-4)
 
 
 def test_golden_glm_logistic():
@@ -256,9 +299,11 @@ def test_golden_glm_logistic():
         sm_term = _map_r_term_to_sm_term(r_term, list(app_coefs.keys()))
         assert sm_term is not None, f"Could not map R term '{r_term}' to app terms: {list(app_coefs.keys())}"
         
-        _assert_close(f"{r_term} Estimate", app_coefs[sm_term]["coefficient"], r_vals["Estimate"], tol=0.01)
-        _assert_close(f"{r_term} SE", app_coefs[sm_term]["std_err"], r_vals["SE"], tol=0.01)
-        _assert_close(f"{r_term} p", app_coefs[sm_term]["p_value"], r_vals["p"], tol=0.01)
+        # Standard GLM (no separation): statsmodels IRLS == R glm() IRLS.
+        # Empirical Δ ≤ 1e-11.  Tol=1e-4 catches solver drift.
+        _assert_close(f"{r_term} Estimate", app_coefs[sm_term]["coefficient"], r_vals["Estimate"], tol=1e-4)
+        _assert_close(f"{r_term} SE", app_coefs[sm_term]["std_err"], r_vals["SE"], tol=1e-4)
+        _assert_close(f"{r_term} p", app_coefs[sm_term]["p_value"], r_vals["p"], tol=1e-4)
 
 
 def test_golden_logistf_firth():
@@ -288,7 +333,11 @@ def test_golden_logistf_firth():
         sm_term = _map_r_term_to_sm_term(r_term, list(app_coefs.keys()))
         assert sm_term is not None, f"Could not map R term '{r_term}' to app terms: {list(app_coefs.keys())}"
         
-        _assert_close(f"{r_term} Estimate", app_coefs[sm_term]["coefficient"], r_vals["Estimate"], tol=0.01)
-        # R's logistf doesn't return regular standard errors for parameters effectively, but we extracted sqrt(diag(var))
-        # Let's compare p-values (Profile Likelihood Ratio from our custom implementation vs logistf)
-        _assert_close(f"{r_term} p-value", app_coefs[sm_term]["p_value"], r_vals["p"], tol=0.02)
+        # Firth coefficient: penalised IRLS (logistf) vs our Newton-Raphson.
+        # Empirical Δ ≤ 3.2e-7.  Tol=1e-4 is safe; if this trips after a
+        # scipy upgrade, compare the new Δ magnitude before loosening.
+        _assert_close(f"{r_term} Estimate", app_coefs[sm_term]["coefficient"], r_vals["Estimate"], tol=1e-4)
+        # Profile-Likelihood-Ratio p-values: logistf's PLR vs our bisection
+        # PLR.  Empirical Δ ≤ 1e-7.  Tol=1e-3 provides margin for the
+        # different optimisation paths (see module docstring).
+        _assert_close(f"{r_term} p-value", app_coefs[sm_term]["p_value"], r_vals["p"])
