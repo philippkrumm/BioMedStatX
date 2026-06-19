@@ -23,6 +23,7 @@ from PyQt5.QtCore import (
 from PyQt5.QtGui import QColor, QDesktopServices, QDrag, QPixmap, QPen
 from PyQt5.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -316,6 +317,74 @@ def extract_from_coordinates(df_raw, selection_map, replicate_type="biological",
 
     result = pd.concat(frames, ignore_index=True)
     return result.dropna(subset=[value_col]), nan_report
+
+
+def extract_paired_from_coordinates(df_raw, condition_map):
+    """
+    Each block row = one Subject/sample measurement.
+    Multiple columns within a row are averaged (treated as technical replicates of that row).
+    Subject ID = 1-indexed row offset across all ranges in order.
+    NA-preserving: rows with missing values are kept with NaN (not dropped), so
+    downstream listwise deletion preserves correct pairing.
+    All conditions must have the same total row count (validated by the dialog).
+    Returns (result_df, nan_report).
+    result_df columns: Group, Value, Subject
+    """
+    frames = []
+    nan_report = {}
+
+    for condition_name, ranges in condition_map.items():
+        nan_report[condition_name] = 0
+        subject_idx = 1
+        for rng in ranges:
+            r1, r2 = rng["rows"]
+            c1, c2 = rng["cols"]
+            block = df_raw.iloc[r1:r2 + 1, c1:c2 + 1]
+            for row_offset in range(r2 - r1 + 1):
+                row_vals = []
+                for col_offset in range(c2 - c1 + 1):
+                    raw = block.iloc[row_offset, col_offset]
+                    if pd.isna(raw) or str(raw).strip() == "":
+                        nan_report[condition_name] += 1
+                    else:
+                        try:
+                            row_vals.append(float(str(raw).strip()))
+                        except ValueError:
+                            nan_report[condition_name] += 1
+                val = float(np.nanmean(row_vals)) if row_vals else np.nan
+                frames.append({"Group": condition_name, "Value": val, "Subject": subject_idx})
+                subject_idx += 1
+
+    if not frames:
+        return pd.DataFrame(columns=["Group", "Value", "Subject"]), nan_report
+    return pd.DataFrame(frames), nan_report
+
+
+def extract_bivariate_from_coordinates(df_raw, xy_map):
+    """
+    xy_map must have "X-axis value" and "Y-axis value" keys.
+    Returns DataFrame with X, Y columns (NaN-preserving).
+    Equal length is validated by the dialog before this is called.
+    """
+    def _extract_vals(ranges):
+        vals = []
+        for rng in ranges:
+            r1, r2 = rng["rows"]
+            c1, c2 = rng["cols"]
+            block = df_raw.iloc[r1:r2 + 1, c1:c2 + 1]
+            for v in block.values.flatten():
+                if pd.isna(v) or str(v).strip() == "":
+                    vals.append(np.nan)
+                else:
+                    try:
+                        vals.append(float(str(v).strip()))
+                    except ValueError:
+                        vals.append(np.nan)
+        return vals
+
+    x_vals = _extract_vals(xy_map.get("X-axis value", []))
+    y_vals = _extract_vals(xy_map.get("Y-axis value", []))
+    return pd.DataFrame({"X": x_vals, "Y": y_vals})
 
 
 def _sorted_unique(values):
@@ -1403,7 +1472,8 @@ class RangeSelectionDelegate(QStyledItemDelegate):
 class SheetSelectionDialog(QDialog):
     def __init__(self, df_raw, initial_sheet=None, available_sheets=None,
                  source_path=None, parent=None,
-                 initial_selection_map=None, initial_replicate_type=None):
+                 initial_selection_map=None, initial_replicate_type=None,
+                 initial_design_mode=None):
         super().__init__(parent)
         self.setObjectName("rangeSelectionDialog")
         self.setWindowTitle("Select Data Ranges")
@@ -1412,6 +1482,7 @@ class SheetSelectionDialog(QDialog):
         # Restore previous selection if provided
         self._initial_selection_map = initial_selection_map or None
         self._initial_replicate_type = initial_replicate_type or None
+        self._design_mode = initial_design_mode or "between"
         # Size dynamically based on screen (80% of available area, capped sensibly)
         try:
             screen = QApplication.primaryScreen().availableGeometry()
@@ -1435,13 +1506,33 @@ class SheetSelectionDialog(QDialog):
         self._colored_cells = set()  # cache of (r,c) cells currently colored — incremental recolor
 
         self._build_ui()
+
+        # Set design radio without triggering the change handler
+        if self._design_mode == "paired":
+            self._paired_radio.blockSignals(True)
+            self._paired_radio.setChecked(True)
+            self._paired_radio.blockSignals(False)
+        elif self._design_mode == "bivariate":
+            self._bivariate_radio.blockSignals(True)
+            self._bivariate_radio.setChecked(True)
+            self._bivariate_radio.blockSignals(False)
+        self._sync_mode_ui()
+
         if self._initial_selection_map:
             # Restore prior groups in original order
             for g in self._initial_selection_map.keys():
                 self._add_group_internal(g)
         else:
-            self._add_group_internal("Group_A")
-            self._add_group_internal("Group_B")
+            if self._design_mode == "between":
+                self._add_group_internal("Group A")
+                self._add_group_internal("Group B")
+            elif self._design_mode == "paired":
+                self._add_group_internal("Condition 1")
+                self._add_group_internal("Condition 2")
+            else:
+                self._add_group_internal("X-axis value")
+                self._add_group_internal("Y-axis value")
+
         self._populate_table(df_raw)
         if self._initial_selection_map:
             # Restore range assignments + replicate type
@@ -1509,38 +1600,88 @@ class SheetSelectionDialog(QDialog):
         right_layout.setContentsMargins(12, 12, 12, 12)
         right_layout.setSpacing(8)
 
-        groups_title = QLabel("Groups")
-        groups_title.setObjectName("columnCardTitle")
-        right_layout.addWidget(groups_title)
+        # ── Design selector ────────────────────────────────────────────
+        design_title = QLabel("How are your data structured?")
+        design_title.setObjectName("columnCardTitle")
+        right_layout.addWidget(design_title)
+
+        self._design_btn_group = QButtonGroup(self)
+
+        self._between_radio = QRadioButton("Separate groups")
+        self._between_radio.setChecked(True)
+        self._design_btn_group.addButton(self._between_radio)
+        right_layout.addWidget(self._between_radio)
+
+        between_desc = QLabel("Each block is a different set of samples\n(e.g. control vs. treated, WT vs. KO)")
+        between_desc.setObjectName("columnCardMeta")
+        between_desc.setContentsMargins(20, 0, 0, 4)
+        right_layout.addWidget(between_desc)
+
+        self._paired_radio = QRadioButton("Same samples, measured repeatedly")
+        self._design_btn_group.addButton(self._paired_radio)
+        right_layout.addWidget(self._paired_radio)
+
+        paired_desc = QLabel(
+            "Each row is one sample measured more than once\n"
+            "(e.g. before vs. after). Row 1 must be the\n"
+            "same sample in every block."
+        )
+        paired_desc.setObjectName("columnCardMeta")
+        paired_desc.setContentsMargins(20, 0, 0, 4)
+        right_layout.addWidget(paired_desc)
+
+        self._bivariate_radio = QRadioButton("Two measurements, related")
+        self._design_btn_group.addButton(self._bivariate_radio)
+        right_layout.addWidget(self._bivariate_radio)
+
+        bivariate_desc = QLabel(
+            "Two values per sample — does one track the other?\n"
+            "(e.g. dose vs. response; shown as scatter)"
+        )
+        bivariate_desc.setObjectName("columnCardMeta")
+        bivariate_desc.setContentsMargins(20, 0, 0, 4)
+        right_layout.addWidget(bivariate_desc)
+
+        self._design_btn_group.buttonClicked.connect(self._on_design_mode_changed)
+
+        sep_design = QFrame()
+        sep_design.setFrameShape(QFrame.HLine)
+        right_layout.addWidget(sep_design)
+
+        # ── Block / condition list ──────────────────────────────────────
+        self._groups_title_label = QLabel("Groups")
+        self._groups_title_label.setObjectName("columnCardTitle")
+        right_layout.addWidget(self._groups_title_label)
 
         self._groups_container = QVBoxLayout()
         self._groups_container.setSpacing(4)
         right_layout.addLayout(self._groups_container)
 
-        add_group_btn = QPushButton("+ Add Group")
-        add_group_btn.setObjectName("secondaryButton")
-        add_group_btn.clicked.connect(self._on_add_group)
-        right_layout.addWidget(add_group_btn)
+        self._add_group_btn = QPushButton("+ Add Group")
+        self._add_group_btn.setObjectName("secondaryButton")
+        self._add_group_btn.clicked.connect(self._on_add_group)
+        right_layout.addWidget(self._add_group_btn)
 
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
         right_layout.addWidget(sep)
 
-        rep_title = QLabel("Replicate type")
-        rep_title.setObjectName("columnCardTitle")
-        right_layout.addWidget(rep_title)
+        # ── Replicate type (between-subjects only) ─────────────────────
+        self._rep_section_title = QLabel("Replicates")
+        self._rep_section_title.setObjectName("columnCardTitle")
+        right_layout.addWidget(self._rep_section_title)
 
-        self._bio_radio = QRadioButton("Biological  (each cell = 1 N)")
+        self._bio_radio = QRadioButton("Biological — each value is its own sample (1 n per cell)")
         self._bio_radio.setChecked(True)
         self._bio_radio.toggled.connect(self._on_replicate_changed)
         right_layout.addWidget(self._bio_radio)
 
-        self._tech_radio = QRadioButton("Technical  (mean per block)")
+        self._tech_radio = QRadioButton("Technical — repeated readings of one sample (block averaged to 1 n)")
         right_layout.addWidget(self._tech_radio)
 
-        sep2 = QFrame()
-        sep2.setFrameShape(QFrame.HLine)
-        right_layout.addWidget(sep2)
+        self._rep_section_sep = QFrame()
+        self._rep_section_sep.setFrameShape(QFrame.HLine)
+        right_layout.addWidget(self._rep_section_sep)
 
         self._status_label = QLabel("No cells selected")
         self._status_label.setObjectName("columnCardMeta")
@@ -1556,6 +1697,13 @@ class SheetSelectionDialog(QDialog):
         assign_row.addWidget(self._assign_btn)
         assign_row.addWidget(self._assign_combo, 1)
         right_layout.addLayout(assign_row)
+
+        self._bivariate_helper_label = QLabel(
+            "X = what you varied (e.g. dose)\nY = what you measured (e.g. response)"
+        )
+        self._bivariate_helper_label.setObjectName("columnCardMeta")
+        self._bivariate_helper_label.setVisible(False)
+        right_layout.addWidget(self._bivariate_helper_label)
 
         right_layout.addStretch()
 
@@ -1592,6 +1740,87 @@ class SheetSelectionDialog(QDialog):
             )
         except Exception:
             pass
+
+    # ------------------------------------------------------------------
+    # Design mode
+    # ------------------------------------------------------------------
+
+    def _sync_mode_ui(self):
+        """Sync right-panel visibility to current _design_mode (no selection reset)."""
+        mode = self._design_mode
+        titles = {"between": "Groups", "paired": "Conditions", "bivariate": "Measurements"}
+        self._groups_title_label.setText(titles[mode])
+        show_rep = (mode == "between")
+        self._rep_section_title.setVisible(show_rep)
+        self._bio_radio.setVisible(show_rep)
+        self._tech_radio.setVisible(show_rep)
+        self._rep_section_sep.setVisible(show_rep)
+        self._add_group_btn.setVisible(mode != "bivariate")
+        self._bivariate_helper_label.setVisible(mode == "bivariate")
+
+    def _on_design_mode_changed(self, _button=None):
+        if self._between_radio.isChecked():
+            new_mode = "between"
+        elif self._paired_radio.isChecked():
+            new_mode = "paired"
+        else:
+            new_mode = "bivariate"
+
+        if new_mode == self._design_mode:
+            return
+
+        has_assignments = any(len(v) > 0 for v in self._selection_map.values())
+        if has_assignments:
+            reply = QMessageBox.question(
+                self, "Change Design Type",
+                "Changing the design type will clear all current selections. Continue?",
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                # Revert radio to current mode without triggering this handler again
+                for radio in (self._between_radio, self._paired_radio, self._bivariate_radio):
+                    radio.blockSignals(True)
+                if self._design_mode == "between":
+                    self._between_radio.setChecked(True)
+                elif self._design_mode == "paired":
+                    self._paired_radio.setChecked(True)
+                else:
+                    self._bivariate_radio.setChecked(True)
+                for radio in (self._between_radio, self._paired_radio, self._bivariate_radio):
+                    radio.blockSignals(False)
+                return
+
+        self._design_mode = new_mode
+
+        # Reset all selection state
+        self._selection_map.clear()
+        self._group_colors.clear()
+        self._color_index = 0
+        self._focused_group = None
+        self._colored_cells.clear()
+        self._last_selected_ranges = []
+        self._last_indexes = []
+        self._assign_combo.clear()
+        self._replicate_type = "biological"
+        self._bio_radio.blockSignals(True)
+        self._bio_radio.setChecked(True)
+        self._bio_radio.blockSignals(False)
+
+        # Add defaults for new mode
+        if new_mode == "between":
+            self._add_group_internal("Group A")
+            self._add_group_internal("Group B")
+        elif new_mode == "paired":
+            self._add_group_internal("Condition 1")
+            self._add_group_internal("Condition 2")
+        else:
+            self._add_group_internal("X-axis value")
+            self._add_group_internal("Y-axis value")
+
+        self._sync_mode_ui()
+        self._rebuild_group_list()
+        self._recolor_table()
+        self._update_preview()
 
     # ------------------------------------------------------------------
     # Table population
@@ -1749,11 +1978,12 @@ class SheetSelectionDialog(QDialog):
             count_lbl.setObjectName("columnCardMeta")
             row_layout.addWidget(count_lbl)
 
-            rm_btn = QToolButton()
-            rm_btn.setText("×")
-            rm_btn.setObjectName("hintDismiss")
-            rm_btn.clicked.connect(lambda _checked, g=group_name: self._on_remove_group(g))
-            row_layout.addWidget(rm_btn)
+            if self._design_mode != "bivariate":
+                rm_btn = QToolButton()
+                rm_btn.setText("×")
+                rm_btn.setObjectName("hintDismiss")
+                rm_btn.clicked.connect(lambda _checked, g=group_name: self._on_remove_group(g))
+                row_layout.addWidget(rm_btn)
 
             self._groups_container.addWidget(row_w)
 
@@ -2111,7 +2341,48 @@ class SheetSelectionDialog(QDialog):
                 self, "No Selection", "Assign at least one group before applying."
             )
             return
+
+        if self._design_mode == "paired":
+            def _row_count(ranges):
+                return sum(r["rows"][1] - r["rows"][0] + 1 for r in ranges)
+            row_counts = {cond: _row_count(ranges) for cond, ranges in self._selection_map.items()
+                          if ranges}
+            if len(set(row_counts.values())) > 1:
+                detail = ", ".join(f"{c} = {n} rows" for c, n in row_counts.items())
+                QMessageBox.warning(
+                    self, "Block Height Mismatch",
+                    "For 'same samples measured repeatedly', every condition needs one "
+                    "row per sample — so all blocks must be the same height.\n\n"
+                    f"You selected: {detail}."
+                )
+                return
+
+        elif self._design_mode == "bivariate":
+            groups = [g for g, r in self._selection_map.items() if r]
+            if len(groups) != 2:
+                QMessageBox.warning(
+                    self, "Two blocks required",
+                    "For 'two measurements, related', mark one X block and one Y block.\n"
+                    f"You currently have {len(groups)}."
+                )
+                return
+            def _cell_count(ranges):
+                return sum(
+                    (r["rows"][1] - r["rows"][0] + 1) * (r["cols"][1] - r["cols"][0] + 1)
+                    for r in ranges
+                )
+            counts = {g: _cell_count(self._selection_map[g]) for g in groups}
+            vals = list(counts.values())
+            if vals[0] != vals[1]:
+                names = list(counts.keys())
+                QMessageBox.warning(
+                    self, "Count Mismatch",
+                    "X and Y need the same number of values so every point has both "
+                    f"coordinates. {names[0]} = {vals[0]}, {names[1]} = {vals[1]}."
+                )
+                return
+
         self.accept()
 
     def get_result(self):
-        return self._selection_map, self._replicate_type, self._current_sheet
+        return self._selection_map, self._replicate_type, self._current_sheet, self._design_mode

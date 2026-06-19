@@ -49,7 +49,9 @@ from autopilot.statistical_analyzer_autopilot_ui import (
     _pivot_wide_to_long,
     _safe_file_slug,
     _sorted_unique,
+    extract_bivariate_from_coordinates,
     extract_from_coordinates,
+    extract_paired_from_coordinates,
 )
 from analysis.statisticaltester import StatisticalTester
 from analysis.stats_functions import AnalysisManager
@@ -172,8 +174,8 @@ def _ap_init_ui(self):
     self.range_select_btn = QPushButton("Select Data Ranges...")
     self.range_select_btn.setObjectName("secondaryButton")
     self.range_select_btn.setToolTip(
-        "Open the raw sheet viewer to select cell ranges and assign them to groups.\n"
-        "Single-factor only — for multi-factor designs use a pre-formatted long-format file."
+        "Handles one grouping at a time. For two-factor designs, covariates, or mixed models, "
+        "arrange your data as a table with one row per measurement and load that instead."
     )
     self.range_select_btn.setVisible(False)
     self.range_select_btn.clicked.connect(self._ap_open_range_selector)
@@ -489,6 +491,13 @@ def _ap_apply_mapping_heuristics(self):
 
     if self.df is None:
         return
+
+    # Bivariate range extraction: X = predictor → Factor 1, Y = outcome → DV
+    if getattr(self, "_range_design_mode", None) == "bivariate":
+        if "X" in self.df.columns and "Y" in self.df.columns:
+            self.dv_bucket.assign_column("Y", _infer_column_kind(self.df["Y"]))
+            self.factor1_bucket.assign_column("X", _infer_column_kind(self.df["X"]))
+            return
 
     columns = list(self.df.columns)
     numeric_all = [column for column in columns if pd.api.types.is_numeric_dtype(self.df[column])]
@@ -1948,11 +1957,13 @@ def _ap_open_range_selector(self):
     prior = getattr(self, "_range_selection_metadata", None) or {}
     prior_selection_map = None
     prior_replicate_type = None
+    prior_design_mode = None
     if prior:
         sels = prior.get("selections") or []
         if sels:
             prior_selection_map = {s["group"]: s.get("ranges", []) for s in sels}
             prior_replicate_type = sels[0].get("replicate_type")
+        prior_design_mode = prior.get("design_mode")
         # If prior selection was made on a different sheet, reopen that sheet
         prior_sheet = prior.get("sheet")
         if prior_sheet and available_sheets and prior_sheet in available_sheets \
@@ -1968,43 +1979,72 @@ def _ap_open_range_selector(self):
         parent=self,
         initial_selection_map=prior_selection_map,
         initial_replicate_type=prior_replicate_type,
+        initial_design_mode=prior_design_mode,
     )
     if dlg.exec_() != QDialog.Accepted:
         return
-    selection_map, replicate_type, sheet_name = dlg.get_result()
+    selection_map, replicate_type, sheet_name, design_mode = dlg.get_result()
     if not selection_map:
         return
 
     if sheet_name and sheet_name != initial_sheet and not path.lower().endswith(".csv"):
         df_raw = pd.read_excel(path, sheet_name=sheet_name, header=None, dtype=str)
 
-    result_df, nan_report = extract_from_coordinates(
-        df_raw, selection_map, replicate_type=replicate_type
-    )
-    # Drop metadata cols — prevent auto-mapping Source_Range as Factor 2
-    self.df = result_df.drop(columns=["Source_Range", "n_replicates"], errors="ignore")
+    # Route to correct extractor based on design mode
+    if design_mode == "paired":
+        result_df, nan_report = extract_paired_from_coordinates(df_raw, selection_map)
+        self.df = result_df
+    elif design_mode == "bivariate":
+        self.df = extract_bivariate_from_coordinates(df_raw, selection_map)
+        nan_report = {}
+    else:
+        result_df, nan_report = extract_from_coordinates(
+            df_raw, selection_map, replicate_type=replicate_type
+        )
+        self.df = result_df.drop(columns=["Source_Range", "n_replicates"], errors="ignore")
+
+    self._range_design_mode = design_mode
     self._range_selection_metadata = {
         "source_file": path,
         "sheet": sheet_name,
+        "design_mode": design_mode,
         "selections": [
             {"group": g, "ranges": r, "replicate_type": replicate_type}
             for g, r in selection_map.items()
         ],
     }
-    total_nan = sum(nan_report.values())
+
+    total_nan = sum(nan_report.values()) if nan_report else 0
     if total_nan > 0:
         self.statusBar().showMessage(
             f"{total_nan} non-numeric value(s) dropped during import.", 8000
         )
-    group_col = "Group"
-    group_counts = []
-    for g in selection_map:
-        n = int((self.df[group_col] == g).sum()) if group_col in self.df.columns else 0
-        group_counts.append(f"{g}: n={n}")
-    summary = "  |  ".join(group_counts)
+
+    # Summary label — wording varies by design mode
     if hasattr(self, "_range_groups_label"):
-        self._range_groups_label.setText(f"Imported groups — {summary}")
+        if design_mode == "bivariate":
+            x_n = len(self.df["X"].dropna()) if "X" in self.df.columns else 0
+            y_n = len(self.df["Y"].dropna()) if "Y" in self.df.columns else 0
+            summary = f"X = {x_n} values  |  Y = {y_n} values"
+            self._range_groups_label.setText(f"Imported variables — {summary}")
+        elif design_mode == "paired":
+            group_counts = []
+            for g in selection_map:
+                n = int((self.df["Group"] == g).sum()) if "Group" in self.df.columns else 0
+                group_counts.append(f"{g}: n={n}")
+            self._range_groups_label.setText(
+                "Imported conditions — " + "  |  ".join(group_counts)
+            )
+        else:
+            group_counts = []
+            for g in selection_map:
+                n = int((self.df["Group"] == g).sum()) if "Group" in self.df.columns else 0
+                group_counts.append(f"{g}: n={n}")
+            self._range_groups_label.setText(
+                "Imported groups — " + "  |  ".join(group_counts)
+            )
         self._range_groups_label.setVisible(True)
+
     self._wide_format_info = None
     self._ap_reset_result_area()
     self._refresh_preview_table()
