@@ -420,14 +420,14 @@ class DecisionTreeVisualizer:
                 'I1_M': {"label": "3 or more groups", "pos": (-3, 3)},      # MOVED CLOSER TO CENTER
 
                 # Parametric - Two Groups (MOVED CLOSER TO TWO GROUPS)
-                'J1_INDEP': {"label": "Independent\n(different participants)", "pos": (-14, 2)},     # CLOSER
-                'J1_DEP': {"label": "Dependent\n(same participants)", "pos": (-12, 2)},         # CLOSER
+                'J1_INDEP': {"label": "Independent\n(different subjects)", "pos": (-14, 2)},     # CLOSER
+                'J1_DEP': {"label": "Dependent\n(same subjects)", "pos": (-12, 2)},         # CLOSER
                 'K1_2_IND': {"label": "Welch's t-test", "pos": (-14, 1)},
                 'K1_2_DEP': {"label": "Paired t-test", "pos": (-12, 1)},
 
                 # THREE ANOVA DESIGNS - MOVED INDEPENDENT GROUPS FURTHER LEFT
-                'INDEPENDENT_GROUPS': {"label": "Different participants\nin each group", "pos": (-8, 2)},     # MOVED FURTHER LEFT
-                'REPEATED_MEASURES': {"label": "Same participants\nmeasured multiple times", "pos": (-2, 2)},       # SAME 
+                'INDEPENDENT_GROUPS': {"label": "Different subjects\nin each group", "pos": (-8, 2)},     # MOVED FURTHER LEFT
+                'REPEATED_MEASURES': {"label": "Same subjects\nmeasured multiple times", "pos": (-2, 2)},       # SAME 
                 'MIXED_DESIGN': {"label": "Mixed design\n(between + within factors)", "pos": (4, 2)},                  # MOVED CLOSER
 
                 # INDEPENDENT GROUPS PATH - MOVED FURTHER LEFT AND MORE SPACING
@@ -463,8 +463,8 @@ class DecisionTreeVisualizer:
                 'MIXED_ANOVA_CORRECTED': {"label": "Mixed ANOVA\n(Within Corrected)", "pos": (5.5, -3)},
                 'MIXED_POSTHOC': {"label": "Which groups / time points differ?", "pos": (4, -4)},
                 'MIXED_TUKEY': {"label": "Mixed Tukey\n(Between/Within)", "pos": (2, -5)},      # MORE SPACING: 1.5 apart
-                'MIXED_BETWEEN': {"label": "Between groups\n(different participants)", "pos": (4, -5)},       # MORE SPACING: 1.5 apart  
-                'MIXED_WITHIN': {"label": "Within group\n(same participants over time)", "pos": (6, -5)},       # MORE SPACING: 1.5 apart
+                'MIXED_BETWEEN': {"label": "Between groups\n(different subjects)", "pos": (4, -5)},       # MORE SPACING: 1.5 apart  
+                'MIXED_WITHIN': {"label": "Within group\n(same subjects over time)", "pos": (6, -5)},       # MORE SPACING: 1.5 apart
 
                 # Non-parametric branch - MOVED CLOSER TO PARAMETRIC
                 'G2': {"label": "Non-parametric test\n(rank-based)", "pos": (10, 5)},                      # MOVED CLOSER
@@ -473,14 +473,14 @@ class DecisionTreeVisualizer:
                 'I2_M': {"label": "3 or more groups", "pos": (14, 3)},
 
                 # Non-parametric - Two groups (MOVED CLOSER TO TWO GROUPS)
-                'J2_INDEP': {"label": "Independent\n(different participants)", "pos": (7, 2)},               # MOVED CLOSER
-                'J2_DEP': {"label": "Dependent\n(same participants)", "pos": (9, 2)},                   # MOVED CLOSER
+                'J2_INDEP': {"label": "Independent\n(different subjects)", "pos": (7, 2)},               # MOVED CLOSER
+                'J2_DEP': {"label": "Dependent\n(same subjects)", "pos": (9, 2)},                   # MOVED CLOSER
                 'K2_2_IND': {"label": "Mann-Whitney U", "pos": (7, 1)},
                 'K2_2_DEP': {"label": "Wilcoxon\nSigned-Rank", "pos": (9, 1)},
 
                 # Non-parametric - Multiple groups (advanced layout aligned to parametric pattern)
-                'NP_INDEPENDENT_GROUPS': {"label": "Different participants\nin each group", "pos": (12.5, 2)},
-                'NP_REPEATED_MEASURES': {"label": "Same participants\nmeasured multiple times", "pos": (16, 2)},
+                'NP_INDEPENDENT_GROUPS': {"label": "Different subjects\nin each group", "pos": (12.5, 2)},
+                'NP_REPEATED_MEASURES': {"label": "Same subjects\nmeasured multiple times", "pos": (16, 2)},
                 'NP_MIXED_DESIGN': {"label": "Mixed design\n(between + within)", "pos": (20, 2)},
 
                 # Non-parametric independent path (classic + robust two-way)
@@ -500,8 +500,8 @@ class DecisionTreeVisualizer:
                 # Non-parametric mixed path
                 'NP_MIXED_ROBUST': {"label": "Brunner-Langer\nATS", "pos": (20, 1)},
                 'NP_MIXED_POSTHOC': {"label": "Which groups / time points differ?", "pos": (20, 0)},
-                'NP_MIXED_BETWEEN': {"label": "Between groups\n(different participants)", "pos": (19, -1)},
-                'NP_MIXED_WITHIN': {"label": "Within group\n(same participants over time)", "pos": (21, -1)},
+                'NP_MIXED_BETWEEN': {"label": "Between groups\n(different subjects)", "pos": (19, -1)},
+                'NP_MIXED_WITHIN': {"label": "Within group\n(same subjects over time)", "pos": (21, -1)},
             }
 
             # Apply wide-canvas spacing to preserve structure while avoiding label collisions.
@@ -776,7 +776,9 @@ class DecisionTreeVisualizer:
                             else:
                                 highlighted.add(('NP_POSTHOC', 'NP_MANN_WHITNEY'))
                         
-            elif (actual_test_type.lower() == "parametric" or 
+            elif (actual_test_type.lower() == "parametric" or
+                  "welch" in test_name.lower() or
+                  "t-test" in test_name.lower() or
                   (test_name.lower().find("anova") != -1 and test_name.lower().find("non") == -1)) and \
                  not welch_t_condition and not welch_anova_condition:
                 logger.debug("DEBUG TREE: Taking parametric path")
@@ -909,12 +911,10 @@ class DecisionTreeVisualizer:
                             highlighted.add(('IND_TWO_WAY', 'IND_POSTHOC'))
                             # Determine specific post-hoc test
                             posthoc_test = results.get("posthoc_test", "")
-                            if "tukey" in posthoc_test.lower():
+                            if "tukey" in posthoc_test.lower() or "games" in posthoc_test.lower() or "howell" in posthoc_test.lower():
                                 highlighted.add(('IND_POSTHOC', 'IND_TUKEY'))
                             elif "dunnett" in posthoc_test.lower():
                                 highlighted.add(('IND_POSTHOC', 'IND_DUNNETT'))
-                            elif "fdr" in posthoc_test.lower() or "benjamini" in posthoc_test.lower():
-                                highlighted.add(('IND_POSTHOC', 'IND_FDR'))
                             else:
                                 highlighted.add(('IND_POSTHOC', 'IND_HOLM_SIDAK'))
                             
@@ -928,12 +928,10 @@ class DecisionTreeVisualizer:
                             highlighted.add(('IND_ONE_WAY', 'IND_POSTHOC'))
                             # Determine specific post-hoc test
                             posthoc_test = results.get("posthoc_test", "")
-                            if "tukey" in posthoc_test.lower():
+                            if "tukey" in posthoc_test.lower() or "games" in posthoc_test.lower() or "howell" in posthoc_test.lower():
                                 highlighted.add(('IND_POSTHOC', 'IND_TUKEY'))
                             elif "dunnett" in posthoc_test.lower():
                                 highlighted.add(('IND_POSTHOC', 'IND_DUNNETT'))
-                            elif "fdr" in posthoc_test.lower() or "benjamini" in posthoc_test.lower():
-                                highlighted.add(('IND_POSTHOC', 'IND_FDR'))
                             else:
                                 highlighted.add(('IND_POSTHOC', 'IND_HOLM_SIDAK'))
             # Generate edge lists for drawing
@@ -1293,12 +1291,12 @@ class DecisionTreeVisualizer:
                 'H1': {"label": "How many groups?", "pos": (-10, 4)},
                 'I1_2': {"label": "2 groups", "pos": (-13, 3)},
                 'I1_M': {"label": "3 or more groups", "pos": (-3, 3)},
-                'J1_INDEP': {"label": "Independent\n(different participants)", "pos": (-14, 2)},
-                'J1_DEP':   {"label": "Dependent\n(same participants)", "pos": (-12, 2)},
+                'J1_INDEP': {"label": "Independent\n(different subjects)", "pos": (-14, 2)},
+                'J1_DEP':   {"label": "Dependent\n(same subjects)", "pos": (-12, 2)},
                 'K1_2_IND': {"label": "Welch's t-test", "pos": (-14, 1)},
                 'K1_2_DEP': {"label": "Paired t-test", "pos": (-12, 1)},
-                'INDEPENDENT_GROUPS': {"label": "Different participants\nin each group", "pos": (-8, 2)},
-                'REPEATED_MEASURES':  {"label": "Same participants\nmeasured multiple times", "pos": (-2, 2)},
+                'INDEPENDENT_GROUPS': {"label": "Different subjects\nin each group", "pos": (-8, 2)},
+                'REPEATED_MEASURES':  {"label": "Same subjects\nmeasured multiple times", "pos": (-2, 2)},
                 'MIXED_DESIGN':        {"label": "Mixed design\n(between + within factors)", "pos": (4, 2)},
                 'IND_ONE_WAY':   {"label": "Welch's ANOVA", "pos": (-9, 1)},
                 'IND_TWO_WAY':   {"label": "Two-way ANOVA", "pos": (-7, 1)},
@@ -1306,7 +1304,6 @@ class DecisionTreeVisualizer:
                 'IND_TUKEY':     {"label": "Games-Howell", "pos": (-9.5, -1)},
                 'IND_DUNNETT':   {"label": "Dunnett Test", "pos": (-8, -1)},
                 'IND_HOLM_SIDAK':{"label": "Pairwise t-tests\n(Holm-Šidák)", "pos": (-6.5, -1)},
-                'IND_FDR':       {"label": "Pairwise t-tests\n(FDR)", "pos": (-5.0, -1)},
                 'RM_MAUCHLY':            {"label": k1_m_sph_label, "pos": (-2, 1)},
                 'RM_SPHERICITY_OK':      {"label": "Even correlation\n-> no correction needed", "pos": (-3.5, 0)},
                 'RM_SPHERICITY_VIOLATED':{"label": "Uneven correlation\n-> correction needed", "pos": (-0.5, 0)},
@@ -1328,18 +1325,18 @@ class DecisionTreeVisualizer:
                 'MIXED_ANOVA_CORRECTED':     {"label": "Mixed ANOVA\n(Within Corrected)", "pos": (5.5, -3)},
                 'MIXED_POSTHOC':             {"label": "Which groups / time points differ?", "pos": (4, -4)},
                 'MIXED_TUKEY':   {"label": "Mixed Tukey\n(Between/Within)", "pos": (2, -5)},
-                'MIXED_BETWEEN': {"label": "Between groups\n(different participants)", "pos": (4, -5)},
-                'MIXED_WITHIN':  {"label": "Within group\n(same participants over time)", "pos": (6, -5)},
+                'MIXED_BETWEEN': {"label": "Between groups\n(different subjects)", "pos": (4, -5)},
+                'MIXED_WITHIN':  {"label": "Within group\n(same subjects over time)", "pos": (6, -5)},
                 'G2': {"label": "Non-parametric test\n(rank-based)", "pos": (10, 5)},
                 'H2': {"label": "How many groups?", "pos": (10, 4)},
                 'I2_2': {"label": "2 groups", "pos": (8, 3)},
                 'I2_M': {"label": "3 or more groups", "pos": (14, 3)},
-                'J2_INDEP': {"label": "Independent\n(different participants)", "pos": (7, 2)},
-                'J2_DEP':   {"label": "Dependent\n(same participants)", "pos": (9, 2)},
+                'J2_INDEP': {"label": "Independent\n(different subjects)", "pos": (7, 2)},
+                'J2_DEP':   {"label": "Dependent\n(same subjects)", "pos": (9, 2)},
                 'K2_2_IND': {"label": "Mann-Whitney U", "pos": (7, 1)},
                 'K2_2_DEP': {"label": "Wilcoxon\nSigned-Rank", "pos": (9, 1)},
-                'NP_INDEPENDENT_GROUPS': {"label": "Different participants\nin each group", "pos": (12.5, 2)},
-                'NP_REPEATED_MEASURES':  {"label": "Same participants\nmeasured multiple times", "pos": (16, 2)},
+                'NP_INDEPENDENT_GROUPS': {"label": "Different subjects\nin each group", "pos": (12.5, 2)},
+                'NP_REPEATED_MEASURES':  {"label": "Same subjects\nmeasured multiple times", "pos": (16, 2)},
                 'NP_MIXED_DESIGN':       {"label": "Mixed design\n(between + within)", "pos": (20, 2)},
                 'K2_M_IND':           {"label": "Kruskal-Wallis", "pos": (11.5, 1)},
                 'NP_POSTHOC':         {"label": "Which groups differ?", "pos": (11.5, 0)},
@@ -1353,8 +1350,8 @@ class DecisionTreeVisualizer:
                 'NP_RM_PAIRWISE': {"label": "RM Pairwise\nComparisons", "pos": (16, -1)},
                 'NP_MIXED_ROBUST':   {"label": "Brunner-Langer\nATS", "pos": (20, 1)},
                 'NP_MIXED_POSTHOC':  {"label": "Which groups / time points differ?", "pos": (20, 0)},
-                'NP_MIXED_BETWEEN':  {"label": "Between groups\n(different participants)", "pos": (19, -1)},
-                'NP_MIXED_WITHIN':   {"label": "Within group\n(same participants over time)", "pos": (21, -1)},
+                'NP_MIXED_BETWEEN':  {"label": "Between groups\n(different subjects)", "pos": (19, -1)},
+                'NP_MIXED_WITHIN':   {"label": "Within group\n(same subjects over time)", "pos": (21, -1)},
             }
             nodes_info = DecisionTreeVisualizer._apply_wide_canvas_layout(nodes_info)
 
@@ -1367,7 +1364,7 @@ class DecisionTreeVisualizer:
                 ('I1_M','INDEPENDENT_GROUPS'),('I1_M','REPEATED_MEASURES'),('I1_M','MIXED_DESIGN'),
                 ('INDEPENDENT_GROUPS','IND_ONE_WAY'),('INDEPENDENT_GROUPS','IND_TWO_WAY'),
                 ('IND_ONE_WAY','IND_POSTHOC'),('IND_TWO_WAY','IND_POSTHOC'),
-                ('IND_POSTHOC','IND_TUKEY'),('IND_POSTHOC','IND_DUNNETT'),('IND_POSTHOC','IND_HOLM_SIDAK'),('IND_POSTHOC','IND_FDR'),
+                ('IND_POSTHOC','IND_TUKEY'),('IND_POSTHOC','IND_DUNNETT'),('IND_POSTHOC','IND_HOLM_SIDAK'),
                 ('REPEATED_MEASURES','RM_MAUCHLY'),
                 ('RM_MAUCHLY','RM_SPHERICITY_OK'),('RM_MAUCHLY','RM_SPHERICITY_VIOLATED'),
                 ('RM_SPHERICITY_OK','RM_ANOVA_STANDARD'),
@@ -1467,7 +1464,10 @@ class DecisionTreeVisualizer:
                             ph = posthoc_test.lower()
                             highlighted.add(('NP_POSTHOC','NP_DUNN') if "dunn" in ph else ('NP_POSTHOC','NP_MANN_WHITNEY'))
 
-            elif actual_test_type.lower() == "parametric" or ("anova" in test_name.lower() and "non" not in test_name.lower()):
+            elif (actual_test_type.lower() == "parametric"
+                  or "welch" in test_name.lower()
+                  or "t-test" in test_name.lower()
+                  or ("anova" in test_name.lower() and "non" not in test_name.lower())):
                 if not auto_switched:
                     highlighted.add(('F','G1'))
                 highlighted.add(('G1','H1'))
@@ -1518,18 +1518,16 @@ class DecisionTreeVisualizer:
                         if p_value is not None and p_value < alpha:
                             highlighted.add(('IND_TWO_WAY','IND_POSTHOC'))
                             ph = posthoc_test.lower()
-                            if "tukey" in ph: highlighted.add(('IND_POSTHOC','IND_TUKEY'))
+                            if "tukey" in ph or "games" in ph or "howell" in ph: highlighted.add(('IND_POSTHOC','IND_TUKEY'))
                             elif "dunnett" in ph: highlighted.add(('IND_POSTHOC','IND_DUNNETT'))
-                            elif "fdr" in ph or "benjamini" in ph: highlighted.add(('IND_POSTHOC','IND_FDR'))
                             else: highlighted.add(('IND_POSTHOC','IND_HOLM_SIDAK'))
                     else:
                         highlighted.update([('I1_M','INDEPENDENT_GROUPS'),('INDEPENDENT_GROUPS','IND_ONE_WAY')])
                         if p_value is not None and p_value < alpha:
                             highlighted.add(('IND_ONE_WAY','IND_POSTHOC'))
                             ph = posthoc_test.lower()
-                            if "tukey" in ph: highlighted.add(('IND_POSTHOC','IND_TUKEY'))
+                            if "tukey" in ph or "games" in ph or "howell" in ph: highlighted.add(('IND_POSTHOC','IND_TUKEY'))
                             elif "dunnett" in ph: highlighted.add(('IND_POSTHOC','IND_DUNNETT'))
-                            elif "fdr" in ph or "benjamini" in ph: highlighted.add(('IND_POSTHOC','IND_FDR'))
                             else: highlighted.add(('IND_POSTHOC','IND_HOLM_SIDAK'))
 
             # active node set

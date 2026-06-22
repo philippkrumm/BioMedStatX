@@ -459,7 +459,7 @@ class _ChartsMixin:
                 "div_id": "biomedstatx-profile-plot",
                 "info": (
                     "Shows the group mean (±SE) at each level of the within-subject factor.\n"
-                    "Grey lines trace individual subject trajectories — they reveal whether each participant follows the overall group trend.\n"
+                    "Grey lines trace individual subject trajectories — they reveal whether each subject follows the overall group trend.\n"
                     "Stable, parallel individual trajectories support the assumption of a consistent within-subject effect.\n"
                     "Error bars show the standard error of the mean (SE).\n\n"
                     "Hover over any point to see exact mean, SE, and n."

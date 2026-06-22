@@ -192,11 +192,17 @@ def _ap_init_ui(self):
     preview_label = QLabel("Table Preview")
     preview_label.setObjectName("sectionLabel")
     left_layout.addWidget(preview_label)
+    self.preview_hint = QLabel("Table preview appears after loading a file.")
+    self.preview_hint.setObjectName("lblEmptyState")
+    self.preview_hint.setWordWrap(True)
+    left_layout.addWidget(self.preview_hint)
     self.preview_table = QTableWidget(0, 0)
     self.preview_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
     self.preview_table.setSelectionMode(QAbstractItemView.NoSelection)
     self.preview_table.setAlternatingRowColors(True)
-    left_layout.addWidget(self.preview_table, 1)
+    self.preview_table.setMinimumHeight(160)
+    self.preview_table.setVisible(False)
+    left_layout.addWidget(self.preview_table, 2)
 
     cards_label = QLabel("Columns")
     cards_label.setObjectName("sectionLabel")
@@ -204,7 +210,9 @@ def _ap_init_ui(self):
     cards_scroll = QScrollArea()
     cards_scroll.setWidgetResizable(True)
     cards_scroll.setObjectName("headerCardScroll")
+    cards_scroll.setMinimumHeight(120)
     self.header_cards_widget = QWidget()
+    self.header_cards_widget.setObjectName("headerCardsInner")
     self.header_cards_layout = QVBoxLayout(self.header_cards_widget)
     self.header_cards_layout.setContentsMargins(0, 0, 0, 0)
     self.header_cards_layout.setSpacing(10)
@@ -212,6 +220,7 @@ def _ap_init_ui(self):
     cards_scroll.setWidget(self.header_cards_widget)
     left_layout.addWidget(cards_scroll, 1)
 
+    _apply_elevation(left_panel, radius=14, y_offset=3, opacity=0.13)
     splitter.addWidget(left_panel)
 
     # Center panel
@@ -399,6 +408,7 @@ def _ap_init_ui(self):
 
     center_layout.addStretch()
 
+    _apply_elevation(center_panel, radius=14, y_offset=3, opacity=0.13)
     splitter.addWidget(center_panel)
 
     # Right panel
@@ -415,14 +425,17 @@ def _ap_init_ui(self):
     self.result_cockpit.configure_plot_requested.connect(self.configure_plot_from_result)
     self.result_cockpit.open_output_requested.connect(self.open_current_output_folder)
     right_layout.addWidget(self.result_cockpit, 1)
-    _apply_elevation(self.result_cockpit)
     _apply_elevation(self.decision_tree_panel)
+    _apply_elevation(self.result_cockpit)
 
     splitter.addWidget(right_panel)
     splitter.setSizes([450, 430, 520])
 
     central_scroll.setWidget(central_widget)
     self.setCentralWidget(central_scroll)
+
+    self._refresh_preview_table()
+    self._rebuild_column_cards()
 
     self.file_path_label = self.auto_file_label
     self.current_analysis_context = None
@@ -438,8 +451,12 @@ def _ap_refresh_preview_table(self):
         self.preview_table.clear()
         self.preview_table.setRowCount(0)
         self.preview_table.setColumnCount(0)
+        self.preview_table.setVisible(False)
+        self.preview_hint.setVisible(True)
         return
 
+    self.preview_hint.setVisible(False)
+    self.preview_table.setVisible(True)
     preview_df = self.df.head(12).copy()
     self.preview_table.clear()
     self.preview_table.setColumnCount(len(preview_df.columns))
@@ -463,6 +480,11 @@ def _ap_rebuild_column_cards(self):
     self._column_cards = {}
 
     if self.df is None:
+        empty = QLabel("Load a file to see its columns here.")
+        empty.setObjectName("lblEmptyState")
+        empty.setWordWrap(True)
+        empty.setAlignment(Qt.AlignCenter)
+        self.header_cards_layout.addWidget(empty)
         self.header_cards_layout.addStretch()
         return
 

@@ -60,6 +60,18 @@ except ImportError:
 
 AUTO_PILOT_STEP_ORDER = ["load", "map", "analyze", "results"]
 
+
+def _prompt_text(parent, title, label, text=""):
+    """QInputDialog.getText replacement without the useless title-bar '?' button."""
+    dlg = QInputDialog(parent)
+    dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+    dlg.setWindowTitle(title)
+    dlg.setLabelText(label)
+    dlg.setTextValue(text)
+    ok = dlg.exec_() == QDialog.Accepted
+    return dlg.textValue(), ok
+
+
 def _safe_file_slug(text):
     cleaned = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in str(text))
     cleaned = "_".join(part for part in cleaned.split("_") if part)
@@ -446,7 +458,7 @@ class PipelineTrackerWidget(QWidget):
             self.steps[step_key] = chip
             layout.addWidget(chip, 1)
             if index < len(step_specs) - 1:
-                connector = QLabel("···")
+                connector = QLabel("›")
                 connector.setAlignment(Qt.AlignCenter)
                 connector.setObjectName("pipelineConnector")
                 layout.addWidget(connector)
@@ -921,7 +933,7 @@ class DecisionTreePanel(QFrame):
         title_row.addWidget(self.maximize_button)
         layout.addLayout(title_row)
 
-        self.status_label = QLabel("The statistical decision path will appear here after the analysis.")
+        self.status_label = QLabel("Pan and zoom · Decision path renders after analysis.")
         self.status_label.setObjectName("panelDescription")
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
@@ -936,7 +948,7 @@ class DecisionTreePanel(QFrame):
         self.overlay = None
 
     def show_placeholder(self, text):
-        self.status_label.setText(text)
+        self.status_label.setText("Pan and zoom · Decision path renders after analysis.")
         self.last_tree_data = None
         self.tree_view.show_placeholder(text)
         self.maximize_button.setEnabled(False)
@@ -1612,7 +1624,11 @@ class SheetSelectionDialog(QDialog):
         self._design_btn_group.addButton(self._between_radio)
         right_layout.addWidget(self._between_radio)
 
-        between_desc = QLabel("Each block is a different set of samples\n(e.g. control vs. treated, WT vs. KO)")
+        between_desc = QLabel(
+            "Each group is a separate set of samples\n"
+            "(e.g. control vs. treated, WT vs. KO).\n"
+            "→ Welch's t-test or ANOVA (rank-based if non-normal)"
+        )
         between_desc.setObjectName("columnCardMeta")
         between_desc.setContentsMargins(20, 0, 0, 4)
         right_layout.addWidget(between_desc)
@@ -1622,9 +1638,10 @@ class SheetSelectionDialog(QDialog):
         right_layout.addWidget(self._paired_radio)
 
         paired_desc = QLabel(
-            "Each row is one sample measured more than once\n"
-            "(e.g. before vs. after). Row 1 must be the\n"
-            "same sample in every block."
+            "Each row is one sample measured several times\n"
+            "(e.g. before vs. after). Keep rows aligned —\n"
+            "row 1 must be the same sample in every group.\n"
+            "→ paired t-test or RM-ANOVA (non-parametric if non-normal)"
         )
         paired_desc.setObjectName("columnCardMeta")
         paired_desc.setContentsMargins(20, 0, 0, 4)
@@ -1635,8 +1652,9 @@ class SheetSelectionDialog(QDialog):
         right_layout.addWidget(self._bivariate_radio)
 
         bivariate_desc = QLabel(
-            "Two values per sample — does one track the other?\n"
-            "(e.g. dose vs. response; shown as scatter)"
+            "Two related values per sample\n"
+            "(e.g. dose vs. response; shown as scatter).\n"
+            "→ correlation or linear regression"
         )
         bivariate_desc.setObjectName("columnCardMeta")
         bivariate_desc.setContentsMargins(20, 0, 0, 4)
@@ -1652,6 +1670,15 @@ class SheetSelectionDialog(QDialog):
         self._groups_title_label = QLabel("Groups")
         self._groups_title_label.setObjectName("columnCardTitle")
         right_layout.addWidget(self._groups_title_label)
+
+        groups_cta = QLabel(
+            "1. Select the matching cells in the sheet\n"
+            "2. Click a group below to target it\n"
+            "3. Hit “Assign to” (or right-click → Assign)"
+        )
+        groups_cta.setObjectName("columnCardMeta")
+        groups_cta.setContentsMargins(0, 0, 0, 4)
+        right_layout.addWidget(groups_cta)
 
         self._groups_container = QVBoxLayout()
         self._groups_container.setSpacing(4)
@@ -1676,7 +1703,7 @@ class SheetSelectionDialog(QDialog):
         self._bio_radio.toggled.connect(self._on_replicate_changed)
         right_layout.addWidget(self._bio_radio)
 
-        self._tech_radio = QRadioButton("Technical — repeated readings of one sample (block averaged to 1 n)")
+        self._tech_radio = QRadioButton("Technical — repeated readings of one sample (averaged to 1 n per group)")
         right_layout.addWidget(self._tech_radio)
 
         self._rep_section_sep = QFrame()
@@ -1973,8 +2000,8 @@ class SheetSelectionDialog(QDialog):
             name_lbl.setObjectName("columnCardMeta")
             row_layout.addWidget(name_lbl, 1)
 
-            n_ranges = len(self._selection_map.get(group_name, []))
-            count_lbl = QLabel(f"({n_ranges})")
+            n_values = self._group_value_count(group_name)
+            count_lbl = QLabel("(0 values)" if n_values == 0 else f"(n={n_values})")
             count_lbl.setObjectName("columnCardMeta")
             row_layout.addWidget(count_lbl)
 
@@ -1987,11 +2014,30 @@ class SheetSelectionDialog(QDialog):
 
             self._groups_container.addWidget(row_w)
 
+    def _group_value_count(self, group_name):
+        """True sample size n for a group.
+
+        Biological mode: every non-empty cell is its own sample.
+        Technical mode: each assigned block is averaged to a single replicate,
+        so n equals the number of blocks, not the raw cell count.
+        """
+        ranges = self._selection_map.get(group_name, [])
+        if getattr(self, "_replicate_type", "biological") == "technical":
+            return len(ranges)
+        total = 0
+        for rng in ranges:
+            top, bottom = rng["rows"]
+            left, right = rng["cols"]
+            for row in range(top, bottom + 1):
+                for col in range(left, right + 1):
+                    item = self._table.item(row, col)
+                    if item is not None and item.text().strip():
+                        total += 1
+        return total
+
     def _on_group_rename(self, group_name):
         """Prompt user for a new name; rename group across all internal maps."""
-        new_name, ok = QInputDialog.getText(
-            self, "Rename Group", "New name:", text=group_name
-        )
+        new_name, ok = _prompt_text(self, "Rename Group", "New name:", group_name)
         if not ok:
             return
         new_name = new_name.strip()
@@ -2053,7 +2099,7 @@ class SheetSelectionDialog(QDialog):
             self._table.scrollToItem(item)
 
     def _on_add_group(self):
-        name, ok = QInputDialog.getText(self, "Add Group", "Group name:")
+        name, ok = _prompt_text(self, "Add Group", "Group name:")
         if ok and name.strip():
             name = name.strip()
             if name in self._group_colors:
@@ -2286,6 +2332,8 @@ class SheetSelectionDialog(QDialog):
 
     def _on_replicate_changed(self, _checked):
         self._replicate_type = "biological" if self._bio_radio.isChecked() else "technical"
+        # n semantics differ per mode (cells vs. blocks) — refresh the counts.
+        self._rebuild_group_list()
 
     def _update_preview(self):
         parts = []

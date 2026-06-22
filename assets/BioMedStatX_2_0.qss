@@ -157,10 +157,16 @@ QLabel#pipelineStepIcon {
     padding-top: 2px;
 }
 
-QLabel#pipelineStepTitle,
-QLabel#pipelineConnector {
+QLabel#pipelineStepTitle {
     color: #52708f;
     font-weight: 600;
+}
+
+QLabel#pipelineConnector {
+    color: #9ab8cb;
+    font-size: 20px;
+    font-weight: 400;
+    padding: 0 2px;
 }
 
 /* ── BUTTONS ── */
@@ -375,8 +381,32 @@ QLabel#decisionTreeImage {
     padding: 16px;
 }
 
+QGraphicsView#decisionTreeView {
+    background: #f4f8fb;
+    border: none;
+    border-radius: 14px;
+}
+
 QPushButton#decisionTreeMaximizeButton {
-    padding: 8px 12px;
+    background: transparent;
+    border: 1px solid #c4daea;
+    border-radius: 8px;
+    padding: 6px 14px;
+    color: #2a5272;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QPushButton#decisionTreeMaximizeButton:hover {
+    background: #e5f5f3;
+    border-color: #5bbdb5;
+    color: #0f766e;
+}
+
+QPushButton#decisionTreeMaximizeButton:disabled {
+    background: transparent;
+    color: #9ab3c5;
+    border-color: #dce8f2;
 }
 
 QFrame#decisionTreeOverlay {
@@ -458,6 +488,17 @@ QScrollArea {
     background: #f4f8fb;
     border: none;
     border-radius: 12px;
+}
+
+QScrollArea#headerCardScroll {
+    background: #f4f8fb;
+    border: none;
+    border-radius: 10px;
+}
+
+QWidget#headerCardsInner {
+    background: #f4f8fb;
+    border-radius: 10px;
 }
 
 QLineEdit {
@@ -620,6 +661,8 @@ QTextEdit#debugConsoleText {
     border-radius: 10px;
     color: #d9e8f5;
     padding: 8px;
+    font-family: "Cascadia Mono", "Consolas", monospace;
+    font-size: 12px;
 }
 
 QDialog#plotConfigDialog QGroupBox,

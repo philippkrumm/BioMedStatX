@@ -1511,6 +1511,7 @@ class PlotAestheticsDialog(QDialog):
     def __init__(self, groups=None, samples=None, config=None, parent=None, context="user_plot",
                  default_filename=None, show_export_controls=True, analysis_result=None, dependent=False):
         super().__init__(parent)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self.setObjectName("plotAestheticsDialog")
         self.groups = groups or []
         self.samples = samples or {}

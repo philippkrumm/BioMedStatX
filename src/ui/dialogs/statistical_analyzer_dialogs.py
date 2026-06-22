@@ -1002,7 +1002,6 @@ class DebugConsoleWindow(QWidget):
         self.text_edit = QTextEdit()
         self.text_edit.setObjectName("debugConsoleText")
         self.text_edit.setReadOnly(True)
-        self.text_edit.setFont(__import__('PyQt5.QtGui', fromlist=['QFont']).QFont("Courier", 10))
         layout.addWidget(self.text_edit)
 
         btn_row = QHBoxLayout()

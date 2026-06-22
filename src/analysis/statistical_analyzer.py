@@ -21,8 +21,10 @@ from PyQt5.QtGui import QColor, QIcon, QPixmap, QDrag, QDesktopServices
 from PyQt5.QtCore import Qt, QMimeData, QPoint, pyqtSignal, QObject, QPropertyAnimation, QEasingCurve, QSequentialAnimationGroup, QTimer, QUrl
 
 # Initialize central logging before anything else may emit messages.
+import logging
 from core.logger_config import configure_logging
 configure_logging()
+logger = logging.getLogger(__name__)
 
 # Initialize lazy loading system
 from core.lazy_imports import preload_critical_modules, get_matplotlib_pyplot as get_matplotlib
@@ -678,7 +680,7 @@ class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
                 "Updates Not Available",
                 "Update functionality is not available in this build.\n\n"
                 "Please check the GitHub repository manually for updates:\n"
-                "https://github.com/philippkrumm/BioMedStatX---Code"
+                "https://github.com/philippkrumm/BioMedStatX/releases"
             )
 
 
