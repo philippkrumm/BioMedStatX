@@ -725,6 +725,83 @@ def _install_global_excepthook():
     sys.excepthook = _excepthook
 
 
+def _run_import_smoke_if_requested():
+    """Exit after checking frozen-app imports when BIOMEDSTATX_SMOKE_IMPORTS=1."""
+    if os.environ.get("BIOMEDSTATX_SMOKE_IMPORTS", "").lower() not in {"1", "true", "yes"}:
+        return
+
+    import importlib
+
+    modules = [
+        "numpy",
+        "numpy.f2py",
+        "scipy.stats",
+        "scipy.sparse",
+        "scipy.linalg",
+        "pandas",
+        "statsmodels.api",
+        "statsmodels.formula.api",
+        "sklearn",
+        "pingouin",
+        "scikit_posthocs",
+        "matplotlib.backends.backend_qt5agg",
+        "PyQt5.QtPrintSupport",
+        "plotly.graph_objects",
+        "plotly.io",
+        "plotly.offline.offline",
+        "openpyxl",
+        "xlrd",
+        "PIL.Image",
+        "networkx",
+        "seaborn",
+        "jinja2",
+        "requests",
+        "packaging",
+        "marginaleffects",
+        "analysis.analysis_core",
+        "analysis.posthoc_core",
+        "analysis.nonparametricanovas",
+        "analysis.clinical_models",
+        "analysis.correlation_models",
+        "analysis.effect_sizes",
+        "statistical_testing.advanced_pipeline",
+        "statistical_testing.assumption_checks",
+        "export.html_exporter",
+        "export.report_charts",
+        "export.report_summaries",
+        "visualization.datavisualizer",
+        "visualization.flowchartvisualizer",
+        "visualization.plot_preview",
+        "ui.dialogs.plot_aesthetics_dialog",
+        "ui.dialogs.comparison_selection_dialog",
+        "autopilot.statistical_analyzer_autopilot_pipeline",
+        "autopilot.statistical_analyzer_autopilot_ui",
+    ]
+
+    lines = []
+    failures = []
+    for module_name in modules:
+        try:
+            importlib.import_module(module_name)
+            lines.append(f"OK {module_name}")
+        except Exception as exc:
+            failures.append(module_name)
+            lines.append(f"FAIL {module_name}: {type(exc).__name__}: {exc}")
+
+    report_path = os.environ.get("BIOMEDSTATX_SMOKE_REPORT")
+    if report_path:
+        try:
+            with open(report_path, "w", encoding="utf-8") as handle:
+                handle.write("\n".join(lines) + "\n")
+        except Exception:
+            pass
+
+    for line in lines:
+        logger.info(line)
+
+    sys.exit(1 if failures else 0)
+
+
 if __name__ == "__main__":
     try:
         # Timer-Warnungen unterdrücken
@@ -734,6 +811,8 @@ if __name__ == "__main__":
         # Configure logging: clean console (WARNING+), full DEBUG to biomedstatx.log.
         from core.logging_setup import setup_logging
         setup_logging()
+
+        _run_import_smoke_if_requested()
 
         # Enforce high-DPI behavior before QApplication is created.
         if hasattr(Qt, "AA_EnableHighDpiScaling"):

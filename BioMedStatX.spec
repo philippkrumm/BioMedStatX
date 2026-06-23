@@ -62,8 +62,35 @@ def _is_excluded_data(entry):
     dst = entry[1].replace("\\", "/")
     parts = dst.split("/")
     return bool(_EXCLUDED_ROOTS.intersection(parts))
+
+def _is_excluded_hiddenimport(module_name):
+    parts = module_name.split(".")
+    return (
+        "tests" in parts
+        or "test" in parts
+        or module_name.endswith(".conftest")
+        or module_name == "conftest"
+    )
+
 all_datas = [e for e in all_datas if not _is_excluded_data(e)]
 all_binaries = [e for e in all_binaries if not _is_excluded_data(e)]
+all_hiddenimports = [m for m in all_hiddenimports if not _is_excluded_hiddenimport(m)]
+
+if IS_WIN:
+    _conda_bin = _os.path.join(sys.base_prefix, "Library", "bin")
+    _conda_runtime_dlls = [
+        "ffi-8.dll",
+        "libbz2.dll",
+        "libcrypto-3-x64.dll",
+        "libexpat.dll",
+        "liblzma.dll",
+        "libssl-3-x64.dll",
+        "sqlite3.dll",
+    ]
+    for _dll in _conda_runtime_dlls:
+        _src = _os.path.join(_conda_bin, _dll)
+        if _os.path.exists(_src):
+            all_binaries.append((_src, "."))
 
 a = Analysis(
     ["src/analysis/statistical_analyzer.py"],
@@ -76,6 +103,9 @@ a = Analysis(
         "PyQt5.QtPrintSupport",
         # matplotlib Qt backend
         "matplotlib.backends.backend_qt5agg",
+        # NumPy exposes f2py lazily via numpy.__getattr__; SciPy's import path
+        # can touch it even though the app does not call f2py directly.
+        "numpy.f2py",
     ],
     hookspath=[],
     hooksconfig={},
@@ -103,9 +133,6 @@ a = Analysis(
         # numpy.f2py.cfuncs crashes with "'NoneType' object has no attribute
         # 'write'". Excluding nltk removes the rthook and the crash.
         "nltk",
-        # f2py is Fortran build-tooling, never needed at runtime, and triggers
-        # the same stdout-is-None crash. Exclude defensively.
-        "numpy.f2py",
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
