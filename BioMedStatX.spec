@@ -79,7 +79,9 @@ a = Analysis(
     ],
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    # Runs before the entry script: redirects None stdout/stderr (windowed build)
+    # so import-time prints in scipy/statsmodels/etc. never crash the GUI.
+    runtime_hooks=["tools/pyi_rth_stdio.py"],
     # PySide6/PySide2/PyQt6 may be installed in the dev environment as deps of
     # other tools (plotly, jupyter widgets, etc.). The app uses PyQt5 only, so
     # exclude the alternative Qt bindings explicitly — PyInstaller refuses to
@@ -95,6 +97,15 @@ a = Analysis(
         "pytest", "_pytest",
         "sphinx", "docutils",
         "panel", "bokeh", "param",
+        # nltk is pulled in transitively but never used by the app. Its
+        # PyInstaller runtime hook eagerly imports nltk -> scipy.stats ->
+        # numpy.f2py at startup; in a windowed build (sys.stdout is None)
+        # numpy.f2py.cfuncs crashes with "'NoneType' object has no attribute
+        # 'write'". Excluding nltk removes the rthook and the crash.
+        "nltk",
+        # f2py is Fortran build-tooling, never needed at runtime, and triggers
+        # the same stdout-is-None crash. Exclude defensively.
+        "numpy.f2py",
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,

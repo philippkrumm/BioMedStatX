@@ -18,3 +18,16 @@ project_includes = ["src", "tests", "validation"]
 # Headless Qt is forced in conftest.py (QT_QPA_PLATFORM=offscreen).
 testpaths = ["tests"]
 addopts = "-q --strict-markers"
+markers = [
+    "slow: permutation/bootstrap/R-subprocess tests; excluded from the on-edit hook (run in CI / via regen-golden)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# E/W pycodestyle, F pyflakes, I import sorting. E501 (line length) is left to
+# the formatter so lint autofix on edit stays quiet and non-disruptive.
+select = ["E", "W", "F", "I"]
+ignore = ["E501"]
