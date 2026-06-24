@@ -273,7 +273,7 @@ def perform_advanced_test_pipeline(
             finalization_updates = dict(finalization_result.metadata or {})
             if finalization_updates.get("warning"):
                 logger.warning(finalization_updates["warning"])
-            for key in ["excel_file", "final_test_label", "tested_against"]:
+            for key in ["final_test_label", "tested_against"]:
                 if key in finalization_updates:
                     res[key] = finalization_updates[key]
             return res
@@ -412,7 +412,7 @@ def perform_advanced_test_pipeline(
             finalization_updates = dict(finalization_result.metadata or {})
             if finalization_updates.get("warning"):
                 logger.warning(finalization_updates["warning"])
-            for key in ["excel_file", "final_test_label", "tested_against"]:
+            for key in ["final_test_label", "tested_against"]:
                 if key in finalization_updates:
                     res[key] = finalization_updates[key]
 

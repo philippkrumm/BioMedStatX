@@ -34,27 +34,6 @@ from conftest import DESIGNS
 from export.html_exporter import HTMLExporter
 
 
-def _excel_export_enabled() -> bool:
-    """True iff ExportDispatcher's Excel call is uncommented in source.
-
-    Excel export is HTML-only-mode-disabled in commit c1b26ef; this lets the
-    tests auto-restore their Excel assertions once the dispatcher is flipped
-    back. See validation/test_all_paths.py for the same helper.
-    """
-    dispatcher = SRC / "export_dispatcher.py"
-    try:
-        src = dispatcher.read_text(encoding="utf-8")
-    except OSError:
-        return False
-    for raw in src.splitlines():
-        line = raw.lstrip()
-        if line.startswith("#"):
-            continue
-        if "ResultsExporter.export_results_to_excel" in line:
-            return True
-    return False
-
-
 def _temp_tree_files() -> set[str]:
     temp_dir = Path(tempfile.gettempdir())
     return {p.name for p in temp_dir.glob("decision_tree_*.png")}
@@ -130,8 +109,7 @@ def test_single_analysis_html_export(design_name, make_excel_fixture, tmp_path):
     assert result is not None
     assert not result.get("error"), result.get("error")
 
-    excel_output = Path(result.get("excel_file", out_excel_base)).resolve()
-    html_output = excel_output.with_suffix(".html")
+    html_output = Path(out_excel_base).with_suffix(".html")
     assert html_output.exists(), f"Expected HTML companion report at {html_output}"
     _assert_single_report(html_output, result)
 
@@ -157,8 +135,7 @@ def test_single_analysis_html_export_preserves_utf8_special_characters(tmp_path)
     assert result is not None
     assert not result.get("error"), result.get("error")
 
-    excel_output = Path(result.get("excel_file") or (str(tmp_path / "utf8_special_chars_output.xlsx"))).resolve()
-    html_output = excel_output.with_suffix(".html")
+    html_output = Path(str(tmp_path / "utf8_special_chars_output")).with_suffix(".html")
     assert html_output.exists()
 
     text = _read_text(html_output)
@@ -217,13 +194,8 @@ def test_multi_dataset_html_export(tmp_path):
 
     from export.export_dispatcher import ExportDispatcher
 
-    combined_excel = tmp_path / "html_validation_multi.xlsx"
-    export_result = ExportDispatcher.export_multi_dataset_results(all_results, str(combined_excel))
-    # Excel export currently disabled in ExportDispatcher (HTML-only mode,
-    # commit c1b26ef). The dispatcher still returns the requested xlsx path
-    # but never writes the file; only assert existence when the export is on.
-    if _excel_export_enabled():
-        assert Path(export_result["excel_path"]).exists()
+    combined_out = str(tmp_path / "html_validation_multi")
+    export_result = ExportDispatcher.export_multi_dataset_results(all_results, combined_out)
     assert export_result["html_path"] is not None
 
     html_output = Path(export_result["html_path"])

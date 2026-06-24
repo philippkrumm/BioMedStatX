@@ -55,7 +55,7 @@ def test_brunner_langer_dialog():
     assert internal == engine_out, f"engine != BL-internal\n internal={internal}\n engine={engine_out}"
 
     # Pipeline wrapper + stubbed selection
-    AdvancedPostHocEngine._select_comparisons_dialog = staticmethod(lambda pairs: pairs)
+    AdvancedPostHocEngine._select_comparisons_dialog = staticmethod(lambda pairs, cb=None: pairs)
     upd = eng._run_nonparametric_fallback_posthoc({
         "res": res, "test": "mixed_anova", "df_original": df, "dv": "y",
         "subject": "subj", "between": ["G"], "within": ["Time"], "alpha": 0.05,
@@ -101,7 +101,7 @@ def test_brunner_langer_dialog_nan():
     assert res["error"] is None, f"BL raised on NaN data: {res['error']}"
     assert res["factors"] and res["interactions"]
 
-    AdvancedPostHocEngine._select_comparisons_dialog = staticmethod(lambda pairs: pairs)
+    AdvancedPostHocEngine._select_comparisons_dialog = staticmethod(lambda pairs, cb=None: pairs)
     eng = AdvancedPostHocEngine()
     specs = eng._brunner_langer_candidate_specs(res, df, ["G"], ["Time"], 0.05)
     all_pairs = [(s[0], s[1]) for s in specs]
@@ -151,7 +151,7 @@ def test_brunner_langer_catastrophic_nan():
 
     # Pipeline posthoc must also not crash
     from statistical_testing.engines.advanced_posthoc import AdvancedPostHocEngine
-    AdvancedPostHocEngine._select_comparisons_dialog = staticmethod(lambda pairs: pairs)
+    AdvancedPostHocEngine._select_comparisons_dialog = staticmethod(lambda pairs, cb=None: pairs)
     eng = AdvancedPostHocEngine()
     upd = eng._run_nonparametric_fallback_posthoc({
         "res": res, "test": "mixed_anova", "df_original": df, "dv": "y",

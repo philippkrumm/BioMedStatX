@@ -237,6 +237,87 @@ def _make_regression(n=30, seed=99):
     return pd.DataFrame({"Group": ["Sample"] * n, "X": x, "Y": y})
 
 
+def _make_welch_anova_heteroscedastic(n_per_group=12, seed=7):
+    """3 normally distributed groups with unequal variances (σ ratio 1:2:4).
+
+    n_per_group kept small so Shapiro-Wilk on pooled residuals has low power
+    (passes), while Brown-Forsythe detects the 1:4 variance ratio.
+    → Routing: normal + unequal var → Welch ANOVA → Games-Howell.
+    If normality fails anyway (scale-mixture heavy tails), Kruskal-Wallis is
+    the correct fallback — expected_test_keywords accepts both.
+    """
+    rng = np.random.default_rng(seed)
+    sds = [1.0, 2.0, 4.0]
+    rows = []
+    for grp, sd in zip(["G1", "G2", "G3"], sds):
+        vals = rng.normal(10.0, sd, size=n_per_group)
+        for v in vals:
+            rows.append({"Group": grp, "Value": v})
+    return pd.DataFrame(rows)
+
+
+def _make_sphericity_violation_rm(n_subjects=16, seed=13):
+    """RM design where Mauchly's sphericity test will fail.
+    T1-T2: tight correlation (r≈0.95), T2-T3: independent with 5× variance.
+    Var(T1-T2) << Var(T2-T3) → compound symmetry broken → GG/HF correction.
+    """
+    rng = np.random.default_rng(seed)
+    rows = []
+    for s in range(n_subjects):
+        base = rng.normal(10.0, 1.0)
+        t1 = base + rng.normal(0, 0.15)
+        t2 = base + rng.normal(0, 0.15)   # tight with T1
+        t3 = rng.normal(12.0, 5.0)        # independent, large variance
+        for lvl, val in zip(["T1", "T2", "T3"], [t1, t2, t3]):
+            rows.append({"Subject": f"S{s+1}", "Group": lvl, "Value": val})
+    return pd.DataFrame(rows)
+
+
+def _make_lmm_hierarchical(n_subjects=20, seed=17):
+    """Hierarchical design: subjects measured at 3 time points with between-subject grouping.
+    Routes to LMM when inferred_test='lmm'.
+    """
+    rng = np.random.default_rng(seed)
+    rows = []
+    for s in range(n_subjects):
+        grp = "Trt" if s < n_subjects // 2 else "Ctrl"
+        subj_re = rng.normal(0, 1.5)
+        for ti, time in enumerate(["T1", "T2", "T3"]):
+            val = (5.0 if grp == "Trt" else 0.0) + ti * 1.5 + subj_re + rng.normal(0, 0.8)
+            rows.append({"Subject": f"S{s+1}", "Group": grp, "Time": time, "Value": val})
+    return pd.DataFrame(rows)
+
+
+def _make_logistic_regression(n=60, seed=23):
+    """Binary outcome with group predictor + continuous covariate.
+    Routes to logistic_regression when inferred_test='logistic_regression'.
+    """
+    rng = np.random.default_rng(seed)
+    rows = []
+    for gi, grp in enumerate(["Ctrl", "Trt"]):
+        n_g = n // 2
+        cov = rng.normal(50.0, 10.0, size=n_g)
+        logit = -2.0 + gi * 1.5 + 0.04 * cov
+        prob = 1.0 / (1.0 + np.exp(-logit))
+        outcome = (rng.uniform(size=n_g) < prob).astype(int)
+        for c, o in zip(cov, outcome):
+            rows.append({"Group": grp, "Covariate": float(c), "Outcome": int(o)})
+    return pd.DataFrame(rows)
+
+
+def _make_skewed_lognormal(n_per_group=20, seed=31):
+    """Strongly right-skewed log-normal data (3 groups).
+    Shapiro-Wilk fails → transformation dialog is triggered.
+    """
+    rng = np.random.default_rng(seed)
+    rows = []
+    for gi, grp in enumerate(["G1", "G2", "G3"]):
+        vals = rng.lognormal(mean=gi * 0.5, sigma=1.2, size=n_per_group)
+        for v in vals:
+            rows.append({"Group": grp, "Value": v})
+    return pd.DataFrame(rows)
+
+
 # ---------------------------------------------------------------------------
 # Design definitions — used by test_all_paths.py
 # ---------------------------------------------------------------------------
@@ -533,6 +614,92 @@ DESIGNS = [
         "factors": 1,
         "x_column": "X",
         "y_column": "Y",
+    },
+    # ── New designs: Welch, Sphericity, LMM, Logistic ──────────────────────
+    {
+        "name": "welch_anova_heteroscedastic",
+        "df_factory": lambda: _make_welch_anova_heteroscedastic(20),
+        "factor_columns": ["Group"],
+        "dv_columns": ["Value"],
+        "group_labels": ["G1", "G2", "G3"],
+        "subject_column": None,
+        "dependent": False,
+        "inferred_test": "one_way_anova",
+        # If normality passes: Welch ANOVA + Games-Howell. If pooled residuals
+        # fail Shapiro-Wilk (scale-mixture tails), Kruskal-Wallis is the correct
+        # non-parametric fallback — both routes are accepted.
+        "expected_test_keywords": ["welch", "games", "howell", "anova", "kruskal", "wallis"],
+        "r_test": None,  # Welch ANOVA p-value differs from standard F; skip R cross-check
+        "r_output_format": ["p_value", "statistic"],
+        "levels": 3,
+        "factors": 1,
+    },
+    {
+        "name": "sphericity_violation_rm",
+        "df_factory": lambda: _make_sphericity_violation_rm(16),
+        "factor_columns": ["Group"],
+        "dv_columns": ["Value"],
+        "group_labels": ["T1", "T2", "T3"],
+        "subject_column": "Subject",
+        "dependent": True,
+        "inferred_test": "repeated_measures_anova",
+        "expected_test_keywords": ["repeated", "rm", "anova"],
+        # Mauchly will fail; test checks for sphericity_correction key in result
+        "requires_sphericity_correction": True,
+        "r_test": None,  # GG-corrected RM ANOVA differs from R's standard aov(); skip
+        "r_output_format": ["p_value", "statistic"],
+        "levels": 3,
+        "factors": 1,
+    },
+    {
+        "name": "lmm_hierarchical",
+        "df_factory": lambda: _make_lmm_hierarchical(20),
+        "factor_columns": ["Group"],
+        "dv_columns": ["Value"],
+        "group_labels": ["Trt", "Ctrl"],
+        "subject_column": "Subject",
+        "dependent": True,
+        "inferred_test": "lmm",
+        "expected_test_keywords": ["lmm", "mixed", "linear", "model"],
+        "r_test": None,
+        "r_output_format": ["p_value", "statistic"],
+        "levels": 2,
+        "factors": 1,
+        "between_factors": ["Group"],
+        "within_factors": ["Time"],
+    },
+    {
+        "name": "logistic_regression",
+        "df_factory": lambda: _make_logistic_regression(60),
+        "factor_columns": ["Group"],
+        "dv_columns": ["Outcome"],
+        "group_labels": ["Ctrl", "Trt"],
+        "subject_column": None,
+        "dependent": False,
+        "inferred_test": "logistic_regression",
+        "expected_test_keywords": ["logistic", "regression"],
+        "r_test": None,
+        "r_output_format": ["p_value", "statistic"],
+        "levels": 2,
+        "factors": 1,
+        "covariate_columns": ["Covariate"],
+    },
+    {
+        "name": "skewed_lognormal_boxcox",
+        # Log-normal data; test_all_paths.py overrides transform mock → "box_cox" for this design
+        "df_factory": lambda: _make_skewed_lognormal(20),
+        "factor_columns": ["Group"],
+        "dv_columns": ["Value"],
+        "group_labels": ["G1", "G2", "G3"],
+        "subject_column": None,
+        "dependent": False,
+        "inferred_test": "one_way_anova",
+        "expected_test_keywords": ["anova", "kruskal", "wallis", "mann", "whitney"],
+        "requires_transform_mock": "box_cox",
+        "r_test": None,
+        "r_output_format": ["p_value", "statistic"],
+        "levels": 3,
+        "factors": 1,
     },
 ]
 

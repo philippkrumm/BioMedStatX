@@ -27,13 +27,23 @@ for p in (_ROOT, os.path.join(_ROOT, "src")):
         sys.path.insert(0, p)
 
 
-def _neutralize_dialogs():
-    """Replace every interactive Qt dialog with a non-interactive default so an
-    assumption-violating or significant case doesn't block on a modal dialog."""
-    # Catch-all: any modal dialog returns immediately (Rejected) instead of
-    # blocking the event-less headless process forever. This covers dialogs that
-    # are constructed directly (e.g. ComparisonSelectionDialog.exec_()), not only
-    # those routed through UIDialogManager.
+_TRANSFORMS = ["log10", "sqrt", "box_cox", None]
+_POSTHOC_PARAMETRIC = ["tukey", "games_howell", "dunnett"]
+_POSTHOC_NONPARAM = ["dunn", None]
+
+
+def _neutralize_dialogs(seed: int):
+    """Replace every interactive Qt dialog with a randomized-but-deterministic default.
+
+    Randomizing transform and posthoc ensures every method is exercised across seeds
+    instead of always hitting the same code path.
+    """
+    import numpy as np
+    rng = np.random.default_rng(seed + 0xDEAD)
+    chosen_transform = _TRANSFORMS[int(rng.integers(0, len(_TRANSFORMS)))]
+    chosen_posthoc = _POSTHOC_PARAMETRIC[int(rng.integers(0, len(_POSTHOC_PARAMETRIC)))]
+    chosen_nonparam = _POSTHOC_NONPARAM[int(rng.integers(0, len(_POSTHOC_NONPARAM)))]
+
     try:
         from PyQt5.QtWidgets import QDialog
         QDialog.exec_ = lambda self, *a, **k: 0
@@ -44,19 +54,30 @@ def _neutralize_dialogs():
         from analysis.statisticaltester import UIDialogManager
     except Exception:
         return
-    UIDialogManager.select_transformation_dialog = staticmethod(lambda *a, **k: "log10")
-    # "tukey" uses all comparisons without a follow-up custom-pairs modal.
-    UIDialogManager.select_posthoc_test_dialog = staticmethod(lambda *a, **k: "tukey")
-    for name in ("select_nonparametric_posthoc_dialog",
-                 "select_control_group_dialog", "select_custom_pairs_dialog"):
-        setattr(UIDialogManager, name, staticmethod(lambda *a, **k: None))
+
+    UIDialogManager.select_transformation_dialog = staticmethod(
+        lambda *a, _t=chosen_transform, **k: _t
+    )
+    UIDialogManager.select_posthoc_test_dialog = staticmethod(
+        lambda *a, _p=chosen_posthoc, **k: _p
+    )
+    UIDialogManager.select_nonparametric_posthoc_dialog = staticmethod(
+        lambda *a, _np=chosen_nonparam, **k: _np
+    )
+    # Dunnett needs a control group; return the first group if available
+    def _control_group_dialog(*a, groups=None, **k):
+        if groups:
+            return groups[0]
+        return None
+    UIDialogManager.select_control_group_dialog = staticmethod(_control_group_dialog)
+    UIDialogManager.select_custom_pairs_dialog = staticmethod(lambda *a, **k: [])
 
 
 def main(seed: int) -> int:
     from fuzzing.generators import build_case, case_to_analyze_kwargs
     from fuzzing.oracles import check_result
 
-    _neutralize_dialogs()
+    _neutralize_dialogs(seed)
 
     case = build_case(seed)
     verdict = {"seed": seed, "test": case.test_label, "mutations": case.mutations}

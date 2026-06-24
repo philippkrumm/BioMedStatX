@@ -23,11 +23,10 @@ FlowchartVisualizer.get_tree_json(results)  -> dict | None
 
 FlowchartVisualizer.visualize(results, output_path=None) -> str | None
     Saves a matplotlib PNG and returns the file path.
-    Delegates to generate_and_save_for_excel() entry point.
 
-FlowchartVisualizer.generate_and_save_for_excel(results) -> str | None
+FlowchartVisualizer.generate_and_save(results) -> str | None
     Thin wrapper that matches the DecisionTreeVisualizer API used by the
-    Excel/HTML export path.
+    HTML export path.
 """
 
 from __future__ import annotations
@@ -288,14 +287,14 @@ class FlowchartVisualizer:
             return None
 
     @staticmethod
-    def generate_and_save_for_excel(results: dict) -> str | None:
-        """Thin wrapper matching the DecisionTreeVisualizer.generate_and_save_for_excel API."""
+    def generate_and_save(results: dict) -> str | None:
+        """Thin wrapper matching the DecisionTreeVisualizer.generate_and_save API."""
         try:
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
                 base_path = tmp.name.replace(".png", "")
             return FlowchartVisualizer.visualize(results, output_path=base_path)
         except Exception as exc:
-            logger.info(f"FlowchartVisualizer.generate_and_save_for_excel error: {exc}")
+            logger.info(f"FlowchartVisualizer.generate_and_save error: {exc}")
             return None
 
     # ------------------------------------------------------------------

@@ -1,7 +1,5 @@
-import base64
 import copy
 import json
-import os
 from pathlib import Path
 from typing import Any
 
@@ -45,12 +43,12 @@ class _ResultsEncoder(json.JSONEncoder):
 class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationMixin, _ChartsMixin, _SummariesMixin):
 
     @staticmethod
-    def export_results_to_html(results: dict, output_file: str, analysis_log=None, pre_generated_tree=None) -> str | None:
+    def export_results_to_html(results: dict, output_file: str, analysis_log=None) -> str | None:
         try:
             output_path = Path(output_file).resolve()
             output_path.parent.mkdir(parents=True, exist_ok=True)
             context = HTMLExporter._prepare_single_report_context(
-                results, analysis_log=analysis_log, pre_generated_tree=pre_generated_tree
+                results, analysis_log=analysis_log
             )
             html = HTMLExporter._render_template(context, mode="single")
             with open(output_path, "w", encoding="utf-8") as handle:
@@ -75,7 +73,7 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
             return None
 
     @staticmethod
-    def _prepare_single_report_context(results: dict, analysis_log=None, pre_generated_tree=None) -> dict:
+    def _prepare_single_report_context(results: dict, analysis_log=None) -> dict:
         results_copy = copy.deepcopy(results or {})
         normalized = HTMLExporter._normalize_for_json(results_copy)
         analysis_log_text = analysis_log if analysis_log is not None else results_copy.get("analysis_log", "")
@@ -144,7 +142,6 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
         plot_reference_lines = HTMLExporter._build_plot_reference_lines(results_copy)
 
         plot_designer_enabled = bool(plot_data)
-        decision_tree_image = HTMLExporter._embed_decision_tree(results_copy, pre_generated_path=pre_generated_tree)
         decision_tree_json = HTMLExporter._build_decision_tree_json(results_copy)
         decision_path = HTMLExporter._build_decision_path_model(results_copy)
         methods_text = HTMLExporter._build_methods_text(results_copy, analysis_log_text)
@@ -155,7 +152,6 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
             "subtitle": hero["subtitle"],
             "hero": hero,
             "decision_path": decision_path,
-            "decision_tree_image": decision_tree_image,
             "decision_tree_json": json.dumps(decision_tree_json, ensure_ascii=False) if decision_tree_json else "null",
             "decision_path_json": json.dumps(decision_path, ensure_ascii=False),
             "statistical_rows": metrics,
@@ -326,38 +322,6 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
         except Exception as exc:
             logger.warning("decision tree JSON failed: %s", exc, exc_info=True)
             return None
-
-    @staticmethod
-    def _embed_decision_tree(results: dict, pre_generated_path: str | None = None) -> str | None:
-        # If caller already generated the tree, encode it directly without re-generating or deleting.
-        if pre_generated_path and os.path.exists(pre_generated_path):
-            try:
-                with open(pre_generated_path, "rb") as handle:
-                    encoded = base64.b64encode(handle.read()).decode("ascii")
-                return f"data:image/png;base64,{encoded}"
-            except Exception as exc:
-                logger.warning("decision tree embedding (pre-generated) failed: %s", exc, exc_info=True)
-                return None
-
-        temp_path = None
-        try:
-            from visualization.decisiontreevisualizer import DecisionTreeVisualizer
-
-            temp_path = DecisionTreeVisualizer.generate_and_save_for_excel(results)
-            if not temp_path or not os.path.exists(temp_path):
-                return None
-            with open(temp_path, "rb") as handle:
-                encoded = base64.b64encode(handle.read()).decode("ascii")
-            return f"data:image/png;base64,{encoded}"
-        except Exception as exc:
-            logger.warning("decision tree embedding failed: %s", exc, exc_info=True)
-            return None
-        finally:
-            if temp_path and os.path.exists(temp_path):
-                try:
-                    os.remove(temp_path)
-                except OSError as exc:
-                    logger.warning("decision tree temp cleanup failed for %s: %s", temp_path, exc)
 
     @staticmethod
     def _build_methods_text(results: dict, analysis_log: Any) -> str:

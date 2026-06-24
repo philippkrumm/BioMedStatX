@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 import logging
@@ -11,14 +10,6 @@ class ExportDispatcher:
         base_path = Path(output_file).resolve()
         base_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Generate decision tree once; reuse for HTML export
-        tree_path = None
-        try:
-            from visualization.decisiontreevisualizer import DecisionTreeVisualizer
-            tree_path = DecisionTreeVisualizer.generate_and_save_for_excel(results)
-        except Exception as exc:
-            logger.warning(f"WARNING EXPORT DISPATCHER: Decision tree pre-generation failed: {exc}")
-
         html_result = None
         warning = None
         try:
@@ -27,19 +18,15 @@ class ExportDispatcher:
                 from export.html_exporter import HTMLExporter
 
                 html_result = HTMLExporter.export_results_to_html(
-                    results, str(html_path), analysis_log, pre_generated_tree=tree_path
+                    results, str(html_path), analysis_log
                 )
                 if html_result is None:
                     warning = f"HTML report export failed for '{html_path.name}'."
             except Exception as exc:
                 warning = f"HTML report export failed for '{html_path.name}': {exc}"
                 logger.warning(f"WARNING EXPORT DISPATCHER: {warning}")
-        finally:
-            if tree_path and os.path.exists(tree_path):
-                try:
-                    os.remove(tree_path)
-                except Exception:
-                    pass
+        except Exception:
+            pass
 
         return {
             "html_path": html_result,

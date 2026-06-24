@@ -1,9 +1,8 @@
 """Self-contained HTML report for outlier detection.
 
-Replaces the former openpyxl/Excel workbook export. Produces a single .html file
-with: a summary, per-dataset group-statistics tables, the raw values with
-detected outliers highlighted, and an embedded swarm/box visualization (base64
-PNG). No external assets — the file is portable.
+Produces a single .html file with: a summary, per-dataset group-statistics
+tables, the raw values with detected outliers highlighted, and an embedded
+swarm/box visualization (base64 PNG). No external assets — the file is portable.
 """
 from __future__ import annotations
 
@@ -31,7 +30,7 @@ def _esc(value: Any) -> str:
 
 def _plot_base64(df: pd.DataFrame, group_col: str, value_col: str, outlier_col: str) -> str | None:
     """Box + swarm/strip plot with outliers highlighted, returned as a base64 PNG
-    (data payload only). Mirrors the former Excel visualization sheet."""
+    (data payload only)."""
     try:
         import matplotlib
         matplotlib.use("Agg")

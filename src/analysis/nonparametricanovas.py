@@ -1,6 +1,7 @@
 # --- Minimal test for posthoc_marginaleffects ---
 
 import logging
+logger = logging.getLogger(__name__)
 # (Moved to end of file to ensure all symbols are defined)
 # --- Utility: Modern post hoc analysis using marginaleffects ---
 def posthoc_marginaleffects(
@@ -883,7 +884,7 @@ def perform_brunner_langer_ats(data, dv, between_factor, within_factor, subject_
             "No standardized Cohen-style magnitude thresholds apply to rank-based longitudinal designs; "
             "the RTE table below is the appropriate effect metric."
         )
-        # Append RTE table so it appears in the Excel Summary sheet
+        # Append RTE table to analysis log
         rte_lines = ["Relative Treatment Effects (RTE, range 0–1; 0.5 = no effect):"]
         for _, rte_row in RTE_df.iterrows():
             rte_lines.append(

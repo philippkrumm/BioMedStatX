@@ -46,7 +46,7 @@ def test_freedman_lane_dialog():
     assert internal == engine_out, f"engine != FL-internal\n internal={internal}\n engine={engine_out}"
 
     # Orchestrator with stubbed selection (pick first 2 pairs)
-    AdvancedPostHocEngine._select_comparisons_dialog = staticmethod(lambda all_pairs: all_pairs[:2])
+    AdvancedPostHocEngine._select_comparisons_dialog = staticmethod(lambda all_pairs, cb=None: all_pairs[:2])
     out2 = eng._freedman_lane_dialog_posthoc(res, df, "y", ["A", "B"], 0.05)
     assert len(out2["pairwise_comparisons"]) == 2
 
@@ -73,7 +73,7 @@ def test_freedman_lane_dialog_nan():
     res = perform_freedman_lane_test(df, "y", "A", "B", alpha=0.05, n_permutations=200, seed=2)
     assert res["error"] is None, f"FL raised on NaN data: {res['error']}"
 
-    AdvancedPostHocEngine._select_comparisons_dialog = staticmethod(lambda pairs: pairs)
+    AdvancedPostHocEngine._select_comparisons_dialog = staticmethod(lambda pairs, cb=None: pairs)
     eng = AdvancedPostHocEngine()
     specs = eng._freedman_lane_candidate_specs(res, df, ["A", "B"], 0.05)
     all_pairs = [(s[0], s[1]) for s in specs]

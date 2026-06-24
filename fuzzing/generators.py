@@ -19,10 +19,10 @@ from typing import Any, Dict, List
 import numpy as np
 import pandas as pd
 
-# Test designs the fuzzer drives. "" => standard simple path (t-test / one-way
-# ANOVA decided by group count + dependent flag).
+# Test designs the fuzzer drives.
 TEST_TYPES = [
     "oneway", "ttest", "rm_anova", "two_way_anova", "mixed_anova", "ancova",
+    "correlation", "regression", "firth_logistic", "lmm",
 ]
 
 MUTATIONS = [
@@ -65,7 +65,7 @@ def _base_design(rng: np.random.Generator, test_label: str):
                 rows.append({"Grp": g, "Val": float(rng.normal(gi, 1.0))})
         df = pd.DataFrame(rows)
         ctx = {"factor_columns": ["Grp"], "dv_columns": ["Val"],
-               "group_labels": group_names, "mode": "single"}
+               "group_labels": group_names, "mode": "single", "inferred_test": "one_way_anova"}
         kwargs = {"group_col": "Grp", "groups": group_names, "value_cols": ["Val"],
                   "dependent": bool(rng.integers(0, 2)) if test_label == "ttest" else False}
 
@@ -82,16 +82,16 @@ def _base_design(rng: np.random.Generator, test_label: str):
         df = pd.DataFrame(rows)
         if test_label == "rm_anova":
             ctx = {"factor_columns": ["Time"], "dv_columns": ["Val"],
-                   "group_labels": within_levels, "subject_column": "Subject", "mode": "single"}
+                   "group_labels": within_levels, "subject_column": "Subject", "mode": "single",
+                   "inferred_test": "repeated_measures_anova", "within_factors": ["Time"]}
             kwargs = {"group_col": "Time", "groups": within_levels, "value_cols": ["Val"],
-                      "dependent": True, "test": "repeated_measures_anova",
-                      "additional_factors": ["Time"], "subject_column": "Subject"}
+                      "dependent": True, "subject_column": "Subject"}
         else:
             ctx = {"factor_columns": ["Between"], "dv_columns": ["Val"],
-                   "group_labels": sorted(set(between)), "subject_column": "Subject", "mode": "single"}
+                   "group_labels": sorted(set(between)), "subject_column": "Subject", "mode": "single",
+                   "inferred_test": "mixed_anova", "between_factors": ["Between"], "within_factors": ["Time"]}
             kwargs = {"group_col": "Between", "groups": sorted(set(between)), "value_cols": ["Val"],
-                      "dependent": True, "test": "mixed_anova",
-                      "additional_factors": ["Between", "Time"], "subject_column": "Subject"}
+                      "dependent": True, "subject_column": "Subject"}
 
     elif test_label == "two_way_anova":
         fa = [f"A{i}" for i in range(2)]
@@ -102,21 +102,74 @@ def _base_design(rng: np.random.Generator, test_label: str):
                     rows.append({"FacA": a, "FacB": b, "Val": float(rng.normal(0, 1))})
         df = pd.DataFrame(rows)
         ctx = {"factor_columns": ["FacA", "FacB"], "dv_columns": ["Val"],
-               "group_labels": fa, "mode": "single"}
+               "group_labels": fa, "mode": "single", "inferred_test": "two_way_anova"}
         kwargs = {"group_col": "FacA", "groups": fa, "value_cols": ["Val"],
-                  "dependent": False, "test": "two_way_anova",
-                  "additional_factors": ["FacA", "FacB"]}
+                  "dependent": False}
 
-    else:  # ancova
+    elif test_label == "ancova":
         for gi, g in enumerate(group_names):
             for _ in range(n_per):
                 cov = float(rng.normal(0, 1))
                 rows.append({"Grp": g, "Cov": cov, "Val": float(gi + 0.5 * cov + rng.normal(0, 1))})
         df = pd.DataFrame(rows)
         ctx = {"factor_columns": ["Grp"], "dv_columns": ["Val"],
-               "group_labels": group_names, "covariates": ["Cov"], "mode": "single"}
+               "group_labels": group_names, "covariates": ["Cov"], "mode": "single",
+               "inferred_test": "ancova"}
         kwargs = {"group_col": "Grp", "groups": group_names, "value_cols": ["Val"],
-                  "dependent": False, "test": "ancova", "covariates": ["Cov"]}
+                  "dependent": False, "covariates": ["Cov"]}
+
+    elif test_label == "correlation":
+        n = int(rng.integers(10, 30))
+        x = rng.normal(0, 1, size=n)
+        y = 0.6 * x + rng.normal(0, 0.8, size=n)
+        df = pd.DataFrame({"Grp": ["Sample"] * n, "X": x.tolist(), "Y": y.tolist()})
+        ctx = {"factor_columns": ["Grp"], "dv_columns": ["Y"], "group_labels": ["Sample"],
+               "x_variable": "X", "inferred_test": "correlation", "mode": "single"}
+        kwargs = {"group_col": "Grp", "groups": ["Sample"], "value_cols": ["Y"],
+                  "dependent": False}
+
+    elif test_label == "regression":
+        n = int(rng.integers(10, 30))
+        x = rng.uniform(0, 10, size=n)
+        y = 2.0 * x + rng.normal(0, 2.0, size=n)
+        df = pd.DataFrame({"Grp": ["Sample"] * n, "X": x.tolist(), "Y": y.tolist()})
+        ctx = {"factor_columns": ["Grp"], "dv_columns": ["Y"], "group_labels": ["Sample"],
+               "x_variable": "X", "inferred_test": "linear_regression", "mode": "single"}
+        kwargs = {"group_col": "Grp", "groups": ["Sample"], "value_cols": ["Y"],
+                  "dependent": False}
+
+    elif test_label == "firth_logistic":
+        n_subj = int(rng.integers(10, 25))
+        group_names_2 = ["A", "B"]
+        n_half = n_subj // 2
+        grp = ["A"] * n_half + ["B"] * (n_subj - n_half)
+        # Near-separation: group A → mostly 1, group B → mostly 0
+        outcome = ([1] * (n_half - 1) + [0]) + ([0] * (n_subj - n_half - 1) + [1])
+        cov = rng.normal(0, 1, size=n_subj).tolist()
+        df = pd.DataFrame({"Grp": grp, "Cov": cov, "Outcome": outcome})
+        ctx = {"factor_columns": ["Grp"], "dv_columns": ["Outcome"], "group_labels": group_names_2,
+               "covariates": ["Cov"], "inferred_test": "logistic_regression", "mode": "single"}
+        kwargs = {"group_col": "Grp", "groups": group_names_2, "value_cols": ["Outcome"],
+                  "dependent": False, "covariates": ["Cov"]}
+
+    else:  # lmm
+        n_subj = int(rng.integers(6, 15))
+        within_levels = [f"T{i}" for i in range(int(rng.integers(2, 4)))]
+        between_grps = [f"B{i % 2}" for i in range(n_subj)]
+        for s in range(n_subj):
+            re = float(rng.normal(0, 1))
+            for lvl in within_levels:
+                rows.append({
+                    "Subject": f"S{s}", "Time": lvl, "Between": between_grps[s],
+                    "Val": float(rng.normal(0, 1) + re),
+                })
+        df = pd.DataFrame(rows)
+        ctx = {"factor_columns": ["Between"], "dv_columns": ["Val"],
+               "group_labels": list(dict.fromkeys(between_grps)),
+               "subject_column": "Subject", "between_factors": ["Between"],
+               "within_factors": ["Time"], "inferred_test": "lmm", "mode": "single"}
+        kwargs = {"group_col": "Between", "groups": list(dict.fromkeys(between_grps)),
+                  "value_cols": ["Val"], "dependent": True, "subject_column": "Subject"}
 
     return df, ctx, kwargs
 

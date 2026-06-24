@@ -7,7 +7,7 @@ from statistical_testing.engines.advanced_posthoc import AdvancedPostHocEngine
 
 def test_freedman_lane_integration():
     # Stub dialog (headless): select all candidates
-    AdvancedPostHocEngine._select_comparisons_dialog = staticmethod(lambda pairs: pairs)
+    AdvancedPostHocEngine._select_comparisons_dialog = staticmethod(lambda pairs, cb=None: pairs)
 
     rng = np.random.default_rng(0)
     rows = []
@@ -41,7 +41,7 @@ def test_freedman_lane_integration():
 
 def test_freedman_lane_integration_nan():
     """Full pipeline (_run_nonparametric_fallback_posthoc) must work with NaN df_original."""
-    AdvancedPostHocEngine._select_comparisons_dialog = staticmethod(lambda pairs: pairs)
+    AdvancedPostHocEngine._select_comparisons_dialog = staticmethod(lambda pairs, cb=None: pairs)
     rng = np.random.default_rng(42)
     rows = []
     for ai, a in enumerate(["a1", "a2", "a3"]):

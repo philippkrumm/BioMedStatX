@@ -3,14 +3,15 @@
 Run manually: python validation/generate_golden_r_advanced.py (requires R, car, afex, emmeans)
 
 Generates:
-1. Two-way Type-II ANOVA via `car`
+1. Two-way Type-III ANOVA via `car` (sum contrasts, matches Python anova_lm typ=3)
 2. RM / Mixed ANOVA via `afex`
-3. ANCOVA via `emmeans`
+3. ANCOVA via `emmeans` (Type-III SS, matches Python anova_lm typ=3)
 
 Freezes into tests/golden/references_r_advanced.json.
 """
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 
@@ -21,6 +22,7 @@ OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                    "tests", "golden", "references_r_advanced.json")
 
 R_SCRIPT = r'''
+options(OutDec=".", scipen=999)
 suppressMessages({
   library(jsonlite)
   library(car)
@@ -34,12 +36,15 @@ args <- commandArgs(trailingOnly=TRUE)
 d <- read.csv(args[1], stringsAsFactors=TRUE)
 d$subj <- as.factor(d$subj)
 
+# Sum contrasts to match Python's C(factor, Sum) / anova_lm(typ=3)
+options(contrasts=c("contr.sum", "contr.poly"))
+
 results <- list()
 
-# 1. Two-way Type-II ANOVA (car)
+# 1. Two-way Type-III ANOVA (car, sum contrasts)
 # Model: y ~ groupA * groupB
 m_car <- lm(y_car ~ groupA * groupB, data=d)
-a_car <- Anova(m_car, type=2)
+a_car <- Anova(m_car, type=3)
 # Extract F, df, p
 car_eff <- list()
 for(rn in rownames(a_car)) {
@@ -52,7 +57,7 @@ for(rn in rownames(a_car)) {
         )
     }
 }
-results$car_type2 <- car_eff
+results$car_type2 <- car_eff  # key kept as car_type2 for backward compat with test references
 
 # 2. Mixed ANOVA (afex)
 # Model: y ~ groupA * time + Error(subj/time)
@@ -78,10 +83,10 @@ for(rn in rownames(afex_table)) {
 }
 results$afex_mixed <- afex_eff
 
-# 3. ANCOVA & emmeans
+# 3. ANCOVA & emmeans (Type-III SS, sum contrasts set globally above)
 # Model: y ~ groupA + covar
 m_ancova <- lm(y_ancova ~ groupA + covar, data=d)
-a_ancova <- Anova(m_ancova, type=2)
+a_ancova <- Anova(m_ancova, type=3)
 # emmeans
 emm <- emmeans(m_ancova, "groupA")
 emm_df <- as.data.frame(emm)
@@ -190,25 +195,51 @@ def build_dataset():
     return pd.DataFrame(rows)
 
 
+def _find_rscript():
+    rscript = shutil.which("Rscript")
+    if rscript:
+        return rscript
+    for candidate in [
+        r"C:\Program Files\R\R-4.4.1\bin\Rscript.exe",
+        r"C:\Program Files\R\R-4.4.0\bin\Rscript.exe",
+        r"C:\Program Files\R\R-4.3.3\bin\Rscript.exe",
+        "/usr/local/bin/Rscript",
+        "/usr/bin/Rscript",
+    ]:
+        if os.path.isfile(candidate):
+            return candidate
+    raise FileNotFoundError("Rscript not found on PATH. Install R or add R/bin to PATH.")
+
+
+def _parse_json_from_r_output(stdout: str) -> dict:
+    """Extract JSON from R output, skipping any warning/message lines before or after."""
+    for line in reversed(stdout.strip().splitlines()):
+        line = line.strip()
+        if line.startswith("{") or line.startswith("["):
+            return json.loads(line)
+    raise ValueError(f"No JSON found in R output:\n{stdout}")
+
+
 def main():
     df = build_dataset()
+    rscript = _find_rscript()
     with tempfile.TemporaryDirectory() as tmp:
         csv = os.path.join(tmp, "data.csv")
         df.to_csv(csv, index=False)
         rscript_path = os.path.join(tmp, "script.R")
         with open(rscript_path, "w") as fh:
             fh.write(R_SCRIPT)
-        
+
         try:
-            out = subprocess.run(["Rscript", rscript_path, csv], capture_output=True, text=True, check=True)
-            results = json.loads(out.stdout.strip().splitlines()[-1])
+            out = subprocess.run([rscript, rscript_path, csv], capture_output=True, text=True, check=True)
+            results = _parse_json_from_r_output(out.stdout)
         except subprocess.CalledProcessError as e:
             print("Rscript failed!")
             print("STDOUT:", e.stdout)
             print("STDERR:", e.stderr)
             raise
-        except json.JSONDecodeError as e:
-            print("JSON decoding failed. R output was:")
+        except (json.JSONDecodeError, ValueError) as e:
+            print(f"JSON decoding failed: {e}\nR output was:")
             print(out.stdout)
             raise
 

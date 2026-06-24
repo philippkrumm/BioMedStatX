@@ -211,9 +211,9 @@ class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
         help_menu.addAction(graph_vis_action)
 
         # New: Statistical Tests & HTML Report help
-        stats_excel_action = QAction('Statistical Tests && HTML Report', self)
-        stats_excel_action.triggered.connect(self.show_statistical_tests_excel_help)
-        help_menu.addAction(stats_excel_action)
+        stats_html_action = QAction('Statistical Tests && HTML Report', self)
+        stats_html_action.triggered.connect(self.show_statistical_tests_html_help)
+        help_menu.addAction(stats_html_action)
 
         help_menu.addSeparator()
 
@@ -333,10 +333,10 @@ class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
         layout.addWidget(btn)
         dlg.exec_()
 
-    def show_statistical_tests_excel_help(self):
+    def show_statistical_tests_html_help(self):
         from PyQt5.QtWidgets import QDialog, QVBoxLayout, QTextBrowser, QPushButton
         dlg = QDialog(self)
-        _configure_dialog(dlg, object_name="statsExcelHelpDialog")
+        _configure_dialog(dlg, object_name="statsHtmlHelpDialog")
         dlg.setWindowTitle("Statistical Tests & HTML Report")
         dlg.resize(900, 600)
         layout = QVBoxLayout(dlg)
@@ -405,8 +405,8 @@ class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
 
         # Determine file types
         file_types = []
-        if any(f.endswith('.xlsx') for f in files):
-            file_types.append("Excel results")
+        if any(f.endswith('.html') for f in files):
+            file_types.append("HTML report")
         if any(f.endswith(('.pdf', '.png')) for f in files):
             file_types.append("plots")
 

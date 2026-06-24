@@ -2,8 +2,8 @@
 test_all_paths.py — BioMedStatX decision-tree coverage + R cross-validation.
 
 Runs every statistical path through AnalysisManager.analyze() with synthetic
-data, validates routing, statistical properties, Excel output structure, and
-cross-checks p-values against R as the scientific ground truth.
+data, validates routing, statistical properties, and cross-checks p-values
+against R as the scientific ground truth.
 
 Run with:
     cd validation
@@ -24,7 +24,6 @@ from unittest.mock import patch, MagicMock
 
 import numpy as np
 import pandas as pd
-import openpyxl
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -73,141 +72,19 @@ def build_analysis_context(design: dict, group_labels: list) -> dict:
         ctx["within_factors"]    = design["factor_columns"]
         ctx["additional_factors"] = design["factor_columns"]
     elif design["inferred_test"] == "ancova":
-        # analysis_core.py reads covariates from analysis_context["covariates"]
         ctx["covariates"] = design.get("covariate_columns", [])
     elif design["inferred_test"] in ("correlation", "linear_regression"):
-        # analysis_core.py reads x from analysis_context["x_variable"] (line 589)
         ctx["x_variable"] = design.get("x_column")
+    elif design["inferred_test"] == "lmm":
+        ctx["between_factors"] = design.get("between_factors", [])
+        ctx["within_factors"] = design.get("within_factors", [])
+        ctx["additional_factors"] = (
+            design.get("between_factors", []) + design.get("within_factors", [])
+        )
+        ctx["covariates"] = design.get("covariate_columns", [])
+    elif design["inferred_test"] == "logistic_regression":
+        ctx["covariates"] = design.get("covariate_columns", [])
     return ctx
-
-
-# ---------------------------------------------------------------------------
-# Helpers: Excel output validation
-# ---------------------------------------------------------------------------
-
-REQUIRED_SHEETS = ["Summary", "Statistical Results", "Descriptive Statistics", "Assumptions", "Decision Tree"]
-
-
-def _get_sheet_text(ws) -> str:
-    """Return all cell values from a worksheet as a single lowercase string."""
-    parts = []
-    for row in ws.iter_rows():
-        for cell in row:
-            if cell.value is not None:
-                parts.append(str(cell.value))
-    return " ".join(parts).lower()
-
-
-def _find_p_value_in_results_sheet(ws) -> float | None:
-    """
-    Search the Results sheet for a cell whose header is 'p-value', 'p value',
-    or 'p' and return the first numeric value found below that header.
-    Returns None if not found.
-    """
-    header_cols = {}
-    for row in ws.iter_rows(min_row=1, max_row=5):
-        for cell in row:
-            if cell.value and isinstance(cell.value, str):
-                lv = cell.value.strip().lower()
-                if lv in ("p-value", "p value", "p", "p-val", "pvalue"):
-                    header_cols[cell.column] = cell.row
-
-    for col, header_row in header_cols.items():
-        for row_idx in range(header_row + 1, header_row + 10):
-            v = ws.cell(row=row_idx, column=col).value
-            if isinstance(v, (int, float)) and not (v != v):  # not NaN
-                return float(v)
-    return None
-
-
-def _excel_export_enabled() -> bool:
-    """Return True iff ExportDispatcher still calls ResultsExporter.export_results_to_excel.
-
-    The function is intentionally cheap: it inspects the dispatcher source for
-    an *uncommented* call. Re-enabling Excel (toggle the leading ``# `` in
-    src/export_dispatcher.py) flips this back to True and unskips the suite —
-    no test edits required.
-    """
-    dispatcher = SRC / "export_dispatcher.py"
-    try:
-        src = dispatcher.read_text(encoding="utf-8")
-    except OSError:
-        return False
-    for raw in src.splitlines():
-        line = raw.lstrip()
-        if line.startswith("#"):
-            continue
-        if "ResultsExporter.export_results_to_excel" in line:
-            return True
-    return False
-
-
-def assert_excel_output(result: dict, design: dict, out_dir: Path):
-    """Validate the Excel output file produced by the analysis."""
-    # Excel export is currently disabled in ExportDispatcher (HTML-only mode,
-    # see commit c1b26ef). Skip this check until the export is re-enabled —
-    # toggling the comments in src/export_dispatcher.py auto-restores the test.
-    if not _excel_export_enabled():
-        pytest.skip(
-            f"[{design['name']}] Excel export disabled in ExportDispatcher "
-            "(HTML-only mode). Re-enable in src/export_dispatcher.py to run this check."
-        )
-
-    # The output file is named *_output.xlsx to distinguish from the input fixture
-    xlsx_files = list(out_dir.glob("*_output.xlsx"))
-    if not xlsx_files:
-        xlsx_files = list(out_dir.glob("*.xlsx"))
-        # Exclude the input fixture file
-        xlsx_files = [f for f in xlsx_files if "_output" in f.name or "results" in f.name.lower()
-                      or design["name"] + ".xlsx" not in f.name]
-    assert len(xlsx_files) >= 1, (
-        f"[{design['name']}] No output .xlsx file found in {out_dir}. "
-        f"Files present: {list(out_dir.iterdir())}"
-    )
-
-    wb = openpyxl.load_workbook(str(xlsx_files[0]))
-
-    # 1. Required sheets present
-    for sheet in REQUIRED_SHEETS:
-        assert sheet in wb.sheetnames, (
-            f"[{design['name']}] Missing sheet '{sheet}'. "
-            f"Found: {wb.sheetnames}"
-        )
-
-    # 2. Pairwise sheet for multi-group results
-    if design["levels"] > 2:
-        # "Pairwise Comparisons" sheet may exist but is optional if test was not significant
-        pass  # soft check — some implementations skip it for non-significant results
-
-    # 3. p-value in Statistical Results sheet matches Python result dict
-    ws_results = wb["Statistical Results"]
-    excel_p = _find_p_value_in_results_sheet(ws_results)
-    if excel_p is not None and result.get("p_value") is not None:
-        python_p = float(result["p_value"])
-        assert abs(excel_p - python_p) < 1e-4, (
-            f"[{design['name']}] p-value mismatch: "
-            f"Python={python_p:.6f}, Excel={excel_p:.6f}"
-        )
-
-    # 4. Non-parametric mention in Analysis Log (Decision Tree is an image, not searchable text)
-    test_name_lower = str(result.get("test", "")).lower()
-    if any(kw in test_name_lower for kw in ["kruskal", "mann", "wilcox", "friedman"]):
-        log_text = ""
-        if "Analysis Log" in wb.sheetnames:
-            log_text = _get_sheet_text(wb["Analysis Log"])
-        summary_text = _get_sheet_text(wb["Summary"]) if "Summary" in wb.sheetnames else ""
-        combined_text = log_text + " " + summary_text
-        if not any(kw in combined_text for kw in ["non-parametric", "nonparametric", "not normally",
-                                                    "kruskal", "mann", "wilcox", "friedman",
-                                                    "non_parametric"]):
-            print(f"  WARNING [{design['name']}]: No non-parametric mention in Log/Summary")
-
-    # 5. ANOVA: eta (effect size) mentioned for multi-group or multi-factor tests
-    if design["levels"] >= 3 or design["factors"] >= 2:
-        results_text = _get_sheet_text(wb["Statistical Results"])
-        # Soft check — log a warning if missing but don't fail (implementation may differ)
-        if "eta" not in results_text and "effect" not in results_text:
-            print(f"  WARNING [{design['name']}]: No eta/effect_size in Statistical Results sheet")
 
 
 # ---------------------------------------------------------------------------
@@ -417,7 +294,7 @@ def validate_against_r(result: dict, design: dict, excel_path: str, tmp_path: Pa
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("design", DESIGNS, ids=[d["name"] for d in DESIGNS])
-def test_path(design, make_excel_fixture, tmp_path):
+def test_path(design, make_excel_fixture, tmp_path, monkeypatch):
     """
     End-to-end test for one statistical path:
       1. Generate synthetic Excel fixture
@@ -427,6 +304,15 @@ def test_path(design, make_excel_fixture, tmp_path):
       5. Assert Excel output structure and p-value consistency
       6. R cross-validation (skipped gracefully if R unavailable)
     """
+    # ── 0. Per-design mock overrides ────────────────────────────────────────
+    transform_mock = design.get("requires_transform_mock")
+    if transform_mock:
+        # Override session-level None mock → specific transformation for this design only
+        monkeypatch.setattr(
+            "analysis.statisticaltester.UIDialogManager.select_transformation_dialog",
+            staticmethod(lambda *a, **k: transform_mock),
+        )
+
     # ── 1. Generate fixture ─────────────────────────────────────────────────
     excel_path = make_excel_fixture(design)
 
@@ -502,11 +388,135 @@ def test_path(design, make_excel_fixture, tmp_path):
         f"got: '{combined}'"
     )
 
-    # ── 7. Excel output ─────────────────────────────────────────────────────
-    assert_excel_output(result, design, tmp_path)
+    # ── 6b. Sphericity correction present when Mauchly expected to fail ─────
+    if design.get("requires_sphericity_correction"):
+        corr = result.get("sphericity_correction") or result.get("epsilon_gg") or result.get("epsilon_hf")
+        if corr is None:
+            # Dig into nested keys some implementations use
+            for key in ("anova_table", "factors", "sphericity"):
+                sub = result.get(key)
+                if isinstance(sub, dict) and any(
+                    k in sub for k in ("epsilon_gg", "epsilon_hf", "sphericity_correction")
+                ):
+                    corr = True
+                    break
+        if corr is None:
+            print(f"  WARNING [{design['name']}]: Mauchly expected to fail but no sphericity "
+                  f"correction key found in result. Keys: {list(result.keys())}")
 
-    # ── 8. R cross-validation ───────────────────────────────────────────────
+    # ── 7. R cross-validation ───────────────────────────────────────────────
     validate_against_r(result, design, excel_path, tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# Post-hoc method coverage: parametrize over every implemented choice
+# ---------------------------------------------------------------------------
+
+_POSTHOC_DESIGNS = [d for d in DESIGNS if d["name"] in ("one_way_anova_parametric",)]
+
+@pytest.mark.parametrize("posthoc_method", ["tukey", "games_howell", "dunnett"])
+@pytest.mark.parametrize("design", _POSTHOC_DESIGNS, ids=[d["name"] for d in _POSTHOC_DESIGNS])
+def test_posthoc_methods(design, posthoc_method, make_excel_fixture, tmp_path, monkeypatch):
+    """Each implemented parametric post-hoc method must not crash and return valid p-values."""
+    # Override dialog mock to return the specific method
+    monkeypatch.setattr(
+        "analysis.statisticaltester.UIDialogManager.select_posthoc_test_dialog",
+        staticmethod(lambda *a, **k: posthoc_method),
+    )
+    if posthoc_method == "dunnett":
+        # Dunnett needs a control group; return the first group
+        monkeypatch.setattr(
+            "analysis.statisticaltester.UIDialogManager.select_control_group_dialog",
+            staticmethod(lambda *a, **k: "G1"),
+        )
+
+    excel_path = make_excel_fixture(design)
+    df = design["df_factory"]()
+    context = build_analysis_context(design, design["group_labels"])
+    out_base = str(tmp_path / f"{design['name']}_{posthoc_method}_output")
+
+    result = AnalysisManager.analyze(
+        file_path=excel_path,
+        group_col=design["factor_columns"][0],
+        groups=design["group_labels"],
+        sheet_name=0,
+        value_cols=design["dv_columns"],
+        dependent=design["dependent"],
+        skip_plots=True,
+        file_name=out_base,
+        analysis_context=context,
+    )
+
+    assert result is not None, f"[{design['name']} / {posthoc_method}] analyze() returned None"
+    if result.get("error"):
+        err = str(result["error"])
+        if "pingouin" in err.lower() or "xarray" in err.lower():
+            pytest.skip(f"pingouin/xarray broken — {err[:80]}")
+        pytest.fail(f"[{design['name']} / {posthoc_method}] error: {err}")
+
+    for comp in result.get("pairwise_comparisons") or []:
+        p = comp.get("p_value")
+        assert p is None or (0.0 <= float(p) <= 1.0), (
+            f"[{posthoc_method}] pairwise p={p} outside [0,1]"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Transformation path: Box-Cox and sqrt must run end-to-end without crashing
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("transform", ["box_cox", "sqrt", "log10"])
+def test_transformation_path(transform, tmp_path, monkeypatch):
+    """Transformation applied after Shapiro-Wilk failure must not crash and must return valid p."""
+    from conftest import _make_skewed_lognormal
+
+    monkeypatch.setattr(
+        "analysis.statisticaltester.UIDialogManager.select_transformation_dialog",
+        staticmethod(lambda *a, **k: transform),
+    )
+    monkeypatch.setattr(
+        "analysis.statisticaltester.UIDialogManager.select_posthoc_test_dialog",
+        staticmethod(lambda *a, **k: "tukey"),
+    )
+
+    df = _make_skewed_lognormal(20)
+    excel_path = str(tmp_path / f"skewed_{transform}.xlsx")
+    df.to_excel(excel_path, index=False)
+
+    context = {
+        "dv_columns": ["Value"],
+        "factor_columns": ["Group"],
+        "group_labels": ["G1", "G2", "G3"],
+        "subject_column": None,
+        "dependent": False,
+        "inferred_test": "one_way_anova",
+        "additional_factors": [],
+        "combine_columns": False,
+        "display_group_col": "Group",
+    }
+
+    result = AnalysisManager.analyze(
+        file_path=excel_path,
+        group_col="Group",
+        groups=["G1", "G2", "G3"],
+        sheet_name=0,
+        value_cols=["Value"],
+        dependent=False,
+        skip_plots=True,
+        file_name=str(tmp_path / f"skewed_{transform}_out"),
+        analysis_context=context,
+    )
+
+    assert result is not None, f"[{transform}] analyze() returned None"
+    if result.get("error"):
+        err = str(result["error"])
+        if "pingouin" in err.lower() or "xarray" in err.lower():
+            pytest.skip(f"pingouin/xarray broken — {err[:80]}")
+        pytest.fail(f"[{transform}] analysis error: {err}")
+
+    p = result.get("p_value")
+    if p is not None:
+        assert 0.0 <= float(p) <= 1.0, f"[{transform}] p_value={p} outside [0,1]"
 
 
 # ---------------------------------------------------------------------------
@@ -571,7 +581,6 @@ if __name__ == "__main__":
                     if p_val is not None:
                         assert 0.0 <= float(p_val) <= 1.0, f"p_value={p_val} out of range"
 
-                    assert_excel_output(result, design, tmp_path)
                     validate_against_r(result, design, excel_path, tmp_path)
 
                 print("PASS")

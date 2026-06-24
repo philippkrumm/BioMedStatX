@@ -356,13 +356,16 @@ class ANCOVAModel:
             main_p = float(self.anova_table.loc[factor_key, "PR(>F)"])
             main_f = float(self.anova_table.loc[factor_key, "F"])
 
-        # Compute eta-squared for main factor
+        # Compute partial eta-squared for main factor (ss_factor / (ss_factor + ss_residual))
         eta_sq = None
         if self.anova_table is not None and factor_key in self.anova_table.index:
             ss_factor = self.anova_table.loc[factor_key, "sum_sq"]
-            ss_total = self.anova_table["sum_sq"].sum()
-            if ss_total > 0:
-                eta_sq = float(ss_factor / ss_total)
+            residual_key = next((k for k in self.anova_table.index if "residual" in k.lower()), None)
+            if residual_key is not None:
+                ss_residual = self.anova_table.loc[residual_key, "sum_sq"]
+                denom = ss_factor + ss_residual
+                if denom > 0:
+                    eta_sq = float(ss_factor / denom)
 
         return {
             "test": "ANCOVA" if len(self._between_factors) == 1 else "Two-Way ANCOVA",
@@ -370,7 +373,7 @@ class ANCOVAModel:
             "p_value": main_p,
             "statistic": main_f,
             "effect_size": eta_sq,
-            "effect_size_type": "eta_squared",
+            "effect_size_type": "partial_eta_squared",
             "anova_table": anova_rows,
             "covariate_effects": covariate_effects,
             "adjusted_means": adj_means,
@@ -454,8 +457,8 @@ class LinearMixedModel:
                     ll_ri = fit_ri.llf
                     ll_ri_rs = fit_ri_rs.llf
                     D = 2 * (ll_ri_rs - ll_ri)
-                    
-                    df_diff = 2
+                    # Diagonal RE structure adds 1 parameter (variance of slope) — df=1
+                    df_diff = 1
                     p_val = float(scipy_stats.chi2.sf(D, df_diff))
                     
                     self._lrt_performed = True

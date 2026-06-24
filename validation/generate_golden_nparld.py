@@ -16,6 +16,7 @@ matches for the within and interaction effects.
 """
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 
@@ -26,6 +27,7 @@ OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                    "tests", "golden", "references_nparld.json")
 
 R_SCRIPT = r'''
+options(OutDec=".", scipen=999)
 suppressMessages({library(nparLD); library(jsonlite)})
 args <- commandArgs(trailingOnly=TRUE)
 d <- read.csv(args[1], stringsAsFactors=TRUE)
@@ -52,16 +54,48 @@ def build_dataset():
     return pd.DataFrame(rows)
 
 
+def _find_rscript():
+    rscript = shutil.which("Rscript")
+    if rscript:
+        return rscript
+    for candidate in [
+        r"C:\Program Files\R\R-4.4.1\bin\Rscript.exe",
+        r"C:\Program Files\R\R-4.4.0\bin\Rscript.exe",
+        r"C:\Program Files\R\R-4.3.3\bin\Rscript.exe",
+        "/usr/local/bin/Rscript",
+        "/usr/bin/Rscript",
+    ]:
+        if os.path.isfile(candidate):
+            return candidate
+    raise FileNotFoundError("Rscript not found on PATH. Install R or add R/bin to PATH.")
+
+
+def _parse_json_from_r_output(stdout: str):
+    """Extract JSON from R stdout, skipping warning/message lines before or after."""
+    for line in reversed(stdout.strip().splitlines()):
+        line = line.strip()
+        if line.startswith("{") or line.startswith("["):
+            return json.loads(line)
+    raise ValueError(f"No JSON found in R output:\n{stdout}")
+
+
 def main():
     df = build_dataset()
+    rscript = _find_rscript()
     with tempfile.TemporaryDirectory() as tmp:
         csv = os.path.join(tmp, "bl.csv")
         df.to_csv(csv, index=False)
         rscript_path = os.path.join(tmp, "bl.R")
         with open(rscript_path, "w") as fh:
             fh.write(R_SCRIPT)
-        out = subprocess.run(["Rscript", rscript_path, csv], capture_output=True, text=True, check=True)
-        r_effects = json.loads(out.stdout.strip().splitlines()[-1])
+        try:
+            out = subprocess.run([rscript, rscript_path, csv], capture_output=True, text=True, check=True)
+        except subprocess.CalledProcessError as e:
+            print("Rscript failed!")
+            print("STDOUT:", e.stdout)
+            print("STDERR:", e.stderr)
+            raise
+        r_effects = _parse_json_from_r_output(out.stdout)
 
     # nparLD source label -> app anova_table "Source"; compare_p only off-between.
     src_map = {"grp": "grp", "time": "time", "grp:time": "grp:time"}
