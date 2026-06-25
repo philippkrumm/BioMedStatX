@@ -262,16 +262,12 @@ class DecisionTreeVisualizer:
             within_correction = str(results.get("within_correction_used", "None"))
 
             welch_t_condition = (
-                ("welch" in test_name.lower() and "t-test" in test_name.lower()) or
-                ("welch" in test_name.lower() and n_groups == 2) or
-                (is_normal and not has_equal_variance and n_groups == 2 and
-                 ("welch" in test_name.lower() or "independent" in test_name.lower()))
+                is_normal and not has_equal_variance and n_groups == 2 and
+                ("welch" in test_name.lower() or "t-test" in test_name.lower() or "independent" in test_name.lower())
             )
             welch_anova_condition = (
-                ("welch" in test_name.lower() and "anova" in test_name.lower()) or
-                ("welch" in test_name.lower() and n_groups > 2) or
-                (is_normal and not has_equal_variance and n_groups > 2 and
-                 ("welch" in test_name.lower() or "anova" in test_name.lower()))
+                is_normal and not has_equal_variance and n_groups > 2 and
+                ("welch" in test_name.lower() or "anova" in test_name.lower())
             )
 
             # labels
