@@ -160,6 +160,16 @@ class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
         self._position_debug_console()
         self.debug_console.show()
 
+        # First-run onboarding gate
+        from PyQt5.QtCore import QTimer, QSettings
+        from autopilot.statistical_analyzer_autopilot_pipeline import (
+            should_offer_tour, _current_app_version,
+        )
+        _stored = QSettings("BioMedStatX", "BioMedStatX").value(
+            "onboarding/completed_version", "")
+        if should_offer_tour(_stored, _current_app_version()):
+            QTimer.singleShot(400, self._maybe_offer_tour)
+
     def _position_debug_console(self):
         """Position the debug console to the right of the main window, or below if no space."""
         _primary = QApplication.instance().primaryScreen() if QApplication.instance() else None
@@ -188,7 +198,18 @@ class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
         file_menu.addAction(exit_action)
 
         # Help menu
-        help_menu = menubar.addMenu('&Help')
+        self.help_menu = menubar.addMenu('&Help')
+        help_menu = self.help_menu
+
+        tour_action = QAction('Interactive Tour', self)
+        tour_action.triggered.connect(self.start_tutorial)
+        help_menu.addAction(tour_action)
+
+        template_action = QAction('Save Example Template...', self)
+        template_action.triggered.connect(self.export_example_template)
+        help_menu.addAction(template_action)
+
+        help_menu.addSeparator()
 
         # Getting Started should be first
         getting_started_action = QAction('Getting Started', self)
@@ -452,6 +473,19 @@ class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
             "<li><b>More than two groups:</b> Repeated Measures ANOVA or Friedman test</li>"
             "</ul>"
         )
+
+    def _maybe_offer_tour(self):
+        from PyQt5.QtWidgets import QMessageBox
+        box = QMessageBox(self)
+        box.setWindowTitle("Welcome to BioMedStatX")
+        box.setText("New here? Take a 60-second tour of the workflow.")
+        start_btn = box.addButton("Start tour", QMessageBox.AcceptRole)
+        box.addButton("Maybe later", QMessageBox.RejectRole)
+        box.exec_()
+        if box.clickedButton() is start_btn:
+            self.start_tutorial()
+        else:
+            self._mark_tour_seen()
 
     def show_getting_started_help(self):
         """Shows a comprehensive getting started guide for first-time users."""

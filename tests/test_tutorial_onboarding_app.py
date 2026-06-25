@@ -60,3 +60,10 @@ def test_export_template_cancelled_is_noop(app, tmp_path, monkeypatch):
     monkeypatch.setattr(QFileDialog, "getSaveFileName",
                         staticmethod(lambda *a, **k: ("", "")))
     app.export_example_template()  # no exception, nothing written
+
+
+def test_help_menu_has_tour_and_template_actions(app):
+    assert hasattr(app, "help_menu")
+    texts = [a.text() for a in app.help_menu.actions()]
+    assert any("Interactive Tour" in t for t in texts)
+    assert any("Example Template" in t for t in texts)
