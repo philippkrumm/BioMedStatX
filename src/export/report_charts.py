@@ -731,8 +731,10 @@ class _ChartsMixin:
                 numeric = _FormattingMixin._coerce_numeric_sequence(values)
                 if not numeric:
                     continue
+                import html
+                escaped_group_name = html.escape(str(group_name))
                 group_order.append(str(group_name))
-                label = f"{group_name} (n={len(numeric)})"
+                label = f"{escaped_group_name} (n={len(numeric)})"
                 color = palette[idx % len(palette)]
                 figure.add_trace(
                     go.Box(

@@ -72,9 +72,14 @@ class AutoUpdater:
         
     def _on_update_available(self, update_info):
         """Handle when update is available"""
+        import html
         version_str = update_info['version']
-        release_notes = update_info['release_notes']
+        release_notes = html.escape(update_info['release_notes'])
         release_url = update_info['release_url']
+        
+        # Scheme validation to prevent URL injection
+        if not str(release_url).startswith("https://github.com/"):
+            release_url = f"https://github.com/{GITHUB_REPO}/releases/latest"
         
         # Show update notification with link to releases page
         msg = QMessageBox(self.parent)

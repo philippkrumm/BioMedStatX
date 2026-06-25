@@ -312,10 +312,9 @@ class AssumptionCheckEngine:
                           f"Brown-Forsythe test yielded {_vp_str} \u2014 {_var_verdict}.",
                           detail=f"F={stat:.4f}, {_vp_str}" if isinstance(stat, (float, int)) else "")
 
-        need_transform = not (
-            test_info["pre_transformation"]["residuals_normality"]["is_normal"]
-            and test_info["pre_transformation"]["variance"]["equal_variance"]
-        )
+        # Welch-ANOVA (and RM corrections) handles variance heteroscedasticity.
+        # Transformation is strictly for correcting non-normality.
+        need_transform = not test_info["pre_transformation"]["residuals_normality"]["is_normal"]
 
         # Transformation if needed
         if need_transform:

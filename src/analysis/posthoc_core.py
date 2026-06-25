@@ -153,182 +153,162 @@ class TwoWayPostHocAnalyzer(PostHocAnalyzer):
                 else:
                     filtered_pairs = all_pairs
                 logger.debug(f"DEBUG POSTHOC: filtered_pairs = {filtered_pairs}")
-                # Perform t-tests for each pair
-                pvals = []
-                stats_list = []
-                for g1, g2 in filtered_pairs:
-                    vals1 = group_to_values[g1]
-                    vals2 = group_to_values[g2]
-                    # Use t-test (assume equal variance for now)
-                    stat, pval = ttest_ind(vals1, vals2, equal_var=True)
-                    pvals.append(pval)
-                    stats_list.append((g1, g2, stat, pval, vals1, vals2))
-                # Apply multiple comparison correction based on method
-                multipletests = get_statsmodels_multitest()
-                if pvals:
-                    if method.lower() == 'tukey':
-                        # For Tukey, we'll use a different approach below
-                        correction_method = "Tukey HSD"
-                        pvals_corr = pvals  # Will be replaced by Tukey results
-                    elif method.lower() == 'dunnett' and control_group:
-                        # For Dunnett, use proper Dunnett test implementation
-                        correction_method = "Dunnett"
+
+                if method.lower() == 'tukey':
+                    pairwise_tukeyhsd = get_pairwise_tukeyhsd()
+                    # Create interaction group for Tukey HSD matching the exact label formats
+                    df['interaction_group'] = factors[0] + "=" + df[factors[0]].astype(str) + ", " + factors[1] + "=" + df[factors[1]].astype(str)
+                    # Run Tukey HSD on the interaction groups
+                    tukey = pairwise_tukeyhsd(df[dv], df['interaction_group'], alpha=alpha)
+                    
+                    for i in range(len(tukey.pvalues)):
+                        group1 = str(tukey.groupsunique[tukey.pairindices[i, 0]])
+                        group2 = str(tukey.groupsunique[tukey.pairindices[i, 1]])
+                        p_val = tukey.pvalues[i]
+                        conf_int = tukey.confint[i]
+                        
+                        norm_pair = normalize_pair((group1, group2))
+                        match = (normalized_selected is not None and norm_pair in normalized_selected)
+                        if normalized_selected is not None and not match:
+                            continue
+                            
+                        # No Holm-Sidak correction needed for Tukey! It's already family-wise corrected.
+                        PostHocAnalyzer.add_comparison(
+                            result,
+                            group1=group1,
+                            group2=group2,
+                            test="Tukey HSD",
+                            p_value=p_val,
+                            statistic=None,
+                            corrected=True,
+                            correction_method="Tukey HSD",
+                            confidence_interval=tuple(conf_int),
+                            alpha=alpha
+                        )
+
+                elif method.lower() == 'dunnett' and control_group:
+                    # Flatten the data for scipy.stats.dunnett
+                    samples = []
+                    control_sample = None
+                    treatment_labels = []
+                    
+                    for group_label in interaction_groups:
+                        vals = group_to_values[group_label]
+                        if group_label == control_group:
+                            control_sample = vals
+                        else:
+                            samples.append(vals)
+                            treatment_labels.append(group_label)
+                    
+                    if control_sample is None:
+                        raise ValueError(f"Control group '{control_group}' not found in data.")
+                        
+                    # Safeguard: Check n >= 2 for all samples (including control)
+                    if len(control_sample) < 2:
+                        raise ValueError(f"Control group '{control_group}' has n={len(control_sample)} < 2, cannot compute Dunnett.")
+                    for label, sample in zip(treatment_labels, samples):
+                        if len(sample) < 2:
+                            raise ValueError(f"Treatment group '{label}' has n={len(sample)} < 2, cannot compute Dunnett.")
+                            
+                    if samples:
+                        scipy_stats = get_scipy_stats()
+                        dunnett_res = scipy_stats.dunnett(*samples, control=control_sample)
+                        
                         try:
-                            sp = get_scikit_posthocs()
-                            # Prepare data for scikit_posthocs
-                            all_data = []
-                            all_groups = []
-                            for group in interaction_groups:
-                                values = group_to_values[group]
-                                all_data.extend(values)
-                                all_groups.extend([group] * len(values))
-                            
-                            # Create DataFrame for scikit_posthocs
-                            import pandas as pd
-                            dunnett_df = pd.DataFrame({"value": all_data, "group": all_groups})
-                            
-                            # Use the control_group directly - it's already the exact group name the user selected
-                            control_label = control_group
-                            logger.debug(f"DEBUG: Using control_group directly: '{control_label}'")
-                            
-                            # Perform Dunnett test
-                            dunnett_result = sp.posthoc_dunnett(dunnett_df, val_col="value", group_col="group", control=control_label)
-                            
-                            # Extract p-values for the comparisons we made
-                            pvals_corr = []
-                            for g1, g2, *_ in stats_list:
-                                if g1 == control_label or g2 == control_label:
-                                    # Get the p-value from the Dunnett result matrix
-                                    try:
-                                        if g1 == control_label:
-                                            p_val = float(dunnett_result.loc[g2, control_label])
-                                        else:
-                                            p_val = float(dunnett_result.loc[g1, control_label])
-                                    except (KeyError, ValueError):
-                                        # Fallback to original p-value
-                                        p_val = stats_list[len(pvals_corr)][3]
-                                    pvals_corr.append(p_val)
-                                else:
-                                    pvals_corr.append(1.0)  # Non-control comparisons get p=1.0
-                        except ImportError:
-                            # Fallback if scikit_posthocs not available
-                            # Filter to only comparisons involving the control group
-                            dunnett_pvals = []
-                            dunnett_stats = []
-                            control_label = control_group  # Use control_group directly
-                            logger.debug(f"DEBUG: Dunnett fallback using control_group: '{control_label}'")
-                            
-                            for i, (g1, g2, stat, pval, vals1, vals2) in enumerate(stats_list):
-                                if g1 == control_label or g2 == control_label:
-                                    dunnett_pvals.append(pval)
-                                    dunnett_stats.append((g1, g2, stat, pval, vals1, vals2))
+                            ci = dunnett_res.confidence_interval(confidence_level=1 - alpha)
+                            lowers, uppers = ci.low, ci.high
+                        except AttributeError:
+                            lowers, uppers = [None]*len(samples), [None]*len(samples)
+                        
+                        for i, label in enumerate(treatment_labels):
+                            norm_pair = normalize_pair((control_group, label))
+                            if normalized_selected is not None and norm_pair not in normalized_selected:
+                                continue
                                 
-                                # Apply Dunnett correction using Holm-Šidák as fallback
-                                if dunnett_pvals:
-                                    reject, pvals_corr_dunnett, _, _ = multipletests(dunnett_pvals, alpha=alpha, method='holm-sidak')
-                                    # Map back to original order
-                                    pvals_corr = []
-                                    dunnett_idx = 0
-                                    for g1, g2, *_ in stats_list:
-                                        if g1 == control_label or g2 == control_label:
-                                            pvals_corr.append(pvals_corr_dunnett[dunnett_idx])
-                                            dunnett_idx += 1
-                                        else:
-                                            pvals_corr.append(1.0)  # Non-control comparisons get p=1.0
-                                else:
-                                    pvals_corr = [1.0] * len(pvals)
-                    elif method.lower() == 'paired_fdr':
-                        correction_method = "FDR (Benjamini-Hochberg)"
-                        reject, pvals_corr, _, _ = multipletests(pvals, alpha=alpha, method='fdr_bh')
-                    else:
-                        # Default: Holm-Šidák
-                        correction_method = "Holm-Šidák"
-                        reject, pvals_corr, _, _ = multipletests(pvals, alpha=alpha, method='holm-sidak')
+                            # If scipy returns an array or scalar depending on number of treatments
+                            p_val = float(np.atleast_1d(dunnett_res.pvalue)[i])
+                            stat = float(np.atleast_1d(dunnett_res.statistic)[i])
+                            
+                            c_int = (None, None)
+                            if lowers[i] is not None and uppers[i] is not None:
+                                c_int = (float(np.atleast_1d(lowers)[i]), float(np.atleast_1d(uppers)[i]))
+                            
+                            PostHocAnalyzer.add_comparison(
+                                result,
+                                group1=control_group,
+                                group2=label,
+                                test="Dunnett Test",
+                                p_value=p_val,
+                                statistic=stat,
+                                corrected=True,
+                                correction_method="Dunnett",
+                                confidence_interval=c_int,
+                                alpha=alpha
+                            )
                 else:
-                    pvals_corr = []
-                    correction_method = "Holm-Šidák"
-                # Add to results
-                for i, (g1, g2, stat, pval, vals1, vals2) in enumerate(stats_list):
-                    # Effect size: Cohen's d
-                    n1, n2 = len(vals1), len(vals2)
-                    s1, s2 = np.var(vals1, ddof=1), np.var(vals2, ddof=1)
-                    s_pooled = np.sqrt(((n1-1)*s1 + (n2-1)*s2) / (n1+n2-2)) if (n1+n2-2) > 0 else 0
-                    cohen_d = (np.mean(vals1) - np.mean(vals2)) / s_pooled if s_pooled > 0 else 0
-                    # Confidence interval for mean difference
-                    mean_diff = np.mean(vals1) - np.mean(vals2)
-                    stderr_diff = np.sqrt(s1/n1 + s2/n2) if n1 > 0 and n2 > 0 else 0
-                    t = get_scipy_stats().t
-                    df_ = n1 + n2 - 2
-                    if df_ > 0 and stderr_diff > 0:
-                        t_crit = t.ppf(1 - alpha/2, df_)
-                        ci = (mean_diff - t_crit * stderr_diff, mean_diff + t_crit * stderr_diff)
+                    # Perform t-tests for each pair
+                    pvals = []
+                    stats_list = []
+                    for g1, g2 in filtered_pairs:
+                        vals1 = group_to_values[g1]
+                        vals2 = group_to_values[g2]
+                        # Use t-test (assume equal variance for now)
+                        stat, pval = get_scipy_stats().ttest_ind(vals1, vals2, equal_var=True)
+                        pvals.append(pval)
+                        stats_list.append((g1, g2, stat, pval, vals1, vals2))
+                    
+                    # Apply multiple comparison correction based on method
+                    multipletests = get_statsmodels_multitest()
+                    if pvals:
+                        if method.lower() == 'paired_fdr':
+                            correction_method = "FDR (Benjamini-Hochberg)"
+                            reject, pvals_corr, _, _ = multipletests(pvals, alpha=alpha, method='fdr_bh')
+                        else:
+                            # Default: Holm-Šidák
+                            correction_method = "Holm-Šidák"
+                            reject, pvals_corr, _, _ = multipletests(pvals, alpha=alpha, method='holm-sidak')
                     else:
-                        ci = (None, None)
-                    PostHocAnalyzer.add_comparison(
-                        result,
-                        group1=g1,
-                        group2=g2,
-                        test="Pairwise t-test",
-                        p_value=pvals_corr[i] if i < len(pvals_corr) else pval,
-                        statistic=stat,
-                        corrected=True,
-                        correction_method=correction_method,
-                        effect_size=cohen_d,
-                        effect_size_type="cohen_d",
-                        confidence_interval=ci,
-                        alpha=alpha
-                    )
-                logger.debug(f"DEBUG POSTHOC: Added {len(stats_list)} comparisons to results.")
-                # After all, print available pairs and warn if any selected pair is not present
-                available_pairs = set(normalize_pair((g1, g2)) for g1, g2, *_ in stats_list)
-                logger.debug(f"DEBUG POSTHOC: available_pairs = {available_pairs}")
+                        pvals_corr = []
+                        correction_method = "Holm-Šidák"
+                        
+                    # Add to results
+                    for i, (g1, g2, stat, pval, vals1, vals2) in enumerate(stats_list):
+                        # Effect size: Cohen's d
+                        n1, n2 = len(vals1), len(vals2)
+                        s1, s2 = np.var(vals1, ddof=1), np.var(vals2, ddof=1)
+                        s_pooled = np.sqrt(((n1-1)*s1 + (n2-1)*s2) / (n1+n2-2)) if (n1+n2-2) > 0 else 0
+                        cohen_d = (np.mean(vals1) - np.mean(vals2)) / s_pooled if s_pooled > 0 else 0
+                        # Confidence interval for mean difference
+                        mean_diff = np.mean(vals1) - np.mean(vals2)
+                        stderr_diff = np.sqrt(s1/n1 + s2/n2) if n1 > 0 and n2 > 0 else 0
+                        t = get_scipy_stats().t
+                        df_ = n1 + n2 - 2
+                        if df_ > 0 and stderr_diff > 0:
+                            t_crit = t.ppf(1 - alpha/2, df_)
+                            ci = (mean_diff - t_crit * stderr_diff, mean_diff + t_crit * stderr_diff)
+                        else:
+                            ci = (None, None)
+                        PostHocAnalyzer.add_comparison(
+                            result,
+                            group1=g1,
+                            group2=g2,
+                            test="Pairwise t-test",
+                            p_value=pvals_corr[i] if i < len(pvals_corr) else pval,
+                            statistic=stat,
+                            corrected=True,
+                            correction_method=correction_method,
+                            effect_size=cohen_d,
+                            effect_size_type="cohen_d",
+                            confidence_interval=ci,
+                            alpha=alpha
+                        )
+
+                # After all, warn if any selected pair is not present
                 if normalized_selected is not None:
-                    missing = normalized_selected - available_pairs
+                    added_pairs = set(normalize_pair((c["group1"], c["group2"])) for c in result["pairwise_comparisons"])
+                    missing = normalized_selected - added_pairs
                     if missing:
                         logger.warning(f"WARNING: The following selected pairs were not found in the available post-hoc comparisons: {missing}")
-                pairwise_tukeyhsd = get_pairwise_tukeyhsd()
-                # Create interaction group for Tukey HSD
-                df['interaction_group'] = df[factors[0]].astype(str) + "_" + df[factors[1]].astype(str)
-                # Run Tukey HSD on the interaction groups
-                tukey = pairwise_tukeyhsd(df[dv], df['interaction_group'], alpha=alpha)
-                # For the Tukey HSD test in the fallback, we'll need to manually apply Holm-Šidák
-                # First collect all pairwise comparisons and p-values
-                comparisons = []
-                for i in range(len(tukey.pvalues)):
-                    group1 = tukey.groupsunique[tukey.pairindices[i, 0]]
-                    group2 = tukey.groupsunique[tukey.pairindices[i, 1]]
-                    p_val = tukey.pvalues[i]
-                    conf_int = tukey.confint[i]
-                    comparisons.append({
-                        'group1': group1,
-                        'group2': group2,
-                        'p_value': p_val,
-                        'conf_int': conf_int
-                    })
-                # Apply Holm-Šidák correction
-                p_values = [comp['p_value'] for comp in comparisons]
-                multipletests = get_statsmodels_multitest()
-                reject, corrected_p_values, _, _ = multipletests(p_values, alpha=alpha, method='holm-sidak')
-                # Convert results into standardized format with corrected p-values
-                for i, comp in enumerate(comparisons):
-                    # Normalize for matching
-                    norm_pair = normalize_pair((comp['group1'], comp['group2']))
-                    match = (normalized_selected is not None and norm_pair in normalized_selected)
-                    logger.debug(f"DEBUG POSTHOC: fallback comparing {comp['group1']} vs {comp['group2']} | normalized: {norm_pair} | match: {match}")
-                    if normalized_selected is not None and not match:
-                        continue
-                    PostHocAnalyzer.add_comparison(
-                        result,
-                        group1=comp['group1'],
-                        group2=comp['group2'],
-                        test="Pairwise t-test",
-                        p_value=corrected_p_values[i],
-                        statistic=None,
-                        corrected=True,
-                        correction_method="Holm-Šidák",
-                        confidence_interval=tuple(comp['conf_int']),
-                        alpha=alpha
-                    )
             
             # Set the posthoc_test value for decision tree visualization
             method_name_map = {
@@ -1585,7 +1565,11 @@ class DependentPostHoc(PostHocAnalyzer):
                 import warnings
                 with warnings.catch_warnings(record=True) as w:
                     warnings.simplefilter("always")
-                    wstat, p = stats.wilcoxon(x, y, zero_method='pratt', exact=True if len(x) <= 25 else False)
+                    try:
+                        wstat, p = stats.wilcoxon(x, y, zero_method='pratt', exact=True if len(x) <= 25 else False)
+                    except TypeError:
+                        # Fallback for SciPy 1.17+ which removed the 'exact' keyword argument
+                        wstat, p = stats.wilcoxon(x, y, zero_method='pratt')
                     if w:
                         for warn in w:
                             msg = f"Wilcoxon Warning: {str(warn.message)}"

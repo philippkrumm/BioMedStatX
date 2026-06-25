@@ -411,7 +411,12 @@ def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05, n_permu
 
         # Sanitize column names for patsy formulas
         import re
-        _safe = lambda s: re.sub(r"\W+", "_", str(s)).strip("_") or "col"
+        def _safe(s):
+            res = re.sub(r"\W+", "_", str(s)).strip("_") or "col"
+            if res in ("C", "I", "Q"):
+                return f"{res}_safe"
+            return res
+            
         safe_dv = _safe(dv)
         safe_a  = _safe(factor_a)
         safe_b  = _safe(factor_b)

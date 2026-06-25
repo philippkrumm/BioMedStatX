@@ -43,6 +43,11 @@ class _ResultsEncoder(json.JSONEncoder):
 class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationMixin, _ChartsMixin, _SummariesMixin):
 
     @staticmethod
+    def _safe_json_dumps(obj, cls=None) -> str:
+        s = json.dumps(obj, cls=cls, ensure_ascii=False)
+        return s.replace("</", "<\\/")
+
+    @staticmethod
     def export_results_to_html(results: dict, output_file: str, analysis_log=None) -> str | None:
         try:
             output_path = Path(output_file).resolve()
@@ -152,30 +157,30 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
             "subtitle": hero["subtitle"],
             "hero": hero,
             "decision_path": decision_path,
-            "decision_tree_json": json.dumps(decision_tree_json, ensure_ascii=False) if decision_tree_json else "null",
-            "decision_path_json": json.dumps(decision_path, ensure_ascii=False),
+            "decision_tree_json": HTMLExporter._safe_json_dumps(decision_tree_json) if decision_tree_json else "null",
+            "decision_path_json": HTMLExporter._safe_json_dumps(decision_path),
             "statistical_rows": metrics,
             "assumptions": assumptions,
             "sphericity_correction_note": assumptions.get("sphericity_correction_note"),
             "descriptive": descriptive,
             "pairwise_rows": pairwise,
-            "bracket_data_json": json.dumps(bracket_data, ensure_ascii=False),
-            "pairwise_data_json": json.dumps(pairwise_payload, cls=_ResultsEncoder, ensure_ascii=False),
-            "plot_data_json": json.dumps(plot_data, cls=_ResultsEncoder, ensure_ascii=False),
-            "plot_subject_trajectories_json": json.dumps(plot_subject_trajectories, cls=_ResultsEncoder, ensure_ascii=False),
-            "plot_reference_lines_json": json.dumps(plot_reference_lines, cls=_ResultsEncoder, ensure_ascii=False),
-            "stats_summary_json": json.dumps(stats_summary, cls=_ResultsEncoder, ensure_ascii=False),
-            "plot_stats_json": json.dumps(stats_summary, cls=_ResultsEncoder, ensure_ascii=False),
+            "bracket_data_json": HTMLExporter._safe_json_dumps(bracket_data),
+            "pairwise_data_json": HTMLExporter._safe_json_dumps(pairwise_payload, cls=_ResultsEncoder),
+            "plot_data_json": HTMLExporter._safe_json_dumps(plot_data, cls=_ResultsEncoder),
+            "plot_subject_trajectories_json": HTMLExporter._safe_json_dumps(plot_subject_trajectories, cls=_ResultsEncoder),
+            "plot_reference_lines_json": HTMLExporter._safe_json_dumps(plot_reference_lines, cls=_ResultsEncoder),
+            "stats_summary_json": HTMLExporter._safe_json_dumps(stats_summary, cls=_ResultsEncoder),
+            "plot_stats_json": HTMLExporter._safe_json_dumps(stats_summary, cls=_ResultsEncoder),
             "plot_designer_enabled": plot_designer_enabled,
-            "group_order_json": json.dumps(group_order, ensure_ascii=False),
+            "group_order_json": HTMLExporter._safe_json_dumps(group_order),
             "group_chart_div_id": "biomedstatx-group-chart" if group_chart_block else "",
             "raw_data_table": raw_table,
             "chart_blocks": charts,
             "methods_text": methods_text,
-            "group_factor_map_json": json.dumps(results_copy.get("group_factor_map", {}), ensure_ascii=False),
+            "group_factor_map_json": HTMLExporter._safe_json_dumps(results_copy.get("group_factor_map", {})),
             "info_texts": HTMLExporter._info_texts(),
             "generated_warning": results_copy.get("error"),
-            "normalized_results_json": json.dumps(normalized, cls=_ResultsEncoder, ensure_ascii=False),
+            "normalized_results_json": HTMLExporter._safe_json_dumps(normalized, cls=_ResultsEncoder),
             "math_render_enabled": math_render_enabled,
         }
 

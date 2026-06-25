@@ -27,6 +27,11 @@ def _sanitize_columns(df, columns):
     mapping = {}
     for col in columns:
         safe = re.sub(r'[^A-Za-z0-9_]', '_', str(col))
+        
+        # Block patsy keywords
+        if safe in ('C', 'I', 'Q'):
+            safe = f"{safe}_safe"
+            
         if safe != col:
             # Avoid collisions
             base = safe
@@ -37,6 +42,33 @@ def _sanitize_columns(df, columns):
             df.rename(columns={col: safe}, inplace=True)
         mapping[col] = safe
     return mapping
+
+def _restore_names_in_dict(d, rev_map):
+    """Recursively reverse the sanitized names back to original names in dictionaries and lists."""
+    if not rev_map:
+        return d
+        
+    if isinstance(d, dict):
+        new_d = {}
+        for k, v in d.items():
+            new_k = k
+            if isinstance(k, str):
+                # Replace longer safe names first to prevent partial replacements
+                for safe, orig in sorted(rev_map.items(), key=lambda x: len(x[0]), reverse=True):
+                    if safe != orig:
+                        new_k = new_k.replace(safe, str(orig))
+            new_d[new_k] = _restore_names_in_dict(v, rev_map)
+        return new_d
+    elif isinstance(d, list):
+        return [_restore_names_in_dict(item, rev_map) for item in d]
+    elif isinstance(d, str):
+        new_str = d
+        for safe, orig in sorted(rev_map.items(), key=lambda x: len(x[0]), reverse=True):
+            if safe != orig:
+                new_str = new_str.replace(safe, str(orig))
+        return new_str
+    else:
+        return d
 
 
 class ANCOVAModel:
@@ -49,6 +81,7 @@ class ANCOVAModel:
     """
 
     def __init__(self):
+        self._rev_map = {}
         self.result = None
         self.anova_table = None
         self._df = None
@@ -66,6 +99,7 @@ class ANCOVAModel:
 
         # Sanitize column names for patsy formulas (replace spaces/special chars)
         col_map = _sanitize_columns(self._df, [dv] + between_factors + covariates)
+        self._rev_map = {v: k for k, v in col_map.items()}
         self._dv = col_map[dv]
         self._between_factors = [col_map[f] for f in between_factors]
         self._covariates = [col_map[c] for c in covariates]
@@ -367,7 +401,7 @@ class ANCOVAModel:
                 if denom > 0:
                     eta_sq = float(ss_factor / denom)
 
-        return {
+        res = {
             "test": "ANCOVA" if len(self._between_factors) == 1 else "Two-Way ANCOVA",
             "model_type": "ANCOVA",
             "p_value": main_p,
@@ -388,6 +422,7 @@ class ANCOVAModel:
             "covariates_used": self._covariates,
             "between_factors": self._between_factors,
         }
+        return _restore_names_in_dict(res, self._rev_map)
 
 
 class LinearMixedModel:
@@ -398,6 +433,7 @@ class LinearMixedModel:
     """
 
     def __init__(self):
+        self._rev_map = {}
         self.result = None
         self._df = None
         self._dv = None
@@ -420,6 +456,7 @@ class LinearMixedModel:
         self._df = df.dropna(subset=all_cols).copy()
 
         col_map = _sanitize_columns(self._df, all_cols)
+        self._rev_map = {v: k for k, v in col_map.items()}
         self._dv = col_map[dv]
         self._fixed_effects = [col_map[f] for f in fixed_effects]
         self._random_intercept = col_map[random_intercept]
@@ -590,7 +627,7 @@ class LinearMixedModel:
 
         icc_val = self.icc()
 
-        return {
+        res = {
             "test": "Linear Mixed Model",
             "model_type": "LMM",
             "p_value": main_p,
@@ -617,12 +654,14 @@ class LinearMixedModel:
             "random_structure_chosen": self._random_structure_chosen,
             "df_method": df_method,
         }
+        return _restore_names_in_dict(res, self._rev_map)
 
 
 class LogisticRegressionModel:
     """Logistic regression for binary outcomes via statsmodels GLM(Binomial) with Firth fallback."""
 
     def __init__(self):
+        self._rev_map = {}
         self.result = None
         self._df = None
         self._dv = None
@@ -641,6 +680,7 @@ class LogisticRegressionModel:
         self._df = df.dropna(subset=all_cols).copy()
 
         col_map = _sanitize_columns(self._df, all_cols)
+        self._rev_map = {v: k for k, v in col_map.items()}
         self._dv = col_map[dv]
         self._predictors = [col_map[p] for p in predictors]
         self._covariates = [col_map[c] for c in (covariates or [])]
@@ -1096,7 +1136,7 @@ class LogisticRegressionModel:
             except Exception:
                 pass
 
-        return {
+        res = {
             "test": "Logistic Regression",
             "model_type": "LogisticRegression",
             "model_variant": self._model_variant,
@@ -1120,6 +1160,7 @@ class LogisticRegressionModel:
             "predictors_used": self._predictors,
             "covariates_used": self._covariates,
         }
+        return _restore_names_in_dict(res, self._rev_map)
 
 
 class BetaRegressionModel:
@@ -1131,6 +1172,7 @@ class BetaRegressionModel:
     """
 
     def __init__(self):
+        self._rev_map = {}
         self.result = None
         self._df = None
         self._dv = None
@@ -1147,6 +1189,7 @@ class BetaRegressionModel:
         self._df = df.dropna(subset=all_cols).copy()
 
         col_map = _sanitize_columns(self._df, all_cols)
+        self._rev_map = {v: k for k, v in col_map.items()}
         self._dv = col_map[dv]
         self._predictors = [col_map[p] for p in predictors]
         self._covariates = [col_map[c] for c in (covariates or [])]
@@ -1277,7 +1320,7 @@ class BetaRegressionModel:
         except Exception:
             pass
 
-        return {
+        res = {
             "test": "Beta Regression",
             "model_type": "BetaRegression",
             "p_value": main_p,
@@ -1303,6 +1346,7 @@ class BetaRegressionModel:
                 "requested but bootstrap produced insufficient samples" if self._bias_corrected else None
             ),
         }
+        return _restore_names_in_dict(res, self._rev_map)
 
 
 class DataHealthScanner:

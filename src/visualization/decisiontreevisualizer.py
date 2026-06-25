@@ -261,14 +261,9 @@ class DecisionTreeVisualizer:
             correction_used = str(results.get("correction_used", "None"))
             within_correction = str(results.get("within_correction_used", "None"))
 
-            welch_t_condition = (
-                is_normal and not has_equal_variance and n_groups == 2 and
-                ("welch" in test_name.lower() or "t-test" in test_name.lower() or "independent" in test_name.lower())
-            )
-            welch_anova_condition = (
-                is_normal and not has_equal_variance and n_groups > 2 and
-                ("welch" in test_name.lower() or "anova" in test_name.lower())
-            )
+            strategy = results.get("strategy") or results.get("test_info", {}).get("decision", {}).get("strategy")
+            welch_t_condition = (strategy == "welch_ttest")
+            welch_anova_condition = (strategy == "welch_anova")
 
             # labels
             if welch_t_condition or welch_anova_condition:
@@ -304,7 +299,7 @@ class DecisionTreeVisualizer:
                 'IND_ONE_WAY':   {"label": "Welch's ANOVA", "pos": (-9, 1)},
                 'IND_TWO_WAY':   {"label": "Two-way ANOVA", "pos": (-7, 1)},
                 'IND_POSTHOC':   {"label": "Which specific groups differ?", "pos": (-8, 0)},
-                'IND_TUKEY':     {"label": "Games-Howell", "pos": (-9.5, -1)},
+                'IND_TUKEY':     {"label": "Tukey HSD /\nGames-Howell", "pos": (-9.5, -1)},
                 'IND_DUNNETT':   {"label": "Dunnett Test", "pos": (-8, -1)},
                 'IND_HOLM_SIDAK':{"label": "Pairwise t-tests\n(Holm-Šidák)", "pos": (-6.5, -1)},
                 'RM_MAUCHLY':            {"label": k1_m_sph_label, "pos": (-2, 1)},

@@ -13,10 +13,10 @@ pillow
 networkx
 requests
 packaging
-marginaleffects
-jinja2
-plotly
-scikit-learn
+marginaleffects==0.5.0
+jinja2==3.1.4
+plotly==5.24.1
+scikit-learn==1.8.0
 
 # Optional / alternatives:
 # PySide2  # use instead of PyQt5 if preferred

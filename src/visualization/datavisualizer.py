@@ -1969,6 +1969,9 @@ class DataVisualizer:
         if os.getcwd() != original_dir:
             os.chdir(original_dir)
             logger.debug(f"DEBUG PLOT: Restored original directory: {original_dir}")
+            
+        import matplotlib.pyplot as plt
+        plt.close(fig)
 
     @staticmethod
     def _control_ticks_for_many_groups(ax, groups, plot_type):

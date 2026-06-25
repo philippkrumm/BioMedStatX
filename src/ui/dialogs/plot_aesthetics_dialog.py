@@ -562,10 +562,11 @@ class ColorsTab(QWidget):
                 # Convert to hex colors and update buttons
                 for i, group in enumerate(self.groups):
                     if i < len(palette_colors):
-                        # Convert RGB tuple to hex
+                        # Convert RGB tuple to hex, clamped to 0-255
                         rgb = palette_colors[i]
+                        clamp = lambda v: min(255, max(0, int(v * 255)))
                         hex_color = "#{:02x}{:02x}{:02x}".format(
-                            int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255)
+                            clamp(rgb[0]), clamp(rgb[1]), clamp(rgb[2])
                         )
                         self.color_buttons[group].set_color(hex_color)
             except ImportError:
