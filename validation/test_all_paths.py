@@ -198,6 +198,10 @@ def validate_against_r(result: dict, design: dict, excel_path: str, tmp_path: Pa
     if r_test is None:
         return  # Robustness/NaN test or no R equivalent — skip
 
+    if os.name == "nt" and not os.environ.get("RUN_R_TESTS_ON_WINDOWS"):
+        print(f"  SKIP R validation [{design['name']}]: Windows R fork-bomb protection.")
+        return
+
     r_script = R_TEMPLATES / f"{r_test}.R"
     if not r_script.exists():
         print(f"  SKIP R validation [{design['name']}]: no template {r_script.name}")

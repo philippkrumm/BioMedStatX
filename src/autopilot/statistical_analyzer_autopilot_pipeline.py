@@ -89,7 +89,9 @@ def _load_auto_pilot_stylesheet():
     for path in stylesheet_paths:
         if os.path.exists(path):
             with open(path, "r", encoding="utf-8") as handle:
-                return handle.read()
+                qss = handle.read()
+                arrow_path = _resource_path("assets/icons/chevron-down.png").replace("\\", "/")
+                return qss.replace("{CHEVRON_DOWN_PATH}", arrow_path)
     return ""
 
 

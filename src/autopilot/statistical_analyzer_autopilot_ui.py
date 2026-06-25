@@ -1584,7 +1584,6 @@ class SheetSelectionDialog(QDialog):
             if self._current_sheet and self._current_sheet in self._available_sheets:
                 self._sheet_combo.setCurrentText(self._current_sheet)
             self._sheet_combo.currentTextChanged.connect(self._on_sheet_changed)
-            self._apply_combo_arrow_style(self._sheet_combo)
             sheet_row.addWidget(self._sheet_combo, 1)
             sheet_row.addStretch()
             main_layout.addLayout(sheet_row)
@@ -1720,7 +1719,6 @@ class SheetSelectionDialog(QDialog):
         self._assign_btn.setObjectName("secondaryButton")
         self._assign_btn.clicked.connect(self._on_assign_clicked)
         self._assign_combo = QComboBox()
-        self._apply_combo_arrow_style(self._assign_combo)
         assign_row.addWidget(self._assign_btn)
         assign_row.addWidget(self._assign_combo, 1)
         right_layout.addLayout(assign_row)
@@ -1753,20 +1751,6 @@ class SheetSelectionDialog(QDialog):
         btn_box.button(QDialogButtonBox.Apply).clicked.connect(self._on_apply)
         btn_box.rejected.connect(self.reject)
         main_layout.addWidget(btn_box)
-
-    def _apply_combo_arrow_style(self, combo):
-        try:
-            base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            arrow = os.path.join(base, "assets", "icons", "chevron-down.png").replace("\\", "/")
-            # Quotes around the path are required for paths containing spaces
-            combo.setStyleSheet(
-                f'QComboBox::drop-down {{ border-left: 1px solid #c4daea; width: 22px; '
-                f'background: #eef8f6; border-top-right-radius: 7px; '
-                f'border-bottom-right-radius: 7px; }}'
-                f'QComboBox::down-arrow {{ image: url("{arrow}"); width: 10px; height: 6px; }}'
-            )
-        except Exception:
-            pass
 
     # ------------------------------------------------------------------
     # Design mode

@@ -45,8 +45,8 @@ def node_metrics(label, is_active):
     lh = fs * 1.3
     max_chars = max((len(line) for line in lines), default=0)
     est_text_w = max_chars * fs * 0.57
-    node_w = max(130.0, min(320.0, est_text_w + 32.0))
-    node_h = max(52.0, min(204.0, len(lines) * lh + 20.0))
+    node_w = max(130.0, min(500.0, est_text_w + 32.0))
+    node_h = max(52.0, min(500.0, len(lines) * lh + 30.0))
     return node_w, node_h, fs
 
 
@@ -110,7 +110,11 @@ class DecisionNodeItem(QGraphicsItem):
         painter.setBrush(QBrush(fill_color))
 
         rx = 5.0 if self.is_square else 16.0
-        painter.drawRoundedRect(self.boundingRect(), rx, rx)
+        
+        # Adjust drawing rect by half pen width so the border doesn't get clipped
+        adj = border_width / 2.0
+        draw_rect = self.boundingRect().adjusted(adj, adj, -adj, -adj)
+        painter.drawRoundedRect(draw_rect, rx, rx)
 
         # Draw multi-line text. drawText honours explicit '\n' line breaks
         # (QStaticText collapsed them, joining words like "participantsin").
@@ -194,7 +198,15 @@ class DecisionEdgeItem(QGraphicsItem):
         painter.setPen(pen)
 
         # Draw line path
-        painter.drawLine(QPointF(ex1, ey1), QPointF(ex2, ey2))
+        # Shorten line by arrow length to avoid bleed-through
+        arrow_len = 9.0 * width
+        L = math.hypot(dx, dy)
+        if L > arrow_len:
+            line_ex2 = ex2 - (dx / L) * arrow_len
+            line_ey2 = ey2 - (dy / L) * arrow_len
+            painter.drawLine(QPointF(ex1, ey1), QPointF(line_ex2, line_ey2))
+        else:
+            painter.drawLine(QPointF(ex1, ey1), QPointF(ex2, ey2))
 
         # Arrowhead. SVG markers scale with stroke width (markerUnits="strokeWidth"):
         # marker is 9×7 units, so the px size is 9*width long by 7*width tall —

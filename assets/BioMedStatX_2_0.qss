@@ -484,6 +484,12 @@ QComboBox::drop-down {
     width: 20px;
 }
 
+QComboBox::down-arrow {
+    image: url("{CHEVRON_DOWN_PATH}");
+    width: 10px;
+    height: 6px;
+}
+
 QScrollArea {
     background: #f4f8fb;
     border: none;

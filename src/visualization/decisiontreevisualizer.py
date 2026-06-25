@@ -8,10 +8,10 @@ class DecisionTreeVisualizer:
     Uses networkx and matplotlib to generate a directed graph showing the decision-making process.
     """
 
-    WIDE_LAYOUT_TOP_X_SCALE = 1.35
-    WIDE_LAYOUT_BOTTOM_X_SCALE = 2.25
-    WIDE_LAYOUT_TOP_Y_SCALE = 1.15
-    WIDE_LAYOUT_BOTTOM_Y_SCALE = 1.55
+    WIDE_LAYOUT_TOP_X_SCALE = 1.85
+    WIDE_LAYOUT_BOTTOM_X_SCALE = 3.35
+    WIDE_LAYOUT_TOP_Y_SCALE = 1.6
+    WIDE_LAYOUT_BOTTOM_Y_SCALE = 2.2
 
     @staticmethod
     def _apply_wide_canvas_layout(nodes_info):

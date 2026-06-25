@@ -150,7 +150,8 @@ If the repository adds a pre-commit configuration, install pre-commit hooks:
   - Check numerical stability where applicable, e.g., using tolerances in assertions.
 - Use deterministic inputs in tests (set random seeds).
 - If the change affects numerical results, include tests that assert results within tight tolerances or compare to a reliable reference implementation (e.g., SciPy).
-- Run the test suite locally: pytest -q
+- Run the test suite locally: `pytest -q`
+- **Windows Users**: The `validation/` test suite runs cross-validation against R by spawning `Rscript` processes. To prevent fork-bombing or Out Of Memory (OOM) crashes when tests are automatically discovered and executed in parallel (e.g. by VS Code Test Explorer), the R tests are skipped by default on Windows. Set the environment variable `RUN_R_TESTS_ON_WINDOWS=1` to explicitly run them.
 
 Target: keep tests fast and deterministic. Long-running experiments or benchmarks should be in `benchmarks/` or `examples/` and not run in CI by default.
 
