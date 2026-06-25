@@ -151,9 +151,9 @@ def _ap_init_ui(self):
     self.auto_file_label = QLabel("No file selected")
     self.auto_file_label.setObjectName("filePathLabel")
     file_row.addWidget(self.auto_file_label, 1)
-    browse_button = QPushButton("Load Data File")
-    browse_button.clicked.connect(self.browse_file)
-    file_row.addWidget(browse_button)
+    self.browse_button = QPushButton("Load Data File")
+    self.browse_button.clicked.connect(self.browse_file)
+    file_row.addWidget(self.browse_button)
     left_layout.addLayout(file_row)
 
     mode_row = QHBoxLayout()
@@ -316,10 +316,16 @@ def _ap_init_ui(self):
     )
     self.filter_bucket = FilterBucketWidget(get_df=lambda: self.df)
 
+    self.mapping_panel = QWidget()
+    self.mapping_panel.setObjectName("mappingPanel")
+    _mapping_layout = QVBoxLayout(self.mapping_panel)
+    _mapping_layout.setContentsMargins(0, 0, 0, 0)
+    _mapping_layout.setSpacing(8)
     for bucket in (self.dv_bucket, self.factor1_bucket, self.factor2_bucket,
                    self.subject_bucket, self.covariates_bucket, self.filter_bucket):
         bucket.changed.connect(self.on_mapping_changed)
-        center_layout.addWidget(bucket)
+        _mapping_layout.addWidget(bucket)
+    center_layout.addWidget(self.mapping_panel)
 
     self.analysis_group_button = QPushButton("Select Groups For Analysis")
     self.analysis_group_button.setObjectName("secondaryButton")
@@ -452,6 +458,8 @@ def _ap_init_ui(self):
     self.current_multi_results = {}
     self.current_rendered_dataset = None
     self.analysis_selected_groups = []
+    self._tour_active = False
+    self._tour_overlay = None
 
 
 def _ap_refresh_preview_table(self):
@@ -2094,6 +2102,128 @@ def _ap_reset_result_area(self):
     )
 
 
+import shutil
+
+
+def _current_app_version() -> str:
+    try:
+        from core.updater import CURRENT_VERSION  # verified: updater.py:11
+        return str(CURRENT_VERSION)
+    except Exception:
+        return "2.0"
+
+
+def _ap_build_tour_steps(self):
+    """Return the ordered 7-step tour. Targets resolve lazily via closures so
+    hidden/empty widgets on first run degrade to a centered bubble."""
+    from ui.components.tutorial_overlay import TourStep, from_widgets, from_menu_action
+
+    central = self  # host window for coordinate mapping
+    help_action = getattr(self, "help_menu", None)
+    help_resolver = None
+    if help_action is not None:
+        help_resolver = from_menu_action(self.menuBar(), self.help_menu.menuAction())
+
+    return [
+        TourStep(
+            title="Bring In Your Data",
+            body=("Start by loading your experimental or clinical data. Open any Excel "
+                  "or CSV file here, then pick the relevant sheet from the worksheet "
+                  "dropdown. If a sheet is cluttered, use Select Data Ranges to capture "
+                  "only the cells you need."),
+            tip=("New to the layout? A ready-made Excel template ships with BioMedStatX, "
+                 "with one tab per design (t-test, ANOVA, repeated measures, and more), "
+                 "each already in the long format the app expects."),
+            resolve_rect=from_widgets(central, self.browse_button,
+                                      self.auto_sheet_combo, self.range_select_btn),
+        ),
+        TourStep(
+            title="Meet Your Variables",
+            body=("A live preview of your table appears as soon as the file loads, and "
+                  "each column header becomes a draggable card here. These cards are the "
+                  "building blocks you route into your analysis."),
+            tip=("Every card shows its detected type (Numeric, Categorical, or Datetime) "
+                 "right on the card, so you can check each column at a glance."),
+            resolve_rect=from_widgets(central, self.preview_table, self.header_cards_widget),
+        ),
+        TourStep(
+            title="Shape Your Analysis",
+            body=("This is where you define your study design. Drag the variable cards "
+                  "into the buckets to assign their roles: Dependent Variable, Factor 1 "
+                  "and 2, an optional Subject ID for repeated measures, and Covariates. "
+                  "As you map, the status line below the buckets shows what each "
+                  "assignment means and what is still missing, and the Start button "
+                  "activates once your mapping is complete and consistent."),
+            tip=("Placed a card in the wrong bucket? Click the small x on the chip to "
+                 "return it."),
+            resolve_rect=from_widgets(central, self.mapping_panel),
+        ),
+        TourStep(
+            title="Define and Compute",
+            body=("Use the group selector to set your comparison cohorts, such as "
+                  "Treatment versus Control, then start the analysis. BioMedStatX checks "
+                  "normality and distribution to select the appropriate statistical test "
+                  "for your data."),
+            tip=("Assumption testing runs automatically in the background, so the method "
+                 "comes from your data rather than a guess."),
+            resolve_rect=from_widgets(central, self.analysis_group_button,
+                                      self.start_analysis_button),
+        ),
+        TourStep(
+            title="Full Statistical Transparency",
+            body=("BioMedStatX is not a black box. The decision tree traces every step "
+                  "the engine took, so you can see why a given test (an ANOVA, a "
+                  "Mann-Whitney U, and so on) was selected for your dataset."),
+            tip=("Hover over any node to read its full label, or use Maximize to study "
+                 "the whole path full-screen."),
+            resolve_rect=from_widgets(central, self.decision_tree_panel),
+        ),
+        TourStep(
+            title="Your Results at a Glance",
+            body=("The cockpit gathers your test statistics, p-values, effect sizes, and "
+                  "a written summary you can drop straight into a manuscript, all in one "
+                  "view."),
+            tip=("Use Open Output Folder for the full HTML report, including tables, "
+                 "plots, and the complete method trace."),
+            resolve_rect=from_widgets(central, self.result_cockpit),
+        ),
+        TourStep(
+            title="Help Is Always One Click Away",
+            body=("That is the whole workflow, from loading a file to a finished result. "
+                  "You can restart this tour anytime from the Help menu, which also holds "
+                  "the Getting Started guide and recipe-based help for every design."),
+            tip=("The Help menu links to dedicated guides for paired samples, advanced "
+                 "ANOVA, and correlation and regression."),
+            resolve_rect=help_resolver,
+            pulse=True,
+        ),
+    ]
+
+
+def _ap_start_tutorial(self):
+    """Launch (or no-op if already running) the guided tour overlay."""
+    from ui.components.tutorial_overlay import TutorialOverlay
+    if getattr(self, "_tour_active", False):
+        return
+    self._tour_active = True
+    overlay = TutorialOverlay(self, self._build_tour_steps())
+
+    def _on_closed():
+        self._tour_active = False
+        self._tour_overlay = None
+        self._mark_tour_seen()
+
+    overlay.closed_callback = _on_closed
+    self._tour_overlay = overlay
+    overlay.start()
+
+
+def _mark_tour_seen_impl(self):
+    from PyQt5.QtCore import QSettings
+    QSettings("BioMedStatX", "BioMedStatX").setValue(
+        "onboarding/completed_version", _current_app_version())
+
+
 class AutopilotMixin:
     """Bundles the autopilot pipeline methods for ``StatisticalAnalyzerApp``.
 
@@ -2144,6 +2274,9 @@ class AutopilotMixin:
     open_exploratory_matrix_dialog = _ap_open_exploratory_matrix_dialog
     _ap_open_range_selector = _ap_open_range_selector
     _ap_reset_result_area = _ap_reset_result_area
+    _build_tour_steps = _ap_build_tour_steps
+    start_tutorial = _ap_start_tutorial
+    _mark_tour_seen = _mark_tour_seen_impl
 
 
 def attach_autopilot_methods(app_cls):  # pragma: no cover — legacy shim
