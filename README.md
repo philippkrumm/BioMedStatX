@@ -1,7 +1,7 @@
 # BioMedStatX
 
 A comprehensive, GUI-based tool for statistical analysis of experimental data.  
-Users can import Excel or CSV files, define groups, and let BioMedStatX handle the rest - from outlier detection and assumption checks, to guided data transformations, selection of appropriate tests, post-hoc analyses, and generation of fully documented reports.
+Users can import Excel or CSV files, define groups, and let BioMedStatX handle the rest: outlier detection, assumption checks, guided data transformations, automatic test selection, post-hoc analyses, and fully documented HTML reports.
 
 > **Repository:** [philippkrumm/BioMedStatX](https://github.com/philippkrumm/BioMedStatX)  
 > **Releases (Download ready-to-use app):** https://github.com/philippkrumm/BioMedStatX/releases  
@@ -49,20 +49,20 @@ BioMedStatX is designed for experimental and biomedical research workflows:
 
 BioMedStatX is distributed as a standalone application for end users and as source code for developers.
 
-### Option 1: Recommended for most users - Download from Releases
+### Option 1: Download from Releases (recommended for most users)
 
 1. Go to the GitHub Releases page:  
    -> https://github.com/philippkrumm/BioMedStatX/releases
 2. Download the latest release (e.g. a `.zip` file containing `BioMedStatX.exe`).
-3. Extract the archive to a folder of your choice. **Please note that this is a one-folder packaging and the BioMedStatX.exe stays always together with the _internal file in one folder**
+3. Extract the archive to a folder of your choice. **The app uses one-folder packaging. Keep BioMedStatX.exe and the _internal folder together.**
 4. Start the application by double-clicking `BioMedStatX.exe`.
 
-That's it - no Python installation or command line usage is required for running the app.
+No Python installation or command-line usage is required.
 
 For a step-by-step walkthrough of the GUI (with screenshots), see:  
 -> [How to use BioMedStatX (User Guide with screenshots)](./docs/HowTo.md)
 
-### Option 2: For developers and contributors – Run from source
+### Option 2: Run from source (developers and contributors)
 
 If you want to inspect or modify the source code, or contribute to the project:
 
@@ -73,7 +73,7 @@ git clone https://github.com/philippkrumm/BioMedStatX.git
 cd BioMedStatX
 ```
 
-For information about the helper scripts included in this repository, including [`Start_BioMedStatX_on_Linux.sh`](./Start_BioMedStatX_on_Linux.sh) and [`start.bat`](./start.bat), see: [docs/SCRIPTS.md](./docs/SCRIPTS.md)
+For information about the helper scripts included in this repository, including [`start.sh`](./start.sh) and [`run.bat`](./run.bat), see: [docs/SCRIPTS.md](./docs/SCRIPTS.md)
 
 
 ---
@@ -88,7 +88,7 @@ A detailed, step-by-step **User Guide with screenshots and numbered button refer
 ### Basic workflow (short version)
 
 1. **Start BioMedStatX**  
-   Launch the main application (e.g., via your Python entry point or executable - see the User Guide for details).
+   Launch the main application (see the [User Guide](./docs/HowTo.md) for details on entry points and executables).
 
 2. **Load your dataset**  
    - Import an Excel or CSV file.
@@ -104,14 +104,7 @@ A detailed, step-by-step **User Guide with screenshots and numbered button refer
    - Adjust settings as needed (see the [User Guide](./docs/HowTo.md) for screenshots).
 
 5. **Run the analysis**  
-   - Start the analysis and let BioMedStatX automatically:
-     - detect outliers,
-     - check assumptions,
-     - select the appropriate supported test,
-       - run post-hoc tests when needed.
-    - You decide when prompted:
-       - whether to apply offered transformations,
-       - which post-hoc procedure to run when multiple valid options exist.
+   BioMedStatX will automatically detect outliers, check assumptions, select the appropriate test, and run post-hoc analyses when needed. When prompted, you decide whether to apply a suggested transformation and which post-hoc procedure to use.
 
 6. **Inspect the output**  
    - Review plots and statistical results.  
@@ -250,8 +243,8 @@ Please use [GitHub Issues](https://github.com/philippkrumm/BioMedStatX/issues/ne
 
 ## ToDos
 
-In this section, we provide some ideas that we think should be implemented, but the maintainers, have not had the time to. If you have the resources to fulfill any of these ToDos, we would love your contribution.
+These are features worth adding when resources allow. Contributions are welcome.
 
-➡️ [Contributing & Issue Reporting](#contributing--issue-reporting)
+-> [Contributing & Issue Reporting](#contributing--issue-reporting)
 
 - Improve support for running from source on Linux, especially for workflows that depend on Excel-specific behavior.

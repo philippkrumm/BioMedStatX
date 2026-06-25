@@ -2,7 +2,7 @@
 
 # Correlation & Regression Guide
 
-This guide covers Correlation, Linear Regression (OLS), ANCOVA, Linear Mixed Models, Logistic Regression, and the Exploratory Correlation Matrix. All analyses are selected based on the Smart Mapping configuration — not by manual test selection.
+This guide covers Correlation, Linear Regression (OLS), ANCOVA, Linear Mixed Models, Logistic Regression, and the Exploratory Correlation Matrix. All analyses are selected based on the Smart Mapping configuration, not by manual test selection.
 
 ---
 
@@ -18,24 +18,24 @@ This guide covers Correlation, Linear Regression (OLS), ANCOVA, Linear Mixed Mod
 | **Logistic Regression** | Dependent Variable has exactly 2 distinct values |
 | **Exploratory Correlation Matrix** | Accessed via **Analysis → Exploratory Correlation Matrix** |
 
-**Continuous vs. categorical:** A numeric column is classified as continuous when it contains more than 10 unique values. Ten or fewer unique values → categorical. This threshold drives test selection silently — check the mapping status line if you see an unexpected design.
+**Continuous vs. categorical:** A numeric column is classified as continuous when it contains more than 10 unique values. Ten or fewer unique values → categorical. This threshold drives test selection silently. If you see an unexpected design, check the mapping status line.
 
 ---
 
 ## 1. Correlation Analysis
 
-### Pearson vs. Spearman — the decision
+### Pearson vs. Spearman: the decision
 
 BioMedStatX runs Shapiro–Wilk on both variables using valid pairs after pairwise deletion:
 
-- Both pass ($p > 0.05$): **Pearson $r$** — parametric, assumes bivariate normality.
-- At least one fails: **Spearman $\rho$** — rank-based, no distributional assumption.
+- Both pass ($p > 0.05$): **Pearson $r$** (parametric, assumes bivariate normality).
+- At least one fails: **Spearman $\rho$** (rank-based, no distributional assumption).
 
 Pearson $r$ is defined as:
 
 $$r = \frac{\sum_{i=1}^{n}(x_i - \bar{x})(y_i - \bar{y})}{\sqrt{\sum_{i=1}^{n}(x_i - \bar{x})^2 \sum_{i=1}^{n}(y_i - \bar{y})^2}}$$
 
-With $n < 30$, Shapiro–Wilk has low power — small samples rarely flag non-normality even when it is present. The conservative choice in that situation is Spearman $\rho$, and we recommend defaulting to it for small clinical datasets.
+With $n < 30$, Shapiro–Wilk has low power. Small samples rarely flag non-normality even when it is present. The conservative choice in that situation is Spearman $\rho$, and we recommend defaulting to it for small clinical datasets.
 
 You can override the auto-selection in the Exploratory Correlation Matrix dialog. The main analysis respects the auto-selection unless the Regression toggle is used (see below).
 
@@ -45,8 +45,8 @@ You can override the auto-selection in the Exploratory Correlation Matrix dialog
 |---|---|
 | **Dependent Variable** | Numeric outcome (e.g. NK cell count) |
 | **Factor 1** | Continuous predictor (e.g. miRNA-21 expression) |
-| **Covariates** | Leave empty — any entry here triggers OLS Regression |
-| **Subject ID** | Leave empty — any entry here triggers LMM |
+| **Covariates** | Leave empty: any entry here triggers OLS Regression |
+| **Subject ID** | Leave empty: any entry here triggers LMM |
 | **Filter** | Optional subgroup restriction |
 
 ### Correlation → Regression toggle
@@ -101,7 +101,7 @@ The full OLS model:
 $$Y_i = \beta_0 + \beta_1 X_{1i} + \beta_2 X_{2i} + \ldots + \beta_k X_{ki} + \varepsilon_i, \quad \varepsilon_i \overset{iid}{\sim} \mathcal{N}(0, \sigma^2)$$
 
 **Simple regression** (one predictor): use the Regression toggle with Covariates empty.
-**Multiple regression** (Factor 1 + covariates): all covariates enter the model simultaneously. Stepwise selection is not performed — all predictors are included.
+**Multiple regression** (Factor 1 + covariates): all covariates enter the model simultaneously. Stepwise selection is not performed; all predictors are included.
 
 ### Smart Mapping configuration
 
@@ -126,7 +126,7 @@ Transformations change the interpretation of $\hat{\beta}$. The HTML report stat
 
 - log₁₀(Y), untransformed X: $\hat{\beta}_1 = 0.3$ means a one-unit increase in X multiplies Y by $10^{0.3} \approx 2.0$.
 - log₁₀(X), untransformed Y: $\hat{\beta}_1 = 5.2$ means doubling X increases Y by $5.2 \cdot \log_{10}(2) \approx 1.57$ units.
-- log₁₀(X) and log₁₀(Y): $\hat{\beta}_1$ is the elasticity — a 1% increase in X corresponds to a $\hat{\beta}_1 \%$ change in Y.
+- log₁₀(X) and log₁₀(Y): $\hat{\beta}_1$ is the elasticity: a 1% increase in X corresponds to a $\hat{\beta}_1 \%$ change in Y.
 
 The warning label next to the transformation dropdowns activates when any transform is selected.
 
@@ -147,10 +147,10 @@ Assign `Pump_time` → Factor 1; `NK_cells_post` → Dependent Variable; `Age`, 
 | Statistic | Formula / Description |
 |---|---|
 | $R^2$ | $1 - SS_{\text{res}} / SS_{\text{tot}}$ |
-| $R^2_{\text{adj}}$ | $1 - (1 - R^2)\frac{n-1}{n-k-1}$ — penalised for $k$ predictors |
+| $R^2_{\text{adj}}$ | $1 - (1 - R^2)\frac{n-1}{n-k-1}$ (penalised for $k$ predictors) |
 | $F(k, n-k-1)$ | Overall model test |
 | $p(F)$ | Two-tailed |
-| AIC | $2k - 2\ell$; BIC: $k\ln(n) - 2\ell$ — lower is better |
+| AIC | $2k - 2\ell$; BIC: $k\ln(n) - 2\ell$ (lower is better) |
 | $n$ | Observations after listwise deletion |
 
 **Coefficient table:**
@@ -210,13 +210,13 @@ Tests $H_0$: the linear functional form is correctly specified. Adds $\hat{Y}^2$
 
 When Factor 1 is categorical and the Covariates bucket is populated, the analysis switches to ANCOVA. The covariate is included as a linear term; its effect is partialled out before testing group differences.
 
-For full ANCOVA documentation — adjusted means, slope homogeneity, Simple Slopes, Johnson–Neyman — see **Section 19 of [HowTo.md](./HowTo.md)**.
+For full ANCOVA documentation (adjusted means, slope homogeneity, Simple Slopes, Johnson–Neyman), see **Section 19 of [HowTo.md](./HowTo.md)**.
 
 The key formula: the adjusted group mean for group $j$:
 
 $$\hat{\mu}_j^* = \hat{\mu}_j - \hat{\beta}_{\text{cov}} \cdot (\bar{x}_{j,\text{cov}} - \bar{x}_{\text{cov}})$$
 
-This is what ANCOVA tests — not the raw means, but the means after accounting for covariate imbalance between groups.
+This is what ANCOVA tests: not the raw means, but the means after accounting for covariate imbalance between groups.
 
 ---
 
@@ -248,12 +248,12 @@ $$\text{ICC} = \frac{\sigma^2_u}{\sigma^2_u + \sigma^2_\varepsilon}$$
 
 | ICC | Interpretation |
 |---|---|
-| $< 0.10$ | Negligible clustering — OLS regression may be adequate |
+| $< 0.10$ | Negligible clustering; OLS regression may be adequate |
 | $0.10$–$0.30$ | Weak clustering |
-| $0.30$–$0.60$ | Moderate clustering — LMM recommended |
-| $> 0.60$ | Strong clustering — LMM indicated |
+| $0.30$–$0.60$ | Moderate clustering; LMM recommended |
+| $> 0.60$ | Strong clustering; LMM indicated |
 
-For full LMM documentation — Smart Mapping configuration, fixed effects table, convergence — see **Section 20 of [HowTo.md](./HowTo.md)**.
+For full LMM documentation (Smart Mapping configuration, fixed effects table, convergence), see **Section 20 of [HowTo.md](./HowTo.md)**.
 
 ---
 
@@ -273,7 +273,7 @@ Values $> 0.10$ suggest a useful model; $> 0.20$ suggests good fit. Unlike OLS $
 
 When complete separation is detected (SE $> 5$ for any coefficient, or non-convergence), the application switches to Firth Penalized Likelihood. This regularisation method was developed specifically for small samples and rare events and produces finite, reliable estimates where standard ML fails.
 
-For full Logistic Regression documentation — AUC, Brier score, calibration slope, OR table — see **Section 21 of [HowTo.md](./HowTo.md)**.
+For full Logistic Regression documentation (AUC, Brier score, calibration slope, OR table), see **Section 21 of [HowTo.md](./HowTo.md)**.
 
 ---
 
@@ -330,7 +330,7 @@ With $n < 20$ and $k$ predictors, the model is underpowered and $R^2_{\text{adj}
 
 | Method | Controls | When to use |
 |---|---|---|
-| **FDR (Benjamini–Hochberg)** | False Discovery Rate at level $q$ | Exploratory work — balances power and specificity |
+| **FDR (Benjamini–Hochberg)** | False Discovery Rate at level $q$ | Exploratory work; balances power and specificity |
 | **Bonferroni** | Family-wise Error Rate at $\alpha$ | Few pre-specified hypotheses |
 | **None** | — | Descriptive overview only; do not report as confirmatory |
 
@@ -342,11 +342,11 @@ With $m = 20$ variables, 190 simultaneous tests run. The expected number of fals
 
 - Matrix of $r$ / $\rho$ values
 - Matrix of corrected $p$-values
-- Matrix of $n$ per pair — inspect this when pairwise deletion is active; large variation in $n$ across pairs can distort the correlation structure
+- Matrix of $n$ per pair (inspect this when pairwise deletion is active; large variation in $n$ across pairs can distort the correlation structure)
 
 ---
 
 ## Related Documentation
 
-- [HowTo.md](./HowTo.md) — Sections 15–21 cover all analysis types with full configuration reference
-- [ADVANCED_ANOVA_GUIDE.md](./ADVANCED_ANOVA_GUIDE.md) — Factorial ANOVA: configuration, assumptions, sphericity, nonparametric fallbacks
+- [HowTo.md](./HowTo.md): Sections 15–21 cover all analysis types with full configuration reference
+- [ADVANCED_ANOVA_GUIDE.md](./ADVANCED_ANOVA_GUIDE.md): Factorial ANOVA (configuration, assumptions, sphericity, nonparametric fallbacks)

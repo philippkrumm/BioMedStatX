@@ -2,7 +2,7 @@
 
 # BioMedStatX User Guide
 
-BioMedStatX runs the entire statistical pipeline from assumption checks to HTML report generation — you supply the data and the mapping, and the application selects the appropriate test. No code required.
+BioMedStatX runs the entire statistical pipeline from assumption checks to HTML report generation. You supply the data and the mapping; the application selects the appropriate test. No code required.
 
 ---
 
@@ -24,7 +24,7 @@ A complete analysis run follows this order:
 2. Assign columns to the Smart Mapping buckets.
 3. Click **Start Auto Analysis**.
 4. Respond to any prompts (transformation, post-hoc method).
-5. Review the HTML report — opened in your browser when analysis completes.
+5. Review the HTML report, opened in your browser when analysis completes.
 
 ---
 
@@ -56,7 +56,7 @@ Prepare your file with a single header row, unique column names, no merged cells
 
 ### Wide-format data
 
-Wide-format files — one column per condition (e.g. `Value_Pre`, `Value_Post`) — are detected and pivoted to long format before analysis. A notice confirms the pivot and lists the detected condition columns.
+Wide-format files (one column per condition, e.g. `Value_Pre`, `Value_Post`) are detected and pivoted to long format before analysis. A notice confirms the pivot and lists the detected condition columns.
 
 ### Select Data Ranges
 
@@ -70,14 +70,14 @@ The center panel provides six mapping buckets. Drag column cards from the **Colu
 
 Each bucket carries an **ⓘ info button** describing what belongs there.
 
-- **Dependent Variable** — The numeric outcome to be analysed: gene expression, cell count, weight, or any continuous measurement. Single analysis mode accepts one column; Multi-Dataset mode accepts several.
-- **Factor 1** — The primary predictor. Categorical input (e.g. `Group` with levels `WT`, `KO`) triggers t-Test or ANOVA. Continuous input (e.g. `Pump time`) triggers Correlation or Regression. Only one column allowed here.
-- **Factor 2** *(optional)* — A second grouping variable. Without Subject ID → Two-Way ANOVA. With Subject ID → Mixed ANOVA.
-- **Subject ID** *(optional)* — The individual-level identifier for paired or repeated-measures designs. Assign this only when the same participant or experimental unit contributes more than one row.
-- **Covariates** *(optional)* — Continuous confounders to control for (e.g. Age, BMI, Baseline). Categorical Factor 1 + Covariates → ANCOVA. Continuous Factor 1 + Covariates → Multiple Regression.
-- **Filter** *(optional)* — Restricts the analysis to a row subset. See Section 15.
+- **Dependent Variable**: The numeric outcome to be analysed: gene expression, cell count, weight, or any continuous measurement. Single analysis mode accepts one column; Multi-Dataset mode accepts several.
+- **Factor 1**: The primary predictor. Categorical input (e.g. `Group` with levels `WT`, `KO`) triggers t-Test or ANOVA. Continuous input (e.g. `Pump time`) triggers Correlation or Regression. Only one column allowed here.
+- **Factor 2** *(optional)*: A second grouping variable. Without Subject ID → Two-Way ANOVA. With Subject ID → Mixed ANOVA.
+- **Subject ID** *(optional)*: The individual-level identifier for paired or repeated-measures designs. Assign this only when the same participant or experimental unit contributes more than one row.
+- **Covariates** *(optional)*: Continuous confounders to control for (e.g. Age, BMI, Baseline). Categorical Factor 1 + Covariates → ANCOVA. Continuous Factor 1 + Covariates → Multiple Regression.
+- **Filter** *(optional)*: Restricts the analysis to a row subset. See Section 15.
 
-### Factor 1 vs. Subject ID — where most mistakes happen
+### Factor 1 vs. Subject ID: where most mistakes happen
 
 A grouping variable and a subject identifier look identical in the data (both contain labels), but play opposite roles. `Group` with values `WT` and `KO` defines what you are *comparing*. `PatientID` with values `P001`, `P002` identifies *who was measured*. Getting this wrong produces an unpaired test where a paired design was intended, which inflates the error variance and reduces power.
 
@@ -105,7 +105,7 @@ After assigning Factor 1, use **Select Groups For Analysis** to restrict the ana
 
 Switch between modes with the radio buttons above the table preview.
 
-**Single Analysis** runs one measurement column through the full pipeline. Use this for any single readout — one gene, one clinical parameter.
+**Single Analysis** runs one measurement column through the full pipeline. Use this for any single readout: one gene, one clinical parameter.
 
 **Multi-Dataset Analysis** runs two or more measurement columns through the same factor mapping in sequence. The HTML report presents a summary card per column, with Benjamini–Hochberg FDR correction applied across all $m$ p-values. Restricted to ANOVA-capable designs.
 
@@ -118,7 +118,7 @@ Click **Start Auto Analysis**. The pipeline executes in this order:
 1. Apply the active data scope (Filter + group selection).
 2. Normality check (Shapiro–Wilk on model residuals; bypassed if $N \ge 30$ per the Central Limit Theorem).
 3. Variance homogeneity check (Levene's test).
-4. Test selection — parametric, Welch, or nonparametric.
+4. Test selection (parametric, Welch, or nonparametric).
 5. Main test.
 6. Post-hoc comparisons (when $p < \alpha$ and $\geq 3$ groups).
 7. Plot and HTML report generation.
@@ -129,7 +129,7 @@ Two interactive prompts may appear: transformation choice (Section 7) and post-h
 
 ## 6. Export Settings
 
-Set the **output file name** before or after analysis. Drag group labels in the **Group order** list to control their left-to-right order in the plot.
+Set the **output file name** before or after analysis.
 
 ---
 
@@ -143,7 +143,7 @@ Shapiro–Wilk tests normality of model residuals (normality is assumed if $N \g
 | **Box–Cox** | Automatic power transformation; $\lambda$ optimised by maximum likelihood |
 | **Arcsin $\sqrt{x}$** | Proportions and percentages bounded in $[0, 1]$ |
 
-Skipping the transformation is always valid. The application then takes the nonparametric route — Mann–Whitney U, Kruskal–Wallis, Friedman — and applies it without further prompting.
+Skipping the transformation is always valid. The application takes the nonparametric route (Mann–Whitney U, Kruskal–Wallis, Friedman) without further prompting.
 
 On very skewed data the Box–Cox $\lambda$ search can run away to a value so large it inflates the variance instead of taming it. The app guards against this: it checks the optimised $\lambda$ against the range $[-3, 3]$, and if $\lambda$ falls outside, it discards the estimate and uses a plain log transformation ($\lambda = 0$) instead. The report adds a note when this fallback happens.
 
@@ -175,21 +175,19 @@ Results appear as significance letters or bracket annotations on the plot and as
 
 ## 9. Plot Customisation
 
-The **Plot Appearance Settings** dialog (accessed from the plot preview) controls:
+The HTML report includes an interactive **Plot Designer** section that rebuilds the plot in real time. Adjust settings and download publication-ready figures without re-running the analysis.
 
-- Figure dimensions and DPI
-- Axis labels, title, and font size
-- Colour and hatch per group
-- Error bars: SD or SEM, with or without caps
-- Data points: jitter, strip, or swarm
-- Significance markers: letters or brackets
-- Legend position and title
-- Background and grid style
-- Paired-observation lines for repeated-measures plots
+The Plot Designer has five tabs:
+
+- **Plot**: chart type (Bar, Box, Violin, Raincloud, Forest, or Estimation), data point overlay (Jitter or Beeswarm), error bars (SD, SEM, 95% CI, IQR, or Range), central measure (mean or median), and paired subject lines for repeated-measures designs.
+- **Axes**: X/Y axis labels, Y-axis range and format, grid style, tick direction, legend position and orientation, and optional reference lines (y = 0 baseline, y = 1 fold-change, threshold lines from payload).
+- **Style**: plot title, axis labels, font family and size, per-group colours, bar fill patterns, and data point symbols.
+- **Stats**: significance bracket visibility, bracket line width and spacing, star size.
+- **Export**: figure dimensions in inches, PNG scale (1x to 4x, up to ~400 DPI), SVG download, and PNG download.
 
 ---
 
-## 10. Statistical Analyses — Full Reference
+## 10. Statistical Analyses: full reference
 
 | Test | Triggered when |
 |---|---|
@@ -232,21 +230,21 @@ The HTML report contains an interactive decision tree. The path actually taken i
 
 ---
 
-## 12. Reviewing Results — HTML Report
+## 12. Reviewing Results: HTML Report
 
 Analysis produces a single self-contained `.html` file that opens in your browser.
 
 The report contains:
 
-- **Header** — test name, $p$-value, significance label, effect size with magnitude badge (Small / Medium / Large by Cohen's conventions)
-- **Statistical results** — statistic, degrees of freedom, $p$-value, effect size, 95% CI, power ($1 - \hat{\beta}$)
-- **Assumption results** — normality, variance, and applied corrections
-- **Descriptive statistics** — $\bar{x}$, SD, SEM, median, $n$ per group
-- **Pairwise comparison table** — post-hoc results with corrected $p$-values
-- **Interactive decision tree** — full path with zoom and replay
-- **Interactive plot** — main chart with optional plot designer
-- **Raw data** — the filtered, analysis-ready dataset
-- **Methods text** — a plain-language description of the pipeline, formatted for direct inclusion in a Methods section
+- **Header**: test name, $p$-value, significance label, effect size with magnitude badge (Small / Medium / Large by Cohen's conventions)
+- **Statistical results**: statistic, degrees of freedom, $p$-value, effect size, 95% CI, power ($1 - \hat{\beta}$)
+- **Assumption results**: normality, variance, and applied corrections
+- **Descriptive statistics**: $\bar{x}$, SD, SEM, median, $n$ per group
+- **Pairwise comparison table**: post-hoc results with corrected $p$-values
+- **Interactive decision tree**: full path with zoom and replay
+- **Interactive plot**: main chart with optional plot designer
+- **Raw data**: the filtered, analysis-ready dataset
+- **Methods text**: a plain-language description of the pipeline, formatted for direct inclusion in a Methods section
 
 ---
 
@@ -257,7 +255,7 @@ The report contains:
 - Modified Z-Score (threshold at $|M_i| > 3.5$, where $M_i = \frac{0.6745(x_i - \tilde{x})}{MAD}$)
 - Grubbs' test (single or iterative)
 
-Review flagged observations before proceeding. Removing outliers changes the analysis — document this decision in your methods.
+Review flagged observations before proceeding. Removing outliers changes the analysis. Document this decision in your methods.
 
 ---
 
@@ -276,7 +274,7 @@ Review flagged observations before proceeding. Removing outliers changes the ana
 
 ### Tips
 
-- Group labels (WT, KO, Control) belong in **Factor 1** — they define experimental conditions, not individuals.
+- Group labels (WT, KO, Control) belong in **Factor 1**: they define experimental conditions, not individuals.
 - Subject ID is needed only when one individual contributes more than one row.
 - In paired designs, every subject must appear exactly once per condition. Imbalanced data triggers a warning.
 - Copy the **Methods text** section from the HTML report directly into your manuscript draft.
@@ -284,16 +282,16 @@ Review flagged observations before proceeding. Removing outliers changes the ana
 
 ---
 
-## 15. Filter Bucket — Subgroup Analysis
+## 15. Filter Bucket: Subgroup Analysis
 
-The Filter bucket restricts the dataset **before** assumption checks and model fitting. This is the correct approach for subgroup analyses — not post-hoc filtering after seeing results.
+The Filter bucket restricts the dataset **before** assumption checks and model fitting. This is the correct approach for subgroup analyses, not post-hoc filtering after seeing results.
 
 **How to use:**
 
 1. Drag a categorical column (e.g. `OP_Group`, `Sex`) into the Filter bucket.
 2. Select a value from the dropdown (e.g. `On-Pump`).
 3. The bucket label updates: *"Analysis restricted to n = 93 rows."*
-4. Click **Start Auto Analysis** — the entire pipeline runs on this subset.
+4. Click **Start Auto Analysis**; the entire pipeline runs on this subset.
 
 > If the filtered subset contains fewer than 5 rows, the analysis aborts with a warning.
 
@@ -311,16 +309,16 @@ The ⓘ button on the bucket title explains its purpose at any time.
 |---|---|
 | **Dependent Variable** | Numeric outcome |
 | **Factor 1** | Continuous predictor |
-| **Covariates** | Leave empty — any entry here switches to Regression |
-| **Subject ID** | Leave empty — any entry here switches to LMM |
+| **Covariates** | Leave empty: any entry here switches to Regression |
+| **Subject ID** | Leave empty: any entry here switches to LMM |
 | **Filter** | Optional subgroup restriction |
 
-### Pearson vs. Spearman — the decision rule
+### Pearson vs. Spearman: the decision rule
 
 Shapiro–Wilk runs on both variables using valid pairs after pairwise deletion:
 
-- Both pass ($p > 0.05$) → **Pearson $r$** — assumes bivariate normality.
-- At least one fails → **Spearman $\rho$** — rank-based, no distributional assumption.
+- Both pass ($p > 0.05$) → **Pearson $r$** (assumes bivariate normality).
+- At least one fails → **Spearman $\rho$** (rank-based, no distributional assumption).
 
 With $n < 30$ the Shapiro–Wilk test has limited power. In small samples, Spearman is the conservative choice regardless of the test outcome.
 
@@ -330,7 +328,7 @@ When Factor 1 is continuous and Covariates is empty, a checkbox appears:
 
 **"Analyse as Linear Regression (Y = a + bX)"**
 
-Leaving it unchecked runs Correlation. Checking it runs Simple OLS Regression with one predictor — slope coefficient $\hat{\beta}_1$, 95% CI on $\hat{\beta}_1$, and the full residual diagnostic battery (Shapiro–Wilk, Breusch–Pagan, Ramsey RESET).
+Leaving it unchecked runs Correlation. Checking it runs Simple OLS Regression with one predictor: slope coefficient $\hat{\beta}_1$, 95% CI on $\hat{\beta}_1$, and the full residual diagnostic battery (Shapiro–Wilk, Breusch–Pagan, Ramsey RESET).
 
 ### What is reported (HTML report)
 
@@ -413,7 +411,7 @@ If **both X and Y are log-transformed** (Log-Log model), $\beta$ represents an e
 | Correction | FDR (Benjamini–Hochberg), Bonferroni, or None |
 | Stratify by | Run the matrix separately per level of a categorical column |
 
-For $m$ variables, the matrix contains $\binom{m}{2}$ tests. With $m = 20$, that is 190 simultaneous tests — uncorrected p-values guarantee false positives. Use FDR or Bonferroni.
+For $m$ variables, the matrix contains $\binom{m}{2}$ tests. With $m = 20$, that is 190 simultaneous tests. Uncorrected p-values guarantee false positives. Use FDR or Bonferroni.
 
 **HTML report output:**
 - Matrix of $r$ / $\rho$ values
@@ -442,16 +440,16 @@ $$\hat{\mu}_j^* = \hat{\mu}_j - \hat{\beta}_{cov}(\bar{x}_{j,cov} - \bar{x}_{cov
 
 ### What is reported (HTML report)
 
-- **ANOVA table** (Type II SS) — $F$, $df$, $p$, $\eta^2$ per source
-- **Covariate effects** — $\hat{\beta}$, SE, $t$, $p$, 95% CI per covariate
-- **Adjusted means** — estimated marginal means at the grand mean of each covariate
-- **Regression slope homogeneity** — tests whether the covariate–outcome slope is equal across groups (the core ANCOVA assumption)
-- **Simple Slopes and Johnson–Neyman interval** — reported when slopes are heterogeneous ($p < 0.05$ for the Factor × Covariate interaction)
-- **Model fit** — $R^2$, adjusted $R^2$, AIC, $n$
+- **ANOVA table** (Type II SS): $F$, $df$, $p$, $\eta^2$ per source
+- **Covariate effects**: $\hat{\beta}$, SE, $t$, $p$, 95% CI per covariate
+- **Adjusted means**: estimated marginal means at the grand mean of each covariate
+- **Regression slope homogeneity**: tests whether the covariate–outcome slope is equal across groups (the core ANCOVA assumption)
+- **Simple Slopes and Johnson–Neyman interval**: reported when slopes are heterogeneous ($p < 0.05$ for the Factor × Covariate interaction)
+- **Model fit**: $R^2$, adjusted $R^2$, AIC, $n$
 
 ### The slope homogeneity assumption
 
-ANCOVA assumes parallel regression slopes. When this assumption fails, the adjusted means are misleading. The Johnson–Neyman (J-N) technique identifies the range of covariate values where the group difference is and is not statistically significant — a more informative answer than simply flagging an assumption violation.
+ANCOVA assumes parallel regression slopes. When this assumption fails, the adjusted means are misleading. The Johnson–Neyman (J-N) technique identifies the range of covariate values where the group difference is and is not statistically significant, which is more informative than simply flagging an assumption violation.
 
 ---
 
@@ -481,7 +479,7 @@ $$Y_{ij} = (\beta_0 + u_{0i}) + (\beta_1 + u_{1i}) X_{ij} + \varepsilon_{ij}$$
 | **Covariates** | Optional additional predictors |
 | **Filter** | Optional subgroup restriction |
 
-### Model selection — random intercept vs. random slope
+### Model selection: random intercept vs. random slope
 
 The application fits both structures and compares them with a Likelihood Ratio Test:
 
@@ -489,16 +487,16 @@ $$\Lambda = -2\bigl(\ell_{\text{RI}} - \ell_{\text{RI+RS}}\bigr) \sim \chi^2(2)$
 
 If $\Lambda > \chi^2_{0.05}(2) = 5.99$ (i.e. $p < 0.05$), the random-intercept + slope model is retained. Otherwise the simpler random-intercept model is used. The structure chosen is noted in the HTML report.
 
-### ICC — Intraclass Correlation Coefficient
+### ICC: Intraclass Correlation Coefficient
 
 $$\text{ICC} = \frac{\sigma^2_u}{\sigma^2_u + \sigma^2_\varepsilon}$$
 
 | ICC | Interpretation |
 |---|---|
-| $< 0.10$ | Negligible clustering — standard regression may suffice |
+| $< 0.10$ | Negligible clustering; standard regression may suffice |
 | $0.10$–$0.30$ | Weak clustering |
-| $0.30$–$0.60$ | Moderate clustering — LMM recommended |
-| $> 0.60$ | Strong clustering — LMM strongly indicated |
+| $0.30$–$0.60$ | Moderate clustering; LMM recommended |
+| $> 0.60$ | Strong clustering; LMM strongly indicated |
 
 ### What is reported (HTML report)
 
@@ -508,7 +506,7 @@ Fixed effects table ($\hat{\beta}$, SE, $df$, $t/z$, $p$, 95% CI), random effect
 
 ## 21. Logistic Regression
 
-**Trigger conditions:** Dependent Variable contains exactly 2 distinct values — either $\{0, 1\}$ or two unique string labels. The application encodes non-numeric outcomes as 0/1 internally.
+**Trigger conditions:** Dependent Variable contains exactly 2 distinct values, either $\{0, 1\}$ or two unique string labels. The application encodes non-numeric outcomes as 0/1 internally.
 
 The model:
 
@@ -539,7 +537,7 @@ $$\log\frac{P(Y=1)}{1 - P(Y=1)} = \beta_0 + \sum_{j=1}^{k} \beta_j X_j$$
 
 **Interpreting the Odds Ratio.** $\text{OR} > 1$: the predictor increases the probability of the event. $\text{OR} < 1$: it decreases the probability. $\text{OR} = 1$: no effect. An $\text{OR} = 2.5$ means the odds of the event are 2.5 times higher per unit increase in the predictor, holding everything else constant.
 
-**Firth correction.** Complete separation — when one predictor perfectly predicts the outcome — causes standard maximum likelihood to diverge. The application detects this (large SEs, $> 5$) and switches to Firth Penalized Likelihood regression automatically. The report notes which variant was used.
+**Firth correction.** Complete separation (when one predictor perfectly predicts the outcome) causes standard maximum likelihood to diverge. The application detects this (large SEs, $> 5$) and switches to Firth Penalized Likelihood regression automatically. The report notes which variant was used.
 
 Under Firth, the Wald confidence interval ($\hat{\beta} \pm 1.96\,\text{SE}$) is unreliable, because separation is the one case it cannot handle. The app instead reports penalized **profile-likelihood** intervals and penalized likelihood-ratio $p$-values, the same inference R's `logistf` uses. The odds-ratio table names the method it applied.
 

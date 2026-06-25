@@ -1,61 +1,51 @@
 # Scripts and How to Use Them
 
-This document describes the helper scripts included in this repository, what they do, and how to run them on Windows and Unix-like systems. All examples assume you run the commands from the repository root.
+This document describes the helper scripts included in this repository, what they do, and how to run them. All examples assume you run the commands from the repository root.
 
 ## Purpose
 
-- Make it easy for developers to run the application from source.
-- Provide a reproducible way to generate documentation PDFs locally.
-- Offer small convenience wrappers which handle common platform differences (venv activation, pandoc location).
+- Let developers start the application from source without typing the full Python command.
+- Offer platform-specific convenience wrappers for Linux/macOS and Windows.
 
 ## Files Covered
 
-- `Start_BioMedStatX_on_Linux.sh` (repo root) — launcher for Linux/macOS. It prefers a native binary and otherwise runs the Python entrypoint.
-- `start.bat` (repo root) — launcher for Windows. It prefers a native `.exe` and otherwise runs the Python entrypoint.
-
-There is currently no `tools/generate_pdfs.bat` file in this repository, and there is no `Source_Code/start_from_source.sh`.
+- `start.sh` (repo root): launcher for Linux/macOS. Tries binary locations first and falls back to the Python entrypoint.
+- `run.bat` (repo root): developer convenience script for Windows. Calls a hardcoded virtual environment path — see the Windows section below before using it.
 
 ## Start Scripts
 
-The repository includes two launcher scripts so the app can be started from the repository root without typing the full Python command.
+### `start.sh` (Linux/macOS)
 
-### `Start_BioMedStatX_on_Linux.sh` (Linux/macOS)
-- Looks for common binary locations first, including `BioMedStatX`, `BioMedStatX.app`, `BioMedStatX.exe`, and `dist/` builds.
-- On macOS it can open a `.app` bundle via `open`.
-- If no binary is found, it falls back to `python3` or `python` and runs `Source_Code/statistical_analyzer.py`.
+- Tries binary locations in this order: `BioMedStatX`, `BioMedStatX.app/Contents/MacOS/BioMedStatX`, `BioMedStatX.exe`, `dist/BioMedStatX`, `dist/BioMedStatX.exe`, `build/BioMedStatX`.
+- On macOS, if a `.app` bundle is found, opens it via `open`.
+- If no binary is found, falls back to `python3` (or `python`) and runs `src/analysis/statistical_analyzer.py`.
 
 Example usage:
 
 ```bash
-chmod +x ./Start_BioMedStatX_on_Linux.sh
-./Start_BioMedStatX_on_Linux.sh
+chmod +x ./start.sh
+./start.sh
 ```
 
-### `start.bat` (Windows)
-- Looks for `BioMedStatX.exe` in the repo root.
-- Looks for `dist\BioMedStatX.exe` as a secondary location.
-- If no native executable is found, it falls back to `python Source_Code\statistical_analyzer.py`.
+### `run.bat` (Windows)
 
-Example usage:
-
-```bat
-.\start.bat
-```
-
-Behavior summary:
+`run.bat` is a minimal developer script. It calls a hardcoded Python interpreter path:
 
 ```bat
 @echo off
-if exist "%REPO_ROOT%\BioMedStatX.exe" (
-  start "" "%REPO_ROOT%\BioMedStatX.exe"
-  goto :eof
-)
-if exist "%REPO_ROOT%\dist\BioMedStatX.exe" (
-  start "" "%REPO_ROOT%\dist\BioMedStatX.exe"
-  goto :eof
-)
-python "%REPO_ROOT%\Source_Code\statistical_analyzer.py"
+cd /d "%~dp0"
+"C:\bmx_venv\Scripts\python.exe" src\analysis\statistical_analyzer.py %*
 ```
+
+Before using it, edit the path `C:\bmx_venv\Scripts\python.exe` to match your local virtual environment. If your venv is at `.venv`, change it to `.venv\Scripts\python.exe`.
+
+Example (after editing):
+
+```bat
+.\run.bat
+```
+
+End users should use the packaged `BioMedStatX.exe` from the GitHub Releases page instead.
 
 ## Virtual environment and dependency tips
 
@@ -82,10 +72,11 @@ pip install -r requirements.txt
 
 ## Security and path notes
 
-- Scripts use relative paths so they work from any current working directory. In Bash use `$(dirname "$0")` and in Windows use `%~dp0`.
-- Be cautious when running scripts obtained from the internet. Review scripts before executing.
+- `start.sh` uses `$(dirname "$0")` to resolve paths relative to the script location.
+- `run.bat` uses `%~dp0` for the same purpose, but the Python interpreter path is hardcoded and must be updated manually.
+- Review scripts obtained from the internet before running them.
 
 ## Notes
 
 - End users on Windows and macOS will usually use the packaged app from the GitHub Releases page.
-- The launcher scripts are mainly useful for running from a cloned repository or a local unpacked build.
+- The launcher scripts are for running from a cloned repository or a local source build.

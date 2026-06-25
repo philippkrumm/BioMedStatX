@@ -3,7 +3,7 @@
 This document describes what was implemented for nonparametric alternatives to
 advanced ANOVA designs, the statistical basis of each method, and the validation
 carried out against reference implementations. All formulas and code references
-were verified against `Source_Code/nonparametricanovas.py` (current revision).
+were verified against `src/analysis/nonparametricanovas.py` (current revision).
 
 ---
 
@@ -11,25 +11,25 @@ were verified against `Source_Code/nonparametricanovas.py` (current revision).
 
 Entry into the advanced-test flow:
 
-- `StatisticalTester.prepare_advanced_test(...)` in `Source_Code/statisticaltester.py`
+- `StatisticalTester.prepare_advanced_test(...)` in `src/analysis/statisticaltester.py` (line 1160)
   Runs assumption checks (Shapiro–Wilk normality on residuals, Levene variance test)
   and attempts data transformations. Returns a `recommendation` flag.
 
-- `StatisticalTester.perform_advanced_test(...)` in `Source_Code/statisticaltester.py`
-  Dispatches on the `recommendation` flag. When `recommendation == 'non_parametric'`,
-  it routes to **design-specific nonparametric tests** or falls back to the
-  legacy GLM/GEE pipeline for unknown design types.
+- `StatisticalTester.perform_advanced_test(...)` in `src/analysis/statisticaltester.py` (line 1243)
+  Delegates to `perform_advanced_test_pipeline` in `src/statistical_testing/advanced_pipeline.py`,
+  which dispatches on the `recommendation` flag. When `recommendation == 'non_parametric'`,
+  it routes to the design-specific nonparametric test or returns an error dict for unknown designs.
 
-- Three functions in `Source_Code/nonparametricanovas.py`:
-  - `perform_friedman_test()` — Repeated-measures fallback
-  - `perform_freedman_lane_test()` — Two-way ANOVA fallback
-  - `perform_brunner_langer_ats()` — Mixed ANOVA fallback
+- Three functions in `src/analysis/nonparametricanovas.py`:
+  - `perform_friedman_test()`: Repeated-measures fallback
+  - `perform_freedman_lane_test()`: Two-way ANOVA fallback
+  - `perform_brunner_langer_ats()`: Mixed ANOVA fallback
 
-- `fallback_modern_models(...)` in `Source_Code/nonparametricanovas.py`
-  **Retained as safety net** for any design type not handled by the three functions
-  above. Not called for RM, Two-Way, or Mixed designs.
+- For unknown design types, the pipeline returns an error dict
+  (`"No non-parametric fallback implemented for test type: {test}"`).
+  RM, Two-Way, and Mixed all have explicit branches.
 
-### Dispatch logic (statisticaltester.py, lines 1821–1858):
+### Dispatch logic (advanced_pipeline.py, lines 281–316):
 
 ```
 recommendation == 'non_parametric'
@@ -77,7 +77,7 @@ Holm step-down correction applied across all comparisons simultaneously.
 - **`model_class`:** `"Freedman-Lane Permutation"`
 - **`StatisticType`:** `"Permutation F (Freedman-Lane)"`
 - **Default permutations:** 5000
-- **Random number generator:** Local `np.random.default_rng(seed)` — does not affect global state
+- **Random number generator:** Local `np.random.default_rng(seed)` (does not affect global state)
 
 **Algorithm (run independently for each of 3 effects: A, B, A×B):**
 
@@ -130,18 +130,18 @@ and Holm-corrected together.
 - **`model_class`:** `"Brunner-Langer ATS"`
 - **`StatisticType`:** `"ANOVA-Type Statistic (ATS)"`
 - **Design:** F1-LD-F1 (1 between-factor × 1 within-factor)
-- **Valid for small samples:** Yes — the ATS requires fewer assumptions on the
+- **Valid for small samples:** Yes. The ATS requires fewer assumptions on the
   covariance structure than Wald-type statistics and has superior small-sample
   performance (Brunner et al. 2002).
 
 #### Algorithm
 
-**Step 1 — Global mid-ranks**
+**Step 1: Global mid-ranks**
 
 All N observations are ranked together using `scipy.stats.rankdata(method='average')`.
 Tied observations receive their average rank.
 
-**Step 2 — Relative Treatment Effects (RTEs)**
+**Step 2: Relative Treatment Effects (RTEs)**
 
 For each cell (group i, time point s):
 
@@ -153,7 +153,7 @@ where R_bar_is is the mean rank of observations in cell (i, s) and N is the tota
 number of observations. RTEs lie in (0, 1); p_hat = 0.5 indicates no treatment effect
 (the cell's distribution is stochastically equal to the marginal).
 
-**Step 3 — Per-group rank covariance matrix**
+**Step 3: Per-group rank covariance matrix**
 
 For between-group i with n_i subjects and t within-levels, pivot ranks to a wide
 matrix R_i of shape (n_i × t). Compute the sample covariance scaled by N:
@@ -166,7 +166,7 @@ This is the Brunner et al. (2002) notation: S_hat_i = (1/N) · (1/(n_i−1)) · 
 where C_n is the centering matrix. The factor 1/N (not 1/N^2) ensures that the total
 covariance matrix V_hat_N defined in Step 4 has the correct asymptotic scale.
 
-**Step 4 — Block-diagonal total covariance**
+**Step 4: Block-diagonal total covariance**
 
 ```
 V_hat_N = block_diag(S_hat_1/n_1,  S_hat_2/n_2,  ...,  S_hat_a/n_a)      shape (at × at)
@@ -176,7 +176,7 @@ This is equivalent to Brunner et al.'s V_hat_N = N · block_diag(S_hat_i/n_i) wi
 S_hat_i = cov(R_i)/N^2, which gives the same result. The implementation uses the
 reformulation above to avoid numerical overflow with large N.
 
-**Step 5 — Idempotent projection matrices** (at × at, applied directly — no pseudoinverse):
+**Step 5: Idempotent projection matrices** (at × at, applied directly, no pseudoinverse):
 
 ```
 T_between = kron(I_a − J_a/a,   J_t/t )     rank a−1
@@ -186,7 +186,7 @@ T_inter   = kron(I_a − J_a/a,   I_t − J_t/t) rank (a−1)(t−1)
 
 where I = identity matrix, J = matrix of ones (all elements = 1).
 
-**Step 6 — ATS per effect**
+**Step 6: ATS per effect**
 
 ```
 ATS = N · (p_hat^T T p_hat) / tr(T V_hat_N)
@@ -195,7 +195,7 @@ ATS = N · (p_hat^T T p_hat) / tr(T V_hat_N)
 where p_hat is the (at × 1) vector of RTEs arranged row-major (group 1 time 1,
 group 1 time 2, …, group a time t).
 
-**Step 7 — Box-approximation degrees of freedom (df1)**
+**Step 7: Box-approximation degrees of freedom (df1)**
 
 ```
 df1 = tr(T V_hat_N)^2 / tr(T V_hat_N T V_hat_N)
@@ -203,7 +203,7 @@ df1 = tr(T V_hat_N)^2 / tr(T V_hat_N T V_hat_N)
 
 The ATS is approximately F(df1, ∞)-distributed (Box approximation).
 
-**Step 8 — p-values**
+**Step 8: p-values**
 
 - **Within and Interaction effects:** F(df1, ∞) ≡ χ^2(df1)/df1:
 
@@ -224,7 +224,7 @@ The ATS is approximately F(df1, ∞)-distributed (Box approximation).
   For unbalanced designs (common in biological data), the Satterthwaite
   approximation is more accurate.
 
-**Extra output:** `results["RTE"]` — a DataFrame with columns
+**Extra output:** `results["RTE"]`: a DataFrame with columns
 `[between_group, within_level, RTE, n]` for each cell.
 
 **Post-hoc tests (built-in, triggered per significant ATS effect):**
@@ -271,21 +271,21 @@ All statistics matched to 2 decimal places (tolerance 0.005):
 
 | Effect | ATS | df1 | df2 | p-value | Match? |
 |--------|----:|----:|----:|--------:|--------|
-| Sex (between) | 8.798 | 1.00 | 17.57 | 0.0084 | yes |
-| Age (within) | 46.191 | 2.56 | — | <0.001 | yes |
-| Sex × Age (interaction) | 1.872 | 2.56 | — | 0.141 | yes |
+| Sex (between) | 8.798 | 1.00 | 17.57 | 0.0084 | Yes |
+| Age (within) | 46.191 | 2.56 | — | <0.001 | Yes |
+| Sex × Age (interaction) | 1.872 | 2.56 | — | 0.141 | Yes |
 
 All 8 cell RTEs also matched exactly (max absolute difference < 0.0001).
 
 **Notes on p-value for the between-effect:**
 
 R's `ANOVA.test` reports the raw chi-square p-value for the between-effect
-(p = 0.003). The Python implementation — and R's `ANOVA.test.mod.Box` — both
+(p = 0.003). The Python implementation and R's `ANOVA.test.mod.Box` both
 use the Satterthwaite F-distribution with finite df2 (p = 0.0084). The latter
 is more conservative and correct for small between-group sample sizes. Both
 implementations agree.
 
-### Covariance scaling — a note
+### Covariance scaling: a note
 
 During development, an error in the covariance scaling was identified and corrected.
 The incorrect formula (`V_hat_i = cov(R_i)/N^2`) produced ATS values inflated by a
@@ -328,8 +328,8 @@ factor and should be interpreted with caution.
 ## 5) Post-hoc pipeline
 
 Post-hoc tests are **built directly into each of the three nonparametric ANOVA
-functions** (`Source_Code/nonparametricanovas.py`). They run automatically at the
-end of each function — no external orchestration is needed.
+functions** (`src/analysis/nonparametricanovas.py`). They run automatically at the
+end of each function; no external orchestration is needed.
 
 ### Design principle
 
@@ -352,17 +352,17 @@ Four shared helper functions (defined at module level, before `perform_friedman_
 
 ### Per-test post-hoc logic
 
-**Friedman** — triggered if overall p < alpha:
+**Friedman**: triggered if overall p < alpha:
 - All k·(k−1)/2 within-level pairs tested with Wilcoxon signed-rank (paired)
 - Holm correction across all pairs simultaneously
 
-**Freedman-Lane** — triggered per effect:
+**Freedman-Lane**: triggered per effect:
 - Factor A significant → all Factor A level pairs (MWU, collapsed over Factor B)
 - Factor B significant → all Factor B level pairs (MWU, collapsed over Factor A)
 - Interaction significant → all cell pairs (MWU)
 - Holm correction across all comparisons from all triggered effects
 
-**Brunner-Langer ATS** — triggered per ATS effect:
+**Brunner-Langer ATS**: triggered per ATS effect:
 - Between factor significant → all between-group pairs (MWU, collapsed over time)
 - Within factor significant → all within-level pairs (Wilcoxon signed-rank, all subjects)
 - Interaction significant → all between-group pairs at each individual within-level (MWU)
@@ -398,7 +398,7 @@ to populate the **Pairwise Comparisons** sheet without any further transformatio
 ## 6) Multiple testing correction
 
 All post-hoc comparisons use **Holm step-down correction**, implemented directly
-via the `_holm_correct()` helper function in `Source_Code/nonparametricanovas.py`.
+via the `_holm_correct()` helper function in `src/analysis/nonparametricanovas.py`.
 
 The Holm procedure orders all m raw p-values p_(1) ≤ p_(2) ≤ … ≤ p_(m) and
 adjusts each as p_tilde_(k) = min(1, max_{j≤k}(m − j + 1) · p_(j)). This controls
@@ -451,7 +451,7 @@ compatibility. They are **not** classical ANOVA F-values.
 |---|---|---|
 | Mixed ANOVA with non-normal data | Separate Kruskal-Wallis + Friedman | Ignores the mixed design structure; no joint test for interaction |
 | Two-way ANOVA with non-normal data | Scheirer-Ray-Hare test | Known to have inflated Type I error for unequal group sizes |
-| Repeated measures | Friedman | yes Standard and appropriate; used here |
+| Repeated measures | Friedman | Yes, standard and appropriate; used here |
 
 ### Relative Treatment Effects vs. means
 
@@ -460,7 +460,7 @@ means or medians. An RTE answers: *"What is the probability that a randomly
 selected observation from this group/time combination is smaller than a randomly
 selected observation from the overall population?"*
 
-- RTE = 0.5: no stochastic ordering — group distributes identically to the population
+- RTE = 0.5: no stochastic ordering; group distributes identically to the population
 - RTE > 0.5: group stochastically dominates the population
 - RTE < 0.5: group is stochastically dominated by the population
 
@@ -552,7 +552,7 @@ avoid the asymptotic requirements (n > 30 per subgroup) of the legacy GLM/GEE pi
    Holm controls the family-wise error rate without assuming independence and is
    uniformly more powerful than Bonferroni. If a reviewer requires a specific
    alternative (e.g., Bonferroni, Benjamini–Hochberg FDR), this can be changed
-   in `_holm_correct()` in `Source_Code/nonparametricanovas.py` without touching
+   in `_holm_correct()` in `src/analysis/nonparametricanovas.py` without touching
    the rest of the post-hoc logic.
 
 7. For mixed designs: rank-based methods produce **population-averaged** effects.
