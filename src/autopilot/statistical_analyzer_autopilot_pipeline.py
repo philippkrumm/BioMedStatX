@@ -2224,6 +2224,28 @@ def _mark_tour_seen_impl(self):
         "onboarding/completed_version", _current_app_version())
 
 
+def _ap_export_example_template(self):
+    """Copy the bundled Excel template to a user-chosen location and reveal it."""
+    from PyQt5.QtCore import QUrl
+    from PyQt5.QtGui import QDesktopServices
+    from PyQt5.QtWidgets import QFileDialog, QMessageBox
+    src = _resource_path("assets/BioMedStatX_Excel_Template.xlsx")
+    if not os.path.exists(src):
+        QMessageBox.critical(self, "Error", "Internal template asset missing.")
+        return
+    default = os.path.join(os.path.expanduser("~"), "Desktop",
+                           "BioMedStatX_Template.xlsx")
+    target, _ = QFileDialog.getSaveFileName(
+        self, "Save Example Template As", default, "Excel Worksheets (*.xlsx)")
+    if not target:
+        return
+    try:
+        shutil.copy2(src, target)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.dirname(target)))
+    except OSError as exc:
+        QMessageBox.critical(self, "Export Error", f"Could not write file:\n{exc}")
+
+
 class AutopilotMixin:
     """Bundles the autopilot pipeline methods for ``StatisticalAnalyzerApp``.
 
@@ -2277,6 +2299,7 @@ class AutopilotMixin:
     _build_tour_steps = _ap_build_tour_steps
     start_tutorial = _ap_start_tutorial
     _mark_tour_seen = _mark_tour_seen_impl
+    export_example_template = _ap_export_example_template
 
 
 def attach_autopilot_methods(app_cls):  # pragma: no cover — legacy shim

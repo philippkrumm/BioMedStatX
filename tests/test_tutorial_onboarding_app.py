@@ -39,3 +39,24 @@ def test_start_tutorial_is_reentrant(app):
     assert app._tour_overlay is first
     app._tour_overlay.close_tour()
     assert app._tour_active is False
+
+
+def test_export_template_copies_file(app, tmp_path, monkeypatch):
+    from PyQt5.QtWidgets import QFileDialog
+    from PyQt5.QtGui import QDesktopServices
+    target = tmp_path / "out.xlsx"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (str(target), "")))
+    opened = {"url": None}
+    monkeypatch.setattr(QDesktopServices, "openUrl",
+                        staticmethod(lambda url: opened.__setitem__("url", url)))
+    app.export_example_template()
+    assert target.exists() and target.stat().st_size > 0
+    assert opened["url"] is not None
+
+
+def test_export_template_cancelled_is_noop(app, tmp_path, monkeypatch):
+    from PyQt5.QtWidgets import QFileDialog
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: ("", "")))
+    app.export_example_template()  # no exception, nothing written
