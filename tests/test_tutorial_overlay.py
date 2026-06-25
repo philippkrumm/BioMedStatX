@@ -86,3 +86,13 @@ def test_pulse_active_only_on_pulse_step(qapp):
     assert ov._pulse_active is True           # step 2 pulses
     ov.close_tour()
     assert ov._pulse_anim.state() == ov._pulse_anim.Stopped
+
+
+from autopilot.statistical_analyzer_autopilot_pipeline import should_offer_tour
+
+
+def test_should_offer_tour_logic():
+    assert should_offer_tour("", "2.0.0") is True          # fresh machine
+    assert should_offer_tour("1.9.0", "2.0.0") is True      # older version seen
+    assert should_offer_tour("2.0.0", "2.0.0") is False     # already seen this version
+    assert should_offer_tour(None, "2.0.0") is True         # missing key

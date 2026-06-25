@@ -63,6 +63,12 @@ DEFAULT_COLORS = ["#0f766e", "#1f7a5a", "#b7791f", "#9f3a38", "#1d4ed8", "#7c3ae
 DEFAULT_HATCHES = ["/", "\\", "|", "-", "+", "x", "o", ".", "*", ""]
 
 
+def should_offer_tour(stored_version, current_version: str) -> bool:
+    """First-run gate: offer the tour when the stored completed-version does
+    not match the current app version (covers empty/None on a fresh machine)."""
+    return (stored_version or "") != (current_version or "")
+
+
 def _resource_path(relative_path):
     """Get absolute path to resource, works for dev and for PyInstaller."""
     try:
