@@ -36,3 +36,53 @@ def test_tourstep_holds_copy(qapp):
     step = TourStep(title="T", body="B", tip="ti")
     assert step.title == "T" and step.tip == "ti"
     assert step.placement == "auto"
+
+
+from ui.components.tutorial_overlay import TutorialOverlay
+
+
+def _three_steps():
+    return [
+        TourStep(title="One", body="b1"),
+        TourStep(title="Two", body="b2"),
+        TourStep(title="Three", body="b3"),
+    ]
+
+
+def test_navigation_clamps_and_closes(qapp):
+    host = QWidget(); host.resize(800, 600); host.show()
+    closed = {"v": False}
+    ov = TutorialOverlay(host, _three_steps())
+    ov.closed_callback = lambda: closed.__setitem__("v", True)
+    ov.start()
+    assert ov.is_first and not ov.is_last
+    ov.prev_step()                 # clamped, stays at 0
+    assert ov.current_index == 0
+    ov.next_step(); ov.next_step()  # -> index 2 (last)
+    assert ov.is_last
+    ov.next_step()                  # past last -> closes
+    assert closed["v"] is True
+
+
+def test_missing_target_uses_centered_bubble(qapp):
+    host = QWidget(); host.resize(800, 600); host.show()
+    step = TourStep(title="x", body="y", resolve_rect=lambda: None)
+    ov = TutorialOverlay(host, [step])
+    ov.start()
+    # No spotlight rect resolved -> overlay records None, no crash
+    assert ov.current_spotlight is None
+    ov.close_tour()
+
+
+def test_pulse_active_only_on_pulse_step(qapp):
+    host = QWidget(); host.resize(800, 600); host.show()
+    plain = TourStep(title="p", body="b", resolve_rect=lambda: QRect(10, 10, 80, 30))
+    pulsing = TourStep(title="q", body="b", resolve_rect=lambda: QRect(10, 10, 80, 30),
+                       pulse=True)
+    ov = TutorialOverlay(host, [plain, pulsing])
+    ov.start(); qapp.processEvents()
+    assert ov._pulse_active is False          # step 1 not pulsing
+    ov.next_step(); qapp.processEvents()
+    assert ov._pulse_active is True           # step 2 pulses
+    ov.close_tour()
+    assert ov._pulse_anim.state() == ov._pulse_anim.Stopped
