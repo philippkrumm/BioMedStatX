@@ -64,17 +64,15 @@ def from_menu_action(menubar, action) -> RectResolver:
 
 
 class TutorialOverlay(QWidget):
-    SPOTLIGHT_PAD = 8
-    SPOTLIGHT_RADIUS = 12
-    DIM_COLOR = QColor(15, 23, 32, 200)
-    # Spotlight accent ring. These constants live here (not QSS) because a
-    # custom paintEvent cannot be styled or animated by QSS. frontend-design
-    # tunes these values in Task 7; the teal default suits the dark palette.
-    RING_COLOR = QColor(45, 212, 191)        # teal accent
-    RING_WIDTH = 2
-    PULSE_MIN_ALPHA = 70
-    PULSE_MAX_ALPHA = 255
-    PULSE_PERIOD_MS = 1100
+    SPOTLIGHT_PAD = 10
+    SPOTLIGHT_RADIUS = 14
+    DIM_COLOR = QColor(22, 49, 58, 170)      # blue-grey, softer on light UI
+    # Spotlight accent ring — custom paintEvent, not QSS.
+    RING_COLOR = QColor(15, 118, 110)         # teal accent (#0f766e)
+    RING_WIDTH = 2.5
+    PULSE_MIN_ALPHA = 60
+    PULSE_MAX_ALPHA = 220
+    PULSE_PERIOD_MS = 1200
 
     def __init__(self, host_window: QWidget, steps):
         super().__init__(host_window)
@@ -130,6 +128,14 @@ class TutorialOverlay(QWidget):
         row.addWidget(self._next)
         lay.addLayout(row)
         self.bubble.adjustSize()
+        # Drop shadow for elevation (matches _apply_elevation style)
+        from PyQt5.QtWidgets import QGraphicsDropShadowEffect
+        shadow = QGraphicsDropShadowEffect(self.bubble)
+        shadow.setBlurRadius(24)
+        shadow.setXOffset(0)
+        shadow.setYOffset(6)
+        shadow.setColor(QColor(0, 0, 0, 46))
+        self.bubble.setGraphicsEffect(shadow)
 
     # ---- lifecycle ----
     def start(self):
