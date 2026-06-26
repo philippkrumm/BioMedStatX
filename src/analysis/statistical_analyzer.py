@@ -80,7 +80,6 @@ def _configure_dialog(dialog, object_name=None, remove_context_help=True):
 
 
 from ui.dialogs.statistical_analyzer_dialogs import (
-    DebugConsoleWindow,
     ExploratoryMatrixDialog,
     HelpHubDialog,
     OutlierDetectionDialog,
@@ -155,11 +154,6 @@ class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
         # Initialize updater
         self.setup_updater()
 
-        # Debug console — starts alongside the main window
-        self.debug_console = DebugConsoleWindow()
-        self._position_debug_console()
-        self.debug_console.show()
-
         # First-run onboarding gate
         from PyQt5.QtCore import QTimer, QSettings
         from autopilot.statistical_analyzer_autopilot_pipeline import (
@@ -169,21 +163,6 @@ class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
             "onboarding/completed_version", "")
         if should_offer_tour(_stored, _current_app_version()):
             QTimer.singleShot(400, self._maybe_offer_tour)
-
-    def _position_debug_console(self):
-        """Position the debug console to the right of the main window, or below if no space."""
-        _primary = QApplication.instance().primaryScreen() if QApplication.instance() else None
-        screen = _primary.geometry() if _primary else None
-        main_geo = self.geometry()
-        console_w = 700
-        console_h = 400
-        right_x = main_geo.right() + 8
-        if right_x + console_w <= screen.width():
-            self.debug_console.setGeometry(right_x, main_geo.top(), console_w, console_h)
-        else:
-            # Fall back to bottom of main window
-            bottom_y = main_geo.bottom() + 8
-            self.debug_console.setGeometry(main_geo.left(), bottom_y, console_w, console_h)
 
     def create_menu(self):
         """Creates the menu bar with help options"""
@@ -243,20 +222,24 @@ class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
         update_action.triggered.connect(self.check_for_updates)
         help_menu.addAction(update_action)
 
+        # Report a problem — reveal the log folder so the user can send the log file
+        report_action = QAction('Report a Problem...', self)
+        report_action.triggered.connect(self.open_log_folder)
+        help_menu.addAction(report_action)
+
+        # Confetti toggle — celebratory burst after an analysis (on by default)
+        from PyQt5.QtCore import QSettings
+        confetti_action = QAction('Celebrate Results with Confetti', self)
+        confetti_action.setCheckable(True)
+        confetti_action.setChecked(
+            QSettings("BioMedStatX", "BioMedStatX").value("ui/confetti_enabled", True, type=bool))
+        confetti_action.toggled.connect(self._set_confetti_enabled)
+        help_menu.addAction(confetti_action)
+
         # About should be last
         about_action = QAction('About', self)
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
-
-        # View menu
-        view_menu = menubar.addMenu('&View')
-        debug_action = QAction('Debug Console', self)
-        debug_action.setShortcut('Ctrl+D')
-        debug_action.setCheckable(True)
-        debug_action.setChecked(True)
-        debug_action.triggered.connect(lambda checked: self.debug_console.show() if checked else self.debug_console.hide())
-        view_menu.addAction(debug_action)
-        self._debug_menu_action = debug_action
 
         # Analysis menu (create new or use existing)
         analysis_menu = menubar.addMenu('&Analysis')
@@ -472,6 +455,33 @@ class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
             "<li><b>Two groups:</b> Paired t-test or Wilcoxon signed-rank test</li>"
             "<li><b>More than two groups:</b> Repeated Measures ANOVA or Friedman test</li>"
             "</ul>"
+        )
+
+    def _set_confetti_enabled(self, enabled):
+        """Persist the confetti preference per device (default on)."""
+        from PyQt5.QtCore import QSettings
+        QSettings("BioMedStatX", "BioMedStatX").setValue("ui/confetti_enabled", bool(enabled))
+
+    def open_log_folder(self):
+        """Reveal the log folder so the user can attach biomedstatx.log to a bug report."""
+        from PyQt5.QtWidgets import QMessageBox
+        from PyQt5.QtGui import QDesktopServices
+        from PyQt5.QtCore import QUrl
+        from core.logger_config import configure_logging
+        log_path = configure_logging()  # idempotent; returns the log Path or None
+        if log_path is None:
+            QMessageBox.warning(
+                self, "Report a Problem",
+                "No log file is available (logging to disk was disabled).",
+            )
+            return
+        folder = str(log_path.parent)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
+        QMessageBox.information(
+            self, "Report a Problem",
+            "Your log folder has been opened.\n\n"
+            "Please attach 'biomedstatx.log' to your message describing the "
+            f"problem and send it to the developer.\n\nLocation:\n{folder}",
         )
 
     def _maybe_offer_tour(self):
@@ -842,9 +852,8 @@ if __name__ == "__main__":
         import os
         os.environ["QT_LOGGING_RULES"] = "qt.core.qobject.timer=false"
 
-        # Configure logging: clean console (WARNING+), full DEBUG to biomedstatx.log.
-        from core.logging_setup import setup_logging
-        setup_logging()
+        # Logging is configured once at import time via core.logger_config
+        # (console + rotating file at the OS log location). No second setup.
 
         _run_import_smoke_if_requested()
 
@@ -867,7 +876,7 @@ if __name__ == "__main__":
         app = _CrashSafeApp(sys.argv)
         app.setStyleSheet(stylesheet)
         window = StatisticalAnalyzerApp()
-        window.show()
+        window.showMaximized()
         sys.exit(app.exec_())
     except Exception as e:
         logger.error(f"Error starting application: {str(e)}")

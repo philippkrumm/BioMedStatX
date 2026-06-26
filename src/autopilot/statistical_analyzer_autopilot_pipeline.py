@@ -109,8 +109,8 @@ def _ap_init_ui(self):
     central_widget = QWidget()
     central_widget.setObjectName("autoPilotRoot")
     root_layout = QVBoxLayout(central_widget)
-    root_layout.setContentsMargins(24, 18, 24, 18)
-    root_layout.setSpacing(16)
+    root_layout.setContentsMargins(16, 10, 16, 10)
+    root_layout.setSpacing(12)
 
     self.pipeline_tracker = PipelineTrackerWidget()
     root_layout.addWidget(self.pipeline_tracker)
@@ -121,7 +121,7 @@ def _ap_init_ui(self):
     title = QLabel("BioMedStatX 2.0")
     title.setObjectName("heroTitle")
     title_block.addWidget(title)
-    subtitle = QLabel("Auto-pilot statistical analysis with guided mapping and transparent decisions.")
+    subtitle = QLabel("Welcome to BioMedStatX, your assistant for statistical analysis.")
     subtitle.setObjectName("heroSubtitle")
     subtitle.setWordWrap(True)
     title_block.addWidget(subtitle)
@@ -140,8 +140,8 @@ def _ap_init_ui(self):
     left_panel = QFrame()
     left_panel.setObjectName("dashboardPanel")
     left_layout = QVBoxLayout(left_panel)
-    left_layout.setContentsMargins(18, 18, 18, 18)
-    left_layout.setSpacing(14)
+    left_layout.setContentsMargins(12, 12, 12, 12)
+    left_layout.setSpacing(9)
 
     left_title = QLabel("Data Source")
     left_title.setObjectName("panelTitle")
@@ -208,7 +208,7 @@ def _ap_init_ui(self):
     self.preview_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
     self.preview_table.setSelectionMode(QAbstractItemView.NoSelection)
     self.preview_table.setAlternatingRowColors(True)
-    self.preview_table.setMinimumHeight(160)
+    self.preview_table.setMinimumHeight(110)
     self.preview_table.setVisible(False)
     left_layout.addWidget(self.preview_table, 2)
 
@@ -218,7 +218,7 @@ def _ap_init_ui(self):
     cards_scroll = QScrollArea()
     cards_scroll.setWidgetResizable(True)
     cards_scroll.setObjectName("headerCardScroll")
-    cards_scroll.setMinimumHeight(120)
+    cards_scroll.setMinimumHeight(90)
     self.header_cards_widget = QWidget()
     self.header_cards_widget.setObjectName("headerCardsInner")
     self.header_cards_layout = QVBoxLayout(self.header_cards_widget)
@@ -235,8 +235,8 @@ def _ap_init_ui(self):
     center_panel = QFrame()
     center_panel.setObjectName("dashboardPanel")
     center_layout = QVBoxLayout(center_panel)
-    center_layout.setContentsMargins(18, 18, 18, 18)
-    center_layout.setSpacing(14)
+    center_layout.setContentsMargins(12, 12, 12, 12)
+    center_layout.setSpacing(9)
 
     center_title = QLabel("Smart Mapping")
     center_title.setObjectName("panelTitle")
@@ -429,8 +429,8 @@ def _ap_init_ui(self):
     right_panel = QFrame()
     right_panel.setObjectName("dashboardPanel")
     right_layout = QVBoxLayout(right_panel)
-    right_layout.setContentsMargins(18, 18, 18, 18)
-    right_layout.setSpacing(14)
+    right_layout.setContentsMargins(12, 12, 12, 12)
+    right_layout.setSpacing(9)
 
     self.decision_tree_panel = DecisionTreePanel()
     right_layout.addWidget(self.decision_tree_panel, 1)
@@ -438,9 +438,16 @@ def _ap_init_ui(self):
     self.result_cockpit = ResultCockpitWidget()
     self.result_cockpit.configure_plot_requested.connect(self.configure_plot_from_result)
     self.result_cockpit.open_output_requested.connect(self.open_current_output_folder)
-    right_layout.addWidget(self.result_cockpit, 1)
+    # Cockpit scrolls internally so its many result cards never force the whole
+    # window to scroll — the right column stays bounded to the viewport height.
+    cockpit_scroll = QScrollArea()
+    cockpit_scroll.setWidgetResizable(True)
+    cockpit_scroll.setFrameShape(QFrame.NoFrame)
+    cockpit_scroll.setObjectName("cockpitScroll")
+    cockpit_scroll.setWidget(self.result_cockpit)
+    right_layout.addWidget(cockpit_scroll, 1)
     _apply_elevation(self.decision_tree_panel)
-    _apply_elevation(self.result_cockpit)
+    _apply_elevation(cockpit_scroll)
 
     splitter.addWidget(right_panel)
     splitter.setSizes([450, 430, 520])
@@ -1703,7 +1710,9 @@ def _ap_render_result_summary(self, context, results, output_dir, subtitle):
         "context_analysis_scope": self._format_context_analysis_scope(context, results),
     }
     self.result_cockpit.set_summary(summary, enable_plot=False, enable_output=bool(output_dir))
-    ConfettiOverlay(self)
+    from PyQt5.QtCore import QSettings
+    if QSettings("BioMedStatX", "BioMedStatX").value("ui/confetti_enabled", True, type=bool):
+        ConfettiOverlay(self)
     self.decision_tree_panel.update_results(results)
     self._set_workflow_state("results", "Results ready")
     self.current_output_dir = output_dir
@@ -2129,8 +2138,8 @@ def _ap_build_tour_steps(self):
             title="Bring In Your Data",
             body=("Start by loading your experimental or clinical data. Open any Excel "
                   "or CSV file here, then pick the relevant sheet from the worksheet "
-                  "dropdown. If a sheet is cluttered, use Select Data Ranges to capture "
-                  "only the cells you need."),
+                  "dropdown. Once a file is loaded, a Select Data Ranges option appears "
+                  "for capturing only the cells you need from a cluttered sheet."),
             tip=("New to the layout? A ready-made Excel template ships with BioMedStatX, "
                  "with one tab per design (t-test, ANOVA, repeated measures, and more), "
                  "each already in the long format the app expects."),
@@ -2177,6 +2186,7 @@ def _ap_build_tour_steps(self):
             tip=("Hover over any node to read its full label, or use Maximize to study "
                  "the whole path full-screen."),
             resolve_rect=from_widgets(central, self.decision_tree_panel),
+            placement="left",
         ),
         TourStep(
             title="Your Results at a Glance",
@@ -2186,6 +2196,7 @@ def _ap_build_tour_steps(self):
             tip=("Use Open Output Folder for the full HTML report, including tables, "
                  "plots, and the complete method trace."),
             resolve_rect=from_widgets(central, self.result_cockpit),
+            placement="left",
         ),
         TourStep(
             title="Help Is Always One Click Away",

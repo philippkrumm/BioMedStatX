@@ -7,6 +7,9 @@ cannot corrupt analysis state.
 """
 from __future__ import annotations
 
+import os
+import sys
+import subprocess
 from dataclasses import dataclass
 from typing import Callable, Optional, Sequence
 
@@ -17,6 +20,48 @@ from PyQt5.QtWidgets import (
 )
 
 RectResolver = Callable[[], Optional[QRect]]
+
+
+def prefers_reduced_motion() -> bool:
+    """OS reduced-motion preference, resolved the same way on every platform.
+
+    An explicit ``BIOMEDSTATX_REDUCED_MOTION`` env override always wins. Failing
+    that, query the native accessibility setting per OS:
+
+    * macOS  — ``com.apple.universalaccess reduceMotion`` == 1
+    * Windows — ``SPI_GETCLIENTAREAANIMATION`` reports animations disabled
+    * Linux  — GNOME ``org.gnome.desktop.interface enable-animations`` == false
+
+    Any failure (missing API, no DE, timeout) returns False so a probe error
+    never breaks the tour.
+    """
+    env = os.environ.get("BIOMEDSTATX_REDUCED_MOTION")
+    if env is not None:
+        return env.strip().lower() in ("1", "true", "yes", "on")
+    try:
+        if sys.platform == "darwin":
+            out = subprocess.run(
+                ["defaults", "read", "com.apple.universalaccess", "reduceMotion"],
+                capture_output=True, text=True, timeout=1.5,
+            )
+            return out.stdout.strip() == "1"
+        if sys.platform.startswith("win"):
+            import ctypes
+            SPI_GETCLIENTAREAANIMATION = 0x1042
+            enabled = ctypes.c_int(1)
+            ok = ctypes.windll.user32.SystemParametersInfoW(
+                SPI_GETCLIENTAREAANIMATION, 0, ctypes.byref(enabled), 0
+            )
+            # Animations OFF (enabled == 0) means the user wants reduced motion.
+            return bool(ok) and enabled.value == 0
+        # Linux / other X11+Wayland desktops: GNOME exposes the flag.
+        out = subprocess.run(
+            ["gsettings", "get", "org.gnome.desktop.interface", "enable-animations"],
+            capture_output=True, text=True, timeout=1.5,
+        )
+        return out.stdout.strip().lower() == "false"
+    except Exception:
+        return False
 
 
 def resolve_union_rect(widgets: Sequence, host: QWidget) -> Optional[QRect]:
@@ -64,6 +109,7 @@ def from_menu_action(menubar, action) -> RectResolver:
 
 
 class TutorialOverlay(QWidget):
+    BUBBLE_WIDTH = 400          # fixed; within the QSS min/max (340–420)
     SPOTLIGHT_PAD = 10
     SPOTLIGHT_RADIUS = 14
     DIM_COLOR = QColor(22, 49, 58, 170)      # blue-grey, softer on light UI
@@ -83,6 +129,11 @@ class TutorialOverlay(QWidget):
         self.closed_callback: Optional[Callable[[], None]] = None
         self.setObjectName("tutorialOverlay")
         self.setFocusPolicy(Qt.StrongFocus)
+        # Translucent backing store (ARGB) is required for the spotlight: the
+        # DestinationOut hole only clears to true transparency when the device
+        # has an alpha channel. WA_NoSystemBackground alone gives an RGB store,
+        # so DestinationOut renders as a flat opaque fill instead of a hole.
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_NoSystemBackground, True)
         self._build_bubble()
         self._ring_alpha = self.PULSE_MAX_ALPHA
@@ -101,6 +152,10 @@ class TutorialOverlay(QWidget):
     def _build_bubble(self):
         self.bubble = QFrame(self)
         self.bubble.setObjectName("tutorialBubble")
+        # Fixed width so the word-wrapped labels compute heightForWidth against
+        # the real width. Without it the bubble is sized too short and the long
+        # body text gets clipped (QLabel clips, it does not scroll).
+        self.bubble.setFixedWidth(self.BUBBLE_WIDTH)
         lay = QVBoxLayout(self.bubble)
         lay.setContentsMargins(18, 16, 18, 14)
         lay.setSpacing(8)
@@ -204,6 +259,9 @@ class TutorialOverlay(QWidget):
         self.update()
 
     def _set_pulse(self, active: bool):
+        # Respect OS reduced-motion: keep a steady ring, skip the loop.
+        if active and prefers_reduced_motion():
+            active = False
         self._pulse_active = active
         if active:
             self._pulse_anim.start()
@@ -217,6 +275,13 @@ class TutorialOverlay(QWidget):
         self.update()
 
     def _position_bubble(self, step):
+        # Pin the word-wrapped labels to the inner width so each reports the
+        # correct heightForWidth; only then does adjustSize give a tall-enough
+        # bubble (a fixed width on the frame alone is not enough).
+        m = self.bubble.layout().contentsMargins()
+        inner = self.BUBBLE_WIDTH - m.left() - m.right()
+        for lbl in (self._title, self._body, self._tip):
+            lbl.setFixedWidth(inner)
         self.bubble.adjustSize()
         bw, bh = self.bubble.width(), self.bubble.height()
         host_rect = self.rect()
@@ -226,39 +291,61 @@ class TutorialOverlay(QWidget):
             y = (host_rect.height() - bh) // 2
             self.bubble.move(max(0, x), max(0, y))
             return
-        # Prefer below, flip above if it would clip.
-        x = min(max(8, spot.left()), host_rect.width() - bw - 8)
-        if spot.bottom() + 12 + bh <= host_rect.height():
-            y = spot.bottom() + 12
-        else:
-            y = max(8, spot.top() - 12 - bh)
-        self.bubble.move(x, y)
+
+        gap = 12
+        hw, hh = host_rect.width(), host_rect.height()
+
+        def clamp(v, hi):
+            return max(8, min(v, hi - 8))
+
+        placement = getattr(step, "placement", "auto") or "auto"
+        if placement == "above":
+            x, y = spot.left(), spot.top() - gap - bh
+        elif placement == "below":
+            x, y = spot.left(), spot.bottom() + gap
+        elif placement == "left":
+            x, y = spot.left() - gap - bw, spot.top()
+        elif placement == "right":
+            x, y = spot.right() + gap, spot.top()
+        else:  # auto — prefer below, flip above if it would clip.
+            x = spot.left()
+            if spot.bottom() + gap + bh <= hh:
+                y = spot.bottom() + gap
+            else:
+                y = spot.top() - gap - bh
+        self.bubble.move(clamp(x, hw - bw), clamp(y, hh - bh))
 
     # ---- painting ----
     def paintEvent(self, _event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
-        painter.fillRect(self.rect(), self.DIM_COLOR)
         spot = self.current_spotlight
-        if spot is not None:
-            padded = spot.adjusted(-self.SPOTLIGHT_PAD, -self.SPOTLIGHT_PAD,
-                                   self.SPOTLIGHT_PAD, self.SPOTLIGHT_PAD)
-            path = QPainterPath()
-            path.addRoundedRect(
-                float(padded.x()), float(padded.y()),
-                float(padded.width()), float(padded.height()),
-                self.SPOTLIGHT_RADIUS, self.SPOTLIGHT_RADIUS,
-            )
-            painter.setCompositionMode(QPainter.CompositionMode_DestinationOut)
-            painter.fillPath(path, QColor(0, 0, 0, 255))
-            painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
-            # Accent ring around the spotlight (alpha pulses on a pulse step).
-            ring_color = QColor(self.RING_COLOR)
-            ring_color.setAlpha(self._ring_alpha if self._pulse_active
-                                else self.PULSE_MAX_ALPHA)
-            painter.setPen(QPen(ring_color, self.RING_WIDTH))
-            painter.setBrush(Qt.NoBrush)
-            painter.drawPath(path)
+        if spot is None:
+            painter.fillRect(self.rect(), self.DIM_COLOR)
+            painter.end()
+            return
+        padded = spot.adjusted(-self.SPOTLIGHT_PAD, -self.SPOTLIGHT_PAD,
+                               self.SPOTLIGHT_PAD, self.SPOTLIGHT_PAD)
+        hole = QPainterPath()
+        hole.addRoundedRect(
+            float(padded.x()), float(padded.y()),
+            float(padded.width()), float(padded.height()),
+            self.SPOTLIGHT_RADIUS, self.SPOTLIGHT_RADIUS,
+        )
+        # Dim everything EXCEPT the spotlight. The hole is left completely
+        # unpainted, so the real app widgets behind the overlay show through at
+        # full opacity. (A child widget can't punch a true alpha hole with
+        # CompositionMode_DestinationOut — that paints an opaque fill instead.)
+        full = QPainterPath()
+        full.addRect(0.0, 0.0, float(self.width()), float(self.height()))
+        painter.fillPath(full.subtracted(hole), self.DIM_COLOR)
+        # Accent ring around the spotlight (alpha pulses on a pulse step).
+        ring_color = QColor(self.RING_COLOR)
+        ring_color.setAlpha(self._ring_alpha if self._pulse_active
+                            else self.PULSE_MAX_ALPHA)
+        painter.setPen(QPen(ring_color, self.RING_WIDTH))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawPath(hole)
         painter.end()
 
     # ---- input capture ----

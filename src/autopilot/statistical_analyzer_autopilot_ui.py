@@ -578,8 +578,8 @@ class MappingBucketWidget(QFrame):
         self.help_recipe_id = help_recipe_id
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(8)
+        layout.setContentsMargins(10, 9, 10, 9)
+        layout.setSpacing(6)
 
         self.title_label = QLabel(title)
         self.title_label.setObjectName("mappingBucketTitle")
@@ -1178,7 +1178,7 @@ class ResultCockpitWidget(QFrame):
         title.setObjectName("panelTitle")
         layout.addWidget(title)
 
-        self.subtitle = QLabel("Run an analysis to populate the cockpit.")
+        self.subtitle = QLabel("Run an analysis to see your results here.")
         self.subtitle.setObjectName("panelDescription")
         self.subtitle.setWordWrap(True)
         layout.addWidget(self.subtitle)
@@ -1339,7 +1339,7 @@ class ResultCockpitWidget(QFrame):
 
 
     def clear(self):
-        self.subtitle.setText("Run an analysis to populate the cockpit.")
+        self.subtitle.setText("Run an analysis to see your results here.")
         metric_defaults = {
             "metric_normality": "Will be calculated after analysis.",
             "metric_variance": "Will be calculated after analysis.",
