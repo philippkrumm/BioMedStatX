@@ -526,25 +526,36 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
                 corrected_p_values = [min(1.0, p * n_comparisons) for p in p_values]
                 
             elif method.lower() == 'dunnett' and control_group:
-                correction_method = "Dunnett"
-                # Filter to only control group comparisons
+                # Mixed designs interleave paired (within-subject) and independent
+                # (between-subject) contrasts, each with its own error term and df.
+                # The per-comparison statistics are therefore NOT exchangeable and
+                # do not share the equicorrelation that scipy.stats.dunnett and the
+                # exact Dunnett multivariate-t assume; raw independent-group arrays
+                # are not available here either. We control the family-wise error
+                # rate over the many-to-one family (control vs each treatment) with
+                # Holm-Bonferroni, which is valid under arbitrary dependence.
+                # Labelled honestly as Holm-adjusted, not exact Dunnett.
+                correction_method = "Dunnett-type (Holm-adjusted, mixed design)"
                 dunnett_p_values = []
                 control_indices = []
-                
+
                 for i, comp in enumerate(comparisons):
                     if control_group in comp["group1"] or control_group in comp["group2"]:
                         dunnett_p_values.append(comp["p_val"])
                         control_indices.append(i)
-                
+
+                corrected_p_values = [1.0] * len(p_values)
                 if dunnett_p_values:
-                    k = len(dunnett_p_values)
-                    dunnett_corrected = [min(1.0, p * k * 0.8) for p in dunnett_p_values]  # Approximate Dunnett factor
-                    
-                    corrected_p_values = [1.0] * len(p_values)
+                    # Plain Holm-Bonferroni (not Holm-Sidak): only the Bonferroni
+                    # variant guarantees FWER control under arbitrary dependence,
+                    # which is required because these contrasts can be negatively
+                    # correlated (within-subject pairing).
+                    multipletests = get_statsmodels_multitest()
+                    holm_adjusted = multipletests(
+                        dunnett_p_values, alpha=alpha, method='holm')[1].tolist()
                     for j, orig_idx in enumerate(control_indices):
-                        corrected_p_values[orig_idx] = dunnett_corrected[j]
+                        corrected_p_values[orig_idx] = holm_adjusted[j]
                 else:
-                    corrected_p_values = [1.0] * len(p_values)
                     correction_method = "Dunnett (no control comparisons found)"
             else:
                 # Default: Holm-Šidák
@@ -1101,28 +1112,37 @@ class RMAnovaPostHocAnalyzer(PostHocAnalyzer):
                 corrected_p_values = [min(1.0, p * n_comparisons) for p in p_values]
                 
             elif method.lower() == 'dunnett' and control_group:
-                correction_method = "Dunnett"
-                # Filter to only control group comparisons
+                # Repeated-measures contrasts are all within-subject (paired) and
+                # thus dependent, so scipy.stats.dunnett / the exact Dunnett
+                # multivariate-t (which assume independent groups with shared
+                # equicorrelation) do not apply, and only the per-comparison
+                # p-values are available. We control the family-wise error rate
+                # over the many-to-one family (control vs each level) with
+                # Holm-Bonferroni, valid under arbitrary dependence. Labelled
+                # honestly as Holm-adjusted, not exact Dunnett.
+                correction_method = "Dunnett-type (Holm-adjusted, repeated measures)"
                 dunnett_p_values = []
                 control_indices = []
-                
+
                 for i, comp in enumerate(comparisons):
                     level1_str = str(comp["level1"])
                     level2_str = str(comp["level2"])
                     if level1_str == control_group or level2_str == control_group:
                         dunnett_p_values.append(comp["p_val"])
                         control_indices.append(i)
-                
+
+                corrected_p_values = [1.0] * len(p_values)
                 if dunnett_p_values:
-                    # Apply Dunnett correction (more liberal than Bonferroni for control comparisons)
-                    k = len(dunnett_p_values)  # Number of comparisons with control
-                    dunnett_corrected = [min(1.0, p * k * 0.8) for p in dunnett_p_values]  # Approximate Dunnett factor
-                    
-                    corrected_p_values = [1.0] * len(p_values)
+                    # Plain Holm-Bonferroni (not Holm-Sidak): only the Bonferroni
+                    # variant guarantees FWER control under arbitrary dependence,
+                    # which is required because these contrasts can be negatively
+                    # correlated (within-subject pairing).
+                    multipletests = get_statsmodels_multitest()
+                    holm_adjusted = multipletests(
+                        dunnett_p_values, alpha=alpha, method='holm')[1].tolist()
                     for j, orig_idx in enumerate(control_indices):
-                        corrected_p_values[orig_idx] = dunnett_corrected[j]
+                        corrected_p_values[orig_idx] = holm_adjusted[j]
                 else:
-                    corrected_p_values = [1.0] * len(p_values)
                     correction_method = "Dunnett (no control comparisons found)"
             else:
                 # Default: Holm-Šidák (step-down method, less conservative than Bonferroni)
