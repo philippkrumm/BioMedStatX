@@ -564,6 +564,30 @@ class DataVisualizer:
         return ax
 
     @staticmethod
+    def grouped_inputs_from_samples(samples, sep=":"):
+        """Split flat interaction-cell samples ({"<between><sep><within>": [vals]})
+        into the long-form inputs plot_grouped_bar needs. Preserves first-seen
+        order for both factors. Raises ValueError if any key lacks the separator.
+        """
+        import pandas as pd
+
+        rows = []
+        between_order, within_order, label_map = [], [], {}
+        for label, vals in samples.items():
+            if sep not in label:
+                raise ValueError(f"cell label {label!r} has no {sep!r} separator")
+            b_lev, w_lev = label.split(sep, 1)
+            label_map[label] = (b_lev, w_lev)
+            if b_lev not in between_order:
+                between_order.append(b_lev)
+            if w_lev not in within_order:
+                within_order.append(w_lev)
+            for v in vals:
+                rows.append({"within": w_lev, "between": b_lev, "value": v})
+        return pd.DataFrame(rows, columns=["within", "between", "value"]), \
+            within_order, between_order, label_map
+
+    @staticmethod
     def _detect_plot_type(ax):
         """Detektiert den Plot-Typ basierend auf vorhandenen Artists"""
         # Prüfe zuerst auf Bar Plots (Rectangle patches mit get_height)

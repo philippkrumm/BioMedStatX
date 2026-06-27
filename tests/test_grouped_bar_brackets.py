@@ -106,3 +106,17 @@ def test_plot_grouped_bar_renders_bars_and_significant_brackets():
     bars = [p for p in ax.patches if (p.get_width() or 0) > 0]
     assert len(bars) == 9
     assert len(ax.lines) >= 3
+
+
+def test_grouped_inputs_from_samples_splits_interaction_labels():
+    samples = {
+        "Ctrl:T1": [1.0, 1.2], "TrtA:T1": [1.4, 1.6],
+        "Ctrl:T2": [2.0, 2.2], "TrtA:T2": [2.6, 2.8],
+    }
+    long_df, within_order, between_order, label_map = \
+        DataVisualizer.grouped_inputs_from_samples(samples, sep=":")
+    assert set(long_df.columns) == {"within", "between", "value"}
+    assert len(long_df) == 8
+    assert between_order == ["Ctrl", "TrtA"]   # first-seen order
+    assert within_order == ["T1", "T2"]
+    assert label_map["Ctrl:T2"] == ("Ctrl", "T2")
