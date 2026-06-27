@@ -336,6 +336,35 @@ class DataVisualizer:
             return 1.0  # Absoluter Fallback
 
     @staticmethod
+    def _result_uses_brackets(pairwise_results, posthoc_method=None):
+        """Whether a flat (non-grouped) plot should draw significance brackets
+        instead of a compact-letter display.
+
+        Brackets for explicit pairwise tests (t-test / Mann-Whitney / Wilcoxon)
+        AND for the EMM + multivariate-t families (treatment-vs-control,
+        level-vs-baseline) — for a many-to-one comparison structure a
+        compact-letter display (which implies all-pairs grouping) would
+        misrepresent the result. This is the pure-RM EMM/mvt rendering path.
+        """
+        _bar_keywords = (
+            'pairwise t-test', 'pairwise t test', 'paired t-test', 'independent t-test',
+            'pairwise mann-whitney', 'pairwise mann whitney', 'mann-whitney',
+            'wilcoxon', 'pairwise wilcoxon',
+            'multivariate-t', 'emm',
+        )
+        if pairwise_results:
+            test_name = str(pairwise_results[0].get('test', '')).lower()
+            return any(k in test_name for k in _bar_keywords)
+        if isinstance(posthoc_method, str):
+            ml = posthoc_method.lower()
+            return any(k in ml for k in (
+                'pairwise t-test', 'pairwise t test', 'pairwise mann-whitney',
+                'pairwise mann whitney', 'pairwise_mannwhitney', 'pairwise_ttest',
+                'multivariate-t', 'emm',
+            ))
+        return False
+
+    @staticmethod
     def _add_pairwise_comparisons(ax, groups, compare, pairwise_results, config=None, df=None):
         """
     Verbesserte significance brackets mit konfigurierbaren Parametern.
@@ -979,40 +1008,15 @@ class DataVisualizer:
         show_letters = True  # Standard: Buchstaben zeigen
         show_bars = False
 
-        # Prüfe zuerst, ob wir den Post-hoc Test Typ aus pairwise_results ermitteln können
+        # Decide brackets vs compact-letter display from the post-hoc test type.
         if pairwise_results is not None and len(pairwise_results) > 0:
-            # Schaue auf den ersten Vergleich, um den Test-Typ zu bestimmen
-            first_comparison = pairwise_results[0]
-            test_name = first_comparison.get('test', '').lower()
-            
-            # Nur bei Pairwise T-Tests oder Mann-Whitney Tests Bars zeigen
-            if any(keyword in test_name for keyword in [
-                'pairwise t-test', 'pairwise t test', 'paired t-test', 'independent t-test',
-                'pairwise mann-whitney', 'pairwise mann whitney', 'mann-whitney',
-                'wilcoxon', 'pairwise wilcoxon'
-            ]):
-                show_letters = False
-                show_bars = True
-                logger.debug(f"DEBUG: Using bars for test: {test_name}")
-            else:
-                show_letters = True
-                show_bars = False
-                logger.debug(f"DEBUG: Using letters for test: {test_name}")
-        
-        # Fallback auf posthoc_method falls pairwise_results test nicht erkannt wurde
+            show_bars = DataVisualizer._result_uses_brackets(pairwise_results, None)
+            show_letters = not show_bars
+            logger.debug(f"DEBUG: show_bars={show_bars} for test: {pairwise_results[0].get('test', '')}")
         elif posthoc_method is not None and isinstance(posthoc_method, str):
-            method_lower = posthoc_method.lower()
-            if any(keyword in method_lower for keyword in [
-                "pairwise t-test", "pairwise t test", "pairwise mann-whitney", 
-                "pairwise mann whitney", "pairwise_mannwhitney", "pairwise_ttest"
-            ]):
-                show_letters = False
-                show_bars = True
-                logger.debug(f"DEBUG: Using bars for posthoc_method: {posthoc_method}")
-            else:
-                show_letters = True
-                show_bars = False
-                logger.debug(f"DEBUG: Using letters for posthoc_method: {posthoc_method}")
+            show_bars = DataVisualizer._result_uses_brackets(None, posthoc_method)
+            show_letters = not show_bars
+            logger.debug(f"DEBUG: show_bars={show_bars} for posthoc_method: {posthoc_method}")
         else:
             # Kein Post-hoc Test: Standard Letters
             show_letters = True
@@ -1198,40 +1202,15 @@ class DataVisualizer:
         show_letters = True  # Standard: Buchstaben zeigen
         show_bars = False
 
-        # Prüfe zuerst, ob wir den Post-hoc Test Typ aus pairwise_results ermitteln können
+        # Decide brackets vs compact-letter display from the post-hoc test type.
         if pairwise_results is not None and len(pairwise_results) > 0:
-            # Schaue auf den ersten Vergleich, um den Test-Typ zu bestimmen
-            first_comparison = pairwise_results[0]
-            test_name = first_comparison.get('test', '').lower()
-            
-            # Nur bei Pairwise T-Tests oder Mann-Whitney Tests Bars zeigen
-            if any(keyword in test_name for keyword in [
-                'pairwise t-test', 'pairwise t test', 'paired t-test', 'independent t-test',
-                'pairwise mann-whitney', 'pairwise mann whitney', 'mann-whitney',
-                'wilcoxon', 'pairwise wilcoxon'
-            ]):
-                show_letters = False
-                show_bars = True
-                logger.debug(f"DEBUG: Using bars for test: {test_name}")
-            else:
-                show_letters = True
-                show_bars = False
-                logger.debug(f"DEBUG: Using letters for test: {test_name}")
-        
-        # Fallback auf posthoc_method falls pairwise_results test nicht erkannt wurde
+            show_bars = DataVisualizer._result_uses_brackets(pairwise_results, None)
+            show_letters = not show_bars
+            logger.debug(f"DEBUG: show_bars={show_bars} for test: {pairwise_results[0].get('test', '')}")
         elif posthoc_method is not None and isinstance(posthoc_method, str):
-            method_lower = posthoc_method.lower()
-            if any(keyword in method_lower for keyword in [
-                "pairwise t-test", "pairwise t test", "pairwise mann-whitney", 
-                "pairwise mann whitney", "pairwise_mannwhitney", "pairwise_ttest"
-            ]):
-                show_letters = False
-                show_bars = True
-                logger.debug(f"DEBUG: Using bars for posthoc_method: {posthoc_method}")
-            else:
-                show_letters = True
-                show_bars = False
-                logger.debug(f"DEBUG: Using letters for posthoc_method: {posthoc_method}")
+            show_bars = DataVisualizer._result_uses_brackets(None, posthoc_method)
+            show_letters = not show_bars
+            logger.debug(f"DEBUG: show_bars={show_bars} for posthoc_method: {posthoc_method}")
         else:
             # Kein Post-hoc Test: Standard Letters
             show_letters = True
@@ -1429,40 +1408,15 @@ class DataVisualizer:
         show_letters = True  # Standard: Buchstaben zeigen
         show_bars = False
 
-        # Prüfe zuerst, ob wir den Post-hoc Test Typ aus pairwise_results ermitteln können
+        # Decide brackets vs compact-letter display from the post-hoc test type.
         if pairwise_results is not None and len(pairwise_results) > 0:
-            # Schaue auf den ersten Vergleich, um den Test-Typ zu bestimmen
-            first_comparison = pairwise_results[0]
-            test_name = first_comparison.get('test', '').lower()
-            
-            # Nur bei Pairwise T-Tests oder Mann-Whitney Tests Bars zeigen
-            if any(keyword in test_name for keyword in [
-                'pairwise t-test', 'pairwise t test', 'paired t-test', 'independent t-test',
-                'pairwise mann-whitney', 'pairwise mann whitney', 'mann-whitney',
-                'wilcoxon', 'pairwise wilcoxon'
-            ]):
-                show_letters = False
-                show_bars = True
-                logger.debug(f"DEBUG: Using bars for test: {test_name}")
-            else:
-                show_letters = True
-                show_bars = False
-                logger.debug(f"DEBUG: Using letters for test: {test_name}")
-        
-        # Fallback auf posthoc_method falls pairwise_results test nicht erkannt wurde
+            show_bars = DataVisualizer._result_uses_brackets(pairwise_results, None)
+            show_letters = not show_bars
+            logger.debug(f"DEBUG: show_bars={show_bars} for test: {pairwise_results[0].get('test', '')}")
         elif posthoc_method is not None and isinstance(posthoc_method, str):
-            method_lower = posthoc_method.lower()
-            if any(keyword in method_lower for keyword in [
-                "pairwise t-test", "pairwise t test", "pairwise mann-whitney", 
-                "pairwise mann whitney", "pairwise_mannwhitney", "pairwise_ttest"
-            ]):
-                show_letters = False
-                show_bars = True
-                logger.debug(f"DEBUG: Using bars for posthoc_method: {posthoc_method}")
-            else:
-                show_letters = True
-                show_bars = False
-                logger.debug(f"DEBUG: Using letters for posthoc_method: {posthoc_method}")
+            show_bars = DataVisualizer._result_uses_brackets(None, posthoc_method)
+            show_letters = not show_bars
+            logger.debug(f"DEBUG: show_bars={show_bars} for posthoc_method: {posthoc_method}")
         else:
             # Kein Post-hoc Test: Standard Letters
             show_letters = True

@@ -173,8 +173,20 @@ def perform_advanced_test_pipeline(
                     test_info=test_info,
                 )
             elif test in ("ancova", "two_way_ancova"):
+                # Let the user pick a control level so the EMM post-hoc uses the
+                # vs-control (multivariate-t) family; None => pairwise fallback.
+                ancova_control = None
+                if control_group_callback and between:
+                    try:
+                        primary_levels = sorted(
+                            str(v) for v in df_transformed[between[0]].dropna().unique()
+                        )
+                        ancova_control = control_group_callback(primary_levels)
+                    except Exception as exc:
+                        logger.warning("ANCOVA control-group selection failed: %s", exc)
                 res = StatisticalTester._run_ancova_logged(
-                    df_transformed, dv, between, covariates, alpha, test_info=test_info
+                    df_transformed, dv, between, covariates, alpha,
+                    test_info=test_info, control_group=ancova_control,
                 )
             elif test == "lmm":
                 res = StatisticalTester._run_lmm_logged(

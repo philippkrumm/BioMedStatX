@@ -89,13 +89,17 @@ class ANCOVAModel:
         self._between_factors = None
         self._covariates = None
         self._alpha = 0.05
+        self._control_group = None
 
-    def fit(self, df, dv, between_factors, covariates, alpha=0.05):
+    def fit(self, df, dv, between_factors, covariates, alpha=0.05, control_group=None):
         import statsmodels.formula.api as smf
         from statsmodels.stats.anova import anova_lm
 
         self._df = df.dropna(subset=[dv] + between_factors + covariates).copy()
         self._alpha = alpha
+        # Control level for vs-control EMM contrasts (original, un-sanitized
+        # label — only column *names* get sanitized, not the level values).
+        self._control_group = control_group
 
         # Sanitize column names for patsy formulas (replace spaces/special chars)
         col_map = _sanitize_columns(self._df, [dv] + between_factors + covariates)
@@ -204,6 +208,123 @@ class ANCOVAModel:
                     }
             means[factor] = adjusted
         return means
+
+    def _emm_functional(self, factor, level):
+        """Linear functional L (length = n model params) whose dot product with
+        the OLS coefficients yields the EMM of ``level`` for ``factor``.
+
+        Built from the *same* balanced reference grid as ``adjusted_means``
+        (other between-factors balanced, covariates at their grand mean), so the
+        contrast L_A - L_B is exactly the difference of adjusted means.
+        """
+        from itertools import product as _product
+        from patsy import dmatrix
+
+        cov_means = {c: self._df[c].mean() for c in self._covariates}
+        other_factors = [f for f in self._between_factors if f != factor]
+        other_levels = [self._df[f].unique() for f in other_factors]
+
+        grid_rows = []
+        for combo in (_product(*other_levels) if other_factors else [()]):
+            row = {factor: level}
+            row.update(dict(zip(other_factors, combo)))
+            row.update(cov_means)
+            grid_rows.append(row)
+        grid = pd.DataFrame(grid_rows)
+
+        design_info = self.result.model.data.design_info
+        X = np.asarray(dmatrix(design_info, grid, return_type="matrix"))
+        return X.mean(axis=0)
+
+    @staticmethod
+    def _mvt_pvalues(t_values, R, df):
+        """Single-step two-sided multivariate-t adjusted p-values for a family
+        of contrasts with correlation matrix ``R`` and ``df`` residual df. This
+        is the emmeans ``adjust="mvt"`` rule: it accounts for the correlation
+        between the contrasts instead of the conservative Bonferroni/Holm bound.
+        """
+        from scipy.stats import multivariate_t, t as student_t
+
+        k = len(t_values)
+        if k == 1:
+            return [float(2.0 * student_t.sf(abs(t_values[0]), df))]
+        rv = multivariate_t(loc=np.zeros(k), shape=R, df=df, allow_singular=True)
+        out = []
+        for tv in t_values:
+            c = abs(float(tv))
+            p_all = float(rv.cdf(np.full(k, c), lower_limit=np.full(k, -c)))
+            out.append(float(min(1.0, max(0.0, 1.0 - p_all))))
+        return out
+
+    def emm_contrasts(self, method="vs_control", control_group=None, factor=None):
+        """EMM (covariate-adjusted) post-hoc contrasts on the primary between
+        factor, computed via ``result.t_test`` on the fitted OLS model.
+
+        method="vs_control": treatment-vs-control family, multivariate-t adjusted
+        (optimal for targeted designs with a defined reference, e.g. empty-vector
+        controls in Dual-Luciferase assays). Requires ``control_group``.
+
+        method="pairwise": all C(G,2) contrasts, Holm-Bonferroni adjusted.
+
+        Returns a list of comparison dicts (group1, group2, estimate, se, t, df,
+        p_value, significant) or ``None`` if the model is not fitted / <2 levels.
+        Each estimate has sign ``mean(group1) - mean(group2)``.
+        """
+        if self.result is None:
+            return None
+        factor = factor or self._between_factors[0]
+        levels = list(pd.unique(self._df[factor]))
+        if len(levels) < 2:
+            return None
+
+        functionals = {lvl: self._emm_functional(factor, lvl) for lvl in levels}
+        beta = np.asarray(self.result.params.values, dtype=float)
+        cov_params = np.asarray(self.result.cov_params().values, dtype=float)
+        ddf = float(self.result.df_resid)
+
+        if method == "vs_control":
+            if control_group is None or control_group not in levels:
+                raise ValueError("vs_control requires a control_group present in the data")
+            treatments = [lvl for lvl in levels if lvl != control_group]
+            pairs = [(trt, control_group) for trt in treatments]
+        elif method == "pairwise":
+            from itertools import combinations as _combinations
+            pairs = list(_combinations(levels, 2))
+        else:
+            raise ValueError(f"unknown contrast method {method!r}")
+
+        Lmat = np.vstack([functionals[a] - functionals[b] for a, b in pairs])
+        est = Lmat @ beta
+        cov_c = Lmat @ cov_params @ Lmat.T
+        se = np.sqrt(np.clip(np.diag(cov_c), 0.0, None))
+        with np.errstate(divide="ignore", invalid="ignore"):
+            t_values = np.where(se > 0, est / se, 0.0)
+
+        if method == "vs_control":
+            d = np.sqrt(np.clip(np.diag(cov_c), 1e-300, None))
+            R = cov_c / np.outer(d, d)
+            np.fill_diagonal(R, 1.0)
+            p_adj = self._mvt_pvalues(list(t_values), R, ddf)
+        else:
+            from scipy.stats import t as student_t
+            from statsmodels.stats.multitest import multipletests
+            p_raw = [float(2.0 * student_t.sf(abs(tv), ddf)) for tv in t_values]
+            _, p_adj, _, _ = multipletests(p_raw, alpha=self._alpha, method="holm")
+            p_adj = list(p_adj)
+
+        contrasts = []
+        for (a, b), e, s, tv, p in zip(pairs, est, se, t_values, p_adj):
+            contrasts.append({
+                "group1": str(a),
+                "group2": str(b),
+                "estimate": float(e),
+                "se": float(s),
+                "t": float(tv),
+                "df": ddf,
+                "p_value": float(p),
+                "significant": bool(p < self._alpha),
+            })
+        return contrasts
 
     def run_simple_slopes_and_jn(self):
         """Perform Simple Slopes (Pick-a-Point) and Johnson-Neyman analysis when slopes are heterogeneous."""
@@ -349,6 +470,34 @@ class ANCOVAModel:
         slope_homogeneity = self.check_regression_slope_homogeneity()
         adj_means = self.adjusted_means()
 
+        # EMM post-hoc contrasts on the primary between factor. Default to the
+        # vs-control family (EMM + multivariate-t) when a control group is
+        # identifiable; otherwise fall back to all-pairwise (EMM + Holm) so the
+        # pipeline never crashes on missing control metadata.
+        emm_comparisons = []
+        posthoc_label = None
+        try:
+            primary = self._between_factors[0]
+            primary_levels = list(pd.unique(self._df[primary]))
+            # Resolve the control label dtype-safely: the UI hands back a string,
+            # but the actual level values may be numeric.
+            ctrl = None
+            if self._control_group is not None:
+                ctrl = next(
+                    (lvl for lvl in primary_levels
+                     if str(lvl) == str(self._control_group)),
+                    None,
+                )
+            if ctrl is not None:
+                emm_comparisons = self.emm_contrasts(method="vs_control", control_group=ctrl)
+                posthoc_label = f"EMM contrasts vs control '{ctrl}' (multivariate-t)"
+            elif len(primary_levels) >= 2:
+                emm_comparisons = self.emm_contrasts(method="pairwise")
+                posthoc_label = "EMM pairwise contrasts (Holm-Bonferroni)"
+        except Exception as exc:
+            logger.error(f"Error computing ANCOVA EMM contrasts: {exc}")
+            emm_comparisons = []
+
         # Determine if slopes are heterogeneous (any interaction p < alpha)
         slopes_heterogeneous = any(v.get("p_value") is not None and v.get("p_value") < self._alpha for v in slope_homogeneity.values())
         
@@ -411,6 +560,8 @@ class ANCOVAModel:
             "anova_table": anova_rows,
             "covariate_effects": covariate_effects,
             "adjusted_means": adj_means,
+            "pairwise_comparisons": emm_comparisons,
+            "posthoc_test": posthoc_label,
             "slope_homogeneity": slope_homogeneity,
             "slopes_heterogeneous": slopes_heterogeneous,
             "simple_slopes_analysis": simple_slopes_analysis,

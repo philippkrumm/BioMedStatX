@@ -512,6 +512,10 @@ class UIDialogManager:
                 options.append(
                     ("Dunnett vs control, each timepoint (EMM + multivariate-t)", "emm_mvt")
                 )
+            if "repeated_measures_anova" in progress_text:
+                options.append(
+                    ("Dunnett vs baseline level (EMM + multivariate-t)", "emm_mvt")
+                )
         else:
             # For One-Way ANOVA (Welch): offer unconditional robust options
             options = []

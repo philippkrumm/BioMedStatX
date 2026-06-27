@@ -119,6 +119,84 @@ def _mvt_adjusted_p(t_values: list[float], df: float) -> list[float]:
     return out
 
 
+@dataclass
+class RMStrata:
+    W: int
+    n: int
+    df_res: int
+    ms_res: float
+    cell_means: pd.Series             # index = within level
+    within_levels: list
+
+
+def rm_strata(df: pd.DataFrame, dv: str, subject: str, within: str) -> RMStrata:
+    """Single within-subject error stratum for a balanced, complete one-way
+    repeated-measures design. Raises UnsupportedDesignError otherwise."""
+    data = df[[subject, within, dv]].dropna()
+    within_levels = list(pd.unique(data[within]))
+    W = len(within_levels)
+
+    counts = data.groupby([subject, within]).size()
+    if not (counts == 1).all():
+        raise UnsupportedDesignError("subjects must have exactly one row per within level")
+    n_per = data.groupby(within)[subject].nunique()
+    if n_per.nunique() != 1:
+        raise UnsupportedDesignError("unbalanced: within levels differ in subject count")
+    n = int(n_per.iloc[0])
+    if len(data) != W * n:
+        raise UnsupportedDesignError("incomplete cells in the design")
+
+    grand = data[dv].mean()
+    subj_mean = data.groupby(subject)[dv].mean()
+    cell_means = data.groupby(within)[dv].mean()
+
+    ss_res = 0.0
+    for _, r in data.iterrows():
+        e = r[dv] - subj_mean[r[subject]] - cell_means[r[within]] + grand
+        ss_res += e * e
+    df_res = (n - 1) * (W - 1)
+    ms_res = ss_res / df_res
+    return RMStrata(W=W, n=n, df_res=df_res, ms_res=ms_res,
+                    cell_means=cell_means, within_levels=within_levels)
+
+
+def rm_dunnett_emm_mvt(df: pd.DataFrame, dv: str, subject: str, within: str,
+                       control_level, alpha: float = 0.05) -> list[dict]:
+    """Level-vs-baseline EMM contrasts for a pure one-way RM ANOVA, jointly
+    multivariate-t adjusted. Reproduces R emmeans on a univariate aov model:
+    ``emmeans(~within) |> contrast("trt.vs.ctrl", adjust="mvt")``.
+
+    Under the univariate RM model (compound symmetry / sphericity) every
+    vs-baseline contrast shares the pooled within-subject error, giving
+    Var=2*MS_res/n, Cov=MS_res/n => equicorrelation 0.5 — the same structure as
+    independent-groups Dunnett, so the closed-form mvt in ``_mvt_adjusted_p``
+    applies exactly. Callers must fall back to the isolated paired-t path on
+    UnsupportedDesignError (unbalanced/incomplete designs).
+    """
+    s = rm_strata(df, dv=dv, subject=subject, within=within)
+    if control_level not in s.within_levels:
+        raise UnsupportedDesignError(f"control level {control_level!r} not present")
+
+    se = float(np.sqrt(2.0 * s.ms_res / s.n))
+    treatments = [lvl for lvl in s.within_levels if lvl != control_level]
+
+    t_values, rows = [], []
+    for lvl in treatments:
+        est = float(s.cell_means[lvl] - s.cell_means[control_level])
+        tval = est / se if se > 0 else 0.0
+        t_values.append(tval)
+        rows.append({"level": lvl, "control": control_level, "estimate": est,
+                     "se": se, "df": float(s.df_res), "t": tval})
+
+    p_adj = _mvt_adjusted_p(t_values, float(s.df_res))
+    results: list[dict] = []
+    for row, p in zip(rows, p_adj):
+        row["p_value"] = p
+        row["significant"] = bool(p < alpha)
+        results.append(row)
+    return results
+
+
 def mixed_dunnett_emm_mvt(df: pd.DataFrame, dv: str, subject: str, between: str,
                           within: str, control_group, alpha: float = 0.05) -> list[dict]:
     """Treatment-vs-control EMM contrasts at each within level, mvt-adjusted

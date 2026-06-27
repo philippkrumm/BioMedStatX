@@ -1497,9 +1497,9 @@ class StatisticalTester:
         )
     
     @staticmethod
-    def _run_ancova_logged(df, dv, between, covariates, alpha=0.05, test_info=None):
+    def _run_ancova_logged(df, dv, between, covariates, alpha=0.05, test_info=None, control_group=None):
         def _test_func(df, dv, subject=None, between=None, within=None, alpha=0.05):
-            return StatisticalTester._run_ancova(df, dv, between, covariates, alpha)
+            return StatisticalTester._run_ancova(df, dv, between, covariates, alpha, control_group=control_group)
         return StatisticalTester._run_any_parametric_test(
             df=df,
             dv=dv,
@@ -1565,11 +1565,12 @@ class StatisticalTester:
         return raw
 
     @staticmethod
-    def _run_ancova(df, dv, between, covariates, alpha=0.05):
+    def _run_ancova(df, dv, between, covariates, alpha=0.05, control_group=None):
         from analysis.clinical_models import ANCOVAModel
         try:
             model = ANCOVAModel()
-            model.fit(df, dv=dv, between_factors=between, covariates=covariates or [], alpha=alpha)
+            model.fit(df, dv=dv, between_factors=between, covariates=covariates or [],
+                      alpha=alpha, control_group=control_group)
             return StatisticalTester._standardize_results(model.as_results_dict())
         except Exception as e:
             return {"error": str(e), "test": "ANCOVA"}

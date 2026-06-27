@@ -1240,6 +1240,7 @@ class _ChartsMixin:
 
             figure = go.Figure()
             palette = ["#0f766e", "#1f7a5a", "#b7791f", "#9f3a38", "#1d4ed8", "#7c3aed"]
+            group_order = []
 
             for _factor, levels in adjusted_means.items():
                 if not isinstance(levels, dict):
@@ -1267,9 +1268,14 @@ class _ChartsMixin:
                         marker_opacity=0.82,
                         width=0.45,
                     ))
+                    group_order.append(label)
 
             if not figure.data:
                 return None
+
+            # Overlay EMM post-hoc significance brackets (group labels match the
+            # contrast group1/group2, which are the adjusted-means level labels).
+            _ChartsMixin._build_significance_brackets(figure, results, group_order)
 
             cov_str = ", ".join(covariates_used) if covariates_used else "none"
             figure.update_layout(

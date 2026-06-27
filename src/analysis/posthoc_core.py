@@ -1002,6 +1002,32 @@ class RMAnovaPostHocAnalyzer(PostHocAnalyzer):
         result = PostHocAnalyzer.create_result_template("RM ANOVA Post-hoc Tests")
         
         try:
+            if method and method.lower() == "emm_mvt":
+                from analysis.emm_posthoc import rm_dunnett_emm_mvt, UnsupportedDesignError
+                within_factor = within[0] if isinstance(within, (list, tuple)) else within
+                try:
+                    contrasts = rm_dunnett_emm_mvt(
+                        df, dv=dv, subject=subject, within=within_factor,
+                        control_level=control_group, alpha=alpha,
+                    )
+                except UnsupportedDesignError as exc:
+                    logger.warning("RM EMM/mvt unavailable (%s); falling back to isolated t-tests", exc)
+                else:
+                    emm_result = PostHocAnalyzer.create_result_template(
+                        "Dunnett-type (EMM + multivariate-t, RM level-vs-baseline)")
+                    for c in contrasts:
+                        PostHocAnalyzer.add_comparison(
+                            emm_result,
+                            group1=str(c["control"]),
+                            group2=str(c["level"]),
+                            test="EMM + multivariate-t",
+                            p_value=c["p_value"],
+                            statistic=c["t"],
+                            significant=c["significant"],
+                            correction_method="multivariate-t (level vs baseline)",
+                        )
+                    return emm_result
+
             logger.debug(f"DEBUG RM POSTHOC: selected_comparisons = {selected_comparisons}")
             
             # Normalize comparison pairs function (consistent with other ANOVAs)
