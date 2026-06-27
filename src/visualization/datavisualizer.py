@@ -439,6 +439,32 @@ class DataVisualizer:
         return {i: (i-0.4, i+0.4) for i in range(1, n_groups+1)}
 
     @staticmethod
+    def _grouped_bar_centers(ax, between_order, within_order):
+        """Map each present (between_level, within_level) cell to its rendered
+        bar's center x — by COORDINATES, not patch index, so a missing/all-NaN
+        cell (seaborn omits its patch) cannot shift other cells and mis-place a
+        bracket. Each bar self-identifies: integer tick -> within level; dodge
+        slot -> between level. Missing cells are simply absent from the result.
+        """
+        n_b = len(between_order)
+        bars = [p for p in ax.patches
+                if hasattr(p, "get_width") and (p.get_width() or 0) > 0]
+        if not bars:
+            return {}
+        width = bars[0].get_width()
+        centers = {}
+        for p in bars:
+            cx = p.get_x() + p.get_width() / 2.0
+            tick = int(round(cx))
+            if not (0 <= tick < len(within_order)):
+                continue
+            slot = int(round((cx - tick) / width + (n_b - 1) / 2.0))
+            if not (0 <= slot < n_b):
+                continue
+            centers[(between_order[slot], within_order[tick])] = cx
+        return centers
+
+    @staticmethod
     def _detect_plot_type(ax):
         """Detektiert den Plot-Typ basierend auf vorhandenen Artists"""
         # Prüfe zuerst auf Bar Plots (Rectangle patches mit get_height)
