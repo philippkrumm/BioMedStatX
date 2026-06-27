@@ -77,3 +77,32 @@ def test_grouped_bracket_positions_only_within_stratum_and_stacked():
         assert {round(b["x1"], 2), round(b["x2"], 2)} <= {-0.27, 0.0, 0.27, 0.73, 1.0, 1.27}
     t1 = sorted([b["height"] for b in brackets if b["x1"] < 0.5])
     assert t1[0] < t1[1]
+
+
+def test_plot_grouped_bar_renders_bars_and_significant_brackets():
+    import numpy as np
+    long_df = pd.DataFrame({
+        "within":  (["T1", "T2", "T3"] * 3) * 6,
+        "between": (["Ctrl"] * 9 + ["TrtA"] * 9 + ["TrtB"] * 9) * 2,
+        "value":   None,
+    })
+    rng = np.random.default_rng(0)
+    base = {("Ctrl", "T1"): 10, ("Ctrl", "T2"): 10, ("Ctrl", "T3"): 10,
+            ("TrtA", "T1"): 10, ("TrtA", "T2"): 11, ("TrtA", "T3"): 16,
+            ("TrtB", "T1"): 10, ("TrtB", "T2"): 10, ("TrtB", "T3"): 10}
+    long_df["value"] = [base[(b, w)] + rng.normal(0, 0.3)
+                        for b, w in zip(long_df["between"], long_df["within"])]
+    pairwise = [
+        {"group1": "Ctrl:T3", "group2": "TrtA:T3", "p_value": 0.0001, "significant": True},
+        {"group1": "Ctrl:T3", "group2": "TrtB:T3", "p_value": 0.9,    "significant": False},
+    ]
+    label_map = {"Ctrl:T3": ("Ctrl", "T3"), "TrtA:T3": ("TrtA", "T3"),
+                 "TrtB:T3": ("TrtB", "T3")}
+    ax = DataVisualizer.plot_grouped_bar(
+        long_df=long_df, within="within", between="between", value="value",
+        within_order=["T1", "T2", "T3"], between_order=["Ctrl", "TrtA", "TrtB"],
+        pairwise_results=pairwise, label_map=label_map, ax=None, save_plot=False,
+    )
+    bars = [p for p in ax.patches if (p.get_width() or 0) > 0]
+    assert len(bars) == 9
+    assert len(ax.lines) >= 3

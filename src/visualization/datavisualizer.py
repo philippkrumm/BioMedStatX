@@ -504,6 +504,66 @@ class DataVisualizer:
         return brackets
 
     @staticmethod
+    def plot_grouped_bar(long_df, within, between, value,
+                         within_order, between_order,
+                         pairwise_results=None, label_map=None,
+                         width=8, height=6, dpi=300,
+                         color_palette="Greys", error_type="sd",
+                         show_error_bars=True, p_value_style="Fixed stars",
+                         bracket_line_width=1.5, bracket_vertical_fraction=0.05,
+                         bracket_color="#000000", comparison_line_height=0.1,
+                         comparison_font_size=14,
+                         x_label=None, y_label=None, title=None,
+                         save_plot=True, file_name=None, file_formats=("png", "svg"),
+                         ax=None):
+        """Grouped bar plot (x=within factor, hue=between factor) with
+        within-stratum treatment-vs-control significance brackets.
+
+        long_df: long-form data with columns [within, between, value].
+        label_map: {"<between>:<within>": (between_level, within_level)} so the
+        pairwise comparison group labels resolve to grouped-bar cells.
+        Returns the matplotlib Axes.
+        """
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(width, height), dpi=dpi)
+        else:
+            fig = ax.figure
+
+        colors = sns.color_palette(color_palette, len(between_order))
+        sns.barplot(
+            data=long_df, x=within, y=value, hue=between,
+            order=within_order, hue_order=between_order,
+            errorbar=(error_type if show_error_bars else None),
+            palette=colors, ax=ax,
+        )
+
+        if pairwise_results and label_map:
+            centers = DataVisualizer._grouped_bar_centers(
+                ax, between_order=between_order, within_order=within_order)
+            y_max = DataVisualizer._get_plot_max_height_robust(ax, None)
+            brackets = DataVisualizer._grouped_bracket_positions(
+                centers, label_map, pairwise_results, y_max, comparison_line_height)
+            for bracket in brackets:
+                DataVisualizer._draw_single_bracket(
+                    ax, bracket, bracket_line_width, comparison_font_size,
+                    bracket_color, bracket_vertical_fraction, p_value_style)
+
+        if x_label:
+            ax.set_xlabel(x_label)
+        if y_label:
+            ax.set_ylabel(y_label)
+        if title:
+            ax.set_title(title)
+
+        if save_plot and file_name:
+            for ext in file_formats:
+                fig.savefig(f"{file_name}.{ext}", dpi=dpi, bbox_inches="tight")
+        return ax
+
+    @staticmethod
     def _detect_plot_type(ax):
         """Detektiert den Plot-Typ basierend auf vorhandenen Artists"""
         # Prüfe zuerst auf Bar Plots (Rectangle patches mit get_height)
