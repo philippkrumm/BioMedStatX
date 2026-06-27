@@ -12,8 +12,8 @@
 
 ## Verified facts (established before writing this plan — do not re-derive)
 
-1. **seaborn grouped-bar patch ordering is hue-major.** For `sns.barplot(x=within, hue=between, order=within_order, hue_order=between_order)`, the non-zero-width patches come out in the order `between_order[0]×(all within), between_order[1]×(all within), ...`. So `patch_index = between_idx * len(within_order) + within_idx`. (Spiked: 3 groups × 3 times → 9 patches; Ctrl@T1,T2,T3 then TrtA@T1,T2,T3 then TrtB@…).
-2. **Bar center x** = `patch.get_x() + patch.get_width()/2`. Dodge offsets are automatic (e.g. for 3 hues at tick 0: centers ≈ -0.267, 0.0, +0.267; width ≈ 0.267).
+1. **seaborn grouped-bar patch ordering is hue-major** for a *complete* design. BUT index-based mapping is unsafe: **a missing / all-NaN cell makes seaborn omit that bar's patch entirely** (spiked: TrtA@T2 NaN → 8 real patches, not 9), which shifts every subsequent index and would put a bracket on the wrong bar. Therefore the mapping MUST be coordinate-based, not index-based (see fact 2).
+2. **Each bar self-identifies from its center x**, robustly even under dropouts: `center = patch.get_x() + patch.get_width()/2`; `tick = round(center)` is the within index (offsets are ±~0.27 < 0.5); `slot = round((center - tick)/width + (n_between-1)/2)` is the between index. The dodge `width` and slot offsets stay constant when cells are missing (seaborn reserves slots by `n_between`). Spiked against the TrtA@T2-missing case: every present bar maps to its correct (between, within); the missing cell is simply absent. Centers ≈ {Ctrl:-0.267, TrtA:0.0, TrtB:+0.267} offset within each integer tick; width ≈ 0.267 for 3 hues.
 3. **Bracket drawing is proprietary matplotlib**, no statannotations. `_draw_single_bracket(ax, bracket, line_width, font_size, bracket_color, vertical_fraction, p_value_style)` consumes a dict `{'x1','x2','height','p_value'}` and draws two verticals + a horizontal + a centered label — purely from x-coordinates (datavisualizer.py:585-615).
 4. **Collision stacking** `_brackets_collide(x1, x2, height, used)` (datavisualizer.py:558-568) is x-overlap based and can be reused directly with patch-center coordinates (unlike `_brackets_collide_improved`, which is group-index based).
 5. **The EMM result only ever contains within-stratum control-vs-treatment pairs** (`group1="Ctrl:T1"`, `group2="TrtA:T1"`, …). No cross-stratum pairs exist, so no cross-stratum brackets can be produced — the "Treatment:T2 vs Ctrl:T1" risk is structurally absent.
@@ -78,6 +78,35 @@ def test_grouped_bar_centers_maps_each_cell_to_its_dodged_center():
     off = centers[("Ctrl", "T1")] - centers[("TrtA", "T1")]
     assert centers[("Ctrl", "T2")] - centers[("TrtA", "T2")] == pytest.approx(off, abs=1e-6)
     assert centers[("TrtA", "T2")] == pytest.approx(1.0, abs=1e-6)
+
+
+def test_grouped_bar_centers_robust_to_dropout_no_misassignment():
+    """A missing cell (biological dropout) must NOT shift other cells'
+    coordinates. seaborn omits the missing bar's patch entirely, so an
+    index-based map would mis-place brackets; the coordinate-based map must
+    keep every present cell correct and simply drop the missing one.
+    """
+    import numpy as np
+    df = pd.DataFrame({
+        "Time":  ["T1", "T2", "T3"] * 3,
+        "Group": ["Ctrl"] * 3 + ["TrtA"] * 3 + ["TrtB"] * 3,
+        "Value": [1.0, 2.0, 3.0, 1.5, 2.5, 4.0, 0.9, 1.8, 2.2],
+    })
+    df.loc[(df.Time == "T2") & (df.Group == "TrtA"), "Value"] = np.nan  # dropout
+    fig, ax = plt.subplots()
+    sns.barplot(data=df, x="Time", y="Value", hue="Group",
+                order=["T1", "T2", "T3"], hue_order=["Ctrl", "TrtA", "TrtB"],
+                errorbar=None, ax=ax)
+    centers = DataVisualizer._grouped_bar_centers(
+        ax, between_order=["Ctrl", "TrtA", "TrtB"], within_order=["T1", "T2", "T3"])
+    # missing cell is absent, NOT silently mapped to a neighbour
+    assert ("TrtA", "T2") not in centers
+    assert len(centers) == 8
+    # the cell AFTER the gap keeps its correct coordinate (tick 2 == T3)
+    assert centers[("TrtA", "T3")] == pytest.approx(2.0, abs=1e-6)
+    # controls/other treatments unaffected
+    assert centers[("Ctrl", "T2")] == pytest.approx(0.733, abs=1e-2)
+    assert centers[("TrtB", "T2")] == pytest.approx(1.267, abs=1e-2)
 ```
 
 - [ ] **Step 2: Run it, verify it FAILS**
@@ -90,22 +119,28 @@ Expected: FAIL — `AttributeError: ... has no attribute '_grouped_bar_centers'`
 ```python
     @staticmethod
     def _grouped_bar_centers(ax, between_order, within_order):
-        """Map each (between_level, within_level) cell to its rendered bar's
-        center x. seaborn lays grouped bars out hue-major: for each hue level
-        (between_order), all x positions (within_order) in order.
+        """Map each present (between_level, within_level) cell to its rendered
+        bar's center x — by COORDINATES, not patch index, so a missing/all-NaN
+        cell (seaborn omits its patch) cannot shift other cells and mis-place a
+        bracket. Each bar self-identifies: integer tick -> within level; dodge
+        slot -> between level. Missing cells are simply absent from the result.
         """
+        n_b = len(between_order)
         bars = [p for p in ax.patches
                 if hasattr(p, "get_width") and (p.get_width() or 0) > 0]
-        n_w = len(within_order)
-        expected = len(between_order) * n_w
-        if len(bars) < expected:
-            raise ValueError(
-                f"grouped barplot has {len(bars)} bars, expected {expected}")
+        if not bars:
+            return {}
+        width = bars[0].get_width()
         centers = {}
-        for h_idx, b_lev in enumerate(between_order):
-            for w_idx, w_lev in enumerate(within_order):
-                p = bars[h_idx * n_w + w_idx]
-                centers[(b_lev, w_lev)] = p.get_x() + p.get_width() / 2.0
+        for p in bars:
+            cx = p.get_x() + p.get_width() / 2.0
+            tick = int(round(cx))
+            if not (0 <= tick < len(within_order)):
+                continue
+            slot = int(round((cx - tick) / width + (n_b - 1) / 2.0))
+            if not (0 <= slot < n_b):
+                continue
+            centers[(between_order[slot], within_order[tick])] = cx
         return centers
 ```
 
@@ -118,7 +153,7 @@ Expected: PASS
 
 ```bash
 git add src/visualization/datavisualizer.py tests/test_grouped_bar_brackets.py
-git commit -m "feat(viz): patch-center extraction for grouped bar plots"
+git commit -m "feat(viz): coordinate-based bar-center extraction (dropout-safe)"
 ```
 
 ---
@@ -485,6 +520,7 @@ git commit -m "feat(viz): dispatch Mixed EMM/Dunnett result to grouped bar plot"
 - [ ] Significance brackets appear **within each timepoint cluster**, only between a treatment and the control bar of the SAME timepoint. No bracket spans two different timepoints.
 - [ ] Non-significant contrasts draw no bracket (or "n.s." per the chosen p-value style); multiple significant treatments in one stratum stack without overlap.
 - [ ] A one-way ANOVA plot is unchanged (still flat `plot_bar`) — confirms no regression.
+- [ ] (Robustness) If a dropout ever reaches the grouped plot, the present bars keep correct positions and the missing cell simply has no bar/bracket — no bracket is drawn on the wrong bar.
 
 ---
 
