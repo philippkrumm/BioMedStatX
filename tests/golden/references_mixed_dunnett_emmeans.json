@@ -1,0 +1,17 @@
+{
+  "dataset": "tests/golden/mixed_dunnett_emmeans_dataset.csv",
+  "method": "emmeans(~ Group | Time, model=univariate); contrast(trt.vs.ctrl, adjust=mvt)",
+  "family": "treatment-vs-control at each within level",
+  "adjust": "mvt",
+  "r_version": "R version 4.5.3 (2026-03-11)",
+  "afex_version": "1.5.1",
+  "emmeans_version": "2.0.3",
+  "contrasts": [
+    {"Time": "T1", "contrast": "TrtA - Ctrl", "estimate": -9.641025000000e-01, "SE": 7.064413304705e-01, "df": 3.453710679536e+01, "t_ratio": -1.364731165089e+00, "p_value": 3.032699215725e-01},
+    {"Time": "T1", "contrast": "TrtB - Ctrl", "estimate": -8.098960000000e-01, "SE": 7.064413304705e-01, "df": 3.453710679536e+01, "t_ratio": -1.146444814406e+00, "p_value": 4.192989559342e-01},
+    {"Time": "T2", "contrast": "TrtA - Ctrl", "estimate": 1.363526875000e+00, "SE": 7.064413304705e-01, "df": 3.453710679536e+01, "t_ratio": 1.930134628578e+00, "p_value": 1.104825364632e-01},
+    {"Time": "T2", "contrast": "TrtB - Ctrl", "estimate": -4.861541250000e-01, "SE": 7.064413304705e-01, "df": 3.453710679536e+01, "t_ratio": -6.881733896801e-01, "p_value": 7.167436148692e-01},
+    {"Time": "T3", "contrast": "TrtA - Ctrl", "estimate": 3.254186625000e+00, "SE": 7.064413304705e-01, "df": 3.453710679536e+01, "t_ratio": 4.606449940907e+00, "p_value": 1.086678208173e-04},
+    {"Time": "T3", "contrast": "TrtB - Ctrl", "estimate": -1.927621250000e-01, "SE": 7.064413304705e-01, "df": 3.453710679536e+01, "t_ratio": -2.728636005365e-01, "p_value": 9.471288736193e-01} 
+  ]
+}
