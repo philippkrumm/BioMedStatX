@@ -77,3 +77,25 @@ def split_plot_strata(df: pd.DataFrame, dv: str, subject: str,
     return SplitPlotStrata(G=G, W=W, n_per_group=n, df_sg=df_sg, df_res=df_res,
                            ms_sg=ms_sg, ms_res=ms_res, cell_means=cell_means,
                            group_levels=group_levels, within_levels=within_levels)
+
+
+def variance_components(s: SplitPlotStrata) -> tuple[float, float]:
+    """Return (sig_s2, sig_w2): between-subject and within-subject variances."""
+    sig_w2 = s.ms_res
+    sig_s2 = (s.ms_sg - s.ms_res) / s.W
+    return sig_s2, sig_w2
+
+
+def contrast_se_df(s: SplitPlotStrata) -> tuple[float, float]:
+    """Constant contrast SE and the Satterthwaite df for a between-group
+    contrast at a fixed within level."""
+    sig_s2, sig_w2 = variance_components(s)
+    var_t = sig_s2 + sig_w2                      # per-obs variance at a fixed level
+    se = float(np.sqrt(2.0 * var_t / s.n_per_group))
+
+    c1 = 1.0 / s.W
+    c2 = (s.W - 1.0) / s.W
+    num = (c1 * s.ms_sg + c2 * s.ms_res) ** 2
+    den = (c1 * s.ms_sg) ** 2 / s.df_sg + (c2 * s.ms_res) ** 2 / s.df_res
+    df = float(num / den)
+    return se, df

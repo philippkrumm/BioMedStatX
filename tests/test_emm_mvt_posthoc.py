@@ -27,3 +27,14 @@ def test_unbalanced_design_raises():
     with pytest.raises(UnsupportedDesignError):
         split_plot_strata(df, dv="Value", subject="Subject",
                           between="Group", within="Time")
+
+
+from analysis.emm_posthoc import contrast_se_df
+
+
+def test_contrast_se_and_satterthwaite_df_match_golden():
+    s = split_plot_strata(_df(), dv="Value", subject="Subject",
+                          between="Group", within="Time")
+    se, df = contrast_se_df(s)
+    assert se == pytest.approx(0.706441, abs=1e-5)
+    assert df == pytest.approx(34.5371, abs=1e-3)
