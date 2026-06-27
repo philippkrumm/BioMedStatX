@@ -1,0 +1,29 @@
+import json
+import os
+import pandas as pd
+import pytest
+from analysis.emm_posthoc import split_plot_strata, UnsupportedDesignError
+
+_DATA = os.path.join("tests", "golden", "mixed_dunnett_emmeans_dataset.csv")
+
+
+def _df():
+    return pd.read_csv(_DATA)
+
+
+def test_split_plot_strata_matches_classical_values():
+    s = split_plot_strata(_df(), dv="Value", subject="Subject",
+                          between="Group", within="Time")
+    assert s.n_per_group == 8
+    assert s.W == 3 and s.G == 3
+    assert s.df_sg == 21 and s.df_res == 42
+    assert s.ms_sg == pytest.approx(4.559091, abs=1e-4)
+    assert s.ms_res == pytest.approx(0.714811, abs=1e-4)
+
+
+def test_unbalanced_design_raises():
+    df = _df()
+    df = df[~((df.Subject == "S01") & (df.Time == "T3"))]  # missing cell
+    with pytest.raises(UnsupportedDesignError):
+        split_plot_strata(df, dv="Value", subject="Subject",
+                          between="Group", within="Time")
