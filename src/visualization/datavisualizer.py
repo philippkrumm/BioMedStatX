@@ -465,6 +465,45 @@ class DataVisualizer:
         return centers
 
     @staticmethod
+    def _grouped_bracket_positions(centers, label_map, pairwise_results,
+                                   y_max, line_height):
+        """Build bracket dicts for treatment-vs-control comparisons using bar
+        patch centers. Each comparison's two groups resolve (via label_map) to
+        (between, within) cells; their center x become x1/x2. Heights are
+        stacked with the existing x-overlap collision check. Comparisons whose
+        groups are not both resolvable/keyed are skipped (defensive).
+        """
+        base_height = y_max * 1.05
+        step = y_max * line_height
+        prepared = []
+        for comp in pairwise_results:
+            g1, g2 = comp.get("group1"), comp.get("group2")
+            c1, c2 = label_map.get(g1), label_map.get(g2)
+            if c1 is None or c2 is None or c1 not in centers or c2 not in centers:
+                continue
+            x1, x2 = centers[c1], centers[c2]
+            if x1 > x2:
+                x1, x2 = x2, x1
+            prepared.append({"comp": comp, "x1": x1, "x2": x2,
+                             "distance": abs(x2 - x1)})
+
+        prepared.sort(key=lambda d: d["distance"])
+        used = []
+        brackets = []
+        for d in prepared:
+            x1, x2 = d["x1"], d["x2"]
+            height = base_height
+            level = 0
+            while DataVisualizer._brackets_collide(x1, x2, height, used):
+                level += 1
+                height = base_height + step * level * 1.2
+            brackets.append({"x1": x1, "x2": x2, "height": height,
+                             "p_value": d["comp"].get("p_value"),
+                             "comp": d["comp"]})
+            used.append((x1, x2, height))
+        return brackets
+
+    @staticmethod
     def _detect_plot_type(ax):
         """Detektiert den Plot-Typ basierend auf vorhandenen Artists"""
         # Prüfe zuerst auf Bar Plots (Rectangle patches mit get_height)

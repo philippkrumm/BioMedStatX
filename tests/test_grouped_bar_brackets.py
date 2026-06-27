@@ -52,3 +52,28 @@ def test_grouped_bar_centers_robust_to_dropout_no_misassignment():
     assert centers[("TrtA", "T3")] == pytest.approx(2.0, abs=1e-6)
     assert centers[("Ctrl", "T2")] == pytest.approx(0.733, abs=1e-2)
     assert centers[("TrtB", "T2")] == pytest.approx(1.267, abs=1e-2)
+
+
+def test_grouped_bracket_positions_only_within_stratum_and_stacked():
+    centers = {
+        ("Ctrl", "T1"): -0.27, ("TrtA", "T1"): 0.0, ("TrtB", "T1"): 0.27,
+        ("Ctrl", "T2"): 0.73, ("TrtA", "T2"): 1.0, ("TrtB", "T2"): 1.27,
+    }
+    label_map = {
+        "Ctrl:T1": ("Ctrl", "T1"), "TrtA:T1": ("TrtA", "T1"), "TrtB:T1": ("TrtB", "T1"),
+        "Ctrl:T2": ("Ctrl", "T2"), "TrtA:T2": ("TrtA", "T2"), "TrtB:T2": ("TrtB", "T2"),
+    }
+    pairwise = [
+        {"group1": "Ctrl:T1", "group2": "TrtA:T1", "p_value": 0.2,  "significant": False},
+        {"group1": "Ctrl:T1", "group2": "TrtB:T1", "p_value": 0.001, "significant": True},
+        {"group1": "Ctrl:T2", "group2": "TrtA:T2", "p_value": 0.04, "significant": True},
+    ]
+    brackets = DataVisualizer._grouped_bracket_positions(
+        centers, label_map, pairwise, y_max=10.0, line_height=0.08
+    )
+    assert len(brackets) == 3
+    for b in brackets:
+        assert b["x1"] < b["x2"]
+        assert {round(b["x1"], 2), round(b["x2"], 2)} <= {-0.27, 0.0, 0.27, 0.73, 1.0, 1.27}
+    t1 = sorted([b["height"] for b in brackets if b["x1"] < 0.5])
+    assert t1[0] < t1[1]
