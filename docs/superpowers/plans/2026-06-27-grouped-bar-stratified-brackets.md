@@ -271,7 +271,7 @@ git commit -m "feat(viz): stratified bracket positions from bar patch centers"
 def test_plot_grouped_bar_renders_bars_and_significant_brackets():
     long_df = pd.DataFrame({
         "within":  (["T1", "T2", "T3"] * 3) * 6,
-        "between": (["Ctrl"] * 9 + ["TrtA"] * 9 + ["TrtB"] * 9) * 1,
+        "between": (["Ctrl"] * 9 + ["TrtA"] * 9 + ["TrtB"] * 9) * 2,  # length 54, aligns with within
         "value":   None,
     })
     # build deterministic values per cell so T3 TrtA differs strongly from Ctrl
