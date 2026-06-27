@@ -90,7 +90,7 @@ class AdvancedPostHocEngine:
                 if posthoc_method is None:
                     posthoc_method = "paired_custom"
                 
-                if posthoc_method == "dunnett":
+                if posthoc_method in ("dunnett", "emm_mvt"):
                     if control_group_callback:
                         control_group = control_group_callback(group_names)
                     elif group_names:
@@ -99,7 +99,7 @@ class AdvancedPostHocEngine:
                 logger.warning("Could not run posthoc_method_callback: %s", exc)
                 posthoc_method = "paired_custom"
 
-            if posthoc_method == "dunnett" and control_group:
+            if posthoc_method in ("dunnett", "emm_mvt") and control_group:
                 selected_comparisons = [(control_group, group) for group in group_names if group != control_group]
             elif posthoc_method == "tukey":
                 selected_comparisons = all_comparisons
