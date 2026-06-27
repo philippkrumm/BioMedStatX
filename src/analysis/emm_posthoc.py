@@ -99,3 +99,54 @@ def contrast_se_df(s: SplitPlotStrata) -> tuple[float, float]:
     den = (c1 * s.ms_sg) ** 2 / s.df_sg + (c2 * s.ms_res) ** 2 / s.df_res
     df = float(num / den)
     return se, df
+
+
+from scipy.stats import multivariate_t, t as student_t
+
+
+def _mvt_adjusted_p(t_values: list[float], df: float) -> list[float]:
+    """Single-step two-sided multivariate-t adjusted p-values for a family that
+    shares one control (balanced => equicorrelation 0.5). Family size k = len."""
+    k = len(t_values)
+    if k == 1:
+        return [float(2.0 * student_t.sf(abs(t_values[0]), df))]
+    R = np.full((k, k), 0.5)
+    np.fill_diagonal(R, 1.0)
+    rv = multivariate_t(loc=np.zeros(k), shape=R, df=df, allow_singular=True)
+    out = []
+    for tv in t_values:
+        c = abs(float(tv))
+        p_all = float(rv.cdf(np.full(k, c), lower_limit=np.full(k, -c)))
+        out.append(float(min(1.0, max(0.0, 1.0 - p_all))))
+    return out
+
+
+def mixed_dunnett_emm_mvt(df: pd.DataFrame, dv: str, subject: str, between: str,
+                          within: str, control_group, alpha: float = 0.05) -> list[dict]:
+    """Treatment-vs-control EMM contrasts at each within level, mvt-adjusted
+    within each within level. Raises UnsupportedDesignError for designs the
+    closed form does not cover (callers must then fall back to isolated t-tests).
+    """
+    s = split_plot_strata(df, dv=dv, subject=subject, between=between, within=within)
+    if control_group not in s.group_levels:
+        raise UnsupportedDesignError(f"control group {control_group!r} not present")
+
+    se, ddf = contrast_se_df(s)
+    treatments = [g for g in s.group_levels if g != control_group]
+
+    results: list[dict] = []
+    for level in s.within_levels:
+        t_values, rows = [], []
+        for trt in treatments:
+            est = float(s.cell_means.loc[trt, level] - s.cell_means.loc[control_group, level])
+            tval = est / se
+            t_values.append(tval)
+            rows.append({"within_level": level, "treatment": trt,
+                         "control": control_group, "estimate": est,
+                         "se": se, "df": ddf, "t": tval})
+        p_adj = _mvt_adjusted_p(t_values, ddf)
+        for row, p in zip(rows, p_adj):
+            row["p_value"] = p
+            row["significant"] = bool(p < alpha)
+            results.append(row)
+    return results
