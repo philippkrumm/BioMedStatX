@@ -2860,7 +2860,38 @@ class DataVisualizer:
                 'comparison_line_height': config.get('bracket_spacing', 0.1),
                 'axis_thickness': config.get('axis_thickness', 0.5),
             })
-            DataVisualizer.plot_bar(groups, samples, **bar_kwargs)
+            # Route the Mixed-ANOVA EMM/multivariate-t (treatment-vs-control)
+            # result to a true grouped bar plot (x=within, hue=between) with
+            # within-stratum brackets. Detect it structurally: interaction-cell
+            # group labels ("between:within") + EMM/multivariate-t pairwise test.
+            _grouped_emm = bool(
+                pairwise_results
+                and groups
+                and all(":" in str(g) for g in groups)
+                and any(("multivariate-t" in str(c.get("test", "")).lower()
+                         or "emm" in str(c.get("test", "")).lower())
+                        for c in pairwise_results)
+            )
+            if _grouped_emm:
+                try:
+                    long_df, w_order, b_order, label_map = \
+                        DataVisualizer.grouped_inputs_from_samples(samples, sep=":")
+                    DataVisualizer.plot_grouped_bar(
+                        long_df=long_df, within="within", between="between", value="value",
+                        within_order=w_order, between_order=b_order,
+                        pairwise_results=pairwise_results, label_map=label_map,
+                        error_type=error_type,
+                        show_error_bars=config.get('show_error_bars', True),
+                        p_value_style=config.get('p_value_style', 'Fixed stars'),
+                        comparison_line_height=config.get('bracket_spacing', 0.1),
+                        comparison_font_size=config.get('bracket_font_size', 16),
+                        save_plot=False, ax=ax,
+                    )
+                except Exception as exc:
+                    logger.warning("grouped EMM plot failed (%s); using flat plot_bar", exc)
+                    DataVisualizer.plot_bar(groups, samples, **bar_kwargs)
+            else:
+                DataVisualizer.plot_bar(groups, samples, **bar_kwargs)
 
         elif plot_type == "Box":
             box_kwargs = _base_no_font.copy()
