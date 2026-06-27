@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+from scipy.stats import multivariate_t, t as student_t
 
 
 class UnsupportedDesignError(ValueError):
@@ -99,9 +100,6 @@ def contrast_se_df(s: SplitPlotStrata) -> tuple[float, float]:
     den = (c1 * s.ms_sg) ** 2 / s.df_sg + (c2 * s.ms_res) ** 2 / s.df_res
     df = float(num / den)
     return se, df
-
-
-from scipy.stats import multivariate_t, t as student_t
 
 
 def _mvt_adjusted_p(t_values: list[float], df: float) -> list[float]:
