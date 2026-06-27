@@ -137,6 +137,21 @@ class DecisionTreeVisualizer:
         return FlowchartVisualizer.visualize(results, output_path)
 
     @staticmethod
+    def _mixed_posthoc_node(posthoc_test: str) -> str:
+        """Map a Mixed-ANOVA post-hoc test name to its decision-tree node.
+
+        Treatment-vs-control / EMM contrasts are between-group comparisons, so
+        they belong on the between-groups branch, not the within-subject one
+        (which would mislead the user about what was actually compared).
+        """
+        ph = (posthoc_test or "").lower()
+        if "tukey" in ph:
+            return "MIXED_TUKEY"
+        if any(kw in ph for kw in ("between", "dunnett", "emm", "multivariate")):
+            return "MIXED_BETWEEN"
+        return "MIXED_WITHIN"
+
+    @staticmethod
     def get_tree_json(results: dict) -> dict | None:
         """
         Returns the decision tree topology as a JSON-serializable dict.
@@ -504,13 +519,10 @@ class DecisionTreeVisualizer:
                                 highlighted.add(('MIXED_ANOVA_CORRECTED','MIXED_POSTHOC'))
                             else:
                                 highlighted.add(('MIXED_ANOVA_STANDARD','MIXED_POSTHOC'))
-                            ph = posthoc_test.lower()
-                            if "tukey" in ph:
-                                highlighted.add(('MIXED_POSTHOC','MIXED_TUKEY'))
-                            elif "between" in ph:
-                                highlighted.add(('MIXED_POSTHOC','MIXED_BETWEEN'))
-                            else:
-                                highlighted.add(('MIXED_POSTHOC','MIXED_WITHIN'))
+                            highlighted.add((
+                                'MIXED_POSTHOC',
+                                DecisionTreeVisualizer._mixed_posthoc_node(posthoc_test),
+                            ))
                     elif "two-way" in test_name_text or "two way" in test_name_text:
                         highlighted.update([('I1_M','INDEPENDENT_GROUPS'),('INDEPENDENT_GROUPS','IND_TWO_WAY')])
                         if p_value is not None and p_value < alpha:
