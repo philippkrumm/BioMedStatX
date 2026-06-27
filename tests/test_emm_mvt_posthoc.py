@@ -59,3 +59,19 @@ def test_mixed_dunnett_emm_mvt_matches_emmeans_golden():
         assert c["df"] == pytest.approx(g["df"], abs=1e-2)
         assert c["t"] == pytest.approx(g["t_ratio"], abs=1e-3)
         assert c["p_value"] == pytest.approx(g["p_value"], abs=2e-3)
+
+
+from analysis.posthoc_core import MixedAnovaPostHocAnalyzer
+
+
+def test_analyzer_emm_mvt_method_produces_significant_t3_trta():
+    result = MixedAnovaPostHocAnalyzer.perform_test(
+        _df(), between="Group", within="Time", dv="Value", subject="Subject",
+        alpha=0.05, method="emm_mvt", control_group="Ctrl",
+    )
+    pairs = result["pairwise_comparisons"]
+    assert len(pairs) == 6
+    hit = [c for c in pairs if "TrtA" in (c["group1"] + c["group2"])
+           and "T3" in (c["group1"] + c["group2"])]
+    assert hit and hit[0]["significant"] is True
+    assert "EMM" in result["posthoc_test"]

@@ -736,8 +736,33 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
         UPDATED: Enhanced Mixed ANOVA post-hoc tests with proper between/within factor distinction
         """
         try:
+            if method and method.lower() == "emm_mvt":
+                from analysis.emm_posthoc import mixed_dunnett_emm_mvt, UnsupportedDesignError
+                try:
+                    contrasts = mixed_dunnett_emm_mvt(
+                        df, dv=dv, subject=subject, between=between,
+                        within=within, control_group=control_group, alpha=alpha,
+                    )
+                except UnsupportedDesignError as exc:
+                    logger.warning("EMM/mvt unavailable (%s); falling back to isolated t-tests", exc)
+                else:
+                    emm_result = PostHocAnalyzer.create_result_template(
+                        "Dunnett-type (EMM + multivariate-t, Mixed)")
+                    for c in contrasts:
+                        PostHocAnalyzer.add_comparison(
+                            emm_result,
+                            group1=f"{c['control']}:{c['within_level']}",
+                            group2=f"{c['treatment']}:{c['within_level']}",
+                            test="EMM + multivariate-t",
+                            p_value=c["p_value"],
+                            statistic=c["t"],
+                            significant=c["significant"],
+                            correction_method="multivariate-t (within level)",
+                        )
+                    return emm_result
+
             result = PostHocAnalyzer.create_result_template("Mixed ANOVA Post-hoc Tests")
-            
+
             # Create interaction groups (between_level:within_level combinations)
             interaction_groups = []
             group_to_data = {}
