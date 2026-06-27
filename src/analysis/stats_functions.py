@@ -508,6 +508,10 @@ class UIDialogManager:
                 ("Tukey-HSD Test (all pairs, strict FWER control)", "tukey"),
                 ("Specific comparisons – strict correction (Holm-\u0160id\u00e1k)", "paired_custom"),
             ]
+            if "mixed_anova" in progress_text:
+                options.append(
+                    ("Dunnett vs control, each timepoint (EMM + multivariate-t)", "emm_mvt")
+                )
         else:
             # For One-Way ANOVA (Welch): offer unconditional robust options
             options = []
