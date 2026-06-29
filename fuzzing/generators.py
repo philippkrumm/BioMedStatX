@@ -31,7 +31,8 @@ MUTATIONS = [
     "comma_decimals", "tiny_groups", "high_cardinality", "collinear_covariate",
     "heavy_skew", "heteroscedastic", "all_constant",
     # rank-deficiency / structural mutations (target (X^T X)^-1 singularity)
-    "empty_factor_cell", "cross_level_missing",
+    # rank-deficiency / structural mutations (target (X^T X)^-1 singularity)
+    "empty_factor_cell", "cross_level_missing", "rank_ties",
 ]
 
 # Simple categorical palette so plotting (when enabled) gets valid colors/hatches.
@@ -243,6 +244,14 @@ def _apply_mutation(df: pd.DataFrame, mut: str, rng: np.random.Generator) -> pd.
         for gi, g in enumerate(df[groups_col].unique()):
             mask = df[groups_col] == g
             df.loc[mask, val] = col[mask] * (10 ** gi)
+    elif mut == "rank_ties":
+        col = pd.to_numeric(df[val], errors="coerce")
+        if not col.isna().all():
+            try:
+                df[val] = pd.qcut(col, q=4, labels=False, duplicates='drop')
+            except Exception:
+                # Fallback to constant if qcut fails
+                df[val] = 1.0
     return df
 
 

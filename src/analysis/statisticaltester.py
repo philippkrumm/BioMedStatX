@@ -4,6 +4,7 @@ import logging
 from scipy import stats
 from analysis.stats_functions import get_pingouin_module, PostHocAnalyzer, UIDialogManager
 from core.methodology_trace import MethodologyTrace
+from analysis.clinical_models import DesignType
 from statistical_testing.decision_logic import (
     extract_assumption_state,
     select_comparison_test,
@@ -75,7 +76,11 @@ class StatisticalTester:
             return (isinstance(x, (int, float)) and not isinstance(x, bool)
                     and not bool(np.isfinite(x)))
 
-        if not (_nonfinite(results.get("p_value")) or _nonfinite(results.get("statistic"))):
+        def _invalid_p(p):
+            return (isinstance(p, (int, float)) and not isinstance(p, bool)
+                    and (p < 0 or p > 1 or not bool(np.isfinite(p))))
+
+        if not (_nonfinite(results.get("statistic")) or _invalid_p(results.get("p_value"))):
             return None
 
         reason = (
@@ -124,7 +129,8 @@ class StatisticalTester:
             "effect_size_type": None,
             "error": None,
             "df1": None,
-            "df2": None
+            "df2": None,
+            "design_type": None
         }
         
         # Debug logging
@@ -257,12 +263,12 @@ class StatisticalTester:
         results["descriptive"] = {g: StatisticalTester._compute_descriptive_stats(original_samples[g]) for g in valid_groups}
         
         # IMPORTANT: Always include transformed descriptive stats when transformation was performed
-        if any(original_samples[g] != transformed_samples[g] for g in valid_groups):
+        if any(not np.array_equal(original_samples[g], transformed_samples[g]) for g in valid_groups):
             results["descriptive_transformed"] = {g: StatisticalTester._compute_descriptive_stats(transformed_samples[g]) for g in valid_groups}
         
         # Store raw data for both original and transformed values
         results["raw_data"] = {g: original_samples[g].copy() for g in valid_groups}
-        if original_samples != transformed_samples:
+        if any(not np.array_equal(original_samples[g], transformed_samples[g]) for g in valid_groups):
             results["raw_data_transformed"] = {g: transformed_samples[g].copy() for g in valid_groups}
 
         if len(valid_groups) == 0:
@@ -271,10 +277,6 @@ class StatisticalTester:
         if len(valid_groups) == 1:
             return StatisticalTester._stat_test_one_group(results, valid_groups, original_samples, transformed_samples)
 
-        # Descriptive statistics for all groups
-        results["descriptive"] = {g: StatisticalTester._compute_descriptive_stats(original_samples[g]) for g in valid_groups}
-        if original_samples != transformed_samples:
-            results["descriptive_transformed"] = {g: StatisticalTester._compute_descriptive_stats(transformed_samples[g]) for g in valid_groups}
 
         samples_to_use = transformed_samples if test_recommendation in {"parametric", "welch"} else original_samples
 
@@ -471,13 +473,16 @@ class StatisticalTester:
         n = len(diff)
         stderr = std_diff / np.sqrt(n) if std_diff > 0 else 0
         t = stats.t
-        ci = t.interval(0.95, n-1, loc=np.mean(diff), scale=stderr)
+        ci = t.interval(1 - alpha, n-1, loc=np.mean(diff), scale=stderr)
         results["confidence_interval"] = ci
         try:
-            from statsmodels.stats.power import TTestPower
-            effect_size = abs(cohen_d)
-            power_analysis = TTestPower()
-            results["power"] = float(power_analysis.power(effect_size=effect_size, nobs=n, alpha=alpha))
+            if cohen_d is not None:
+                from statsmodels.stats.power import TTestPower
+                effect_size = abs(cohen_d)
+                power_analysis = TTestPower()
+                results["power"] = float(power_analysis.power(effect_size=effect_size, nobs=n, alpha=alpha))
+            else:
+                results["power"] = None
         except Exception:
             results["power"] = None
         results["test"] = test_name
@@ -532,13 +537,7 @@ class StatisticalTester:
         results["effect_size"] = r
         results["effect_size_type"] = "r"
         results["confidence_interval"] = (None, None)
-        try:
-            from statsmodels.stats.power import TTestPower
-            effect_size_corrected = r * 0.955
-            power_analysis = TTestPower()
-            results["power"] = float(power_analysis.power(effect_size=effect_size_corrected, nobs=n_eff, alpha=alpha))
-        except Exception:
-            results["power"] = None
+        results["power"] = None
         results["test"] = test_name
         results["statistic"] = statistic
         results["p_value"] = p_value
@@ -585,12 +584,15 @@ class StatisticalTester:
             df = n1 + n2 - 2
         else:
             # HIGH-1: Welch's uses Hedges' g formula (df-weighted pooled SD)
+            # J-correction factor (1 - 3/(4*(n1+n2)-9)) is applied to correct for small sample bias
             s_pooled_hedges = np.sqrt(((n1-1)*s1 + (n2-1)*s2) / (n1+n2-2))
             if s_pooled_hedges == 0:
                 cohen_d = None
                 results["effect_size_type"] = "hedges_g (undefined — zero pooled variance)"
             else:
-                cohen_d = (np.mean(data1_arr) - np.mean(data2_arr)) / s_pooled_hedges
+                d_val = (np.mean(data1_arr) - np.mean(data2_arr)) / s_pooled_hedges
+                J = 1 - 3/(4*(n1+n2)-9)
+                cohen_d = d_val * J
                 results["effect_size_type"] = "hedges_g"
             stderr_diff = np.sqrt(s1/n1 + s2/n2)
             # Welch-Satterthwaite degrees of freedom (safe: n>=2 guaranteed above)
@@ -601,7 +603,7 @@ class StatisticalTester:
         results["effect_size"] = cohen_d
         mean_diff = np.mean(data1_arr) - np.mean(data2_arr)
         t = stats.t
-        ci = t.interval(0.95, df, loc=mean_diff, scale=stderr_diff)
+        ci = t.interval(1 - alpha, df, loc=mean_diff, scale=stderr_diff)
         results["confidence_interval"] = ci
         try:
             if cohen_d is not None:
@@ -910,9 +912,9 @@ class StatisticalTester:
                 "posthoc_tests": None  # We'll add post-hoc separately if needed
             }]
             
-            # Cohen's f (approx.) — no MS_within available for Welch, so use F*df/N
-            n_total = len(df_pg)
-            cohens_f = float(np.sqrt(max(F_value * df1 / n_total, 0.0)))
+            # Cohen's f for Welch: eta2 = F*df1 / (F*df1 + df2); f = sqrt(eta2 / (1-eta2))
+            eta2 = (F_value * df1) / (F_value * df1 + df2) if (F_value * df1 + df2) > 0 else 0.0
+            cohens_f = float(np.sqrt(max(eta2 / (1 - eta2) if 1 - eta2 > 0 else 0.0, 0.0)))
             results["effects"][0]["effect_size"] = cohens_f
 
             # Add test-level results
@@ -947,139 +949,6 @@ class StatisticalTester:
             results["df1"] = None
             results["df2"] = None
             return results
-
-    @staticmethod
-    def _perform_dunnett_t3_posthoc(valid_groups, samples_to_use, alpha=0.05):
-        """
-        Performs Dunnett's T3 post-hoc test for unequal variances.
-        
-        Parameters:
-        -----------
-        valid_groups : list
-            List of group names
-        samples_to_use : dict
-            Dictionary with group names as keys and lists of values as values
-        alpha : float
-            Significance level
-            
-        Returns:
-        --------
-        list
-            List of pairwise comparison results
-        """
-        try:
-            from itertools import combinations
-
-            pairwise_results = []
-            
-            # Create all possible pairs of groups
-            pairs = list(combinations(valid_groups, 2))
-            
-            for group1, group2 in pairs:
-                # Extract data for the two groups
-                data1 = np.array(samples_to_use[group1])
-                data2 = np.array(samples_to_use[group2])
-                
-                # Sample sizes
-                n1 = len(data1)
-                n2 = len(data2)
-                
-                # Calculate means
-                mean1 = np.mean(data1)
-                mean2 = np.mean(data2)
-                
-                # Calculate variances (with correction for sample size)
-                var1 = np.var(data1, ddof=1)
-                var2 = np.var(data2, ddof=1)
-                
-                # Standard error of the difference
-                se = np.sqrt(var1/n1 + var2/n2)
-                
-                # T-statistic
-                t_stat = (mean1 - mean2) / se
-                
-                # Degrees of freedom using Welch-Satterthwaite equation
-                df_num = (var1/n1 + var2/n2)**2
-                df_den = (var1/n1)**2/(n1-1) + (var2/n2)**2/(n2-1)
-                # HIGH-2: guard against degenerate df (n=1 in a group)
-                if df_den == 0 or np.isnan(df_den) or np.isinf(df_den):
-                    df = min(n1, n2) - 1
-                    df_warning = GroupValidationError(
-                        f"Dunnett T3 df calculation degenerate for {group1} vs {group2}; using conservative df={df}."
-                    )
-                    logger.warning(str(df_warning))
-                else:
-                    df = df_num / df_den
-                
-                # Number of groups for the critical value calculation
-                k = len(valid_groups)
-                
-                # Get critical value from studentized range distribution and transform for SMM
-                try:
-                    # For p-value: use studentized range distribution
-                    # First, convert t-statistic to q-statistic format
-                    q_stat = abs(t_stat) * np.sqrt(2)
-                    
-                    # Calculate p-value from studentized range distribution
-                    # We use 1-cdf because we want P(q > |q_stat|)
-                    p_value = 1 - stats.studentized_range.cdf(q_stat, k, df)
-                    
-                    # Get critical value
-                    q_crit = stats.studentized_range.ppf(1-alpha, k, df)
-                    crit_value = q_crit / np.sqrt(2)
-                    
-                    # Determine significance
-                    significant = abs(t_stat) > crit_value
-                    
-                    # Calculate effect size (Cohen's d with pooled SD)
-                    cohens_d = (mean1 - mean2) / np.sqrt((var1 + var2) / 2)
-                    
-                    # Calculate confidence interval
-                    # For the CI, we use the critical value from the studentized range distribution
-                    ci_lower = (mean1 - mean2) - crit_value * se
-                    ci_upper = (mean1 - mean2) + crit_value * se
-                    
-                    # Add the result to our list
-                    pairwise_results.append({
-                        "group1": group1,
-                        "group2": group2,
-                        "test": "Dunnett's T3",
-                        "statistic": float(t_stat),
-                        "p_value": float(p_value),
-                        "significant": significant,
-                        "corrected": True,
-                        "effect_size": float(cohens_d),
-                        "effect_size_type": "cohen_d",
-                        "confidence_interval": (float(ci_lower), float(ci_upper))
-                    })
-                    
-                except Exception as err:
-                    critical_value_warning = ValidationError(
-                        f"Dunnett T3 critical-value calculation failed ({err}); using t-approximation fallback."
-                    )
-                    logger.warning(str(critical_value_warning))
-                    # Fallback: use t-distribution (conservative)
-                    p_value = 2 * (1 - stats.t.cdf(abs(t_stat), df))
-                    significant = p_value < (alpha / len(pairs))  # Bonferroni correction
-                    
-                    pairwise_results.append({
-                        "group1": group1,
-                        "group2": group2,
-                        "test": "Dunnett's T3 (t approximation)",
-                        "statistic": float(t_stat),
-                        "p_value": float(p_value),
-                        "significant": significant,
-                        "corrected": True,
-                        "effect_size": None,
-                        "effect_size_type": None,
-                        "confidence_interval": (None, None)
-                    })
-            
-            return pairwise_results
-        
-        except Exception as e:
-            logger.error(f"ERROR in Dunnett's T3 post-hoc: {str(e)}")
-            return []
 
     @staticmethod
     def _compute_descriptive_stats(values):
@@ -1177,9 +1046,10 @@ class StatisticalTester:
                         subset = df[(df[b_factor] == b_val) & (df[w_factor] == w_val)]
                         samples[group_label] = subset[dv].tolist()
                 groups = list(samples.keys())
+                import re
                 # Formula for Mixed ANOVA (for assumption checking) - use sanitized names
-                sanitized_b_factor = b_factor.replace(' ', '') if ' ' in b_factor else b_factor
-                sanitized_w_factor = w_factor.replace(' ', '') if ' ' in w_factor else w_factor
+                sanitized_b_factor = re.sub(r'\W+', '_', str(b_factor))
+                sanitized_w_factor = re.sub(r'\W+', '_', str(w_factor))
                 formula = f"Value ~ C({sanitized_b_factor}) * C({sanitized_w_factor})"
 
             elif test == 'repeated_measures_anova':
@@ -1187,8 +1057,9 @@ class StatisticalTester:
                 for lvl in df[w_factor].unique():
                     samples[lvl] = df[df[w_factor] == lvl][dv].tolist()
                 groups = list(samples.keys())
+                import re
                 # Formula for RM-ANOVA (for assumption checking) - use sanitized names
-                sanitized_w_factor = w_factor.replace(' ', '') if ' ' in w_factor else w_factor
+                sanitized_w_factor = re.sub(r'\W+', '_', str(w_factor))
                 formula = f"Value ~ C({sanitized_w_factor})"
 
             elif test == 'two_way_anova':
@@ -1199,9 +1070,10 @@ class StatisticalTester:
                         subset = df[(df[fA] == a_val) & (df[fB] == b_val)]
                         samples[group_label] = subset[dv].tolist()
                 groups = list(samples.keys())
+                import re
                 # Formula for Two-Way ANOVA (for assumption checking) - use sanitized names
-                sanitized_fA = fA.replace(' ', '') if ' ' in fA else fA
-                sanitized_fB = fB.replace(' ', '') if ' ' in fB else fB
+                sanitized_fA = re.sub(r'\W+', '_', str(fA))
+                sanitized_fB = re.sub(r'\W+', '_', str(fB))
                 formula = f"Value ~ C({sanitized_fA}) * C({sanitized_fB})"
 
             else:
@@ -1234,8 +1106,6 @@ class StatisticalTester:
                 "groups": groups
             }
 
-        except ValidationError as e:
-            return {"error": str(e)}
         except Exception as e:
             return {"error": str(e)} 
         
@@ -1513,9 +1383,9 @@ class StatisticalTester:
         )
 
     @staticmethod
-    def _run_lmm_logged(df, dv, subject, between, within, covariates, random_slope, alpha=0.05, test_info=None):
+    def _run_lmm_logged(df, dv, subject, between, within, covariates, random_slope, alpha=0.05, test_info=None, control_group=None):
         def _test_func(df, dv, subject=None, between=None, within=None, alpha=0.05):
-            return StatisticalTester._run_lmm(df, dv, subject, between, within, covariates, random_slope, alpha)
+            return StatisticalTester._run_lmm(df, dv, subject, between, within, covariates, random_slope, alpha, control_group=control_group)
         return StatisticalTester._run_any_parametric_test(
             df=df,
             dv=dv,
@@ -1576,12 +1446,12 @@ class StatisticalTester:
             return {"error": str(e), "test": "ANCOVA"}
 
     @staticmethod
-    def _run_lmm(df, dv, subject, between, within, covariates, random_slope, alpha=0.05):
+    def _run_lmm(df, dv, subject, between, within, covariates, random_slope, alpha=0.05, control_group=None):
         from analysis.clinical_models import LinearMixedModel
         try:
             model = LinearMixedModel()
             fixed_effects = (between or []) + (within or [])
-            model.fit(df, dv=dv, fixed_effects=fixed_effects, random_intercept=subject, covariates=covariates or [], random_slope=random_slope)
+            model.fit(df, dv=dv, fixed_effects=fixed_effects, random_intercept=subject, covariates=covariates or [], random_slope=random_slope, alpha=alpha, control_group=control_group)
             return StatisticalTester._standardize_results(model.as_results_dict())
         except Exception as e:
             return {"error": str(e), "test": "Linear Mixed Model"}
@@ -1602,6 +1472,7 @@ class StatisticalTester:
         Performs a Mixed ANOVA. Prefers pingouin, fallback to statsmodels.
         """
         results = {
+            "design_type": DesignType.MIXED.value,
             "test": "Mixed ANOVA",
             "model_type": "MixedANOVA",
             "p_value": None,
@@ -1809,7 +1680,8 @@ class StatisticalTester:
                                 corrected_p = corrected_p_values[i]  # Holm-Bonferroni corrected p-value
                                 
                                 # Calculate effect size (Cohen's d)
-                                d = (np.mean(data1) - np.mean(data2)) / np.std(np.array(data1) - np.array(data2))
+                                from analysis.posthoc_core import PostHocStatistics
+                                d = PostHocStatistics.calculate_cohens_d(data1, data2, paired=True)
                                 
                                 results.setdefault("within_pairwise_comparisons", []).append({
                                     "group1": f"{rm_factor}={group1}",
@@ -1821,7 +1693,7 @@ class StatisticalTester:
                                     "significant": corrected_p < alpha,
                                     "corrected": True,
                                     "effect_size": float(d),
-                                    "effect_size_type": "cohen_d"
+                                    "effect_size_type": "cohen_d_rm"
                                 })
                 except Exception as ph_err:
                     results["warnings"] = results.get("warnings", []) + [f"Post-hoc failed: {ph_err}"]
@@ -1964,6 +1836,7 @@ class StatisticalTester:
         Prefers pingouin, fallback to statsmodels.
         """
         results = {
+            "design_type": DesignType.REPEATED.value,
             "test": "Repeated Measures ANOVA",
             "model_type": "RepeatedMeasuresANOVA",
             "p_value": None,
@@ -1993,7 +1866,7 @@ class StatisticalTester:
                     f"because > 5% of subjects ({n_excluded} out of {n_total}) had missing data. "
                     "LMMs handle unbalanced longitudinal data without listwise deletion."
                 )
-                msg_posthoc = "LMM redirect: pairwise contrasts not automatically computed. Interpret fixed effects table directly or re-run with complete data for post-hoc tests."
+                msg_posthoc = "LMM redirect: pairwise contrasts computed via EMM (Between-Within heuristic, Holm-Bonferroni adjusted)."
                 
                 logger.info(msg_redirect)
                 # Trace: LMM-Redirect (2b)
@@ -2005,7 +1878,7 @@ class StatisticalTester:
                                        f"{n_excluded} of {n_total} subjects ({_lmm_pct}) had incomplete data. "
                                        "LMMs handle unbalanced longitudinal data without listwise deletion "
                                        "and are valid under Missing At Random (MAR) assumptions. "
-                                       "Pairwise contrasts not auto-computed — interpret fixed effects table."))
+                                       "Pairwise contrasts computed via EMM (Between-Within heuristic, Holm-Bonferroni adjusted)."))
                 results["methodology_trace"] = _lmm_trace
                 try:
                     from analysis.clinical_models import LinearMixedModel
@@ -2330,6 +2203,7 @@ class StatisticalTester:
             Results including main effects, interaction, effect sizes
         """
         results = {
+            "design_type": DesignType.INDEPENDENT.value,
             "test": f"Two-Way ANOVA ({between[0]} * {between[1]})",
             "model_type": "TwoWayANOVA",
             "factors": [],
@@ -2891,19 +2765,19 @@ class StatisticalTester:
                     "test_name": "Mauchly's Test for Sphericity",
                     "W": None,
                     "p_value": None,
-                    "sphericity_assumed": True,  # Conservative assumption
+                    "sphericity_assumed": False,  # Conservative assumption (Apply GG)
                     "d": int((k * (k - 1)) / 2 - 1) if k > 2 else None,
                     "note": "No sphericity information in ANOVA table",
-                    "interpretation": "Assuming sphericity (could not test)"
+                    "interpretation": "Indeterminate (Defaulting to GG correction)"
                 }
         except Exception:
             return {
                 "test_name": "Mauchly's Test for Sphericity",
                 "W": None,
                 "p_value": None,
-                "sphericity_assumed": True,
+                "sphericity_assumed": False,
                 "note": "Failed to extract sphericity information",
-                "interpretation": "Defaulting to sphericity assumption"
+                "interpretation": "Indeterminate (Defaulting to GG correction)"
             }
     
     @staticmethod
@@ -2980,18 +2854,11 @@ class StatisticalTester:
             
             # Intelligent correction selection
             if gg_epsilon is not None and hf_epsilon is not None:
-                if gg_epsilon > 0.75:
-                    # Use Huynh-Feldt for higher epsilon values
-                    corrections["corrected_p_value"] = hf_p_value
-                    corrections["correction_used"] = f"Huynh-Feldt (ε = {hf_epsilon:.3f} > 0.75)"
-                    corrections["final_p_value"] = hf_p_value
-                    corrections["recommendation"] = "Huynh-Feldt correction recommended (less conservative)"
-                else:
-                    # Use Greenhouse-Geisser for lower epsilon values
-                    corrections["corrected_p_value"] = gg_p_value
-                    corrections["correction_used"] = f"Greenhouse-Geisser (ε = {gg_epsilon:.3f} ≤ 0.75)"
-                    corrections["final_p_value"] = gg_p_value
-                    corrections["recommendation"] = "Greenhouse-Geisser correction recommended (more conservative)"
+                # Use Greenhouse-Geisser unconditionally (as requested by user / conservative default)
+                corrections["corrected_p_value"] = gg_p_value
+                corrections["correction_used"] = f"Greenhouse-Geisser (ε = {gg_epsilon:.3f})"
+                corrections["final_p_value"] = gg_p_value
+                corrections["recommendation"] = "Greenhouse-Geisser correction recommended (more conservative)"
             elif gg_epsilon is not None:
                 corrections["corrected_p_value"] = gg_p_value
                 corrections["correction_used"] = f"Greenhouse-Geisser (ε = {gg_epsilon:.3f})"

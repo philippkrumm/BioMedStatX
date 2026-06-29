@@ -903,6 +903,10 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
             
             # Add results
             for i, (g1, g2, stat, pval, test_type, data1, data2, matched_data1, matched_data2) in enumerate(stats_list):
+                if method.lower() == 'dunnett' and control_group:
+                    if g1 != control_group and g2 != control_group:
+                        continue
+
                 # Calculate effect size
                 if test_type == "Paired t-test":
                     # Cohen's d for paired samples
@@ -1091,7 +1095,9 @@ class RMAnovaPostHocAnalyzer(PostHocAnalyzer):
                 data2 = data2_df[dv].values
                 
                 if len(data1) != len(data2) or len(data1) < 3:
-                    logger.warning(f"WARNING: Insufficient paired data for {level1} vs {level2}")
+                    msg = f"Insufficient paired data for {level1} vs {level2}"
+                    logger.warning(f"WARNING: {msg}")
+                    result.setdefault("warnings", []).append(msg)
                     continue
                 
                 # Perform paired t-test (appropriate for within-subject design)
@@ -1119,7 +1125,7 @@ class RMAnovaPostHocAnalyzer(PostHocAnalyzer):
                     "effect_size": effect_size,
                     "mean_dif": mean_diff,
                     "se_dif": se_diff,
-                    "d": df_t,
+                    "df": df_t,
                     "n_pairs": n,
                     "data1": data1,
                     "data2": data2,
@@ -1147,13 +1153,14 @@ class RMAnovaPostHocAnalyzer(PostHocAnalyzer):
                         for comp in comparisons:
                             # Convert t-statistic to Tukey's q statistic
                             q_stat = abs(comp["t_stat"]) * np.sqrt(2)
-                            p_tukey = RMAnovaPostHocAnalyzer._tukey_p_value(q_stat, len(within_levels), comp["d"])
+                            p_tukey = RMAnovaPostHocAnalyzer._tukey_p_value(q_stat, len(within_levels), comp["df"])
                             corrected_p_values.append(p_tukey)
                     else:
                         # Fallback to conservative Bonferroni
                         corrected_p_values = [min(1.0, p * n_comparisons) for p in p_values]
                         correction_method = "Bonferroni (Tukey unavailable)"
-                except:
+                except Exception as err:
+                    logger.exception(f"Tukey calculation failed: {err}")
                     # Fallback to Bonferroni if Tukey calculation fails
                     corrected_p_values = [min(1.0, p * n_comparisons) for p in p_values]
                     correction_method = "Bonferroni (Tukey calculation failed)"
@@ -1206,8 +1213,12 @@ class RMAnovaPostHocAnalyzer(PostHocAnalyzer):
             
             # Add each pairwise comparison result with enhanced within-subject information
             for i, comp in enumerate(comparisons):
+                if method.lower() == 'dunnett' and control_group:
+                    if str(comp["level1"]) != control_group and str(comp["level2"]) != control_group:
+                        continue
+                
                 # Calculate corrected confidence interval
-                t_crit = scipy_stats.t.ppf(1 - alpha_sidak/2, comp["d"])
+                t_crit = scipy_stats.t.ppf(1 - alpha_sidak/2, comp["df"])
                 ci_lower = comp["mean_dif"] - t_crit * comp["se_dif"]
                 ci_upper = comp["mean_dif"] + t_crit * comp["se_dif"]
                 
@@ -1229,7 +1240,7 @@ class RMAnovaPostHocAnalyzer(PostHocAnalyzer):
                     alpha=alpha,
                     significant=is_significant,
                     # Additional RM-specific information
-                    degrees_of_freedom=comp["d"],
+                    degrees_of_freedom=comp["df"],
                     n_pairs=comp["n_pairs"],
                     mean_difference=comp["mean_dif"]
                 )
@@ -1265,9 +1276,7 @@ class RMAnovaPostHocAnalyzer(PostHocAnalyzer):
             
         except Exception as e:
             result["error"] = f"Error in RM ANOVA post-hoc tests: {str(e)}"
-            logger.error(f"ERROR RM POSTHOC: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            logger.exception(f"ERROR RM POSTHOC: {str(e)}")
             return result
     
     @staticmethod
@@ -1636,11 +1645,10 @@ class DependentPostHoc(PostHocAnalyzer):
                 import warnings
                 with warnings.catch_warnings(record=True) as w:
                     warnings.simplefilter("always")
-                    try:
-                        wstat, p = stats.wilcoxon(x, y, zero_method='pratt', exact=True if len(x) <= 25 else False)
-                    except TypeError:
-                        # Fallback for SciPy 1.17+ which removed the 'exact' keyword argument
-                        wstat, p = stats.wilcoxon(x, y, zero_method='pratt')
+                    wstat, p = stats.wilcoxon(
+                        x, y, zero_method='pratt',
+                        method='exact' if len(x) <= 25 else 'approx',
+                    )
                     if w:
                         for warn in w:
                             msg = f"Wilcoxon Warning: {str(warn.message)}"
@@ -1662,7 +1670,7 @@ class DependentPostHoc(PostHocAnalyzer):
                 d = PostHocStatistics.calculate_cohens_d(x, y, paired=True)
                 test = "Paired t-test"
                 stat = stats_list[i]
-                es, estype = d, "cohen_d"
+                es, estype = d, "Cohen's d (RM)"
             else:
                 # r from Wilcoxon
                 n = len(x)

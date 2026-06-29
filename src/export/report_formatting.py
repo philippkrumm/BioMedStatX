@@ -182,6 +182,9 @@ class _FormattingMixin:
         numeric = float(value)
         if math.isnan(numeric):
             return "N/A"
+        if not (0.0 <= numeric <= 1.0):
+            return f"invalid (p={numeric:.4f})"
+        numeric = max(0.0, min(1.0, numeric))
         stars = " ***" if numeric < 0.001 else " **" if numeric < 0.01 else " *" if numeric < 0.05 else " ns"
         if numeric < 0.001:
             if numeric > 0:

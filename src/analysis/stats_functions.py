@@ -597,7 +597,7 @@ class UIDialogManager:
         return None
     
     @staticmethod
-    def select_custom_pairs_dialog(groups):
+    def select_custom_pairs_dialog(groups, parent=None):
         """
         Dialog to select custom group pairs for paired t-tests.
         Returns a list of (group1, group2) tuples.
@@ -658,13 +658,13 @@ class UIDialogManager:
                 self.selected_pairs = [pair for cb, pair in self.checkboxes if cb.isChecked()]
                 super().accept()
 
-        dialog = PairSelectionDialog(groups)
+        dialog = PairSelectionDialog(groups, parent=parent)
         if dialog.exec_() == QDialog.Accepted:
             return dialog.selected_pairs
         return []
 
     @staticmethod
-    def select_control_group_dialog(groups):
+    def select_control_group_dialog(groups, parent=None):
         """Opens a dialog window to select the control group"""
         from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QRadioButton, QDialogButtonBox
 
@@ -705,7 +705,7 @@ class UIDialogManager:
                 super().accept()
 
         # Always create a new dialog
-        dialog = ControlGroupDialog(groups)
+        dialog = ControlGroupDialog(groups, parent=parent)
         if dialog.exec_() == QDialog.Accepted:
             return dialog.selected_group
         return groups[0]  # Default: first group

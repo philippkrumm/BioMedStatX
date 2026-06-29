@@ -35,6 +35,8 @@ def _run_guarded(samples, dependent):
 
 @pytest.mark.parametrize("ec", CATALOG, ids=lambda e: e.name)
 def test_core_edge_case_is_graceful(ec):
+    if ec.test_type != "simple":
+        pytest.skip(f"Core suite only supports simple tests, got {ec.test_type}")
     try:
         result = _run_guarded(ec.samples, ec.dependent)
     except Exception as exc:  # pragma: no cover - failure path

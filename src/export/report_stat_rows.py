@@ -211,15 +211,6 @@ class _StatRowsMixin:
         else:
             rows.append({"label": "Random slope LRT", "value": "Not performed"})
 
-        converged = results.get("converged")
-        if converged is None:
-            conv_str = "Not available"
-        elif converged:
-            conv_str = "Yes"
-        else:
-            conv_str = "No — results may be unreliable"
-        rows.append({"label": "Converged", "value": conv_str})
-
         return rows
 
     @staticmethod
@@ -614,6 +605,14 @@ class _StatRowsMixin:
                 else:
                     display = _FormattingMixin._format_metric(value)
                 rows.append({"label": label, "value": display})
+
+        # C6-1: Model-agnostic converged row
+        converged = results.get("converged")
+        if converged is not None:
+            rows.append({
+                "label": "Converged", 
+                "value": "Yes" if converged else "No — results may be unreliable"
+            })
 
         # For Logistic Regression: add Wald z-statistic from odds_ratios table
         if model_type == "LogisticRegression":

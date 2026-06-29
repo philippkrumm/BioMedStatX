@@ -46,33 +46,57 @@ def dummy_file(tmp_path_factory):
     return str(path)
 
 
-def _analyze(samples, dependent, file_path, output_dir):
-    df = to_long_df(samples)
-    groups = list(samples.keys())
-    ctx = {
-        "injected_df": df,
-        "factor_columns": ["Grp"],
-        "dv_columns": ["Val"],
-        "group_labels": groups,
-        "mode": "single",
-    }
+def _analyze(ec, file_path, output_dir):
+    kwargs = ec.kwargs.copy()
+    ctx = {}
+    if hasattr(ec, "df") and ec.df is not None:
+        df = ec.df.copy()
+        df.to_excel(file_path, index=False)
+        ctx = {
+            "injected_df": df,
+            "mode": "single",
+            "test_type_hint": ec.test_type,
+            "inferred_test": ec.test_type,
+            "factor_columns": [df.columns[0]],
+            "dv_columns": [df.columns[-1]]
+        }
+        if "subject" in ec.kwargs:
+            ctx["subject_column"] = ec.kwargs["subject"]
+            ctx["within_factors"] = ec.kwargs.get("within", [])
+        if "group_col" not in kwargs: kwargs["group_col"] = df.columns[0]
+        if "groups" not in kwargs: kwargs["groups"] = []
+        if "value_cols" not in kwargs: kwargs["value_cols"] = [df.columns[-1]]
+    else:
+        df = to_long_df(ec.samples)
+        groups = list(ec.samples.keys())
+        ctx = {
+            "injected_df": df,
+            "factor_columns": ["Grp"],
+            "dv_columns": ["Val"],
+            "group_labels": groups,
+            "mode": "single",
+        }
+        kwargs.update({
+            "group_col": "Grp",
+            "groups": groups,
+            "value_cols": ["Val"],
+            "dependent": ec.dependent,
+        })
+        
     return AnalysisManager.analyze(
         file_path=file_path,
-        group_col="Grp",
-        groups=groups,
-        value_cols=["Val"],
-        dependent=dependent,
         save_plot=False,
         skip_plots=True,
         file_name=str(output_dir / "out"),
         analysis_context=ctx,
+        **kwargs
     )
 
 
 @pytest.mark.parametrize("ec", CATALOG, ids=lambda e: e.name)
 def test_analyze_edge_case_is_graceful(ec, dummy_file, tmp_path):
     try:
-        result = _analyze(ec.samples, ec.dependent, dummy_file, tmp_path)
+        result = _analyze(ec, dummy_file, tmp_path)
     except Exception as exc:  # pragma: no cover - failure path
         pytest.fail(f"{ec.name}: analyze() raised instead of degrading: {exc!r}")
 

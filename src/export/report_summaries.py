@@ -34,6 +34,18 @@ class _SummariesMixin:
         rows = []
         model_type = results.get("model_type", "")
 
+        # C6-1: Model-agnostic converged row
+        converged = results.get("converged")
+        if converged is not None:
+            rows.append({
+                "name": "Model Convergence",
+                "statistic": "—",
+                "p_value": "—",
+                "p_value_style": "",
+                "status_label": "Model converged successfully" if converged else "Did NOT converge — results may be unreliable",
+                "status_class": "is-significant" if converged else "is-error",
+            })
+
         # --- Beta Regression: residual normality, S-V transformation, EPV ---
         if model_type == "BetaRegression":
             residuals = _FormattingMixin._coerce_numeric_sequence(results.get("residuals"))

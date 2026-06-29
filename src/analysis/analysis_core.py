@@ -192,6 +192,7 @@ class AnalysisManager:
                 value_cols=value_cols,
                 combine_columns=combine_columns
             )
+            samples = {g: list(v) if hasattr(v, "tolist") else list(v) for g, v in samples.items()}
             filtered_samples = {g: samples[g] for g in groups if g in samples}
             return {
                 "d": df,
@@ -240,12 +241,16 @@ class AnalysisManager:
                 group_factor_map[group_name] = {"major": str(row[factor_a]), "minor": str(row[factor_b])}
                 return group_name
             working_df[display_group_col] = working_df.apply(make_auto_group, axis=1)
+            analysis_context = analysis_context.copy()
             analysis_context["group_factor_map"] = group_factor_map
             if not groups_to_use:
                 groups_to_use = sorted(working_df[display_group_col].dropna().unique(), key=lambda item: str(item))
         else:
             if not groups_to_use:
                 groups_to_use = sorted(working_df[display_group_col].dropna().unique(), key=lambda item: str(item))
+
+        groups_to_use = [str(g) for g in groups_to_use]
+        working_df[display_group_col] = working_df[display_group_col].astype(str)
 
         primary_dv = context_value_cols[0]
         samples = {}
@@ -356,10 +361,11 @@ class AnalysisManager:
         # Apply FDR correction (Benjamini-Hochberg) across all primary p-values
         if len(all_results) >= 2:
             try:
+                import math
                 multipletests = get_statsmodels_multitest()
                 dataset_names_ordered = list(all_results.keys())
                 raw_ps = [all_results[n].get("p_value") for n in dataset_names_ordered]
-                valid_indices = [i for i, p in enumerate(raw_ps) if isinstance(p, (float, int))]
+                valid_indices = [i for i, p in enumerate(raw_ps) if isinstance(p, (float, int)) and not isinstance(p, bool) and math.isfinite(p)]
                 if len(valid_indices) >= 2:
                     valid_ps = [raw_ps[i] for i in valid_indices]
                     _, p_adj, _, _ = multipletests(valid_ps, method='fdr_bh')
@@ -421,7 +427,6 @@ class AnalysisManager:
                                error_type, dataset_name, additional_factors, 
                                show_individual_lines, **kwargs):
         
-        # Get classes lazily to avoid circular imports
         # Get classes lazily to avoid circular imports
         StatisticalTester = get_statistical_tester()
         DataVisualizer = get_data_visualizer()
@@ -599,9 +604,22 @@ class AnalysisManager:
                     if not fixed_effects:
                         fixed_effects = analysis_context.get('factor_columns', [])
                     random_slope_candidate = within_factors[0] if within_factors else None
+
+                    lmm_control = None
+                    primary_factor = fixed_effects[0] if fixed_effects else None
+                    _control_cb = kwargs.get('control_group_callback')
+                    if _control_cb and primary_factor:
+                        try:
+                            primary_levels = sorted(
+                                str(v) for v in df[primary_factor].dropna().unique()
+                            )
+                            lmm_control = _control_cb(primary_levels)
+                        except Exception as exc:
+                            logger.warning("LMM control-group selection failed in core: %s", exc)
+
                     model.fit(df, dv=value_cols[0], fixed_effects=fixed_effects,
                               random_intercept=subject_column, covariates=covariates or None,
-                              random_slope=random_slope_candidate)
+                              random_slope=random_slope_candidate, alpha=0.05, control_group=lmm_control)
                     test_results = model.as_results_dict()
 
                 elif clinical_test == 'logistic_regression':
@@ -730,6 +748,7 @@ class AnalysisManager:
                     else:  # logistic_regression / beta_regression
                         _predictors_used = analysis_context.get('factor_columns', [])
                         _raw_col_names = [c for c in ([value_cols[0]] + _predictors_used + (covariates or [])) if c]
+                        _raw_col_names = list(dict.fromkeys(_raw_col_names))  # Make unique
                         _raw_source = df
                     _valid_raw_cols = [c for c in _raw_col_names if c in _raw_source.columns]
                     if _valid_raw_cols:
@@ -769,6 +788,7 @@ class AnalysisManager:
                     analysis_log += f"\nResults were saved to {report_file}.\n"
                 except Exception as export_error:
                     logger.error(f"Error exporting: {export_error}")
+                    results["export_warning"] = str(export_error)
                 finally:
                     os.chdir(original_dir)
 
@@ -808,9 +828,6 @@ class AnalysisManager:
                     # Paired t-test assumption is normality of within-pair
                     # differences, not of pooled OLS residuals (B1).
                     model_type = "paired" if dependent else "ttest"
-                    formula = "Value ~ C(Group)"
-                elif len(groups) > 2:
-                    model_type = "oneway"
                     formula = "Value ~ C(Group)"
                 else:
                     model_type = "oneway"
@@ -879,13 +896,15 @@ class AnalysisManager:
                 if len(additional_factors) >= 2:
                     between_factor, within_factor = additional_factors[0], additional_factors[1]
                 else:
-                    return {"error": "Mixed ANOVA requires two factors (between and within)"}
+                    from analysis.statisticaltester import StatisticalTester
+                    return StatisticalTester.make_blocked_result(code="INVALID_DESIGN", reason="Mixed ANOVA requires two factors (between and within)", test_name="mixed_anova")
                 # Step 3: Call prepare_advanced_test first
                 prep = StatisticalTester.prepare_advanced_test(
                     df, 'mixed_anova', value_cols[0], subject_column, [between_factor], [within_factor]
                 )
                 if "error" in prep:
-                    return prep  # or handle error
+                    from analysis.statisticaltester import StatisticalTester
+                    return StatisticalTester.make_blocked_result("PREP_ERROR", prep["error"], test_name=kwargs.get('test', 'unknown_test'))
 
                 # Step 4: Pass outputs to perform_advanced_test
                 results = StatisticalTester.perform_advanced_test(
@@ -923,7 +942,8 @@ class AnalysisManager:
                     df, 'two_way_anova', value_cols[0], None, between_factors, None
                 )
                 if "error" in prep:
-                    return prep  # or handle error
+                    from analysis.statisticaltester import StatisticalTester
+                    return StatisticalTester.make_blocked_result("PREP_ERROR", prep["error"], test_name=kwargs.get('test', 'unknown_test'))
 
                 # Step 4: Pass outputs to perform_advanced_test
                 results = StatisticalTester.perform_advanced_test(
@@ -957,6 +977,7 @@ class AnalysisManager:
             elif kwargs.get('test') == 'repeated_measures_anova':
                 additional_factors = kwargs.get('additional_factors', [])
                 subject_column = kwargs.get('subject_column') or kwargs.get('analysis_context', {}).get('subject_column') or 'Subject'
+                print("DEBUG AC RM-ANOVA:", "additional_factors=", additional_factors, "kwargs=", {k:v for k,v in kwargs.items() if k != 'injected_df'})
                 if len(additional_factors) >= 1:
                     within_factor = additional_factors[0]  # RM-ANOVA uses within factor
                 else:
@@ -966,7 +987,8 @@ class AnalysisManager:
                     df, 'repeated_measures_anova', value_cols[0], subject_column, None, [within_factor]
                 )
                 if "error" in prep:
-                    return prep  # or handle error
+                    from analysis.statisticaltester import StatisticalTester
+                    return StatisticalTester.make_blocked_result("PREP_ERROR", prep["error"], test_name=kwargs.get('test', 'unknown_test'))
 
                 # Step 4: Pass outputs to perform_advanced_test
                 results = StatisticalTester.perform_advanced_test(
@@ -1367,9 +1389,13 @@ class AnalysisManager:
                 file_base = "_".join(map(str, groups))
 
             results['groups'] = groups
-            results['raw_data'] = {g: filtered_samples[g][:] for g in groups}
+            _safe_groups = [g for g in groups if g in filtered_samples]
+            if not _safe_groups: _safe_groups = list(filtered_samples.keys())
+            results['raw_data'] = {g: filtered_samples[g][:] for g in _safe_groups}
             if results.get('transformation', 'None') != 'None':
-                results['raw_data_transformed'] = {g: transformed_samples[g][:] for g in groups}
+                _safe_ts_groups = [g for g in groups if g in transformed_samples]
+                if not _safe_ts_groups: _safe_ts_groups = list(transformed_samples.keys())
+                results['raw_data_transformed'] = {g: transformed_samples[g][:] for g in _safe_ts_groups}
             analysis_context = kwargs.get('analysis_context', {})
             results['selected_groups'] = analysis_context.get('selected_groups') or groups
             results['group_column'] = analysis_context.get('selected_group_column') or analysis_context.get('factor_columns', [None])[0] or group_col
@@ -1399,17 +1425,18 @@ class AnalysisManager:
             from analysis.stats_functions import get_output_path
             report_file = get_output_path(file_base, "html")
 
-            ExportDispatcher = get_export_dispatcher()
-            export_result = ExportDispatcher.export_analysis_results(results, report_file, analysis_log)
-            if export_result.get("warning"):
-                logger.warning(f"WARNING: {export_result['warning']}")
+            try:
+                ExportDispatcher = get_export_dispatcher()
+                export_result = ExportDispatcher.export_analysis_results(results, report_file, analysis_log)
+                if export_result.get("warning"):
+                    logger.warning(f"WARNING: {export_result['warning']}")
 
-            analysis_log += f"\nResults were saved to {report_file}.\n"
-            
-            # Ensure we're back in the original directory
-            if os.getcwd() != original_dir:
-                os.chdir(original_dir)
-                logger.debug(f"DEBUG: Restored original directory: {original_dir}")
+                analysis_log += f"\nResults were saved to {report_file}.\n"
+            finally:
+                # Ensure we're back in the original directory
+                if os.getcwd() != original_dir:
+                    os.chdir(original_dir)
+                    logger.debug(f"DEBUG: Restored original directory: {original_dir}")
 
             # Create the plot, if not skipped
             if not skip_plots:
@@ -1427,6 +1454,7 @@ class AnalysisManager:
                     'value_cols', 'combine_columns', 'skip_plots',
                     'dependent', 'show_individual_lines', 'compare', 'additional_factors',
                     'dataset_name', 'dialog_column', 'dialog_progress',
+                    'subject_column', 'subject_id', 'subject', 'test', 'posthoc_test',
                     # Parameters that don't exist in plot_bar method
                     'aspect',
                     'refline', 'panel_labels', 'value_annotations', 'significance_mode',
@@ -1541,138 +1569,20 @@ class AnalysisManager:
             if results.get('transformation', 'None') != 'None':
                 results['transformed_data'] = transformed_samples
 
-            # About line 5647, just before "return results"
-            params = {
-                "file_path": file_path,
-                "sheet_name": sheet_name,
-                "group_col": group_col,
-                "value_cols": value_cols,
-                "groups": groups,
-                "dependent": dependent,
-                "error_type": error_type,
-                "test_type": kwargs.get('test', ''),
-                "analysis_context": kwargs.get('analysis_context') or {},
-            }
-            # Build protocol
-            def build_analysis_log(results, params):
-                log = []
-                log.append("ANALYSIS LOG")
-                log.append('"This sheet documents the course of the statistical analysis and the decisions made. The log provides a chronological overview of the individual analysis steps, methods used, transformations, test selection, and special notes.\nEach paragraph describes a key step or decision in the analysis process."\n')
-                log.append(f"Analysis report\nDate and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                if 'file_path' in params:
-                    log.append(f"File: {params['file_path']}")
-                if 'sheet_name' in params:
-                    log.append(f"Worksheet: {params['sheet_name']}")
-
-                _ctx = params.get('analysis_context') or {}
-                _test_t = params.get('test_type', '') or _ctx.get('inferred_test', '') or results.get('test', '')
-                _continuous_tests = ('correlation', 'linear_regression', 'logistic_regression',
-                                     'beta_regression', 'ancova', 'two_way_ancova', 'lmm')
-                _is_continuous = _test_t in _continuous_tests
-                _test_label_map = {
-                    'correlation': 'Correlation',
-                    'linear_regression': 'Linear Regression',
-                    'logistic_regression': 'Logistic Regression',
-                    'beta_regression': 'Beta Regression',
-                    'ancova': 'ANCOVA',
-                    'two_way_ancova': 'Two-Way ANCOVA',
-                    'lmm': 'Linear Mixed Model',
-                }
-                if _is_continuous:
-                    log.append(f"Analysis Type: {_test_label_map.get(_test_t, _test_t)}")
-                    _factor_cols = _ctx.get('factor_columns') or ([params['group_col']] if params.get('group_col') else [])
-                    _dv_cols = _ctx.get('dv_columns') or params.get('value_cols') or []
-                    log.append(f"Predictor / Factor variable(s): {', '.join(_factor_cols) if _factor_cols else '—'}")
-                    log.append(f"Outcome / Dependent variable(s): {', '.join(_dv_cols) if _dv_cols else '—'}")
-                    _covariates = params.get('covariates') or _ctx.get('covariates') or []
-                    if _covariates:
-                        log.append(f"Covariates: {', '.join(_covariates)}")
-                else:
-                    if 'group_col' in params:
-                        log.append(f"Group column: {params['group_col']}")
-                    if 'value_cols' in params:
-                        log.append(f"Value column(s): {', '.join(params['value_cols'])}")
-                    if 'groups' in params:
-                        log.append(f"Groups to analyze: {', '.join(str(g) for g in params['groups'])}")
-                    if 'dependent' in params:
-                        log.append(f"Dependent samples: {'Yes' if params['dependent'] else 'No'}")
-                    if 'error_type' in params:
-                        log.append(f"Error bar type: {'SEM (standard error)' if params['error_type']=='se' else 'SD (standard deviation)'}")
-                log.append("\n--- ANALYSIS ---\n")
-                if results.get('import_status'):
-                    log.append("Data imported successfully.")
-                if 'group_sizes' in results:
-                    log.append("Number of data points per group:")
-                    for group, n in results['group_sizes'].items():
-                        log.append(f"{group}: {n} data points")
-                if 'test_recommendation' in results:
-                    log.append(f"Test recommendation: {results['test_recommendation']}")
-                if 'normality_p' in results:
-                    log.append(f"Shapiro-Wilk test (normality): p = {results['normality_p']:.4f} - {'Normally distributed' if results['normality_p'] > 0.05 else 'Not normally distributed'}")
-                if 'levene_p' in results:
-                    log.append(f"Brown-Forsythe test (variance homogeneity): p = {results['levene_p']:.4f} - {'Variances homogeneous' if results['levene_p'] > 0.05 else 'Variances heterogeneous'}")
-                if 'transformation' in results:
-                    log.append(f"Transformation: {results['transformation'] if results['transformation'] else 'No transformation performed.'}")
-                if 'test' in results:
-                    log.append(f"Test performed: {results['test']}")
-                if 'p_value' in results:
-                    p_value = results['p_value']
-                    if p_value is None:
-                        log.append("p-Value: Not available (test may have failed)")
-                        if 'error' in results and results['error']:
-                            log.append(f"Error: {results['error']}")
-                    elif isinstance(p_value, (float, int)):
-                        log.append(f"p-Value: {p_value:.6f}")
-                        log.append(f"Significance: {'Significant (p < 0.05)' if p_value < 0.05 else 'Not significant'}")
-                    else:
-                        log.append(f"p-Value: {p_value}")
-                        log.append("Significance: Not determinable")
-                if "factors" in results:
-                    for factor in results["factors"]:
-                        if not isinstance(factor, dict):
-                            continue
-                        log.append(
-                            f"Main effect {factor['factor']}: F({factor['df1']}, {factor['df2']}) = {factor['F']:.3f}, "
-                            f"p = {factor['p_value']:.4f}, Effect size: {factor.get('effect_size', 'N/A')}"
-                        )
-                if "interactions" in results:
-                    for inter in results["interactions"]:
-                        if not isinstance(inter, dict):
-                            continue
-                        inter_factors = inter.get('factors') if isinstance(inter.get('factors'), list) else []
-                        inter_a = inter_factors[0] if len(inter_factors) > 0 else "Factor 1"
-                        inter_b = inter_factors[1] if len(inter_factors) > 1 else "Factor 2"
-                        log.append(
-                            f"Interaction {inter_a} x {inter_b}: F({inter['df1']}, {inter['df2']}) = {inter['F']:.3f}, "
-                            f"p = {inter['p_value']:.4f}, Effect size: {inter.get('effect_size', 'N/A')}"
-                        )
-                if 'pairwise_comparisons' in results and results['pairwise_comparisons']:
-                    posthoc_test = results.get("posthoc_test", "Post-hoc test")
-                    log.append(f"\nPost‑hoc test: {posthoc_test}")
-                    log.append("Pairwise comparisons:")
-                    for comp in results["pairwise_comparisons"]:
-                        group1 = str(comp['group1'])
-                        group2 = str(comp['group2'])
-                        p_val = comp['p_value']
-                        significant = comp['significant']
-                        p_text = "p < 0.001" if isinstance(p_val, (float, int)) and p_val < 0.001 else f"p = {p_val:.4f}"
-                        sign_text = "significant" if significant else "not significant"
-                        stars = "***" if significant and p_val < 0.001 else "**" if significant and p_val < 0.01 else "*" if significant else ""
-                        log.append(f"{group1} vs {group2}: {p_text}, {sign_text} {stars}")
-                else:
-                    log.append("\nNo pairwise comparisons were performed or calculated.")
-                return "\n".join(log)
-            analysis_log = build_analysis_log(results, params)
             results["analysis_log"] = analysis_log
             return results
 
         except Exception as e:
             error_message = str(e) if str(e) else "Unknown error occurred"
             analysis_log += f"\nERROR: {error_message}\n"
-            logger.error(f"Error during analysis: {error_message}")
-            import traceback
-            traceback.print_exc()
-            return {"error": error_message, "analysis_log": analysis_log}       
+            logger.exception(f"Error during analysis: {error_message}")
+            from analysis.statisticaltester import StatisticalTester
+            _blocked = StatisticalTester.make_blocked_result(
+                error_message, code="UNHANDLED_EXCEPTION", details={"type": type(e).__name__}
+            )
+            _blocked["error_type"] = type(e).__name__
+            _blocked["analysis_log"] = analysis_log
+            return _blocked       
 
 def get_output_path(file_base, ext):
     """Get an absolute path to save output files on desktop."""

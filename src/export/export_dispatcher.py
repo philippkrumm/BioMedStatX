@@ -25,8 +25,9 @@ class ExportDispatcher:
             except Exception as exc:
                 warning = f"HTML report export failed for '{html_path.name}': {exc}"
                 logger.warning(f"WARNING EXPORT DISPATCHER: {warning}")
-        except Exception:
-            pass
+        except Exception as exc:
+            warning = f"HTML report export failed for '{html_path.name}' (outer): {exc}"
+            logger.exception(f"WARNING EXPORT DISPATCHER: {warning}")
 
         return {
             "html_path": html_result,

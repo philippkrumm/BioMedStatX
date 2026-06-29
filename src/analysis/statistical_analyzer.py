@@ -263,7 +263,7 @@ class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
             "About BioMedStatX",
             """
             <h2>BioMedStatX</h2>
-            <p>Version 1.0</p>
+            <p>Version 2.0.0</p>
             <p>An application for statistical analysis and visualization of data.</p>
             <p>© 2025 Philipp Krumm &lt;philipp.krumm@rwth-aachen.de&gt;<br>
             Uniklinik RWTH Aachen<br>

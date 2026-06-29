@@ -694,6 +694,15 @@ class MappingBucketWidget(QFrame):
     def assign_column(self, column_name, column_kind):
         if not self._can_accept_kind(column_kind):
             return False
+
+        # Prevent double-assignment in other buckets
+        win = self.window()
+        if win:
+            for bucket in win.findChildren(MappingBucketWidget):
+                if bucket is not self:
+                    if column_name in bucket.get_assigned_columns():
+                        bucket.remove_column(column_name)
+
         if not self.allow_multiple:
             self.clear_assignments()
         elif any(existing_name == column_name for existing_name, _, _ in self._assignments):

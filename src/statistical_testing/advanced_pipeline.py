@@ -189,8 +189,23 @@ def perform_advanced_test_pipeline(
                     test_info=test_info, control_group=ancova_control,
                 )
             elif test == "lmm":
+                lmm_control = None
+                primary_factor = None
+                if between:
+                    primary_factor = between[0]
+                elif within:
+                    primary_factor = within[0]
+                if control_group_callback and primary_factor:
+                    try:
+                        primary_levels = sorted(
+                            str(v) for v in df_transformed[primary_factor].dropna().unique()
+                        )
+                        lmm_control = control_group_callback(primary_levels)
+                    except Exception as exc:
+                        logger.warning("LMM control-group selection failed: %s", exc)
                 res = StatisticalTester._run_lmm_logged(
-                    df_transformed, dv, subject, between, within, covariates, random_slope, alpha, test_info=test_info
+                    df_transformed, dv, subject, between, within, covariates, random_slope, alpha,
+                    test_info=test_info, control_group=lmm_control
                 )
             elif test == "logistic_regression":
                 res = StatisticalTester._run_logistic_regression_logged(
@@ -243,6 +258,8 @@ def perform_advanced_test_pipeline(
                     should_override = (
                         not current_posthoc
                         or current_posthoc == "Two-Way ANOVA Post-hoc Tests"
+                        or "parametric paired t-tests" in current_posthoc.lower()
+                        or "pairwise paired t-tests" in current_posthoc.lower()
                         or ("Pingouin" in str(current_posthoc) and new_posthoc and "Tukey" in str(new_posthoc))
                     )
                     if should_override:

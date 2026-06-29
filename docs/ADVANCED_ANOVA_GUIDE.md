@@ -164,7 +164,7 @@ BioMedStatX applies corrections based on the Greenhouse–Geisser epsilon estima
 
 Both corrections reduce the effective degrees of freedom, which raises the critical $F$-value. The correction applied is stated in the HTML report.
 
-**Practical guidance:** Sphericity is most likely to be violated when the within-subject factor has many levels (e.g. five or more timepoints) or when subjects show markedly different trajectories. With only two levels, sphericity is trivially satisfied.
+**Practical guidance:** Sphericity is most likely to be violated when the within-subject factor has many levels (e.g. five or more timepoints) or when subjects show markedly different trajectories. With only two levels, sphericity is trivially satisfied. When sphericity cannot be formally tested (e.g. due to indeterminate or incomplete ANOVA table outputs), BioMedStatX conservatively assumes it is violated and defaults to applying the Greenhouse-Geisser correction.
 
 ---
 
@@ -210,8 +210,8 @@ Cohen's benchmarks: $\eta^2_p = 0.01$ small, $0.06$ medium, $0.14$ large.
 
 | Comparison type | Parametric test | Nonparametric test |
 |---|---|---|
-| Between-subjects (groups) | Tukey HSD or Dunnett | Dunn's test (Holm correction) |
-| Within-subjects (timepoints) | Holm-corrected paired $t$-tests | Wilcoxon signed-rank (Holm) |
+| Between-subjects (groups) | Tukey HSD or Dunnett (Control-only) | Dunn's test (Holm correction) |
+| Within-subjects (timepoints) | Holm-corrected paired $t$-tests or Dunnett-RM (Control-only) | Wilcoxon signed-rank (Holm) |
 
 Post-hoc tests are only run when the corresponding main effect or interaction is significant.
 
@@ -236,7 +236,7 @@ One line per between-group over within-factor levels. When the interaction is si
 2. Verify balance. In mixed designs, every subject must have one value per within-factor level. Missing cells exclude the whole subject.
 3. Report $\eta^2_p$ alongside $p$-values. A $p$-value without an effect size cannot tell you whether the result is scientifically meaningful.
 4. If the interaction is significant, do not interpret the main effects in isolation. Plot the cell means and look at the interaction plot first.
-5. Document which post-hoc test was used and why. Tukey and Dunnett answer different questions.
+5. Document which post-hoc test was used and why. Tukey answers all-pairwise questions, whereas Dunnett specifically compares all treatments against a single control group.
 
 ---
 

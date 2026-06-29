@@ -452,7 +452,7 @@ class MixedAnovaAssumptionEngine:
                         "factor": within_factor,
                         "W": float(W) if W is not None else None,
                         "p_value": float(pval) if pval is not None else None,
-                        "sphericity_assumed": bool(spher) if spher is not None else None,
+                        "sphericity_assumed": bool(spher) if spher is not None else False,
                         "df": int((k * (k - 1)) / 2 - 1) if k > 2 else None,
                         "interpretation": MixedAnovaAssumptionEngine._interpret_sphericity_test(pval, spher) if pval is not None else "Test failed",
                         "levels_tested": k,
@@ -489,9 +489,9 @@ class MixedAnovaAssumptionEngine:
                 "factor": within_factor,
                 "W": None,
                 "p_value": None,
-                "sphericity_assumed": None,
+                "sphericity_assumed": False,
                 "note": f"Within-factor sphericity test failed: {str(e)}",
-                "interpretation": "Could not determine sphericity for within-factor - proceeding with caution"
+                "interpretation": "Indeterminate (Defaulting to GG correction)"
             }
             sphericity_results["within_corrected_p_value"] = None
             sphericity_results["within_correction_used"] = "None (sphericity test failed)"
@@ -545,10 +545,10 @@ class MixedAnovaAssumptionEngine:
                         "factor": within_factor,
                         "W": None,
                         "p_value": None,
-                        "sphericity_assumed": True,  # Conservative assumption
+                        "sphericity_assumed": False,  # Conservative assumption (Apply GG)
                         "df": int((k * (k - 1)) / 2 - 1) if k > 2 else None,
                         "note": "No sphericity information in Mixed ANOVA table",
-                        "interpretation": "Assuming sphericity for within-factor (could not test)",
+                        "interpretation": "Indeterminate (Defaulting to GG correction)",
                         "levels_tested": k
                     }
             else:
@@ -560,9 +560,9 @@ class MixedAnovaAssumptionEngine:
                 "factor": within_factor,
                 "W": None,
                 "p_value": None,
-                "sphericity_assumed": True,
+                "sphericity_assumed": False,
                 "note": f"Failed to extract within-factor sphericity: {str(e)}",
-                "interpretation": "Defaulting to sphericity assumption for within-factor",
+                "interpretation": "Indeterminate (Defaulting to GG correction)",
                 "levels_tested": k
             }
     
@@ -897,7 +897,7 @@ class MixedAnovaAssumptionEngine:
                     "test_name": "Interaction Sphericity Test",
                     "interaction": interaction_name,
                     "error": "Interaction effect not found in ANOVA table",
-                    "sphericity_assumed": None
+                    "sphericity_assumed": False
                 }
             
             interaction_row = aov.loc[interaction_mask].iloc[0]
@@ -932,7 +932,7 @@ class MixedAnovaAssumptionEngine:
                         sphericity_result.update({
                             "W": float(W) if W is not None else None,
                             "p_value": float(pval) if pval is not None else None,
-                            "sphericity_assumed": bool(spher) if spher is not None else None,
+                            "sphericity_assumed": bool(spher) if spher is not None else False,
                             "interpretation": "Direct interaction sphericity test performed"
                         })
                     else:
@@ -942,9 +942,9 @@ class MixedAnovaAssumptionEngine:
                     sphericity_result.update({
                         "W": None,
                         "p_value": None,
-                        "sphericity_assumed": None,
+                        "sphericity_assumed": False,
                         "note": f"Direct sphericity test failed: {str(inner_e)}",
-                        "interpretation": "Could not determine interaction sphericity"
+                        "interpretation": "Indeterminate (Defaulting to GG correction)"
                     })
             
             # Add corrections if available
@@ -961,7 +961,7 @@ class MixedAnovaAssumptionEngine:
                 "test_name": "Interaction Sphericity Test",
                 "interaction": f"{within_factor} * {between_factor}",
                 "error": f"Interaction sphericity test failed: {str(e)}",
-                "sphericity_assumed": None
+                "sphericity_assumed": False
             }
     
     @staticmethod

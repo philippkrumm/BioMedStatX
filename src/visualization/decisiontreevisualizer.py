@@ -87,13 +87,13 @@ class DecisionTreeVisualizer:
                 elif "kendall" in eff_name_lower or "w" in eff_name_lower:
                     symbol = "W"
             else:
-                if node_id in ['IND_ONE_WAY', 'IND_TWO_WAY', 'RM_ANOVA_STANDARD', 'RM_ANOVA_CORRECTED', 'MIXED_ANOVA_STANDARD', 'MIXED_ANOVA_CORRECTED', 'WELCH_ANOVA']:
+                if node_id in ['IND_ONE_WAY', 'IND_TWO_WAY', 'RM_ANOVA_STANDARD', 'RM_ANOVA_CORRECTED', 'MIXED_ANOVA_STANDARD', 'MIXED_ANOVA_CORRECTED']:
                     symbol = "η²_p"
                 elif node_id == 'K2_M_IND':
                     symbol = "ε²"
                 elif node_id == 'NP_RM_ROBUST':
                     symbol = "W"
-                elif node_id in ['K1_2_IND', 'K1_2_DEP', 'WELCH_T_TEST']:
+                elif node_id in ['K1_2_IND', 'K1_2_DEP']:
                     symbol = "d"
 
             try:
@@ -102,9 +102,9 @@ class DecisionTreeVisualizer:
                 eff_str = f"{symbol} = {eff_val}"
 
         stat_symbol = ""
-        if node_id in ['K1_2_IND', 'K1_2_DEP', 'WELCH_T_TEST']:
+        if node_id in ['K1_2_IND', 'K1_2_DEP']:
             stat_symbol = "t"
-        elif node_id in ['IND_ONE_WAY', 'IND_TWO_WAY', 'RM_ANOVA_STANDARD', 'RM_ANOVA_CORRECTED', 'MIXED_ANOVA_STANDARD', 'MIXED_ANOVA_CORRECTED', 'WELCH_ANOVA']:
+        elif node_id in ['IND_ONE_WAY', 'IND_TWO_WAY', 'RM_ANOVA_STANDARD', 'RM_ANOVA_CORRECTED', 'MIXED_ANOVA_STANDARD', 'MIXED_ANOVA_CORRECTED']:
             stat_symbol = "F"
         elif node_id == 'K2_2_IND':
             stat_symbol = "U"
@@ -116,6 +116,8 @@ class DecisionTreeVisualizer:
             stat_symbol = "Q"
         elif node_id == 'NP_MIXED_ROBUST':
             stat_symbol = "ATS"
+        elif node_id == 'NP_TWO_WAY_ROBUST':
+            stat_symbol = "F_perm"
 
         if stat_symbol and stat_str and p_str:
             line2 = f"{stat_symbol}{df_str} = {stat_str} | {p_str}"
@@ -160,7 +162,7 @@ class DecisionTreeVisualizer:
         try:
             _model_type = results.get("model_type", "")
             if _model_type in ["Correlation", "LinearRegression", "LogisticRegression",
-                                "ANCOVA", "LMM", "CorrelationMatrix"]:
+                                "BetaRegression", "ANCOVA", "LMM", "CorrelationMatrix"]:
                 from visualization.flowchartvisualizer import FlowchartVisualizer
                 return FlowchartVisualizer.get_tree_json(results)
 
@@ -237,7 +239,7 @@ class DecisionTreeVisualizer:
             if pre_is_normal is None:
                 pre_is_normal = is_normal if not was_transformed else False
             if pre_has_equal_variance is None:
-                pre_has_equal_variance = has_equal_variance if not was_transformed else True
+                pre_has_equal_variance = has_equal_variance if not was_transformed else False
 
             auto_switched = (
                 "Switching to nonparametric" in str(results.get("analysis_log", "")) or
@@ -260,7 +262,11 @@ class DecisionTreeVisualizer:
                     if v:
                         n_groups = len(v); break
             if n_groups == 0:
-                n_groups = 2
+                _multi_kw = ("anova", "kruskal", "friedman", "freedman", "mixed", "brunner")
+                if any(kw in test_name.lower() for kw in _multi_kw):
+                    n_groups = 3
+                else:
+                    n_groups = 2
 
             n_within_levels = results.get("n_within_levels", None)
             actual_test_type = test_type or results.get("recommendation", "")
@@ -304,19 +310,19 @@ class DecisionTreeVisualizer:
                 'H1': {"label": "How many groups?", "pos": (-10, 4)},
                 'I1_2': {"label": "2 groups", "pos": (-13, 3)},
                 'I1_M': {"label": "3 or more groups", "pos": (-3, 3)},
-                'J1_INDEP': {"label": "Independent\n(different subjects)", "pos": (-14, 2)},
-                'J1_DEP':   {"label": "Dependent\n(same subjects)", "pos": (-12, 2)},
-                'K1_2_IND': {"label": "Welch's t-test", "pos": (-14, 1)},
-                'K1_2_DEP': {"label": "Paired t-test", "pos": (-12, 1)},
+                'J1_INDEP': {"label": "Independent\n(different subjects)", "pos": (-14.5, 2)},
+                'J1_DEP':   {"label": "Dependent\n(same subjects)", "pos": (-11.5, 2)},
+                'K1_2_IND': {"label": "Welch's t-test", "pos": (-14.5, 1)},
+                'K1_2_DEP': {"label": "Paired t-test", "pos": (-11.5, 1)},
                 'INDEPENDENT_GROUPS': {"label": "Different subjects\nin each group", "pos": (-8, 2)},
                 'REPEATED_MEASURES':  {"label": "Same subjects\nmeasured multiple times", "pos": (-2, 2)},
                 'MIXED_DESIGN':        {"label": "Mixed design\n(between + within factors)", "pos": (4, 2)},
-                'IND_ONE_WAY':   {"label": "Welch's ANOVA", "pos": (-9, 1)},
-                'IND_TWO_WAY':   {"label": "Two-way ANOVA", "pos": (-7, 1)},
+                'IND_ONE_WAY':   {"label": "Welch's ANOVA", "pos": (-9.5, 1)},
+                'IND_TWO_WAY':   {"label": "Two-way ANOVA", "pos": (-6.5, 1)},
                 'IND_POSTHOC':   {"label": "Which specific groups differ?", "pos": (-8, 0)},
-                'IND_TUKEY':     {"label": "Tukey HSD /\nGames-Howell", "pos": (-9.5, -1)},
-                'IND_DUNNETT':   {"label": "Dunnett Test", "pos": (-8, -1)},
-                'IND_HOLM_SIDAK':{"label": "Pairwise t-tests\n(Holm-Šidák)", "pos": (-6.5, -1)},
+                'IND_TUKEY':     {"label": "Tukey HSD /\nGames-Howell", "pos": (-10.5, -1)},
+                'IND_DUNNETT':   {"label": "Dunnett Test", "pos": (-8.0, -1)},
+                'IND_HOLM_SIDAK':{"label": "Pairwise t-tests\n(Holm-Šidák)", "pos": (-5.5, -1)},
                 'RM_MAUCHLY':            {"label": k1_m_sph_label, "pos": (-2, 1)},
                 'RM_SPHERICITY_OK':      {"label": "Even correlation\n-> no correction needed", "pos": (-3.5, 0)},
                 'RM_SPHERICITY_VIOLATED':{"label": "Uneven correlation\n-> correction needed", "pos": (-0.5, 0)},
@@ -327,6 +333,7 @@ class DecisionTreeVisualizer:
                 'RM_ANOVA_CORRECTED':    {"label": "RM ANOVA\n(Corrected)", "pos": (-0.5, -3)},
                 'RM_POSTHOC':            {"label": "Which time points differ?", "pos": (-2, -4)},
                 'RM_TUKEY':              {"label": "Tukey HSD\n(RM)", "pos": (-3.5, -5)},
+                'RM_EMM':                {"label": "EMM contrasts\n(multivariate-t)", "pos": (-2.0, -5)},
                 'RM_PAIRED_TESTS':       {"label": "Pairwise Paired t-tests\n(Holm-Šidák)", "pos": (-0.5, -5)},
                 'MIXED_MAUCHLY':             {"label": k1_m_sph_label, "pos": (4, 1)},
                 'MIXED_SPHERICITY_OK':       {"label": "Even correlation\n-> no correction needed", "pos": (2.5, 0)},
@@ -337,34 +344,34 @@ class DecisionTreeVisualizer:
                 'MIXED_ANOVA_STANDARD':      {"label": "Mixed ANOVA", "pos": (2.5, -1)},
                 'MIXED_ANOVA_CORRECTED':     {"label": "Mixed ANOVA\n(Within Corrected)", "pos": (5.5, -3)},
                 'MIXED_POSTHOC':             {"label": "Which groups / time points differ?", "pos": (4, -4)},
-                'MIXED_TUKEY':   {"label": "Mixed Tukey\n(Between/Within)", "pos": (2, -5)},
-                'MIXED_BETWEEN': {"label": "Between groups\n(different subjects)", "pos": (4, -5)},
-                'MIXED_WITHIN':  {"label": "Within group\n(same subjects over time)", "pos": (6, -5)},
+                'MIXED_TUKEY':   {"label": "Mixed Tukey\n(Between/Within)", "pos": (1.5, -5)},
+                'MIXED_BETWEEN': {"label": "Between groups\n(different subjects)", "pos": (4.0, -5)},
+                'MIXED_WITHIN':  {"label": "Within group\n(same subjects over time)", "pos": (6.5, -5)},
                 'G2': {"label": "Non-parametric test\n(rank-based)", "pos": (10, 5)},
                 'H2': {"label": "How many groups?", "pos": (10, 4)},
                 'I2_2': {"label": "2 groups", "pos": (8, 3)},
                 'I2_M': {"label": "3 or more groups", "pos": (14, 3)},
-                'J2_INDEP': {"label": "Independent\n(different subjects)", "pos": (7, 2)},
-                'J2_DEP':   {"label": "Dependent\n(same subjects)", "pos": (9, 2)},
-                'K2_2_IND': {"label": "Mann-Whitney U", "pos": (7, 1)},
-                'K2_2_DEP': {"label": "Wilcoxon\nSigned-Rank", "pos": (9, 1)},
+                'J2_INDEP': {"label": "Independent\n(different subjects)", "pos": (6.5, 2)},
+                'J2_DEP':   {"label": "Dependent\n(same subjects)", "pos": (9.5, 2)},
+                'K2_2_IND': {"label": "Mann-Whitney U", "pos": (6.5, 1)},
+                'K2_2_DEP': {"label": "Wilcoxon\nSigned-Rank", "pos": (9.5, 1)},
                 'NP_INDEPENDENT_GROUPS': {"label": "Different subjects\nin each group", "pos": (12.5, 2)},
                 'NP_REPEATED_MEASURES':  {"label": "Same subjects\nmeasured multiple times", "pos": (16, 2)},
                 'NP_MIXED_DESIGN':       {"label": "Mixed design\n(between + within)", "pos": (20, 2)},
-                'K2_M_IND':           {"label": "Kruskal-Wallis", "pos": (11.5, 1)},
-                'NP_POSTHOC':         {"label": "Which groups differ?", "pos": (11.5, 0)},
-                'NP_DUNN':            {"label": "Dunn Test", "pos": (10.5, -1)},
+                'K2_M_IND':           {"label": "Kruskal-Wallis", "pos": (11.0, 1)},
+                'NP_POSTHOC':         {"label": "Which groups differ?", "pos": (11.0, 0)},
+                'NP_DUNN':            {"label": "Dunn Test", "pos": (9.5, -1)},
                 'NP_MANN_WHITNEY':    {"label": "Pairwise\nMann-Whitney U", "pos": (12.5, -1)},
-                'NP_TWO_WAY_ROBUST':  {"label": "Freedman-Lane\nPermutation", "pos": (13.5, 1)},
-                'NP_TWO_WAY_POSTHOC': {"label": "Which groups / conditions differ?", "pos": (13.5, 0)},
-                'NP_TWO_WAY_PAIRWISE':{"label": "Marginal Effects\nPairwise", "pos": (13.5, -1)},
+                'NP_TWO_WAY_ROBUST':  {"label": "Freedman-Lane\nPermutation", "pos": (14.0, 1)},
+                'NP_TWO_WAY_POSTHOC': {"label": "Which groups / conditions differ?", "pos": (14.0, 0)},
+                'NP_TWO_WAY_PAIRWISE':{"label": "Marginal Effects\nPairwise", "pos": (15.5, -1)},
                 'NP_RM_ROBUST':   {"label": "Friedman Test", "pos": (16, 1)},
                 'NP_RM_POSTHOC':  {"label": "Which time points differ?", "pos": (16, 0)},
                 'NP_RM_PAIRWISE': {"label": "RM Pairwise\nComparisons", "pos": (16, -1)},
                 'NP_MIXED_ROBUST':   {"label": "Brunner-Langer\nATS", "pos": (20, 1)},
                 'NP_MIXED_POSTHOC':  {"label": "Which groups / time points differ?", "pos": (20, 0)},
-                'NP_MIXED_BETWEEN':  {"label": "Between groups\n(different subjects)", "pos": (19, -1)},
-                'NP_MIXED_WITHIN':   {"label": "Within group\n(same subjects over time)", "pos": (21, -1)},
+                'NP_MIXED_BETWEEN':  {"label": "Between groups\n(different subjects)", "pos": (18.5, -1)},
+                'NP_MIXED_WITHIN':   {"label": "Within group\n(same subjects over time)", "pos": (21.5, -1)},
             }
             nodes_info = DecisionTreeVisualizer._apply_wide_canvas_layout(nodes_info)
 
@@ -385,7 +392,7 @@ class DecisionTreeVisualizer:
                 ('RM_CHOOSE_CORRECTION','RM_GG_CORRECTION'),('RM_CHOOSE_CORRECTION','RM_HF_CORRECTION'),
                 ('RM_GG_CORRECTION','RM_ANOVA_CORRECTED'),('RM_HF_CORRECTION','RM_ANOVA_CORRECTED'),
                 ('RM_ANOVA_STANDARD','RM_POSTHOC'),('RM_ANOVA_CORRECTED','RM_POSTHOC'),
-                ('RM_POSTHOC','RM_TUKEY'),('RM_POSTHOC','RM_PAIRED_TESTS'),
+                ('RM_POSTHOC','RM_TUKEY'),('RM_POSTHOC','RM_EMM'),('RM_POSTHOC','RM_PAIRED_TESTS'),
                 ('MIXED_DESIGN','MIXED_MAUCHLY'),
                 ('MIXED_MAUCHLY','MIXED_SPHERICITY_OK'),('MIXED_MAUCHLY','MIXED_SPHERICITY_VIOLATED'),
                 ('MIXED_SPHERICITY_OK','MIXED_ANOVA_STANDARD'),
@@ -421,10 +428,40 @@ class DecisionTreeVisualizer:
             analysis_log_text   = str(results.get("analysis_log", "")).lower()
             test_name_text      = test_name.lower()
 
+            design_type = results.get("design_type", None)
+            is_repeated_design = False
+            is_mixed_design = False
+            is_independent_design = False
+
+            if design_type:
+                is_repeated_design = (design_type == "REPEATED")
+                is_mixed_design = (design_type == "MIXED")
+                is_independent_design = (design_type == "INDEPENDENT")
+            else:
+                is_repeated_design = (
+                    "repeated" in test_name_text or 
+                    ("rm" in test_name_text and "anova" in test_name_text) or
+                    ("linear mixed model" in test_name_text and not results.get("between_effects"))
+                )
+                is_mixed_design = (
+                    "mixed" in test_name_text and 
+                    "linear mixed model" not in test_name_text
+                ) or (
+                    "linear mixed model" in test_name_text and 
+                    bool(results.get("between_effects"))
+                )
+                is_independent_design = not is_repeated_design and not is_mixed_design
+
             is_modern_or_robust_fallback = any(kw in t for kw in ("fallback","modern model","robust") for t in (recommendation_text, analysis_log_text))
-            is_nonparam_two_way_advanced = (("two-way" in test_name_text or "two way" in test_name_text) and (is_modern_or_robust_fallback or "freedman" in model_class_text or "permutation" in model_class_text))
-            is_nonparam_rm_advanced      = (("repeated" in test_name_text or "rm anova" in test_name_text) and (is_modern_or_robust_fallback or "friedman" in model_class_text))
-            is_nonparam_mixed_advanced   = ("mixed" in test_name_text and (is_modern_or_robust_fallback or "brunner" in model_class_text or "ats" in model_class_text))
+            
+            if design_type:
+                is_nonparam_two_way_advanced = is_independent_design and (is_modern_or_robust_fallback or "freedman" in model_class_text or "permutation" in model_class_text)
+                is_nonparam_rm_advanced = is_repeated_design and (is_modern_or_robust_fallback or "friedman" in model_class_text)
+                is_nonparam_mixed_advanced = is_mixed_design and (is_modern_or_robust_fallback or "brunner" in model_class_text or "ats" in model_class_text)
+            else:
+                is_nonparam_two_way_advanced = (("two-way" in test_name_text or "two way" in test_name_text) and (is_modern_or_robust_fallback or "freedman" in model_class_text or "permutation" in model_class_text))
+                is_nonparam_rm_advanced      = (("repeated" in test_name_text or "rm anova" in test_name_text) and (is_modern_or_robust_fallback or "friedman" in model_class_text))
+                is_nonparam_mixed_advanced   = ("mixed" in test_name_text and (is_modern_or_robust_fallback or "brunner" in model_class_text or "ats" in model_class_text))
             is_nonparametric_test = (
                 actual_test_type.lower() in ("non-parametric","non_parametric") or
                 test_name.lower().startswith(("non-parametric","nonparametric")) or
@@ -440,8 +477,7 @@ class DecisionTreeVisualizer:
             welch_anova_condition = False
 
             if is_nonparametric_test:
-                if not auto_switched:
-                    highlighted.add(('F','G2'))
+                highlighted.add(('F','G2'))
                 highlighted.add(('G2','H2'))
                 if n_groups == 2:
                     highlighted.add(('H2','I2_2'))
@@ -481,8 +517,7 @@ class DecisionTreeVisualizer:
                   or "welch" in test_name.lower()
                   or "t-test" in test_name.lower()
                   or ("anova" in test_name.lower() and "non" not in test_name.lower())):
-                if not auto_switched:
-                    highlighted.add(('F','G1'))
+                highlighted.add(('F','G1'))
                 highlighted.add(('G1','H1'))
                 if n_groups == 2:
                     highlighted.add(('H1','I1_2'))
@@ -492,11 +527,12 @@ class DecisionTreeVisualizer:
                         highlighted.update([('I1_2','J1_INDEP'),('J1_INDEP','K1_2_IND')])
                 else:
                     highlighted.add(('H1','I1_M'))
-                    if "repeated" in test_name_text or ("rm" in test_name_text and "anova" in test_name_text):
+                    # (Resolved via design_type checks above)
+                    if is_repeated_design:
                         highlighted.update([('I1_M','REPEATED_MEASURES'),('REPEATED_MEASURES','RM_MAUCHLY')])
                         if any(kw in correction_used.lower() for kw in ("greenhouse","gg")) or "greenhouse" in within_correction.lower():
                             highlighted.update([('RM_MAUCHLY','RM_SPHERICITY_VIOLATED'),('RM_SPHERICITY_VIOLATED','RM_CHOOSE_CORRECTION'),('RM_CHOOSE_CORRECTION','RM_GG_CORRECTION'),('RM_GG_CORRECTION','RM_ANOVA_CORRECTED')])
-                        elif any(kw in correction_used.lower() for kw in ("huynh","h")) or "huynh" in within_correction.lower():
+                        elif any(kw in correction_used.lower() for kw in ("huynh","hf")) or "huynh" in within_correction.lower():
                             highlighted.update([('RM_MAUCHLY','RM_SPHERICITY_VIOLATED'),('RM_SPHERICITY_VIOLATED','RM_CHOOSE_CORRECTION'),('RM_CHOOSE_CORRECTION','RM_HF_CORRECTION'),('RM_HF_CORRECTION','RM_ANOVA_CORRECTED')])
                         else:
                             highlighted.update([('RM_MAUCHLY','RM_SPHERICITY_OK'),('RM_SPHERICITY_OK','RM_ANOVA_STANDARD')])
@@ -505,17 +541,24 @@ class DecisionTreeVisualizer:
                                 highlighted.add(('RM_ANOVA_CORRECTED','RM_POSTHOC'))
                             else:
                                 highlighted.add(('RM_ANOVA_STANDARD','RM_POSTHOC'))
-                            highlighted.add(('RM_POSTHOC','RM_TUKEY') if "tukey" in posthoc_test.lower() else ('RM_POSTHOC','RM_PAIRED_TESTS'))
-                    elif "mixed" in test_name_text:
+                            
+                            ph = posthoc_test.lower()
+                            if "tukey" in ph:
+                                highlighted.add(('RM_POSTHOC','RM_TUKEY'))
+                            elif "emm" in ph or "dunnett" in ph or "multivariate" in ph:
+                                highlighted.add(('RM_POSTHOC','RM_EMM'))
+                            else:
+                                highlighted.add(('RM_POSTHOC','RM_PAIRED_TESTS'))
+                    elif is_mixed_design:
                         highlighted.update([('I1_M','MIXED_DESIGN'),('MIXED_DESIGN','MIXED_MAUCHLY')])
                         if any(kw in within_correction.lower() for kw in ("greenhouse","gg")) or "greenhouse" in correction_used.lower():
                             highlighted.update([('MIXED_MAUCHLY','MIXED_SPHERICITY_VIOLATED'),('MIXED_SPHERICITY_VIOLATED','MIXED_CHOOSE_CORRECTION'),('MIXED_CHOOSE_CORRECTION','MIXED_GG_CORRECTION'),('MIXED_GG_CORRECTION','MIXED_ANOVA_CORRECTED')])
-                        elif any(kw in within_correction.lower() for kw in ("huynh","h")) or "huynh" in correction_used.lower():
+                        elif any(kw in within_correction.lower() for kw in ("huynh","hf")) or "huynh" in correction_used.lower():
                             highlighted.update([('MIXED_MAUCHLY','MIXED_SPHERICITY_VIOLATED'),('MIXED_SPHERICITY_VIOLATED','MIXED_CHOOSE_CORRECTION'),('MIXED_CHOOSE_CORRECTION','MIXED_HF_CORRECTION'),('MIXED_HF_CORRECTION','MIXED_ANOVA_CORRECTED')])
                         else:
                             highlighted.update([('MIXED_MAUCHLY','MIXED_SPHERICITY_OK'),('MIXED_SPHERICITY_OK','MIXED_ANOVA_STANDARD')])
                         if p_value is not None and p_value < alpha:
-                            if any(kw in within_correction.lower() for kw in ("greenhouse","huynh")):
+                            if any(kw in within_correction.lower() for kw in ("greenhouse","huynh")) or any(kw in correction_used.lower() for kw in ("greenhouse","huynh")):
                                 highlighted.add(('MIXED_ANOVA_CORRECTED','MIXED_POSTHOC'))
                             else:
                                 highlighted.add(('MIXED_ANOVA_STANDARD','MIXED_POSTHOC'))
@@ -557,10 +600,11 @@ class DecisionTreeVisualizer:
                 return any(kw in lbl for kw in _square_keywords)
 
             test_nodes = {
-                'WELCH_T_TEST', 'WELCH_ANOVA', 'K1_2_IND', 'K1_2_DEP', 
-                'IND_ONE_WAY', 'IND_TWO_WAY', 'RM_ANOVA_STANDARD', 'RM_ANOVA_CORRECTED', 
-                'MIXED_ANOVA_STANDARD', 'MIXED_ANOVA_CORRECTED', 'K2_2_IND', 'K2_2_DEP', 
-                'K2_M_IND', 'NP_RM_ROBUST', 'NP_MIXED_ROBUST'
+                'K1_2_IND', 'K1_2_DEP', 'IND_ONE_WAY', 'IND_TWO_WAY',
+                'RM_ANOVA_STANDARD', 'RM_ANOVA_CORRECTED',
+                'MIXED_ANOVA_STANDARD', 'MIXED_ANOVA_CORRECTED',
+                'K2_2_IND', 'K2_2_DEP', 'K2_M_IND',
+                'NP_RM_ROBUST', 'NP_MIXED_ROBUST', 'NP_TWO_WAY_ROBUST',
             }
             node_list = []
             for nid, info in nodes_info.items():

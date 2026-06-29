@@ -14,8 +14,8 @@ def assert_graceful(result: Dict[str, Any], expectation: str) -> None:
     assert result.get("test") is not None, "result has no 'test' label"
 
     p = result.get("p_value")
-    assert p is None or (isinstance(p, (int, float)) and math.isfinite(p)), (
-        f"p_value must be None or finite, got {p!r}"
+    assert p is None or (isinstance(p, (int, float)) and math.isfinite(p) and 0.0 <= p <= 1.0), (
+        f"p_value must be None or finite and in [0,1], got {p!r}"
     )
 
     stat = result.get("statistic")
@@ -31,5 +31,7 @@ def assert_graceful(result: Dict[str, Any], expectation: str) -> None:
         assert not result.get("blocked"), (
             f"expected a runnable result, but it was blocked: {result.get('block_reason')!r}"
         )
+    elif expectation == "any":
+        pass  # Just ensuring it didn't crash and satisfies type constraints
     else:  # pragma: no cover - guards typos in the catalog
         raise ValueError(f"unknown expectation {expectation!r}")

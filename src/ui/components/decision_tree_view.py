@@ -41,12 +41,14 @@ def node_metrics(label, is_active):
     """Node box size + font, mirroring the HTML/SVG report renderer so the
     in-app tree matches the exported one. See report_single.html.j2."""
     lines = str(label or "").split('\n')
-    fs = 13 if is_active else 11
+    fs = 15 if is_active else 12
     lh = fs * 1.3
     max_chars = max((len(line) for line in lines), default=0)
     est_text_w = max_chars * fs * 0.57
-    node_w = max(130.0, min(500.0, est_text_w + 32.0))
-    node_h = max(52.0, min(500.0, len(lines) * lh + 30.0))
+    min_w = 155.0 if is_active else 130.0
+    min_h = 60.0 if is_active else 52.0
+    node_w = max(min_w, min(500.0, est_text_w + 36.0))
+    node_h = max(min_h, min(500.0, len(lines) * lh + 34.0))
     return node_w, node_h, fs
 
 
@@ -312,10 +314,8 @@ class InteractiveDecisionTreeWidget(QGraphicsView):
         min_x, max_x = min(xs), max(xs)
         min_y, max_y = min(ys), max(ys)
         
-        # Spacing constants mirror the HTML/SVG report renderer so both trees
-        # share the same geometry (see report_single.html.j2).
-        SCALE_X = 42.0
-        SCALE_Y = 42.0 * 1.7
+        SCALE_X = 64.0
+        SCALE_Y = 64.0 * 1.7
         PAD = 96.0
 
         # Largest node half-extent shifts the whole layout clear of the edges,

@@ -946,6 +946,11 @@ def _ap_load_file(self):
     if not self.file_path:
         return
     try:
+        # Clear existing bucket assignments first!
+        for bucket in (self.dv_bucket, self.factor1_bucket, self.factor2_bucket,
+                       self.subject_bucket, self.covariates_bucket, self.filter_bucket):
+            bucket.clear_assignments()
+
         path_lower = self.file_path.lower()
 
         # HTML report reload: extract embedded tidy data
@@ -1028,6 +1033,11 @@ def _ap_load_sheet(self, index):
     if index < 0:
         return
     try:
+        # Clear existing bucket assignments first!
+        for bucket in (self.dv_bucket, self.factor1_bucket, self.factor2_bucket,
+                       self.subject_bucket, self.covariates_bucket, self.filter_bucket):
+            bucket.clear_assignments()
+
         self.df = pd.read_excel(self.file_path, sheet_name=self.auto_sheet_combo.itemText(index))
         self.analysis_selected_groups = []
         self._maybe_pivot()

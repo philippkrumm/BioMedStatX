@@ -2665,7 +2665,7 @@ class DataVisualizer:
         fig.savefig(filename, dpi=dpi, bbox_inches='tight', metadata=metadata)
 
     @staticmethod
-    def add_metadata_block(fig, params, version="1.0", date=None):
+    def add_metadata_block(fig, params, version="2.0.0", date=None):
         """
         Add a tiny text block with version, date, and parameters to the PDF/SVG.
         """

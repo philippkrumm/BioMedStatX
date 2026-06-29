@@ -29,6 +29,12 @@ class EdgeCase:
     dependent: bool = False
     # Optional: the block code we expect (only asserted when set and blocked).
     expected_code: str | None = None
+    # For advanced designs: test type ("simple", "rm", "logistic", etc.)
+    test_type: str = "simple"
+    # Overrides context for advanced designs
+    kwargs: Dict[str, Any] = field(default_factory=dict)
+    # Direct DataFrame (bypasses samples if set)
+    df: pd.DataFrame | None = None
 
 
 CATALOG: List[EdgeCase] = [
@@ -56,6 +62,24 @@ CATALOG: List[EdgeCase] = [
     # --- dependent / paired --------------------------------------------------
     EdgeCase("paired_identical_groups", {"a": [1, 5, 20, 8, 3], "b": [2, 6, 21, 9, 4]}, "blocked", dependent=True, expected_code="VAR_DIFF_ZERO"),
     EdgeCase("paired_nonconsecutive_constant_diff", {"a": [1, 5, 20], "b": [3, 10, 2], "c": [5, 9, 24]}, "blocked", dependent=True, expected_code="VAR_DIFF_ZERO"),
+
+    # --- advanced / clinical degenerate --------------------------------------
+    EdgeCase("logistic_perfect_separation", {}, "ok", test_type="logistic_regression", 
+        df=pd.DataFrame({'x': [1, 2, 3, 4], 'y': [0, 0, 1, 1]}),
+        kwargs={"dependent": "y", "covariates": ["x"]}
+    ),
+    EdgeCase("beta_out_of_bounds", {}, "blocked", test_type="beta_regression",
+        df=pd.DataFrame({'y': [0.0, 0.5, 1.0, 1.5], 'x': [1, 2, 3, 4]}), # beta response must be in (0, 1)
+        kwargs={"dependent": "y", "covariates": ["x"]}
+    ),
+    EdgeCase("rm_cross_level_missing", {}, "ok", test_type="repeated_measures_anova",
+        df=pd.DataFrame({'Subject': [1, 1, 2, 2], 'Time': ['T1', 'T2', 'T1', 'T2'], 'Val': [5, NaN, 6, 7]}),
+        kwargs={"subject": "Subject", "within": ["Time"], "dv": "Val"}
+    ),
+    EdgeCase("mixed_unbalanced_extreme", {}, "blocked", test_type="mixed_anova",
+        df=pd.DataFrame({'Subject': [1, 1, 2, 2, 3, 3], 'Time': ['T1', 'T2', 'T1', 'T2', 'T1', 'T2'], 'Group': ['A', 'A', 'A', 'B', 'B', 'B'], 'Val': [5, 6, 6, 7, NaN, 8]}),
+        kwargs={"subject": "Subject", "within": ["Time"], "between": ["Group"], "dv": "Val"}
+    ),
 ]
 
 

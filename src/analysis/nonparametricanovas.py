@@ -2,6 +2,7 @@
 
 import logging
 logger = logging.getLogger(__name__)
+from analysis.clinical_models import DesignType
 # (Moved to end of file to ensure all symbols are defined)
 # --- Utility: Modern post hoc analysis using marginaleffects ---
 def posthoc_marginaleffects(
@@ -119,16 +120,10 @@ def _wilcoxon_posthoc_comp(arr1, arr2, label1, label2, alpha, warnings_list=None
         import warnings
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            try:
-                stat, p_raw = sp_stats.wilcoxon(
-                    diffs, alternative='two-sided', zero_method='pratt',
-                    exact=True if n <= 25 else False,
-                )
-            except TypeError:
-                # scipy >= 1.17 removed `exact` kwarg; threshold handled internally
-                stat, p_raw = sp_stats.wilcoxon(
-                    diffs, alternative='two-sided', zero_method='pratt',
-                )
+            stat, p_raw = sp_stats.wilcoxon(
+                diffs, alternative='two-sided', zero_method='pratt',
+                method='exact' if n <= 25 else 'approx',
+            )
             if w and warnings_list is not None:
                 for warn in w:
                     msg = f"Wilcoxon Warning ({label1} vs {label2}): {str(warn.message)}"
@@ -136,8 +131,9 @@ def _wilcoxon_posthoc_comp(arr1, arr2, label1, label2, alpha, warnings_list=None
                         warnings_list.append(msg)
     except Exception:
         return None
-    total = n * (n + 1) / 2.0
-    rbc = abs((2.0 * float(stat) - total) / total)   # rank-biserial correlation
+    n_eff = int(np.sum(diffs != 0))
+    total = n_eff * (n_eff + 1) / 2.0
+    rbc = abs(1.0 - 2.0 * float(stat) / total) if total > 0 else 0.0
     return {
         "group1": label1, "group2": label2,
         "test": "Wilcoxon Signed-Rank",
@@ -327,6 +323,7 @@ def perform_friedman_test(data, dv, within_factor, subject_col, alpha=0.05):
                     posthoc_name = f"Pairwise Wilcoxon Signed-Rank (Holm, fallback, n={n_subjects} subjects)"
 
         return {
+            "design_type": DesignType.REPEATED.value,
             "test": "Friedman Test",
             "p_value": p_value,
             "statistic": chi2_stat,
@@ -467,7 +464,7 @@ def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05, n_permu
             rss_red  = float(red_eff.ssr)
             df1 = int(round(red_eff.df_resid - full_eff.df_resid))
             if df1 < 1:
-                df1 = 1
+                raise ValueError("Degenerate design (df1 < 1): The model is rank-deficient or singular.")
             df2 = int(round(full_eff.df_resid))
             ss_eff = max(rss_red - rss_full, 0.0)
             F_obs  = ((ss_eff / df1) / (rss_full / df2)) if rss_full > 0 else 0.0
@@ -478,10 +475,10 @@ def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05, n_permu
             e_red     = red_eff.resid.values
 
             F_perm_arr = np.empty(n_permutations)
+            df_perm = df.copy()
             for i in range(n_permutations):
                 e_perm  = rng.permutation(e_red)
                 y_perm  = y_hat_red + e_perm
-                df_perm = df.copy()
                 df_perm[safe_dv] = y_perm
                 fm = smf.ols(formula_full_eff, data=df_perm).fit()
                 rm = smf.ols(formula_reduced,  data=df_perm).fit()
@@ -624,6 +621,7 @@ def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05, n_permu
             posthoc_name = "Pairwise Mann-Whitney U (Holm-corrected)"
 
         return {
+            "design_type": DesignType.INDEPENDENT.value,
             "test": "Freedman-Lane Permutation Test",
             "p_value": primary_p,
             "statistic": primary_F,
@@ -734,8 +732,12 @@ def perform_brunner_langer_ats(data, dv, between_factor, within_factor, subject_
             # Ensure columns are in sorted within_levels order
             wide = wide.reindex(columns=within_levels)
             # Drop subjects with any missing within-level
-            wide = wide.dropna()
-            n_i  = len(wide)
+            wide_clean = wide.dropna()
+            n_i  = len(wide_clean)
+            if n_i < len(wide):
+                dropped = len(wide) - n_i
+                warnings_list.append(f"Dropped {dropped} incomplete subjects in group '{b_val}'.")
+            wide = wide_clean
             group_ns.append(n_i)
 
             if n_i < 2:
@@ -774,10 +776,14 @@ def perform_brunner_langer_ats(data, dv, between_factor, within_factor, subject_
 
         # --- RTE vector p_hat (row-major: group0_time0, group0_time1, ..., group1_time0, ...) ---
         RTE_df  = pd.DataFrame(RTE_rows)
+        def _get_rte(b_val, w_val):
+            vals = RTE_df[(RTE_df['between_group'] == b_val) & (RTE_df['within_level'] == w_val)]['RTE'].values
+            return vals[0] if len(vals) > 0 else np.nan
+
         RTE_mat = np.array([[
-            RTE_df[(RTE_df['between_group'] == b_val) & (RTE_df['within_level'] == w_val)]['RTE'].values[0]
-            for w_val in within_levels
-        ] for b_val in between_levels])   # shape (a, t)
+            _get_rte(b_val, w_val)
+            for w_val in within_levels] for b_val in between_levels])
+
         p_hat = RTE_mat.flatten(order='C')   # (a*t,)
 
         # --- Idempotent projection matrices (a*t × a*t) ---
@@ -788,14 +794,18 @@ def perform_brunner_langer_ats(data, dv, between_factor, within_factor, subject_
         T_inter   = np.kron(I_a - J_a / a, I_t - J_t / t)  # Interaction: rank (a-1)(t-1)
 
         def _ats_and_df(T_mat):
-            """Compute ATS, Box df1, and trace product for a given projection matrix."""
-            TV     = T_mat @ V_N
+            # ATS = (N/tr(TV)) * (p_hat' T p_hat)
+            # f_hat = tr(TV)² / tr(TVV)
+            TV = T_mat @ V_N
             tr_TV  = np.trace(TV)
-            if tr_TV <= 0:
+            if np.isnan(tr_TV) or tr_TV <= 0:
                 return 0.0, 1.0
-            ATS  = float(N * (p_hat @ T_mat @ p_hat) / tr_TV)
+            p_T_p = p_hat @ T_mat @ p_hat
+            if np.isnan(p_T_p):
+                return 0.0, 1.0
+            ATS  = float(N * p_T_p / tr_TV)
             tr_TV2 = np.trace(TV @ TV)
-            f_hat  = float(tr_TV ** 2 / tr_TV2) if tr_TV2 > 0 else 1.0
+            f_hat  = float(tr_TV ** 2 / tr_TV2) if tr_TV2 > 0 and not np.isnan(tr_TV2) else 1.0
             return ATS, max(f_hat, 1.0)
 
         ATS_A,  f_A  = _ats_and_df(T_between)
@@ -947,6 +957,7 @@ def perform_brunner_langer_ats(data, dv, between_factor, within_factor, subject_
             posthoc_name = "Pairwise Wilcoxon/MWU (Holm-corrected)"
 
         return {
+            "design_type": DesignType.MIXED.value,
             "test": "Brunner-Langer ATS Test",
             "p_value": primary_p,
             "statistic": primary_F,

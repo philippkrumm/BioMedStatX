@@ -640,7 +640,7 @@ class PosthocFallbackEngine:
                         corrected=True,
                         correction_method=correction_method_name,
                         effect_size=d,
-                        effect_size_type="cohen_d",
+                        effect_size_type="Cohen's d (RM)",
                         confidence_interval=ci,
                         alpha=alpha
                     )

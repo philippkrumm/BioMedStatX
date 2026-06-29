@@ -425,15 +425,18 @@ class FlowchartVisualizer:
             highlighted.update([("RESULT", "CI"), ("RESULT", "EFFECT")])
 
         # ====================================================================
-        elif model_type == "LinearRegression":
+        elif model_type in ("LinearRegression", "BetaRegression"):
             r2       = results.get("r_squared", None)
             f_p      = results.get("f_p_value", None)
             cov_type = str(results.get("cov_type", "") or "").lower()
             is_hc3   = "hc3" in cov_type or cov_type == "robust"
 
+            start_lbl = "Start\nBeta Regression" if model_type == "BetaRegression" else "Start\nLinear Regression"
+            fit_lbl = "Fit a beta regression model\nthrough the data" if model_type == "BetaRegression" else "Fit a straight line\nthrough the data"
+
             nodes_info = {
-                "START":         {"label": "Start\nLinear Regression",                               "pos": ( 0.0, 10.0), "isSquare": True},
-                "OLS_FIT":       {"label": "Fit a straight line\nthrough the data",                  "pos": ( 0.0,  8.5), "isSquare": True},
+                "START":         {"label": start_lbl,                                                "pos": ( 0.0, 10.0), "isSquare": True},
+                "OLS_FIT":       {"label": fit_lbl,                                                  "pos": ( 0.0,  8.5), "isSquare": True},
                 "DIAGNOSTICS":   {"label": "Check if the model\nassumptions are met",                "pos": ( 0.0,  7.0), "isSquare": True},
                 "ROBUST_BRANCH": {"label": "Are the prediction errors\nevenly spread?",               "pos": ( 0.0,  5.5), "isSquare": True},
                 "COV_HC3":       {"label": "Uneven spread detected\n→ adjusted estimation",          "pos": (-1.3,  4.0), "isSquare": False},
