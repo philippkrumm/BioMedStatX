@@ -190,30 +190,9 @@ class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
 
         help_menu.addSeparator()
 
-        # Getting Started should be first
-        getting_started_action = QAction('Getting Started', self)
-        getting_started_action.triggered.connect(self.show_getting_started_help)
-        help_menu.addAction(getting_started_action)
-
         help_hub_action = QAction('Help Hub (Recipes)', self)
         help_hub_action.triggered.connect(self.show_help_hub)
         help_menu.addAction(help_hub_action)
-
-        help_menu.addSeparator()
-
-        dependent_help_action = QAction('Dependent Samples', self)
-        dependent_help_action.triggered.connect(self.show_dependent_samples_help)
-        help_menu.addAction(dependent_help_action)
-
-        # New: Graph Visualization help
-        graph_vis_action = QAction('Graph Visualization', self)
-        graph_vis_action.triggered.connect(self.show_graph_visualization_help)
-        help_menu.addAction(graph_vis_action)
-
-        # New: Statistical Tests & HTML Report help
-        stats_html_action = QAction('Statistical Tests && HTML Report', self)
-        stats_html_action.triggered.connect(self.show_statistical_tests_html_help)
-        help_menu.addAction(stats_html_action)
 
         help_menu.addSeparator()
 
@@ -294,111 +273,6 @@ class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
         self._help_hub_dialog.raise_()
         self._help_hub_dialog.activateWindow()
 
-    def show_graph_visualization_help(self):
-        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QTextBrowser, QPushButton
-        dlg = QDialog(self)
-        _configure_dialog(dlg, object_name="graphVisualizationHelpDialog")
-        dlg.setWindowTitle("Graph Visualization")
-        dlg.resize(800, 600)
-        layout = QVBoxLayout(dlg)
-        browser = QTextBrowser()
-        browser.setObjectName("helpDialogBrowser")
-        browser.setHtml("""
-            <h3>Graph Visualization</h3>
-            <ul>
-                <li><b>Plot types:</b> Bar, box, violin, and strip plots are generated from your data. Each type visualizes group distributions differently:
-                    <ul>
-                        <li><b>Bar:</b> Shows group means with error bars.</li>
-                        <li><b>Box:</b> Displays medians, quartiles, and outliers.</li>
-                        <li><b>Violin:</b> Combines boxplot with a kernel density estimate.</li>
-                        <li><b>Strip:</b> Shows all individual data points as dots.</li>
-                    </ul>
-                </li>
-                <li><b>Switching plot types:</b> Use the plot configuration or appearance dialog to select your preferred plot type.</li>
-                <li><b>Appearance adjustments:</b>
-                    <ul>
-                        <li>Change <b>colors</b> and <b>hatches</b> for each group.</li>
-                        <li>Choose <b>error bar type</b>: Standard deviation (SD) or standard error (SEM).</li>
-                        <li>Set <b>error bar style</b>: With caps or line only.</li>
-                        <li>Customize <b>fonts</b>, <b>axes</b>, and <b>grid lines</b> for clarity.</li>
-                    </ul>
-                </li>
-                <li><b>Overlay features:</b>
-                    <ul>
-                        <li>Show <b>individual data points</b> on box, violin, or strip plots.</li>
-                        <li>Add <b>statistical annotations</b>: Letters (grouping) or bars (significance lines) to highlight significant differences.</li>
-                    </ul>
-                </li>
-            </ul>
-        """)
-        layout.addWidget(browser)
-        btn = QPushButton("OK")
-        btn.clicked.connect(dlg.accept)
-        layout.addWidget(btn)
-        dlg.exec_()
-
-    def show_statistical_tests_html_help(self):
-        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QTextBrowser, QPushButton
-        dlg = QDialog(self)
-        _configure_dialog(dlg, object_name="statsHtmlHelpDialog")
-        dlg.setWindowTitle("Statistical Tests & HTML Report")
-        dlg.resize(900, 600)
-        layout = QVBoxLayout(dlg)
-        browser = QTextBrowser()
-        browser.setObjectName("helpDialogBrowser")
-        browser.setHtml("""
-            <h3>Statistical Tests & HTML Report</h3>
-            <ul>
-                <li><b>How does the program select the test?</b>
-                    <ul>
-                        <li>The program automatically detects the appropriate test based on group count and data structure.</li>
-                        <li><b>Two independent groups:</b>
-                            <ul>
-                                <li><b>t-Test</b> (parametric): Used when data is normally distributed and variances are comparable.</li>
-                                <li><b>Mann-Whitney-U Test</b> (non-parametric): Used when assumptions for t-test are not met.</li>
-                            </ul>
-                        </li>
-                        <li><b>Two dependent groups (e.g. paired measurements):</b>
-                            <ul>
-                                <li><b>Paired t-Test</b> (parametric): For normally distributed differences.</li>
-                                <li><b>Wilcoxon signed-rank test</b> (non-parametric): For non-normally distributed differences.</li>
-                            </ul>
-                        </li>
-                        <li><b>More than two independent groups:</b>
-                            <ul>
-                                <li><b>One-Way ANOVA</b> (parametric): For normally distributed data with equal variances.</li>
-                                <li><b>Kruskal-Wallis Test</b> (non-parametric): When ANOVA assumptions are violated.</li>
-                            </ul>
-                        </li>
-                        <li>The decision is based on normality tests (Shapiro-Wilk) and variance homogeneity (Levene test). When assumptions are violated, a non-parametric test is automatically selected.</li>
-                        <li>Post-hoc tests (e.g. pairwise comparisons) are automatically added when significant differences are found.</li>
-                        <li><i>Note: For detailed data templates (including long-format examples), open the Help Hub (Recipes) from the Help menu.</i></li>
-                    </ul>
-                </li>
-                <li><b>Interpreting Results:</b>
-                    <ul>
-                        <li><b>p-values</b> indicate the probability that observed differences are due to chance.</li>
-                        <li><b>Significance indicators</b> (letters or bars) show which groups differ significantly.</li>
-                        <li>Key statistics (means, standard deviations, test statistics) are clearly displayed.</li>
-                    </ul>
-                </li>
-                <li><b>HTML Report Export:</b>
-                    <ul>
-                        <li>Results are written to a self-contained HTML report covering each analysis.</li>
-                        <li>Sections reflect the test or plot type (e.g. "ANOVA Results", "Pairwise Comparisons").</li>
-                        <li>Each section shows group names, means, test statistics, p-values, and significance markers.</li>
-                        <li>Open the report in any web browser to review, print, or share results.</li>
-                    </ul>
-                </li>
-            </ul>
-            <p style='color:gray; font-size:90%'>Note: Use Help -> Help Hub (Recipes) for detailed long-format templates for advanced and basic models.</p>
-        """)
-        layout.addWidget(browser)
-        btn = QPushButton("OK")
-        btn.clicked.connect(dlg.accept)
-        layout.addWidget(btn)
-        dlg.exec_()
-
     def show_analysis_success_dialog(self, analysis_type, files, output_dir):
         """Central method for success dialogs after analyses with single clear confirmation"""
         if not files:
@@ -430,32 +304,6 @@ class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
             return True
 
         return False
-
-    # Neue Methode für die Anzeige einer Hilfefunktion zu abhängigen Stichproben
-    def show_dependent_samples_help(self):
-        QMessageBox.information(
-            self,
-            "Help for Dependent Samples",
-            "<h3>When are samples dependent?</h3>"
-            "<p>Dependent samples arise when:</p>"
-            "<ul>"
-            "<li>Measurements are taken on the <b>same subject</b> at different time points</li>"
-            "<li>Measurements are naturally paired (e.g. left and right eye)</li>"
-            "<li>Experiments are conducted with repeated measurements</li>"
-            "</ul>"
-            "<h3>Data structure for dependent tests</h3>"
-            "<p>For dependent tests, each group must:</p>"
-            "<ul>"
-            "<li>Contain the <b>same number</b> of measurements</li>"
-            "<li>Have measurements in <b>matching order</b></li>"
-            "</ul>"
-            "<p>Example: Measurement 1 in group A and measurement 1 in group B must be from the same subject</p>"
-            "<h3>Available tests</h3>"
-            "<ul>"
-            "<li><b>Two groups:</b> Paired t-test or Wilcoxon signed-rank test</li>"
-            "<li><b>More than two groups:</b> Repeated Measures ANOVA or Friedman test</li>"
-            "</ul>"
-        )
 
     def _set_confetti_enabled(self, enabled):
         """Persist the confetti preference per device (default on)."""
@@ -496,109 +344,6 @@ class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
             self.start_tutorial()
         else:
             self._mark_tour_seen()
-
-    def show_getting_started_help(self):
-        """Shows a comprehensive getting started guide for first-time users."""
-        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QTextBrowser, QPushButton
-
-        dlg = QDialog(self)
-        _configure_dialog(dlg, object_name="gettingStartedHelpDialog")
-        dlg.setWindowTitle("Getting Started with BioMedStatX")
-        dlg.resize(1000, 800)
-        layout = QVBoxLayout(dlg)
-
-        browser = QTextBrowser()
-        browser.setObjectName("helpDialogBrowser")
-        browser.setHtml("""
-            <h2>Getting Started with BioMedStatX</h2>
-            <p><i>A step-by-step guide for first-time users</i></p>
-
-            <h3>Step 1: Prepare Your Data</h3>
-            <p>BioMedStatX works with <b>Excel files</b> (.xlsx or .xls). Your data should be organized in columns, in a long format:</p>
-            <ul>
-                <li><b>Group column:</b> Contains group names (e.g., "Control", "Treatment A", "Treatment B")</li>
-                <li><b>Value column:</b> Contains the measurements you want to analyze</li>
-                <li><b>Subject column (optional):</b> For dependent/paired data - unique identifiers for each subject</li>
-            <p>Take a look into the template excel file, if you need an idea of how to structure your data for the different types of analysis</p>
-            </ul>
-
-
-            <h3>Step 2: Upload Your Excel File</h3>
-            <p>1. Click the <b>"Browse"</b> button in the main window</p>
-            <p>2. Select your Excel file from your computer</p>
-            <p>3. The file path will appear in the text field</p>
-
-            <h3>Step 3: Select Your Worksheet</h3>
-            <p>If your Excel file has multiple sheets:</p>
-            <ul>
-                <li>Use the <b>Sheet dropdown</b> to choose the correct worksheet</li>
-                <li>The program will automatically detect available sheets</li>
-            </ul>
-
-            <h3>Step 4: Configure Your Columns</h3>
-            <p>Tell the program which columns contain your data:</p>
-            <ul>
-                <li><b>Group Column:</b> Select the column with your group names</li>
-                <li><b>Value Column:</b> Select the column with your measurements</li>
-            </ul>
-
-            <h3>Step 5: Choose Your Analysis Type</h3>
-
-            <h4>A) Basic Statistical Tests (Automatic Selection)</h4>
-            <p>Click <b>"Run Statistical Analysis"</b> for automatic test selection:</p>
-            <ul>
-                <li><b>2 groups:</b> t-test or Mann-Whitney U test</li>
-                <li><b>3+ groups:</b> One-way ANOVA or Kruskal-Wallis test</li>
-                <li>The program automatically chooses parametric vs. non-parametric based on your data</li>
-            </ul>
-
-            <h4>B) Complex ANOVA Designs</h4>
-            <p>For repeated and multi-factor designs, map your columns in Smart Mapping and then run <b>Start Auto Analysis</b>:</p>
-            <ul>
-                <li><b>Repeated Measures ANOVA:</b> Same subjects measured multiple times</li>
-                <li><b>Two-Way ANOVA:</b> Two independent factors (e.g., treatment × gender)</li>
-                <li><b>Mixed ANOVA:</b> Combination of between- and within-subject factors</li>
-            </ul>
-            <p>Need a template? Open <b>Help -> Help Hub (Recipes)</b> and copy the long-format example directly into Excel.</p>
-
-            <h3>Step 6: Additional Analysis Options</h3>
-
-            <h4>Outlier Detection</h4>
-            <p>After uploading your data, you can:</p>
-            <ul>
-                <li>Use <b>Analysis → Detect Outliers</b> to identify unusual data points</li>
-                <li>Choose from multiple outlier detection methods</li>
-                <li>Decide whether to keep or remove outliers</li>
-            </ul>
-
-            <h4>Multi-Dataset Analysis</h4>
-            <p>To compare multiple related datasets:</p>
-            <ul>
-                <li>Click <b>Multiple columns...</b> and click <b>Separate analysis per dataset with shared excel file</b> and all the groups you want to analyse
-                <li>Click <b>"Multi-Dataset Analysis"</b> in the main window</li>
-                <li>Each dataset gets its own analysis and plot</li>
-                <li>Results are combined in a single Excel report</li>
-            </ul>
-
-            <h3>Step 7: Customize Your Results</h3>
-
-            <h4>Plot Customization</h4>
-            <ul>
-                <li>Choose between <b>Bar, Box, Violin, or Strip plots</b></li>
-                <li>Customize colors, fonts, and error bars</li>
-                <li>Add statistical significance annotations</li>
-            </ul>
-
-            <p><b>Need more help?</b> Check the other help sections for specific topics!</p>
-        """)
-
-        layout.addWidget(browser)
-
-        btn = QPushButton("OK")
-        btn.clicked.connect(dlg.accept)
-        layout.addWidget(btn)
-
-        dlg.exec_()
 
     def closeEvent(self, event):
         """Cleanup temporäre Daten beim Schließen des Programms"""

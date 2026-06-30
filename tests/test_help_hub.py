@@ -119,3 +119,32 @@ def test_selecting_a_header_redirects_off_it(qapp):
                 f"selection stuck on header at row {header_index}")
     finally:
         dlg.deleteLater()
+
+
+# ---------------------------------------------------------------------------
+# Task 3: Standalone help menu items and dialog methods removed
+# ---------------------------------------------------------------------------
+
+def test_help_menu_has_only_kept_actions(qapp):
+    from analysis.statistical_analyzer import StatisticalAnalyzerApp
+    app = StatisticalAnalyzerApp()
+    try:
+        texts = {a.text() for a in app.help_menu.actions() if a.text()}
+        assert "Getting Started" not in texts
+        assert "Dependent Samples" not in texts
+        assert "Graph Visualization" not in texts
+        assert not any("Statistical Tests" in t for t in texts)
+        assert "Interactive Tour" in texts
+        assert "Help Hub (Recipes)" in texts
+    finally:
+        app.close()
+
+def test_removed_dialog_methods_gone():
+    from analysis.statistical_analyzer import StatisticalAnalyzerApp
+    for name in (
+        "show_getting_started_help",
+        "show_dependent_samples_help",
+        "show_graph_visualization_help",
+        "show_statistical_tests_html_help",
+    ):
+        assert not hasattr(StatisticalAnalyzerApp, name), f"{name} should be removed"
