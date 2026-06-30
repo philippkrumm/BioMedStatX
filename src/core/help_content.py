@@ -3,9 +3,17 @@
 from __future__ import annotations
 
 
+CATEGORY_ORDER = [
+    "Start here",
+    "Choosing a test",
+    "Concepts",
+    "Workflow & Output",
+]
+
 HELP_RECIPES = [
     {
         "id": "getting_started",
+        "category": "Start here",
         "title": "▶  Getting Started — Read This First",
         "summary": "What are the buckets? What does long format mean? Start here.",
         "keywords": ["start", "bucket", "factor", "dependent variable", "subject id", "covariate", "format", "long", "wide", "beginner"],
@@ -65,6 +73,7 @@ HELP_RECIPES = [
     },
     {
         "id": "one_way_anova",
+        "category": "Choosing a test",
         "title": "Comparing groups (t-Test / One-Way ANOVA)",
         "summary": "Are 2 or more separate, independent groups different from each other?",
         "keywords": ["anova", "one-way", "t-test", "group", "factor 1", "independent", "between", "compare"],
@@ -123,6 +132,7 @@ HELP_RECIPES = [
     },
     {
         "id": "two_way_anova",
+        "category": "Choosing a test",
         "title": "Two independent grouping factors (Two-Way ANOVA)",
         "summary": "Two separate ways of grouping — e.g. Treatment AND Sex.",
         "keywords": ["anova", "two-way", "factor 2", "interaction", "between", "crossed", "two factors"],
@@ -181,6 +191,7 @@ HELP_RECIPES = [
     },
     {
         "id": "repeated_measures_anova",
+        "category": "Choosing a test",
         "title": "Same subjects measured multiple times (Repeated Measures ANOVA)",
         "summary": "The same people or animals measured at several time points — one group only.",
         "keywords": ["repeated", "within", "subject", "timepoint", "longitudinal", "pre post", "same subjects", "one group"],
@@ -240,6 +251,7 @@ HELP_RECIPES = [
     },
     {
         "id": "mixed_anova",
+        "category": "Choosing a test",
         "title": "Different groups, each measured multiple times (Mixed ANOVA)",
         "summary": "Treatment vs. Control AND multiple time points — the same subjects within each group.",
         "keywords": ["mixed", "between", "within", "subject id", "longitudinal", "group", "timepoint", "repeated", "groups over time"],
@@ -298,6 +310,7 @@ HELP_RECIPES = [
     },
     {
         "id": "ancova",
+        "category": "Choosing a test",
         "title": "Comparing groups while correcting for a background variable (ANCOVA)",
         "summary": "Like ANOVA, but you control for an additional numeric variable that might distort results.",
         "keywords": ["ancova", "covariate", "baseline", "adjust", "correct", "confound", "control for"],
@@ -351,6 +364,7 @@ HELP_RECIPES = [
     },
     {
         "id": "correlation",
+        "category": "Choosing a test",
         "title": "Do two measurements go up and down together? (Correlation)",
         "summary": "Measure the relationship between two continuous variables. No groups.",
         "keywords": ["correlation", "pearson", "spearman", "relationship", "continuous", "scatter", "association"],
@@ -406,6 +420,7 @@ HELP_RECIPES = [
     },
     {
         "id": "linear_regression",
+        "category": "Choosing a test",
         "title": "Predicting a measurement from other measurements (Linear Regression)",
         "summary": "How much does the outcome change per unit of the predictor? Add control variables.",
         "keywords": ["regression", "ols", "predict", "covariates", "beta", "coefficient", "slope", "linear"],
@@ -462,6 +477,7 @@ HELP_RECIPES = [
     },
     {
         "id": "logistic_regression",
+        "category": "Choosing a test",
         "title": "Predicting a yes/no outcome (Logistic Regression)",
         "summary": "Your outcome is binary — 0/1, yes/no, event/no-event.",
         "keywords": ["logistic", "binary", "0/1", "yes no", "event", "odds ratio", "predict", "complication", "survival"],
@@ -517,5 +533,122 @@ HELP_RECIPES = [
 <li>Rule of thumb: at least 10 events (rows where outcome = 1) per predictor included in the model.</li>
 </ul>
 """,
+    },
+    {
+        "id": "dependent_samples",
+        "category": "Concepts",
+        "title": "Dependent (paired) samples",
+        "summary": "When measurements are paired or repeated on the same subjects, and which tests apply.",
+        "keywords": ["paired", "dependent", "repeated", "wilcoxon", "friedman", "matched"],
+        "html": (
+            "<h3>When are samples dependent?</h3>"
+            "<p>Dependent samples arise when:</p>"
+            "<ul>"
+            "<li>Measurements are taken on the <b>same subject</b> at different time points</li>"
+            "<li>Measurements are naturally paired (e.g. left and right eye)</li>"
+            "<li>Experiments are conducted with repeated measurements</li>"
+            "</ul>"
+            "<h3>Data structure for dependent tests</h3>"
+            "<p>For dependent tests, each group must:</p>"
+            "<ul>"
+            "<li>Contain the <b>same number</b> of measurements</li>"
+            "<li>Have measurements in <b>matching order</b></li>"
+            "</ul>"
+            "<p>Example: Measurement 1 in group A and measurement 1 in group B must be from the same subject</p>"
+            "<h3>Available tests</h3>"
+            "<ul>"
+            "<li><b>Two groups:</b> Paired t-test or Wilcoxon signed-rank test</li>"
+            "<li><b>More than two groups:</b> Repeated Measures ANOVA or Friedman test</li>"
+            "</ul>"
+        ),
+    },
+    {
+        "id": "graph_visualization",
+        "category": "Workflow & Output",
+        "title": "Graph visualization",
+        "summary": "How to configure and export plots from an analysis result.",
+        "keywords": ["plot", "graph", "chart", "figure", "visualization", "export", "bar", "box"],
+        "html": """
+            <h3>Graph Visualization</h3>
+            <ul>
+                <li><b>Plot types:</b> Bar, box, violin, and strip plots are generated from your data. Each type visualizes group distributions differently:
+                    <ul>
+                        <li><b>Bar:</b> Shows group means with error bars.</li>
+                        <li><b>Box:</b> Displays medians, quartiles, and outliers.</li>
+                        <li><b>Violin:</b> Combines boxplot with a kernel density estimate.</li>
+                        <li><b>Strip:</b> Shows all individual data points as dots.</li>
+                    </ul>
+                </li>
+                <li><b>Switching plot types:</b> Use the plot configuration or appearance dialog to select your preferred plot type.</li>
+                <li><b>Appearance adjustments:</b>
+                    <ul>
+                        <li>Change <b>colors</b> and <b>hatches</b> for each group.</li>
+                        <li>Choose <b>error bar type</b>: Standard deviation (SD) or standard error (SEM).</li>
+                        <li>Set <b>error bar style</b>: With caps or line only.</li>
+                        <li>Customize <b>fonts</b>, <b>axes</b>, and <b>grid lines</b> for clarity.</li>
+                    </ul>
+                </li>
+                <li><b>Overlay features:</b>
+                    <ul>
+                        <li>Show <b>individual data points</b> on box, violin, or strip plots.</li>
+                        <li>Add <b>statistical annotations</b>: Letters (grouping) or bars (significance lines) to highlight significant differences.</li>
+                    </ul>
+                </li>
+            </ul>
+        """,
+    },
+    {
+        "id": "statistical_tests_html",
+        "category": "Workflow & Output",
+        "title": "Statistical tests and HTML report",
+        "summary": "How tests are chosen and what the exported HTML report contains.",
+        "keywords": ["report", "html", "export", "results", "tests", "output"],
+        "html": """
+            <h3>Statistical Tests & HTML Report</h3>
+            <ul>
+                <li><b>How does the program select the test?</b>
+                    <ul>
+                        <li>The program automatically detects the appropriate test based on group count and data structure.</li>
+                        <li><b>Two independent groups:</b>
+                            <ul>
+                                <li><b>t-Test</b> (parametric): Used when data is normally distributed and variances are comparable.</li>
+                                <li><b>Mann-Whitney-U Test</b> (non-parametric): Used when assumptions for t-test are not met.</li>
+                            </ul>
+                        </li>
+                        <li><b>Two dependent groups (e.g. paired measurements):</b>
+                            <ul>
+                                <li><b>Paired t-Test</b> (parametric): For normally distributed differences.</li>
+                                <li><b>Wilcoxon signed-rank test</b> (non-parametric): For non-normally distributed differences.</li>
+                            </ul>
+                        </li>
+                        <li><b>More than two independent groups:</b>
+                            <ul>
+                                <li><b>One-Way ANOVA</b> (parametric): For normally distributed data with equal variances.</li>
+                                <li><b>Kruskal-Wallis Test</b> (non-parametric): When ANOVA assumptions are violated.</li>
+                            </ul>
+                        </li>
+                        <li>The decision is based on normality tests (Shapiro-Wilk) and variance homogeneity (Levene test). When assumptions are violated, a non-parametric test is automatically selected.</li>
+                        <li>Post-hoc tests (e.g. pairwise comparisons) are automatically added when significant differences are found.</li>
+                        <li><i>Note: For detailed data templates (including long-format examples), open the Help Hub (Recipes) from the Help menu.</i></li>
+                    </ul>
+                </li>
+                <li><b>Interpreting Results:</b>
+                    <ul>
+                        <li><b>p-values</b> indicate the probability that observed differences are due to chance.</li>
+                        <li><b>Significance indicators</b> (letters or bars) show which groups differ significantly.</li>
+                        <li>Key statistics (means, standard deviations, test statistics) are clearly displayed.</li>
+                    </ul>
+                </li>
+                <li><b>HTML Report Export:</b>
+                    <ul>
+                        <li>Results are written to a self-contained HTML report covering each analysis.</li>
+                        <li>Sections reflect the test or plot type (e.g. "ANOVA Results", "Pairwise Comparisons").</li>
+                        <li>Each section shows group names, means, test statistics, p-values, and significance markers.</li>
+                        <li>Open the report in any web browser to review, print, or share results.</li>
+                    </ul>
+                </li>
+            </ul>
+            <p style='color:gray; font-size:90%'>Note: Use Help -> Help Hub (Recipes) for detailed long-format templates for advanced and basic models.</p>
+        """,
     },
 ]
