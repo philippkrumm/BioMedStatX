@@ -220,12 +220,53 @@ def test_navigate_to_still_selects_recipe(qapp):
         assert current.data(Qt.UserRole) == "ancova"
     finally:
         dlg.deleteLater()
+
+def test_filter_reselects_visible_recipe_when_current_hidden(qapp):
+    # Review point P3: typing a query that hides the current recipe must move
+    # selection to the first still-visible recipe, never leave a hidden item
+    # selected and never land on a header.
+    from ui.dialogs.statistical_analyzer_dialogs import HelpHubDialog
+    dlg = HelpHubDialog()
+    try:
+        dlg.navigate_to("ancova")
+        assert dlg.recipe_list.currentItem().data(Qt.UserRole) == "ancova"
+        # query that cannot match the ancova recipe but matches others
+        dlg.search_input.setText("logistic")
+        current = dlg.recipe_list.currentItem()
+        assert current is not None
+        assert not current.isHidden()
+        assert current.data(Qt.UserRole) is not None  # not a header
+        assert current.data(Qt.UserRole) == "logistic_regression"
+    finally:
+        dlg.deleteLater()
+
+def test_keyboard_down_skips_category_header(qapp):
+    # Review point P2/optimization: arrow-key navigation must never land
+    # selection on a non-selectable category header.
+    from PyQt5.QtGui import QKeyEvent
+    from PyQt5.QtCore import QEvent
+    from ui.dialogs.statistical_analyzer_dialogs import HelpHubDialog
+    dlg = HelpHubDialog()
+    try:
+        dlg.recipe_list.setCurrentRow(
+            next(i for i in range(dlg.recipe_list.count())
+                 if dlg.recipe_list.item(i).data(Qt.UserRole) is not None)
+        )
+        # press Down enough times to cross at least one category boundary
+        for _ in range(dlg.recipe_list.count()):
+            ev = QKeyEvent(QEvent.KeyPress, Qt.Key_Down, Qt.NoModifier)
+            QApplication.sendEvent(dlg.recipe_list, ev)
+            cur = dlg.recipe_list.currentItem()
+            assert cur is None or cur.data(Qt.UserRole) is not None, "landed on header"
+    finally:
+        dlg.deleteLater()
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `pytest tests/test_help_hub.py -k "headers or navigate" -v`
-Expected: FAIL — no header items exist (flat list), `_header_items` returns `[]`.
+Run: `pytest tests/test_help_hub.py -k "headers or navigate or reselect or keyboard" -v`
+Expected: FAIL — no header items exist (flat list), `_header_items` returns `[]`;
+filter/keyboard tests error on the still-flat list.
 
 - [ ] **Step 3: Rewrite `_populate_recipe_list` to group by category**
 
@@ -421,10 +462,16 @@ Append to `tests/test_help_hub.py`:
 ```python
 import re
 
-# Emoji + dingbat ranges + the two known decorative chars (▶, ✓, etc.)
+# Emoji + dingbat ranges + arrows/decorative symbol blocks (catches ▶ ✓ etc.)
 _EMOJI = re.compile(
-    "[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF←-⇿⬀-⯿️]"
+    "[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF"
+    "\U00002190-\U000021FF\U00002B00-\U00002BFF\U0000FE0F]"
 )
+
+# Review point P4-opt: catch every non-hyphen dash variant, not just em/en.
+# em U+2014, en U+2013, horizontal bar U+2015, figure dash U+2012,
+# hyphen U+2010, non-breaking hyphen U+2011.
+_FORBIDDEN_DASHES = ["—", "–", "―", "‒", "‐", "‑"]
 
 def test_no_emoji_in_recipe_text():
     for r in HELP_RECIPES:
@@ -432,12 +479,17 @@ def test_no_emoji_in_recipe_text():
         found = _EMOJI.findall(blob)
         assert not found, f"{r['id']} contains emoji/symbol: {found}"
 
-def test_no_em_or_en_dash_in_recipe_text():
+def test_no_typographic_dash_in_recipe_text():
     for r in HELP_RECIPES:
         blob = r["title"] + r["html"]
-        assert "—" not in blob, f"{r['id']} contains em dash"
-        assert "–" not in blob, f"{r['id']} contains en dash"
+        for dash in _FORBIDDEN_DASHES:
+            assert dash not in blob, (
+                f"{r['id']} contains forbidden dash U+{ord(dash):04X}"
+            )
 ```
+
+Note: regular ASCII hyphen-minus (`-`, U+002D) is allowed; only the typographic
+dash variants above are forbidden.
 
 - [ ] **Step 2: Run test to verify it fails**
 
