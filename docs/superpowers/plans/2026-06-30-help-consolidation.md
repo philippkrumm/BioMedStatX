@@ -15,10 +15,10 @@
 - Recipe `id` values are stable. Confirmed deep-link callers:
   `help_recipe_id="one_way_anova" | "two_way_anova" | "repeated_measures_anova" | "ancova"`
   in `src/autopilot/statistical_analyzer_autopilot_pipeline.py` (lines 267, 279, 292, 308).
-- The 11 existing recipe ids: `getting_started`, `one_way_anova`, `two_way_anova`,
+- The 9 existing recipe ids: `getting_started`, `one_way_anova`, `two_way_anova`,
   `repeated_measures_anova`, `mixed_anova`, `ancova`, `correlation`,
-  `linear_regression`, `logistic_regression`. (Two of the 11 share the file; full set
-  is whatever `HELP_RECIPES` currently contains — the test in Task 1 snapshots them.)
+  `linear_regression`, `logistic_regression`. (Plus the 3 migrated recipes added in
+  Task 1 = 12 total. The tests check this dynamically, not by hardcoded count.)
 - Recipe dict keys in use: `id`, `title`, `summary`, `keywords`, `html`. We add `category`.
 
 ## File structure
@@ -499,7 +499,7 @@ likely contain em dashes and decorative symbols.
 
 - [ ] **Step 3: Run the humanizer pass**
 
-For each of the 14 recipes, apply the `anthropic-skills:humanizer` process to its
+For each of the 12 recipes, apply the `anthropic-skills:humanizer` process to its
 `title` and `html`:
 - Remove emojis and decorative symbols (including the `▶` in the `getting_started`
   title and any badges using emoji; the `.badge-good`/`.badge-bad` HTML spans are
@@ -507,7 +507,18 @@ For each of the 14 recipes, apply the `anthropic-skills:humanizer` process to it
 - Replace em/en dashes per humanizer rule 14 (period, comma, colon, or restructure).
 - Flatten promotional tone and title-case headings to sentence case.
 - Fix the self-referential "open the Help Hub from the Help menu" lines in the three
-  migrated recipes to read naturally now that they live inside the hub.
+  migrated recipes to read naturally now that they live inside the hub (Task 1
+  quality review I2).
+- **Heading-structure normalization (Task 1 quality review I1, I3, M4):** the three
+  migrated recipes (`dependent_samples`, `graph_visualization`,
+  `statistical_tests_html`) currently open at `<h3>` with no `<h2>` page title,
+  unlike the nine existing recipes which open with an `<h2>` matching their recipe
+  `title`. Give each migrated recipe an opening `<h2>` whose text equals its recipe
+  `title` (sentence case), then demote the original first `<h3>` accordingly so
+  headings nest correctly. Ensure the inner heading text is sentence case (e.g.
+  `graph_visualization`'s inner `<h3>Graph Visualization</h3>` becomes the `<h2>`
+  page title `Graph visualization`). Result: all 12 recipes share the same
+  `<h2>` title then `<h3>` section structure.
 - **Do not change any recipe `id` or `category`.** Do not alter table structure or
   the `.badge` spans.
 
