@@ -18,7 +18,7 @@ HELP_RECIPES = [
         "summary": "What are the buckets? What does long format mean? Start here.",
         "keywords": ["start", "bucket", "factor", "dependent variable", "subject id", "covariate", "format", "long", "wide", "beginner"],
         "html": """
-<h2>Getting Started</h2>
+<h2>Getting started: read this first</h2>
 <p>BioMedStatX works through <b>six drag-and-drop buckets</b> in the center of the screen. You drag your column names into these buckets to tell the app what role each column plays. The app then selects the right statistical test automatically. You never pick a test manually.</p>
 
 <h3>The six buckets, in plain English</h3>

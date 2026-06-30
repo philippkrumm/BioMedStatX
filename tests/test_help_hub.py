@@ -159,7 +159,7 @@ def test_removed_dialog_methods_gone():
 # Emoji + dingbat ranges + arrows/decorative symbol blocks (catches ▶ ✓ etc.)
 _EMOJI = re.compile(
     "[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF"
-    "\U00002190-\U000021FF\U00002B00-\U00002BFF\U0000FE0F]"
+    "\U000025A0-\U000025FF\U00002190-\U000021FF\U00002B00-\U00002BFF\U0000FE0F]"
 )
 
 # Catch every non-hyphen dash variant, not just em/en.
