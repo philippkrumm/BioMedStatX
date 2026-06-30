@@ -512,13 +512,14 @@ For each of the 12 recipes, apply the `anthropic-skills:humanizer` process to it
 - **Heading-structure normalization (Task 1 quality review I1, I3, M4):** the three
   migrated recipes (`dependent_samples`, `graph_visualization`,
   `statistical_tests_html`) currently open at `<h3>` with no `<h2>` page title,
-  unlike the nine existing recipes which open with an `<h2>` matching their recipe
-  `title`. Give each migrated recipe an opening `<h2>` whose text equals its recipe
-  `title` (sentence case), then demote the original first `<h3>` accordingly so
-  headings nest correctly. Ensure the inner heading text is sentence case (e.g.
-  `graph_visualization`'s inner `<h3>Graph Visualization</h3>` becomes the `<h2>`
-  page title `Graph visualization`). Result: all 12 recipes share the same
-  `<h2>` title then `<h3>` section structure.
+  unlike the nine existing recipes which open with an `<h2>`. Give each migrated
+  recipe an opening `<h2>` page title, then demote any following heading so headings
+  nest correctly. Result: all 12 recipes share the same structure — a single opening
+  `<h2>` page title, then `<h3>` sections. The `<h2>` text need NOT be verbatim equal
+  to the recipe `title` (the content panel already renders `title` in a separate
+  QLabel above the browser, so a verbatim `<h2>` would double the title); it MUST be
+  sentence case and may be a fuller descriptive phrasing of the same topic. There
+  must be exactly one `<h2>` per recipe and no stray `<h2>` later in the body.
 - **Do not change any recipe `id` or `category`.** Do not alter table structure or
   the `.badge` spans.
 
