@@ -163,6 +163,8 @@ class HelpHubDialog(QDialog):
 
         self.recipe_list = QListWidget()
         self.recipe_list.setObjectName("helpNavList")
+        self._skipping_header = False
+        self.recipe_list.currentItemChanged.connect(self._skip_header_item)
         self.recipe_list.currentItemChanged.connect(self._update_recipe_view)
         nav_layout.addWidget(self.recipe_list, 1)
 
@@ -250,16 +252,63 @@ class HelpHubDialog(QDialog):
                 self.recipe_list.setCurrentItem(item)
                 break
 
-    def _populate_recipe_list(self):
-        self.recipe_list.clear()
-        for recipe in self._recipes:
-            item = QListWidgetItem(recipe["title"])
-            item.setData(Qt.UserRole, recipe["id"])
-            item.setToolTip(recipe.get("summary", ""))
-            self.recipe_list.addItem(item)
+    def _skip_header_item(self, current, previous):
+        """If keyboard navigation lands on a category header, jump to the nearest recipe."""
+        if self._skipping_header or current is None:
+            return
+        if current.data(Qt.UserRole) is not None:
+            return  # already on a real recipe — nothing to do
+        self._skipping_header = True
+        try:
+            current_row = self.recipe_list.row(current)
+            previous_row = self.recipe_list.row(previous) if previous is not None else -1
+            # Determine direction: moving down (or no prior) → search forward; moving up → search backward
+            moving_down = previous_row < current_row
+            count = self.recipe_list.count()
+            if moving_down:
+                search_range = range(current_row + 1, count)
+            else:
+                search_range = range(current_row - 1, -1, -1)
+            for idx in search_range:
+                candidate = self.recipe_list.item(idx)
+                if candidate is not None and not candidate.isHidden() and candidate.data(Qt.UserRole) is not None:
+                    self.recipe_list.setCurrentItem(candidate)
+                    return
+            # No candidate found in that direction: stay on previous item
+            if previous is not None and not previous.isHidden() and previous.data(Qt.UserRole) is not None:
+                self.recipe_list.setCurrentItem(previous)
+        finally:
+            self._skipping_header = False
 
-        if self.recipe_list.count():
-            self.recipe_list.setCurrentRow(0)
+    def _populate_recipe_list(self):
+        from core.help_content import CATEGORY_ORDER
+        self.recipe_list.clear()
+        by_category = {cat: [] for cat in CATEGORY_ORDER}
+        for recipe in self._recipes:
+            by_category.setdefault(recipe.get("category", CATEGORY_ORDER[-1]), []).append(recipe)
+
+        first_recipe_row = None
+        for category in CATEGORY_ORDER:
+            recipes = by_category.get(category) or []
+            if not recipes:
+                continue
+            header = QListWidgetItem(category)
+            header.setData(Qt.UserRole, None)
+            header.setFlags(Qt.ItemIsEnabled)  # enabled for display, NOT selectable
+            font = header.font()
+            font.setBold(True)
+            header.setFont(font)
+            self.recipe_list.addItem(header)
+            for recipe in recipes:
+                item = QListWidgetItem(recipe["title"])
+                item.setData(Qt.UserRole, recipe["id"])
+                item.setToolTip(recipe.get("summary", ""))
+                self.recipe_list.addItem(item)
+                if first_recipe_row is None:
+                    first_recipe_row = self.recipe_list.row(item)
+
+        if first_recipe_row is not None:
+            self.recipe_list.setCurrentRow(first_recipe_row)
 
     def _filter_recipe_list(self, text):
         query = str(text or "").strip().lower()
@@ -268,6 +317,8 @@ class HelpHubDialog(QDialog):
         for index in range(self.recipe_list.count()):
             item = self.recipe_list.item(index)
             recipe_id = item.data(Qt.UserRole)
+            if recipe_id is None:
+                continue  # category header: handled in second pass below
             recipe = self._recipe_by_id.get(recipe_id, {})
             haystack = " ".join([
                 recipe.get("title", ""),
@@ -278,6 +329,22 @@ class HelpHubDialog(QDialog):
             item.setHidden(not visible)
             if visible and first_visible is None:
                 first_visible = item
+
+        # Hide category headers whose recipes are all hidden
+        count = self.recipe_list.count()
+        for index in range(count):
+            item = self.recipe_list.item(index)
+            if item.data(Qt.UserRole) is not None:
+                continue
+            any_visible = False
+            for j in range(index + 1, count):
+                nxt = self.recipe_list.item(j)
+                if nxt.data(Qt.UserRole) is None:
+                    break
+                if not nxt.isHidden():
+                    any_visible = True
+                    break
+            item.setHidden(not any_visible)
 
         current = self.recipe_list.currentItem()
         if current is None or current.isHidden():
@@ -291,6 +358,8 @@ class HelpHubDialog(QDialog):
     def _update_recipe_view(self, current, _previous):
         if current is None:
             return
+        if current.data(Qt.UserRole) is None:
+            return  # header row, nothing to render
 
         recipe_id = current.data(Qt.UserRole)
         recipe = self._recipe_by_id.get(recipe_id)
