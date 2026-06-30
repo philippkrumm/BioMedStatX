@@ -38,9 +38,10 @@ import logging
 logger = logging.getLogger(__name__)
 
 try:
-    from core.help_content import HELP_RECIPES
+    from core.help_content import HELP_RECIPES, CATEGORY_ORDER
 except ImportError as e:
     HELP_RECIPES = []
+    CATEGORY_ORDER = []
     logger.info(f"Warning: help content not available: {e}")
 
 
@@ -274,14 +275,22 @@ class HelpHubDialog(QDialog):
                 if candidate is not None and not candidate.isHidden() and candidate.data(Qt.UserRole) is not None:
                     self.recipe_list.setCurrentItem(candidate)
                     return
-            # No candidate found in that direction: stay on previous item
+            # No candidate found in that direction: prefer staying on the previous recipe.
             if previous is not None and not previous.isHidden() and previous.data(Qt.UserRole) is not None:
                 self.recipe_list.setCurrentItem(previous)
+                return
+            # Boundary case (e.g. Up from the first recipe lands on the header above with no
+            # usable previous): fall back to the first visible non-header recipe so selection
+            # never gets stuck on a header.
+            for idx in range(self.recipe_list.count()):
+                candidate = self.recipe_list.item(idx)
+                if candidate is not None and not candidate.isHidden() and candidate.data(Qt.UserRole) is not None:
+                    self.recipe_list.setCurrentItem(candidate)
+                    return
         finally:
             self._skipping_header = False
 
     def _populate_recipe_list(self):
-        from core.help_content import CATEGORY_ORDER
         self.recipe_list.clear()
         by_category = {cat: [] for cat in CATEGORY_ORDER}
         for recipe in self._recipes:
@@ -330,7 +339,10 @@ class HelpHubDialog(QDialog):
             if visible and first_visible is None:
                 first_visible = item
 
-        # Hide category headers whose recipes are all hidden
+        # Hide category headers whose recipes are all hidden. This pass must run even for an
+        # empty query: with no query every recipe is visible, so each header's forward scan
+        # finds a visible recipe and un-hides the header again. Skipping this pass when the
+        # query is empty would leave headers hidden after a search is cleared.
         count = self.recipe_list.count()
         for index in range(count):
             item = self.recipe_list.item(index)

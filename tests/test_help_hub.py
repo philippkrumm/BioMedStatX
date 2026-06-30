@@ -89,26 +89,33 @@ def test_filter_reselects_visible_recipe_when_current_hidden(qapp):
         current = dlg.recipe_list.currentItem()
         assert current is not None
         assert not current.isHidden()
-        assert current.data(Qt.UserRole) is not None
-        assert current.data(Qt.UserRole) == "logistic_regression"
+        recipe_id = current.data(Qt.UserRole)
+        assert recipe_id is not None
+        # The reselected recipe must actually match the "logistic" query, not just be
+        # any recipe (asserting a specific id would be brittle to ordering/additions).
+        recipe = _by_id()[recipe_id]
+        haystack = (recipe["title"] + " " + " ".join(recipe.get("keywords", []))).lower()
+        assert "logistic" in haystack
     finally:
         dlg.deleteLater()
 
 
-def test_keyboard_down_skips_category_header(qapp):
-    from PyQt5.QtGui import QKeyEvent
-    from PyQt5.QtCore import QEvent
+def test_selecting_a_header_redirects_off_it(qapp):
+    # Deterministic, offscreen-safe check of the header-skip mechanism: directly set
+    # the current row to each header and assert the _skip_header_item slot redirects
+    # selection onto a real recipe. (Sending Key_Down to a never-shown QListWidget is
+    # unreliable — Qt may not advance currentItem, masking a broken/removed slot.)
     from ui.dialogs.statistical_analyzer_dialogs import HelpHubDialog
     dlg = HelpHubDialog()
     try:
-        dlg.recipe_list.setCurrentRow(
-            next(i for i in range(dlg.recipe_list.count())
-                 if dlg.recipe_list.item(i).data(Qt.UserRole) is not None)
-        )
-        for _ in range(dlg.recipe_list.count()):
-            ev = QKeyEvent(QEvent.KeyPress, Qt.Key_Down, Qt.NoModifier)
-            QApplication.sendEvent(dlg.recipe_list, ev)
-            cur = dlg.recipe_list.currentItem()
-            assert cur is None or cur.data(Qt.UserRole) is not None, "landed on header"
+        header_rows = [i for i in range(dlg.recipe_list.count())
+                       if dlg.recipe_list.item(i).data(Qt.UserRole) is None]
+        assert len(header_rows) >= 2
+        for header_index in header_rows:
+            dlg.recipe_list.setCurrentRow(header_index)
+            current = dlg.recipe_list.currentItem()
+            assert current is not None
+            assert current.data(Qt.UserRole) is not None, (
+                f"selection stuck on header at row {header_index}")
     finally:
         dlg.deleteLater()
