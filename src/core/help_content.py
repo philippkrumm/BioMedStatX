@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 CATEGORY_ORDER = [
     "Start here",
     "Choosing a test",
