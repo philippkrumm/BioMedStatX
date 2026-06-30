@@ -16,7 +16,7 @@ def test_every_recipe_has_known_category():
 def test_required_keys_present():
     for r in HELP_RECIPES:
         for key in ("id", "title", "summary", "keywords", "html", "category"):
-            assert key in r and r[key] is not None, f"{r['id']} missing {key}"
+            assert key in r and r[key], f"{r['id']} has empty or missing {key}"
 
 def test_ids_unique():
     ids = [r["id"] for r in HELP_RECIPES]
@@ -29,3 +29,7 @@ def test_deeplink_ids_preserved():
 def test_migrated_recipes_present():
     ids = set(_by_id())
     assert {"dependent_samples", "graph_visualization", "statistical_tests_html"} <= ids
+
+def test_category_order_is_valid():
+    assert len(CATEGORY_ORDER) > 0
+    assert len(CATEGORY_ORDER) == len(set(CATEGORY_ORDER))
