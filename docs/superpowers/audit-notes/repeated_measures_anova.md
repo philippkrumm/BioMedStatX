@@ -10,9 +10,15 @@ Routing (autopilot): a Subject ID plus exactly one factor column, no Factor 2,
 routes to `repeated_measures_anova` when the factor has 3+ levels
 (`_ap_build_analysis_context`, `src/autopilot/statistical_analyzer_autopilot_pipeline.py:1161`-`1166`,
 `context["inferred_test"] = "paired_ttest" if len(levels) == 2 else "repeated_measures_anova"`).
-Two levels route to `paired_ttest` instead. Bucket-to-test routing preview also
-lives at `_ap_infer_test_for_bucket` (`pipeline:768`-`784`,
-`"repeated_measures_anova"`).
+Two levels route to `paired_ttest` instead. A related but distinct function,
+`_ap_resolve_help_recipe_for_bucket`
+(`src/autopilot/statistical_analyzer_autopilot_pipeline.py:758`-`789`), resolves
+which Help Hub recipe id to suggest for a given UI bucket (e.g. hovering or
+focusing the Subject ID bucket); it returns `"repeated_measures_anova"` when
+`bucket_widget is self.subject_bucket` and no Factor 2 is assigned (`:768`-`769`).
+This is a help-content suggestion lookup, not a preview of which statistical
+test will actually run; the real routing decision is made separately by
+`_ap_build_analysis_context` as described above.
 
 Dispatch (analysis core): `AnalysisManager.analyze` builds `local_kwargs["test"]
 = "repeated_measures_anova"` (`src/analysis/analysis_core.py:266`-`269`) and
