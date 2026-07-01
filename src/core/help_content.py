@@ -187,7 +187,7 @@ HELP_RECIPES = [
 <tr><td><b>Dependent Variable</b></td><td>Your measurement column</td><td>Score</td></tr>
 <tr><td><b>Factor 1</b></td><td>First group label column</td><td>Treatment</td></tr>
 <tr><td><b>Factor 2</b></td><td>Second group label column</td><td>Sex</td></tr>
-<tr><td>Subject ID</td><td>Leave empty. Each subject appears only once</td><td>-</td></tr>
+<tr><td>Subject ID</td><td>Leave empty. No subject is measured more than once</td><td>-</td></tr>
 <tr><td>Covariates</td><td>Leave empty</td><td>-</td></tr>
 </table>
 
