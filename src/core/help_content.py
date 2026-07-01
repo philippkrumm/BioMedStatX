@@ -88,6 +88,13 @@ HELP_RECIPES = [
 <p>Examples: "Do Control, Treatment A, and Treatment B mice have different body weights?" "Is there a blood pressure difference between three genotypes?" "Do patients from two hospitals differ in recovery time?"</p>
 <p>The app uses a t-Test automatically when there are exactly 2 groups, and ANOVA when there are 3 or more. You do not choose. It happens automatically.</p>
 
+<h3>What the app checks and runs</h3>
+<p>Before running the test, the app checks two assumptions. It tests whether the model residuals are normally distributed with a Shapiro-Wilk test, and whether the groups have equal spread with a Brown-Forsythe test.</p>
+<p>If the residuals look normal, the app runs Welch's t-test for two groups or Welch's ANOVA for three or more. These stay valid even when the group variances differ, which is why they are used as the default. If the residuals are not normal, the app first offers a data transformation, and when that does not fix the problem it switches to a rank-based test: Mann-Whitney U for two groups or Kruskal-Wallis for three or more.</p>
+
+<h3>After a significant result</h3>
+<p>With three or more groups, a significant ANOVA tells you that the groups are not all equal, but not which pairs differ. The app then compares each pair of groups. For a standard ANOVA the default post-hoc test is Tukey HSD; when the Welch path was taken the default is Games-Howell. A dialog lets you switch to Dunnett against a control group or another option. Every pairwise p-value is corrected for the number of comparisons.</p>
+
 <h3>What your data must look like</h3>
 <p>One row per measurement. Two columns minimum: one with the group label, one with the measured value.</p>
 <table>
@@ -129,6 +136,7 @@ HELP_RECIPES = [
 <li>One row per measurement, not one row per subject with multiple columns.</li>
 <li>Group names are spelled identically across rows. "Control" and "control" are treated as different groups.</li>
 <li>The measurement column contains only numbers, with no units and no text mixed in.</li>
+<li>Each group has at least three measurements. The app blocks the test for any group with fewer.</li>
 <li>No subject appears more than once. If a subject is measured twice, use Repeated Measures ANOVA instead.</li>
 </ul>
 """,
