@@ -71,7 +71,7 @@ There are no new unit tests per recipe; the existing `tests/test_help_hub.py` in
 **Files:** Modify `src/core/help_content.py` (recipe `repeated_measures_anova`); Create `docs/superpowers/audit-notes/repeated_measures_anova.md`.
 
 - [ ] **Step 1:** Follow the shared audit procedure for `repeated_measures_anova`.
-- [ ] **Step 2:** Ground-truth: `src/statistical_testing/advanced_pipeline.py` (sphericity test, Greenhouse-Geisser default when sphericity untestable, LMM fallback threshold), `validators.py`. Verify the sphericity → Greenhouse-Geisser claim matches code behavior (control check 3), the LMM-fallback note, the post-hoc method, and the wide-vs-long data expectation against `_ap_maybe_pivot` and the RM parser.
+- [ ] **Step 2:** Ground-truth: `src/statistical_testing/advanced_pipeline.py` dispatches (`test == "repeated_measures_anova"` at `advanced_pipeline.py:166`) into `StatisticalTester._run_repeated_measures_anova_logged` in `src/analysis/statisticaltester.py`, where the actual sphericity/Greenhouse-Geisser logic lives (`_perform_comprehensive_sphericity_test` at `statisticaltester.py:1967`, correction application around `statisticaltester.py:1936`, `sphericity_assumed`/`mauchly_p`/`epsilon` fields at `:1978-1980`); `validators.py`. Verify the sphericity → Greenhouse-Geisser claim against the actual `_perform_comprehensive_sphericity_test` behavior (control check 3), the LMM-fallback note, the post-hoc method, and the wide-vs-long data expectation against `_ap_maybe_pivot` and the RM parser.
 - [ ] **Step 3:** Rewrite html; write audit note.
 - [ ] **Step 4:** Tests green.
 - [ ] **Step 5:** Commit (`docs(help): audit repeated_measures_anova recipe against code`).
@@ -81,7 +81,7 @@ There are no new unit tests per recipe; the existing `tests/test_help_hub.py` in
 **Files:** Modify `src/core/help_content.py` (recipe `mixed_anova`); Create `docs/superpowers/audit-notes/mixed_anova.md`.
 
 - [ ] **Step 1:** Follow the shared audit procedure for `mixed_anova`.
-- [ ] **Step 2:** Ground-truth: `src/statistical_testing/advanced_pipeline.py`, `src/analysis/emm_posthoc.py` (EMM + multivariate-t Dunnett, method `emm_mvt`), between/within factor assignment, `validators.py`. Verify the between/within factor explanation, the post-hoc method and its adjustment, and the data structure expectation.
+- [ ] **Step 2:** Ground-truth: `src/statistical_testing/advanced_pipeline.py` dispatches (`test == "mixed_anova"` at `advanced_pipeline.py:164`) into `StatisticalTester._run_mixed_anova_logged` in `src/analysis/statisticaltester.py` (mixed-design sphericity via `_test_mixed_anova_within_sphericity:1703`); post-hoc via `src/analysis/emm_posthoc.py` (`rm_dunnett_emm_mvt:163`, `mixed_dunnett_emm_mvt:200` — EMM + multivariate-t Dunnett, method name `emm_mvt`); `validators.py`. Verify the between/within factor explanation, the post-hoc method and its adjustment, and the data structure expectation.
 - [ ] **Step 3:** Rewrite html; write audit note.
 - [ ] **Step 4:** Tests green.
 - [ ] **Step 5:** Commit (`docs(help): audit mixed_anova recipe against code`).
@@ -91,7 +91,7 @@ There are no new unit tests per recipe; the existing `tests/test_help_hub.py` in
 **Files:** Modify `src/core/help_content.py` (recipe `ancova`); Create `docs/superpowers/audit-notes/ancova.md`.
 
 - [ ] **Step 1:** Follow the shared audit procedure for `ancova`.
-- [ ] **Step 2:** Ground-truth: `src/statistical_testing/advanced_pipeline.py` (ANCOVA path), `validators.py`. Verify the covariate handling description, homogeneity-of-regression-slopes assumption (if claimed), post-hoc method/adjustment on adjusted means, and the data structure (group + covariate columns).
+- [ ] **Step 2:** Ground-truth: the actual model is `src/analysis/clinical_models.py:90 (ANCOVAModel)` — "ANCOVA via statsmodels OLS with Type III SS (Sum contrasts)" per its docstring, instantiated from `src/analysis/analysis_core.py:595 (model = ANCOVAModel())`, imported at `analysis_core.py:542`; `src/statistical_testing/advanced_pipeline.py` only dispatches into the `ancova`/`two_way_ancova` branch, it does not itself implement ANCOVA. Homogeneity-of-regression-slopes is a real method: `check_regression_slope_homogeneity` at `clinical_models.py:141`. `validators.py`. Verify the covariate handling description, the slope-homogeneity assumption claim against `check_regression_slope_homogeneity`, post-hoc method/adjustment on adjusted means (`adjusted_means` at `clinical_models.py:181`), and the data structure (group + covariate columns).
 - [ ] **Step 3:** Rewrite html; write audit note.
 - [ ] **Step 4:** Tests green.
 - [ ] **Step 5:** Commit (`docs(help): audit ancova recipe against code`).
@@ -111,7 +111,7 @@ There are no new unit tests per recipe; the existing `tests/test_help_hub.py` in
 **Files:** Modify `src/core/help_content.py` (recipe `linear_regression`); Create `docs/superpowers/audit-notes/linear_regression.md`.
 
 - [ ] **Step 1:** Follow the shared audit procedure for `linear_regression`.
-- [ ] **Step 2:** Ground-truth: the linear-regression path in `src/analysis/` (statsmodels OLS usage), `src/analysis/effect_sizes.py`. Verify reported coefficients/CI/alpha, R^2 / effect-size reporting, and the predictor/outcome data structure.
+- [ ] **Step 2:** Ground-truth: `src/analysis/correlation_models.py:456 (SimpleLinearRegressionModel)` — OLS via `statsmodels.formula.api` (verified: `correlation_models.py:499` imports `smf`, `fit()` at `:487`), continuous predictor + optional covariates, Box-Cox handling on Y via OLS residuals; `src/analysis/effect_sizes.py`. Verify reported coefficients/CI/alpha, R^2 / effect-size reporting, and the predictor/outcome data structure.
 - [ ] **Step 3:** Rewrite html; write audit note.
 - [ ] **Step 4:** Tests green.
 - [ ] **Step 5:** Commit (`docs(help): audit linear_regression recipe against code`).
@@ -121,7 +121,7 @@ There are no new unit tests per recipe; the existing `tests/test_help_hub.py` in
 **Files:** Modify `src/core/help_content.py` (recipe `logistic_regression`); Create `docs/superpowers/audit-notes/logistic_regression.md`.
 
 - [ ] **Step 1:** Follow the shared audit procedure for `logistic_regression`.
-- [ ] **Step 2:** Ground-truth: the logistic path in `src/analysis/` (statsmodels Logit, convergence monitoring + Firth penalized fallback), `effect_sizes.py`. Verify OR / AUC reporting and ranges, the convergence/Firth-fallback claim, default `alpha`, and the yes/no outcome data structure.
+- [ ] **Step 2:** Ground-truth: `src/analysis/clinical_models.py:1041 (LogisticRegressionModel)` — CORRECTION to the spec's assumption: this uses `statsmodels` GLM with a Binomial family (`smf.glm(formula, ..., family=sm.families.Binomial())` at `clinical_models.py:~1145`), NOT `sm.Logit` directly. On convergence failure it falls back to Firth Penalized Likelihood via Newton-Raphson (`_fit_firth_logistic` at `clinical_models.py:1145`, profile CI at `_firth_profile_ci:1251`). `effect_sizes.py`. Verify the recipe's convergence/Firth-fallback description matches this exact mechanism (do not describe it as plain "statsmodels Logit"), OR/AUC reporting and ranges, default `alpha`, and the yes/no outcome data structure.
 - [ ] **Step 3:** Rewrite html; write audit note.
 - [ ] **Step 4:** Tests green.
 - [ ] **Step 5:** Commit (`docs(help): audit logistic_regression recipe against code`).
@@ -131,7 +131,7 @@ There are no new unit tests per recipe; the existing `tests/test_help_hub.py` in
 **Files:** Modify `src/core/help_content.py` (recipe `dependent_samples`); Create `docs/superpowers/audit-notes/dependent_samples.md`.
 
 - [ ] **Step 1:** Follow the shared audit procedure for `dependent_samples`.
-- [ ] **Step 2:** Ground-truth: `src/analysis/statisticaltester.py` (`_wilcoxon_test` ~509-531, `_mannwhitney_test` for contrast, paired t-test, Friedman, `kruskal_wallis` strategy ~691), RM path. Verify the "two groups → paired t / Wilcoxon; more than two → RM ANOVA / Friedman" claim, the matched-order / equal-n data requirement against the actual paired-data handling, and any normality-driven choice.
+- [ ] **Step 2:** Ground-truth: `src/analysis/statisticaltester.py` (`_wilcoxon_test:509-531`, `_mannwhitney_test:633` for contrast) for the two-group case; Friedman is NOT in statisticaltester.py — it lives in `src/analysis/nonparametricanovas.py:189 (perform_friedman_test)`, using `scipy.stats.friedmanchisquare`, with a documented warning for n<3 subjects/cells and a note suggesting Wilcoxon over Friedman for exactly 2 time points (`nonparametricanovas.py:215`). Verify the "two groups → paired t / Wilcoxon; more than two → RM ANOVA / Friedman" claim against these two modules, the matched-order / equal-n data requirement against the actual paired-data handling, and any normality-driven choice.
 - [ ] **Step 3:** Rewrite html; write audit note.
 - [ ] **Step 4:** Tests green.
 - [ ] **Step 5:** Commit (`docs(help): audit dependent_samples recipe against code`).
