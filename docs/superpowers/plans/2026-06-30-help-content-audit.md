@@ -25,7 +25,12 @@ For the recipe assigned to the task:
 4. Classify each claim: correct / wrong / missing-relevant-feature / unclear.
 5. Rewrite the recipe `html` to fix wrong claims and add missing relevant features. Constraints:
    - Do NOT change the recipe `id` or `category`.
-   - Keep humanizer invariants: no emoji, no typographic dashes (— – ― ‒ ‐ ‑), sentence-case headings, exactly one opening `<h2>` then `<h3>` sections.
+   - Apply the `anthropic-skills:humanizer` skill to every NEW or CHANGED sentence
+     (not just the unchanged parts): no emoji, no typographic dashes
+     (— – ― ‒ ‐ ‑), no rule-of-three/copula-avoidance/inflated-significance
+     patterns, sentence-case headings, exactly one opening `<h2>` then `<h3>`
+     sections. Text you did not touch does not need re-humanizing, but anything you
+     write or rewrite must pass the same bar as the Task 4 humanizer pass.
    - Preserve existing `<table>` structure and any `.badge` spans; only change prose.
    - If code contradicts the recipe and the CODE looks wrong (not the recipe), do NOT rewrite to match a bug — flag it.
 6. Write an audit note file at `docs/superpowers/audit-notes/<recipe_id>.md` containing: the claim list with verdict + citation for each, and an "Unclear / possible code bug" section (may be empty).
