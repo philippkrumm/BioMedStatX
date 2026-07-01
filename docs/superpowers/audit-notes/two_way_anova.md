@@ -18,7 +18,7 @@ significant result runs through `AdvancedPostHocEngine.execute`
 branch calls `perform_freedman_lane_test`
 (`src/analysis/nonparametricanovas.py:391`). Bucket-to-test routing lives in
 `_ap_build_analysis_context`
-(`src/autopilot/statistical_analyzer_autopilot_pipeline.py:1169`).
+(`src/autopilot/statistical_analyzer_autopilot_pipeline.py:1054`).
 
 The citation anchor (symbol name or quoted string) is authoritative; the line
 number is only a navigation hint.
@@ -31,10 +31,10 @@ number is only a navigation hint.
 | 2 | Use when there are two separate ways of grouping (e.g. Treatment and Sex) and every combination is measured | correct | routing: two factor columns and no Subject ID -> `two_way_anova` at `_ap_build_analysis_context:1197` (`context["between_factors"] = factor_columns[:2]`, `:1198` `inferred_test = "two_way_anova"`); design validated as exactly two between factors at `validators.py:263` (`validate_test_design`, `"Two-Way ANOVA requires two between factors."`) |
 | 3 | You want to know whether each factor has an effect and whether they interact | correct | main effects computed per factor into `results["factors"]` at `_run_two_way_anova:2262`-`2276` (each with F, p, partial eta squared); interaction computed into `results["interactions"]` at `:2287`-`2298`; top-level `results["p_value"]` is set to the interaction p-value at `:2299` |
 | 4 | No subject appears more than once; if the same subjects are measured at multiple time points or conditions, use Mixed ANOVA | correct | two factors plus a Subject ID route to `mixed_anova`, not two-way, at `_ap_build_analysis_context:1182`-`1195` (`context["inferred_test"] = "mixed_anova"`); two-way is the no-subject branch at `:1196`-`1198` |
-| 5 | Data layout: one row per measurement, both group columns present in every row alongside the measured value (long format) | correct | cells are read as factor_a x factor_b combinations from column values at `_run_two_way_anova:2226` (`df.groupby([factor_a, factor_b])`) and `_extract_raw_data_two_way_anova:2421` (`df[(df[a]==a_val) & (df[b]==b_val)][dv]`); membership comes from column row values (long format), not headers. Note: this is a between-subjects design with replicate rows per cell, so "one row per measurement" is the accurate framing (the recipe previously said "one row per subject", corrected). |
+| 5 | Data layout: one row per measurement, both group columns present in every row alongside the measured value (long format) | correct | cells are read as factor_a x factor_b combinations from column values at `_run_two_way_anova:2226` (`df.groupby([factor_a, factor_b])`) and `_extract_raw_data_two_way_anova` (`statisticaltester.py:1418`, `df[(df[a]==a_val) & (df[b]==b_val)][dv]`); membership comes from column row values (long format), not headers. Note: this is a between-subjects design with replicate rows per cell, so "one row per measurement" is the accurate framing (the recipe previously said "one row per subject", corrected). |
 | 6 | Common mistake: both factors hidden in column names; the app cannot separate them into Factor 1 and Factor 2 | correct | the two-factor long structure is required (claim 5); the paired/repeated auto-melt (`_ap_maybe_pivot` -> `_detect_wide_format`, pipeline `:1961`) only recovers a single value dimension from a subject-keyed wide table and cannot split one merged header into two crossed factors, so a `Control_Male / Control_Female / ...` layout is genuinely unusable |
 | 7 | Bucket mapping: Dependent Variable = measurement column; Factor 1 and Factor 2 = the two group columns; Subject ID and Covariates left empty | correct | DV bucket at `_ap_init_ui` (`"Dependent Variable"`, `accepted_kinds={"numeric"}`); Factor 1 (`:263`) and Factor 2 (`:275`) hold the two grouping columns; two factors with empty Subject and empty Covariates keep the inference on the two-way branch at `_ap_build_analysis_context:1196`-`1198`. Subject ID filled -> `mixed_anova` (`:1195`); Covariates filled -> `two_way_ancova` (`:1242`) |
-| 8 | Checklist: both group columns hold category labels; numeric group codes are fine, a continuous measurement is not | correct (rewritten) | factors are cast to string cells at `_run_two_way_anova:2226`/`_extract_raw_data_two_way_anova:2421` and at `perform_freedman_lane_test:424`-`425` (`df[safe_a].astype(str)`), so integer-coded groups work. The single-factor continuous redirect to correlation/regression only fires for `len(factor_columns) == 1` (`_ap_build_analysis_context:1251`), so with two factors a genuinely continuous numeric column is NOT redirected and would produce many singleton cells. The old wording "text labels, not numbers" was wrong; the new wording accepts numeric group codes and warns against a continuous column. |
+| 8 | Checklist: both group columns hold category labels; numeric group codes are fine, a continuous measurement is not | correct (rewritten) | groups are read from raw column values with no type check: `_run_two_way_anova:2226` (`df.groupby([factor_a, factor_b]).size()`) and `_extract_raw_data_two_way_anova` (`statisticaltester.py:1418`, `df[(df[a]==a_val) & (df[b]==b_val)][dv]`) key cells directly on the factor column's native values (numeric or string), no groupby failure either way. The non-parametric path explicitly casts factors to string before grouping: `perform_freedman_lane_test:424`-`425` (`df[safe_a].astype(str)`) and, in the statsmodels post-hoc fallback, `statisticaltester.py:2438` (`df['interaction_group'] = df[factor_a].astype(str) + "_" + df[factor_b].astype(str)`). So integer-coded groups work in every branch. The single-factor continuous redirect to correlation/regression only fires for `len(factor_columns) == 1` (`_ap_build_analysis_context:1251`), so with two factors a genuinely continuous numeric column is NOT redirected and would produce many singleton cells. The old wording "text labels, not numbers" was wrong; the new wording accepts numeric group codes and warns against a continuous column. |
 | 9 | Checklist: every row has a value in both group columns | correct | rows with a missing factor value are dropped before analysis: `perform_freedman_lane_test:407` (`data[[dv, factor_a, factor_b]].dropna()`); cell extraction reads only present factor combinations at `_run_two_way_anova:2226` |
 | 10 | Checklist: no subject is measured more than once (else Mixed ANOVA) | correct | same routing as claim 4; two-way is between-subjects with no Subject column |
 | 11 | Checklist: each combination of the two factors has at least a few measurements | correct | pre-flight blocks a cell with fewer than `min_n_block=2` non-NaN values: `advanced_pipeline.py:95` (`validate_samples_for_test(..., min_n_block=2)`) -> `validators.py:377` (`if valid.size < min_n_block: return issue("N_BELOW_MIN", ...)`). The Brown-Forsythe variance check additionally needs n>=3 per group to run (`validate_levene_inputs(..., min_n_per_group=3)`, `assumption_checks.py:279`-`285`), and `_run_two_way_anova:2226`-`2238` warns on empty or unbalanced cells. "A few measurements" is deliberately vague per the recipe-economy rule; exact thresholds recorded here. |
@@ -115,6 +115,11 @@ which is true for every branch above (Holm-Sidak, Tukey HSD, Dunnett, Holm). The
 named procedures are recorded here per the recipe-economy rule and kept out of
 the shipped text.
 
+Note: the pairwise p-values themselves are always the correctly adjusted values
+for whichever method ran. The `posthoc_test` *label* attached to the default
+`paired_custom` run is a separate, buggy field; see "Unclear / possible code
+bug" item 2 below.
+
 ## Alpha / adjustment control check
 
 Default `alpha` is 0.05 end to end: `perform_advanced_test_pipeline(..., alpha=0.05)`
@@ -130,8 +135,9 @@ no numeric alpha, so there is nothing to contradict.
 The recipe's two-factor long layout (one measured-value column plus two group-label
 columns, both filled on every row) matches the parser: cells are read as
 factor_a x factor_b combinations from column row values
-(`_run_two_way_anova:2226`, `_extract_raw_data_two_way_anova:2421`,
-`perform_freedman_lane_test:407`). The "both factors merged into column headers"
+(`_run_two_way_anova:2226`, `_extract_raw_data_two_way_anova` at
+`statisticaltester.py:1418`, `perform_freedman_lane_test:407`). The "both factors
+merged into column headers"
 example is correctly flagged as failing: no auto-melt splits a single merged header
 into two crossed factors (`_ap_maybe_pivot` handles only the paired/repeated
 subject-keyed wide signature). The old "one row per subject" phrasing was corrected
@@ -140,8 +146,8 @@ between-subjects design.
 
 ## Unclear / possible code bug
 
-None that contradict the recipe. Two observations recorded for the human, not acted
-on here:
+None that contradict the recipe text itself. Two observations recorded for the
+human, not acted on here:
 
 1. **Numeric factor footgun (documented, not a bug).** With exactly two factor
    columns, the continuous-factor redirect to correlation/regression does not fire
@@ -152,13 +158,47 @@ on here:
    a factor. Worth a human decision on whether the code should also guard the
    two-factor case.
 
-2. **Inline post-hoc label mismatch (cosmetic, overridden).** The inline pingouin
-   post-hoc inside `_run_two_way_anova` uses `pg.pairwise_tests(..., padjust='holm')`
-   but labels the result `"Tukey HSD Test (Pingouin)"` (`statisticaltester.py:2315`,
-   `:2347` `"corrected": "Holm-Bonferroni"`, `:2353` `posthoc_test = "Tukey HSD Test
-   (Pingouin)"`). The label says Tukey while the correction is Holm. In the live
-   autopilot path this inline result is overridden by `AdvancedPostHocEngine`
-   (`advanced_pipeline.py:254`-`266`), whose default `paired_custom` path reports the
-   honest `"Custom paired t-tests (Holm-Sidak)"` label (`posthoc_core.py:317`), so the
-   user does not see the mislabeled string. Flagged for the human because the inline
-   label is still misleading if that code path is ever reached directly.
+2. **Inline post-hoc label mismatch: a real, user-visible display bug, not
+   cosmetic.** The inline pingouin post-hoc inside `_run_two_way_anova` uses
+   `pg.pairwise_tests(..., padjust='holm')` but sets
+   `results["posthoc_test"] = "Tukey HSD Test (Pingouin)"`
+   (`statisticaltester.py:2315` the `pairwise_tests` call, `:2347`
+   `"corrected": "Holm-Bonferroni"` on each comparison, `:2353`
+   `results["posthoc_test"] = "Tukey HSD Test (Pingouin)"`). The label says Tukey
+   while the correction actually applied is Holm.
+
+   This is NOT overridden in the default path, contrary to what a first read of the
+   override guard suggests. `AdvancedPostHocEngine`'s result replaces
+   `res["posthoc_test"]` only when `should_override` is true
+   (`advanced_pipeline.py:258`-`266`). One of the `should_override` branches is
+   `"Pingouin" in str(current_posthoc) and new_posthoc and "Tukey" in str(new_posthoc)`
+   (`:263`), i.e. it only fires when the *replacement* label also contains the
+   substring "Tukey". But the default two-way post-hoc method is `paired_custom`
+   (`advanced_posthoc.py:85`), whose label is
+   `"Custom paired t-tests (Holm-Sidak)"` (`posthoc_core.py:317`,
+   `method_name_map["paired_custom"]`), which does not contain "Tukey". None of the
+   other three `should_override` conditions match either (`current_posthoc` is
+   truthy and is not `"Two-Way ANOVA Post-hoc Tests"`, `"parametric paired
+   t-tests"`, or `"pairwise paired t-tests"`). So for the default `paired_custom`
+   two-way post-hoc, `should_override` evaluates `False`, `res["posthoc_test"]`
+   keeps the inline value `"Tukey HSD Test (Pingouin)"`, and
+   `pairwise_comparisons` is separately overwritten with the correct
+   `paired_custom`/Holm-Sidak values (`advanced_pipeline.py:255`). The two fields
+   go out of sync: the comparisons are Holm-Sidak but the test-name field still
+   says Tukey.
+
+   That mislabeled `posthoc_test` string then reaches the user-facing analysis
+   log: `analysis_core.py:1362`-`1364` reads `results.get("posthoc_test", None)`
+   and, because it contains `"Tukey HSD"`, sets `posthoc_display = "Tukey HSD
+   Test"`, which is printed into the log as the post-hoc method used. This means
+   the DEFAULT two-way ANOVA post-hoc run through the ordinary autopilot path logs
+   "Post-hoc test: Tukey HSD Test" while the pairwise p-values it displays are
+   actually Holm-Sidak corrected. The override only actually fires when the user
+   explicitly picks the `tukey` method via the post-hoc dialog (then both the
+   inline and replacement labels contain "Tukey" and the two happen to agree by
+   coincidence, not by working override logic). This is a genuine, user-visible
+   misreporting of the correction method for the default post-hoc path, not a
+   dead/unreachable code path, and it is worth fixing at the code level (e.g. by
+   removing the `"Tukey" in str(new_posthoc)` gate, or by having `_run_two_way_anova`
+   not set an inline `posthoc_test` label at all since it is always meant to be
+   replaced) even though this audit task does not touch code.
