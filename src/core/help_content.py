@@ -340,7 +340,10 @@ HELP_RECIPES = [
 <p>You want to compare groups, but you suspect that another variable, one you did not control, differs between your groups and may distort the comparison. ANCOVA adjusts the group averages mathematically to account for the background variable, allowing for a fairer comparison.</p>
 <p><b>Important:</b> The covariate must not be affected by the treatment itself (e.g. do not use weight after treatment as a covariate). Otherwise, you risk mathematically removing the actual treatment effect (overadjustment bias).</p>
 <p>Example: You compare test scores between Treatment and Control groups. But Control patients happened to be older than Treatment patients. A simple ANOVA would partly reflect that pre-existing age difference, not just the treatment effect. Putting Age into Covariates corrects for it.</p>
-<p>The correcting variable goes into the <b>Covariates</b> bucket. It must be a number (not a group label).</p>
+<p>The correcting variable goes into the <b>Covariates</b> bucket. It must be a number (not a group label). You can add more than one.</p>
+
+<h3>What the app checks and runs</h3>
+<p>The app fits the ANCOVA model and reports each group's average after adjusting for the covariate, next to the raw unadjusted average. It also checks whether the covariate affects every group the same way, which is the assumption ANCOVA relies on. If that assumption fails, it runs a follow-up analysis that shows over which range of the covariate the groups actually differ. When the group effect comes out significant, the app compares the adjusted group averages against each other and adjusts the p-values for the number of comparisons.</p>
 
 <h3>What your data must look like</h3>
 <p>One row per subject. One measurement column (outcome), one group column, and one or more numeric covariate columns.</p>
