@@ -275,8 +275,11 @@ HELP_RECIPES = [
 <h2>Mixed ANOVA: groups and repeated measurements</h2>
 
 <h3>When do you use this?</h3>
-<p>You have <b>two or more groups</b>, and the <b>same subjects within each group are measured multiple times</b>. You want to know: does the measurement change over time, does it differ between groups, and (most interestingly) does the change over time look different across groups?</p>
+<p>You have <b>two or more groups</b>, and the <b>same subjects within each group are measured multiple times</b>. You want to know three things: does the measurement change over time, does it differ between groups, and does the change over time look different from one group to another? That last question, the interaction, is what this test is built around and what it reports as the main result.</p>
 <p>Examples: "Do Treatment and Control patients show different recovery trajectories from Baseline to Week 8?" "Do WT and KO mice respond differently across three dose levels?"</p>
+
+<h3>What the app checks and runs</h3>
+<p>The app checks whether your data is normally distributed, whether the groups have similar spread, and whether the differences between time points are stable enough to compare on equal footing. If everything looks fine, it runs a mixed ANOVA that separates the group effect, the time effect, and the interaction between them. If that equal-footing assumption for the time factor cannot be confirmed, the app applies a conservative correction rather than assuming it holds. If the data is not normal, it falls back to a rank-based test for this design. When the interaction is significant, the app compares the group-and-time combinations and adjusts the p-values for the number of comparisons.</p>
 
 <h3>What your data must look like</h3>
 <p>One row per measurement. Four columns: subject identifier, the independent group, the time point or condition, and the measurement value.</p>
@@ -302,7 +305,7 @@ HELP_RECIPES = [
 <tr><td>P011</td><td>Treatment</td><td>144</td><td>122</td></tr>
 <tr><td>P012</td><td>Treatment</td><td>146</td><td>125</td></tr>
 </table>
-<p><b>Why this fails:</b> Timepoint must be a single column with the labels as values, not separate columns for each time point.</p>
+<p><b>Why this fails:</b> the app only reshapes a wide file when there is no group column, so the automatic reshape does not apply here. It keeps the table as is, and there is no single Timepoint column to map to Factor 1. Put the time points in one column with the labels as values, and keep the group in its own column, as in the long layout above.</p>
 
 <h3>What to drag where</h3>
 <table>
@@ -317,9 +320,9 @@ HELP_RECIPES = [
 
 <h3>Before you click Start: checklist</h3>
 <ul>
-<li>Each subject appears exactly once per time point.</li>
-<li>A subject's Group value is identical across all their rows.</li>
-<li>Ideally, all subjects have measurements at all time points. If &gt;5% of subjects have missing data, the app automatically switches to a robust Linear Mixed Model (LMM).</li>
+<li>Each subject appears exactly once per time point. No duplicate SubjectID + Timepoint combinations within a group.</li>
+<li>A subject's Group value is identical across all their rows. The app uses this to decide which factor is the group and which is the repeated one, so a subject that appears under more than one group breaks the design.</li>
+<li>Ideally, all subjects have measurements at all time points. If any subject is missing even one time point, the app switches to a mixed model that uses every subject instead of dropping anyone with a gap.</li>
 <li>Subject ID, Factor 1 (within), and Factor 2 (between) are all filled. This is what distinguishes Mixed ANOVA from Two-Way ANOVA.</li>
 </ul>
 """,
