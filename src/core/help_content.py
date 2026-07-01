@@ -215,6 +215,9 @@ HELP_RECIPES = [
 <p>Examples: "Does blood pressure change from Baseline to Week 4 to Week 8 in our patients?" "Does heart rate change across three exercise intensities in the same athletes?"</p>
 <p><b>Key distinction:</b> all subjects are in one group only. If they are also split into different groups (e.g. Treatment vs. Control), use Mixed ANOVA instead.</p>
 
+<h3>What the app checks and runs</h3>
+<p>The app checks whether your data is normally distributed and whether the differences between time points are stable enough to compare them on equal footing. If the data looks normal, it runs a repeated measures ANOVA. If that equal-footing assumption cannot be confirmed, the app applies a conservative correction rather than assuming it holds. If the data is not normal, the app falls back to a rank-based test for repeated measures. When the overall result is significant, it compares the time points and adjusts the p-values for the number of comparisons.</p>
+
 <h3>What your data must look like</h3>
 <p>One row per measurement. Three columns: subject identifier, the time point or condition label, and the measured value. Each subject appears once per time point.</p>
 <table>
@@ -231,7 +234,7 @@ HELP_RECIPES = [
 </table>
 <p>Notice: P001 appears three times, once per time point. That is correct and expected.</p>
 
-<h3>Common mistake: one column per time point</h3>
+<h3>One column per time point also works</h3>
 <table>
 <tr><th>SubjectID</th><th>Baseline</th><th>Week_4</th><th>Week_8</th></tr>
 <tr><td>P001</td><td>140</td><td>130</td><td>125</td></tr>
@@ -240,9 +243,10 @@ HELP_RECIPES = [
 <tr><td>P004</td><td>138</td><td>128</td><td>122</td></tr>
 <tr><td>P005</td><td>144</td><td>134</td><td>130</td></tr>
 </table>
-<p><b>Why this fails:</b> The time points must be values inside a "Timepoint" column. When they are column headers, the app cannot map Timepoint to Factor 1.</p>
+<p>If you load this wide layout, with one subject identifier and one numeric column per time point, the app recognizes it and reshapes it into the long format above for you. The time points become the values of a new condition column. Either layout is fine to load.</p>
 
 <h3>What to drag where</h3>
+<p>If the app already reshaped a wide file, the reshaped columns are what you map here.</p>
 <table>
 <tr><th>Bucket</th><th>What to drag here</th><th>In this example</th></tr>
 <tr><td><b>Dependent Variable</b></td><td>Your measurement column</td><td>Blood_Pressure</td></tr>
@@ -255,8 +259,8 @@ HELP_RECIPES = [
 <h3>Before you click Start: checklist</h3>
 <ul>
 <li>Each subject appears exactly once per time point. No duplicate SubjectID + Timepoint combinations.</li>
-<li>Ideally, all subjects have measurements at all time points. If &gt;5% of subjects have missing data, the app automatically switches to a robust Linear Mixed Model (LMM) instead of excluding subjects (listwise deletion).</li>
-<li>The Timepoint column contains text labels such as "Baseline" and "Week_4", not numbers like 0, 4, 8.</li>
+<li>Ideally, all subjects have measurements at all time points. If some measurements are missing, the app switches to a mixed model that uses every subject instead of dropping anyone with a gap.</li>
+<li>The Timepoint column can hold text labels such as "Baseline" and "Week_4", or numbers such as 0, 4, and 8. Both work.</li>
 <li>Subject ID values repeat across rows. This is correct and expected.</li>
 </ul>
 """,
