@@ -32,7 +32,8 @@ HELP_RECIPES = [
 </table>
 
 <h3>The single most important rule: one row = one measurement</h3>
-<p>BioMedStatX expects your data in what statisticians call <b>long format</b>: <b>each row is one measurement from one subject</b>. Most people are used to wide format, where each condition has its own column. Wide format does not work here.</p>
+<p>BioMedStatX expects your data in what statisticians call <b>long format</b>: <b>each row is one measurement from one subject</b>. Most people are used to wide format, where each condition has its own column. For group comparisons, wide format does not work: put your group labels in a column, not in the headers.</p>
+<p>There is one exception. If your file looks like a paired or repeated-measures layout, one subject ID column plus a few numeric condition columns and no group column, the app melts it to long format for you and tells you it did so. For everything else you arrange the data in long format yourself.</p>
 
 <table>
 <tr><th colspan="2">Correct: long format</th></tr>
@@ -67,7 +68,10 @@ HELP_RECIPES = [
 <li>Covariates filled gives an <b>ANCOVA or Multiple Regression</b></li>
 <li>Outcome has exactly two values (0/1 or Yes/No) gives <b>Logistic Regression</b></li>
 </ul>
-<p>The grey status line below the buckets always shows which test would run right now, before you click Start.</p>
+<p>The status line below the buckets checks your mapping as you drag. When it says the mapping looks valid, the Start button turns on. The full decision path, including the exact test that ran, appears in the results after you click Start.</p>
+
+<h3>Want a file to start from?</h3>
+<p>Open the <b>Help</b> menu and choose <b>Save Example Template...</b>. That writes a small Excel file already laid out in long format, so you can see the shape the app expects and replace the numbers with your own.</p>
 """,
     },
     {
