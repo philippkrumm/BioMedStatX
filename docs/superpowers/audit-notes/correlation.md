@@ -132,3 +132,14 @@ recipe text (which names no specific test), recorded for completeness:
    `20 <= n < 100`** (`correlation_models.py:356`-`361`); for `n < 20` and
    `n >= 100` the `scipy_stats.spearmanr` p-value is kept as-is. This is an
    internal accuracy refinement, invisible to the recipe. Recorded, no change.
+
+3. **The `CorrelationModel` class docstring is stale and describes the wrong
+   mechanism** (`correlation_models.py:199`-`203`): it says `method='auto'`
+   "applies Shapiro-Wilk to both variables and uses Pearson when both are
+   normally distributed (p > alpha)," but the actual `fit` logic is the
+   skew/excess-kurtosis N-tier gating described in observation 1 above, which
+   does not read the Shapiro p-value at all. This is a genuine code
+   documentation bug (not a recipe issue — the recipe never named a specific
+   mechanism), found during spec review of this task. Worth fixing at the code
+   level: update the docstring to match the real `fit` logic. No recipe or
+   code change made here, per the audit's scope.
