@@ -455,12 +455,12 @@ HELP_RECIPES = [
 
 <h3>Two ways to trigger regression</h3>
 <ul>
-<li><b>Simple regression</b> (one predictor, no additional controls): Drag only Factor 1. Then tick the checkbox <i>"Analyse as Linear Regression"</i> that appears below the buckets. Without that tick, the app runs Correlation instead.</li>
+<li><b>Simple regression</b> (one predictor, no additional controls): Drag only Factor 1. Then tick the checkbox <i>"Als Lineare Regression analysieren (Y = a + bX)"</i> that appears below the buckets. Without that tick, the app runs Correlation instead.</li>
 <li><b>Multiple regression</b> (predictor + control variables): Drag Factor 1 and one or more Covariates. The Regression mode activates automatically when Covariates is populated.</li>
 </ul>
 
 <h3>Variable Transformations</h3>
-<p>When regression mode is active, you will see dropdowns to transform your X or Y variables (e.g. into log10 or square root). Use this if your data is highly skewed or heteroscedastic. <b>Important:</b> Transforming changes how you interpret the result! If you log-transform Y, the effect is multiplicative rather than additive. If you log-transform <b>both X and Y (Log-Log)</b>, β represents an <i>elasticity</i> (a 1% increase in X yields a β% change in Y).</p>
+<p>When regression mode is active, you will see dropdowns to transform your X or Y variables. The options are log10, log10(x+1), square root, and Box-Cox. Use one if your data is highly skewed or the spread of the outcome grows with the predictor. <b>Important:</b> Transforming changes how you interpret the result. If you log-transform Y, the effect is multiplicative rather than additive. If you log-transform <b>both X and Y (Log-Log)</b>, β represents an <i>elasticity</i> (a 1% increase in X yields a β% change in Y).</p>
 
 <h3>What your data must look like</h3>
 <p>One row per subject. One numeric outcome column, one or more numeric predictor columns.</p>
@@ -486,7 +486,8 @@ HELP_RECIPES = [
 </table>
 
 <h3>Reading the result</h3>
-<p>The main output is the <b>coefficient (β)</b> for each predictor. If β = -2.5 for Dosage_mg, it means: for every additional mg of dosage, blood pressure decreases by 2.5 points on average, holding age and baseline BP constant.</p>
+<p>The main output is the <b>coefficient (β)</b> for each predictor. If β = -2.5 for Dosage_mg, it means: for every additional mg of dosage, blood pressure decreases by 2.5 points on average, holding age and baseline BP constant. Each coefficient also comes with a p-value and a 95% confidence interval, so you can see whether the effect is distinguishable from zero and how precisely it is estimated.</p>
+<p>The report also shows <b>R²</b> (and adjusted R²): the share of variation in the outcome the model accounts for. A high β with a low R² means the predictor matters but leaves most of the outcome unexplained.</p>
 
 <h3>Before you click Start: checklist</h3>
 <ul>
