@@ -55,6 +55,17 @@ code is wrong rather than the recipe, that is reported, not fixed here).
 - If the recipe and the code disagree and it is unclear which is intended (recipe
   describes desired behavior, code does something else), flag it in the audit notes
   for human decision rather than silently rewriting.
+- **Recipe economy.** The "Choosing a test" recipes are a triage page ("which recipe
+  do I want"), not a statistics methods appendix. When adding a missing feature, prefer
+  one short plain-language sentence over naming every specific procedure. Do not list
+  named assumption tests (Shapiro-Wilk, Brown-Forsythe, Levene, ...) or every named
+  post-hoc method (Tukey HSD, Games-Howell, Dunnett, ...) in the recipe body just
+  because they are correct — say what happens ("the app checks whether your data is
+  normally distributed and adjusts automatically") rather than teaching the taxonomy.
+  Benchmark: match the economy of the existing `correlation` recipe's one-sentence
+  "the app picks Pearson or Spearman automatically" treatment, not a methods paragraph.
+  The full named-procedure detail belongs in the audit note (for the human record),
+  not necessarily in the shipped recipe text.
 
 ## Invariants (enforced by existing tests in tests/test_help_hub.py)
 
