@@ -152,8 +152,11 @@ HELP_RECIPES = [
 <p>Examples: "Does the treatment effect depend on sex?" "Does diet interact with exercise level to affect weight loss?"</p>
 <p>No subject appears more than once. If the same subjects are measured at multiple time points or conditions, use Mixed ANOVA instead.</p>
 
+<h3>What the app checks and runs</h3>
+<p>The app checks whether your data is normally distributed and whether the combinations of the two factors have similar spread. If the data looks normal, it runs a two-way ANOVA and reports a main effect for each factor plus the interaction between them. If the data is not normal, the app first tries a transformation, then falls back to a permutation-based test. When a result is significant, it compares the relevant groups and adjusts the p-values for the number of comparisons.</p>
+
 <h3>What your data must look like</h3>
-<p>One row per subject. <b>Both</b> group columns are present in every row.</p>
+<p>One row per measurement. <b>Both</b> group columns are present in every row, alongside the measured value.</p>
 <table>
 <tr><th>Treatment</th><th>Sex</th><th>Score</th></tr>
 <tr><td>Control</td><td>Male</td><td>45</td></tr>
@@ -190,9 +193,10 @@ HELP_RECIPES = [
 
 <h3>Before you click Start: checklist</h3>
 <ul>
-<li>Both group columns contain text labels, not numbers.</li>
+<li>Both group columns hold category labels, one per row. Numbers used as group codes are fine as long as they mark a handful of distinct groups and not a continuous measurement.</li>
 <li>Every row has a value in both group columns.</li>
-<li>Each subject appears exactly once in the entire dataset.</li>
+<li>No subject is measured more than once. If a subject is measured under several conditions, use Mixed ANOVA instead.</li>
+<li>Each combination of the two factors has at least a few measurements.</li>
 <li>No group name is embedded in a column header.</li>
 </ul>
 """,
