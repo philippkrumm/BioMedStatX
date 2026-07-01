@@ -89,11 +89,8 @@ HELP_RECIPES = [
 <p>The app uses a t-Test automatically when there are exactly 2 groups, and ANOVA when there are 3 or more. You do not choose. It happens automatically.</p>
 
 <h3>What the app checks and runs</h3>
-<p>Before running the test, the app checks two assumptions. It tests whether the model residuals are normally distributed with a Shapiro-Wilk test, and whether the groups have equal spread with a Brown-Forsythe test.</p>
-<p>If the residuals look normal, the app runs Welch's t-test for two groups or Welch's ANOVA for three or more. These stay valid even when the group variances differ, which is why they are used as the default. If the residuals are not normal, the app first offers a data transformation, and when that does not fix the problem it switches to a rank-based test: Mann-Whitney U for two groups or Kruskal-Wallis for three or more.</p>
-
-<h3>After a significant result</h3>
-<p>With three or more groups, a significant ANOVA tells you that the groups are not all equal, but not which pairs differ. The app then compares each pair of groups. For a standard ANOVA the default post-hoc test is Tukey HSD; when the Welch path was taken the default is Games-Howell. A dialog lets you switch to Dunnett against a control group or another option. Every pairwise p-value is corrected for the number of comparisons.</p>
+<p>The app checks whether your data is normally distributed and whether the groups have similar spread. If the data looks normal, it defaults to Welch's version of the t-Test or ANOVA, since that stays valid whether or not the groups have equal variance. If the data is not normal, the app first tries a transformation, then falls back to a rank-based test.</p>
+<p>When the result is significant with three or more groups, the app automatically compares each pair of groups and adjusts the p-values for the number of comparisons.</p>
 
 <h3>What your data must look like</h3>
 <p>One row per measurement. Two columns minimum: one with the group label, one with the measured value.</p>
