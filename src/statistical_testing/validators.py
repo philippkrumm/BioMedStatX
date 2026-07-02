@@ -255,6 +255,8 @@ def validate_test_design(
     if test_name == "mixed_anova":
         if not between or not within:
             raise ModelDesignError("Mixed ANOVA requires between and within factor.")
+        if subject is None:
+            raise ModelDesignError("Mixed ANOVA requires subject column.")
     elif test_name == "repeated_measures_anova":
         if not within:
             raise ModelDesignError("RM-ANOVA requires within factor.")
