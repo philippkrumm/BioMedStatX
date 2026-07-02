@@ -67,6 +67,22 @@ Estimation are legitimately reachable. The recipe now mentions it as a separate
 "redesign in the report" surface rather than listing Forest/Estimation as
 live-dialog types.
 
+**Not every analysis gets one.** `plot_designer_enabled = bool(plot_data)`
+(`html_exporter.py:149`) and `plot_data` is built from `results["raw_data"]`
+(`html_exporter.py:107`-`117`). For `correlation`, `linear_regression`,
+`logistic_regression`, and `beta_regression`, `AnalysisManager.analyze` never
+populates `raw_data` in the first place:
+`_no_group_raw = clinical_test in ('correlation', 'linear_regression',
+'logistic_regression', 'beta_regression')`, and when `_no_group_raw` is true
+the `results['raw_data'] = {...}` assignment is skipped in favor of
+`raw_data_columns` instead (`analysis_core.py:741`-`756`). So for those four
+analysis types `plot_data` stays `{}`, `plot_designer_enabled` is false, and
+the in-report designer does not render at all. This is self-consistent rather
+than a gap: those analyses have no group-wise pairwise comparisons, so there
+is no effect-size/CI data for Forest or Estimation anyway, and no group
+structure for Bar/Box/Violin/Raincloud either. Worth stating explicitly so a
+reader does not expect the designer on every report.
+
 **Forest / Estimation gating.** These two are not general "regression" plots.
 `plot_designer.js` only renders them when post-hoc pairwise comparisons carry an
 effect size and confidence interval:
@@ -81,12 +97,35 @@ supply effect sizes and confidence intervals", not "for regression".
 
 ## "Strip" is a point-overlay layout, not a plot type
 
-Confirmed the seed finding independently. The four plot types are dispatched
-in `DataVisualizer` with an explicit `raise ValueError(f"Unbekannter plot_type:
-{plot_type}")` for anything else: `if plot_type == "Bar"` / `elif ... "Box"` /
-`elif ... "Violin"` / `elif ... "Raincloud"` / `else: raise`
-(`src/visualization/datavisualizer.py:2803`-`2905`). There is no "Strip" plot
-type.
+Confirmed the seed finding independently, and confirmed it at both dispatch
+points that exist for plot type, since the app has two of them, not one:
+
+- **Preview dispatch** `DataVisualizer.plot_from_config`
+  (`src/visualization/datavisualizer.py:2679`-`2905`), wired to the live
+  in-dialog preview canvas at `src/visualization/plot_preview.py:223`
+  (`DataVisualizer.plot_from_config(self.ax, self.groups, self.samples,
+  config, ...)`). This one is strict: `if plot_type == "Bar"` / `elif ...
+  "Box"` / `elif ... "Violin"` / `elif ... "Raincloud"` /
+  `else: raise ValueError(f"Unbekannter plot_type: {plot_type}")`
+  (`datavisualizer.py:2803`-`2905`).
+- **Export dispatch**, the one that actually produces the saved PNG/PDF/XLSX
+  files, is a *separate* function: `AnalysisManager.analyze`
+  (`src/analysis/analysis_core.py:1469`-`1535`), reached from
+  `_ap_configure_plot_from_result`'s `AnalysisManager.analyze(...)` call
+  (`src/autopilot/statistical_analyzer_autopilot_pipeline.py:1890`). This
+  dispatch is *not* strict: it has a dead `elif plot_type == "Strip":` branch
+  (`analysis_core.py:1500`-`1512`) that silently falls back to
+  `DataVisualizer.plot_box(...)`, and its catch-all `else` falls back to
+  `DataVisualizer.plot_bar(...)` with only `logger.warning(f"WARNING: Unknown
+  plot type '{plot_type}', falling back to Bar plot")`, never a raised error
+  (`analysis_core.py:1522`-`1535`). See "Unclear / possible code bug" below for
+  the implication.
+
+Both dispatches only recognize `Bar`, `Box`, `Violin`, `Raincloud` as real plot
+types (the export dispatch's `Strip` and `else` branches are unreachable
+through the current dropdown, which offers only those four,
+`plot_aesthetics_dialog.py:646`), so the recipe's four-type list is correct in
+practice. There is no "Strip" plot type in either code path.
 
 "Strip" is one of three point-overlay layouts applied on top of a plot:
 `if style == 'jitter'` / `elif style == 'strip'` / `elif style == 'swarm'` in
@@ -105,8 +144,13 @@ Strip->strip` (`:948`-`951`).
   Every plot family honors it: Bar, Violin, Box each call
   `DataVisualizer._add_data_points(...)` guarded by `if show_points`
   (`datavisualizer.py:982`, `:1179`, `:1385`), and Raincloud shows points by
-  construction. So the old "on box, violin, or strip plots" phrasing was wrong
-  on both counts (there is no strip plot, and points work on bar plots too).
+  construction, unconditionally, not gated behind `show_points` at all:
+  `ax.scatter(features, y, s=point_size/8, marker=marker,
+  c=point_colors[idx % len(point_colors)], ...)` runs in the per-group loop
+  with no `if show_points` guard around it (`datavisualizer.py:1636`). So the
+  old "on box, violin, or strip plots" phrasing was wrong on both counts
+  (there is no strip plot, and points work on bar plots too), and Raincloud is
+  additionally the one type where points cannot be turned off.
 
 ## Error bar control check
 
@@ -143,7 +187,7 @@ Strip->strip` (`:948`-`951`).
 | # | Claim (from title/html) | Verdict | Citation |
 |---|-------------------------|---------|----------|
 | 1 | Title/summary: configure and export plots from an analysis result | correct | `_ap_configure_plot_from_result` builds `PlotAestheticsDialog` from `current_analysis_result` (`...pipeline.py:1833`, `:1850`); exports xlsx/pdf/png (`:1916`) |
-| 2 | Plot types are "Bar, box, violin, and strip" | wrong | live types are `Bar, Box, Violin, Raincloud` (`plot_aesthetics_dialog.py:646`); dispatch raises on anything else (`datavisualizer.py:2803`-`2905`). "Strip" is not a plot type. |
+| 2 | Plot types are "Bar, box, violin, and strip" | wrong | selectable types are `Bar, Box, Violin, Raincloud` (`plot_aesthetics_dialog.py:646`). Preview dispatch raises on anything else (`datavisualizer.py:2803`-`2905`, via `plot_preview.py:223`); export dispatch instead silently falls back to Bar/Box for unrecognized types (`analysis_core.py:1500`-`1535`), unreachable in practice only because the dropdown never offers a 5th value. "Strip" is not a plot type. |
 | 3 | Bar shows group means with error bars | correct | Bar branch draws mean + error bars (`datavisualizer.py:2803`-`2848`) |
 | 4 | Box displays medians, quartiles, and outliers | correct | Box branch (`datavisualizer.py:2850`-`2865`); standard boxplot semantics |
 | 5 | Violin combines boxplot with a KDE | correct | Violin branch (`datavisualizer.py:2867`-`2878`), density + inner box |
@@ -184,8 +228,34 @@ Strip->strip` (`:948`-`951`).
 
 ## Unclear / possible code bug
 
-- **None affecting the recipe.** The two surfaces are intentional (a native Qt
-  export dialog plus a browser-side re-plotter in the report), not a bug.
+- **Dead `"Strip"` branch and silent catch-all fallback in the export
+  dispatch (code smell, not fixed here).** `AnalysisManager.analyze`'s plot
+  dispatch (`analysis_core.py:1469`-`1535`) still has an
+  `elif plot_type == "Strip":` branch (`:1500`-`1512`) with the comment
+  "Strip plot doesn't exist, fall back to box plot with points". This is
+  legacy from before the dialog's plot-type dropdown was pinned to the current
+  four values; "Strip" was removed from
+  `plot_type_combo.addItems([...])` (`plot_aesthetics_dialog.py:646`) but the
+  branch handling it was never deleted, so it is unreachable dead code today.
+  More significant: the same dispatch's catch-all `else`
+  (`:1522`-`1535`) does not raise on an unrecognized `plot_type`; it silently
+  renders a Bar plot and only logs
+  `logger.warning(f"WARNING: Unknown plot type '{plot_type}', falling back to
+  Bar plot")`. Contrast this with the *preview* dispatch
+  (`plot_from_config`, `datavisualizer.py:2905`), which does
+  `raise ValueError(f"Unbekannter plot_type: {plot_type}")` for the same
+  situation. So the two dispatches disagree on failure behavior: a bad
+  `plot_type` value fails loudly in the preview but would fail silently
+  (wrong plot, no error, just a log line) in the actual exported file. Today
+  this is unreachable, confirmed, because the dropdown can only produce
+  `Bar`, `Box`, `Violin`, or `Raincloud`, so no code path currently supplies an
+  unexpected value. Flagged here as a maintenance risk for a human to consider
+  cleaning up (delete the dead `Strip` branch, and decide whether the export
+  dispatch should raise like the preview dispatch does instead of silently
+  substituting Bar), not something this audit changes.
+- **None else affecting the recipe.** The two figure-building surfaces
+  (native Qt export dialog plus a browser-side re-plotter in the report) are
+  intentional, not a bug.
 - **Observation, not a defect to fix here:** the live dialog's error-metric
   values are the lowercase codes `sd/se/ci` while the in-report designer uses
   `sd/sem/ci95/iqr/range`. The two lists diverge (the report designer is a
