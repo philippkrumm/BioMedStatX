@@ -727,13 +727,7 @@ def _ap_is_binary_outcome_for_help(self):
     if series.empty:
         return False
 
-    unique_values = series.unique()
-    if len(unique_values) != 2:
-        return False
-
-    is_01 = set(unique_values) <= {0, 1, 0.0, 1.0}
-    is_str = all(isinstance(value, str) for value in unique_values)
-    return bool(is_01 or is_str)
+    return _classify_binary_outcome(series.unique(), dv_col)
 
 
 def _ap_is_continuous_factor1_for_help(self):

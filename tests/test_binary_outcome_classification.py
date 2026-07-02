@@ -53,3 +53,40 @@ def test_single_value_column_is_not_binary():
 def test_mixed_type_unique_values_is_not_binary():
     # Neither all-numeric-01 nor all-string, so neither is_01 nor is_str holds.
     assert _classify_binary_outcome([0, "No"], "Outcome") is False
+
+
+class _FakeBucket:
+    def __init__(self, columns):
+        self._columns = columns
+
+    def get_assigned_columns(self):
+        return self._columns
+
+
+class _FakeAppForHelpDetection:
+    def __init__(self, df, dv_column):
+        self.df = df
+        self.dv_bucket = _FakeBucket([dv_column])
+
+
+def test_help_hint_and_real_routing_agree_on_grouping_named_binary_column():
+    # Regression case: before this fix, _ap_is_binary_outcome_for_help lacked the
+    # grouping-name guard that _classify_binary_outcome has, so a column like
+    # "Treatment_Arm" with Yes/No values would be judged binary for Help Hub
+    # recipe suggestions but correctly non-binary for real test routing -- an
+    # inconsistency that suggested the wrong Help Hub recipe.
+    import pandas as pd
+    from autopilot.statistical_analyzer_autopilot_pipeline import _ap_is_binary_outcome_for_help
+
+    df = pd.DataFrame({"Treatment_Arm": ["Yes", "No", "Yes", "No"]})
+    fake_app = _FakeAppForHelpDetection(df, "Treatment_Arm")
+    assert _ap_is_binary_outcome_for_help(fake_app) is False
+
+
+def test_help_hint_still_true_for_genuine_binary_outcome():
+    import pandas as pd
+    from autopilot.statistical_analyzer_autopilot_pipeline import _ap_is_binary_outcome_for_help
+
+    df = pd.DataFrame({"Survived": ["Yes", "No", "Yes", "No"]})
+    fake_app = _FakeAppForHelpDetection(df, "Survived")
+    assert _ap_is_binary_outcome_for_help(fake_app) is True
