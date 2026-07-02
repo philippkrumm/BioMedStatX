@@ -1497,19 +1497,6 @@ class AnalysisManager:
                         title=title, save_plot=save_plot,
                         pairwise_results=pairwise_comparisons,
                         file_name=file_base, legend_colors=colors, **plot_kwargs)
-                elif plot_type == "Strip":
-                    # Strip plot doesn't exist, fall back to box plot with points
-                    plot_kwargs['show_points'] = plot_kwargs.get('show_points', True)
-                    plot_kwargs['point_size'] = plot_kwargs.get('point_size', 80)
-                    plot_kwargs['point_alpha'] = plot_kwargs.get('point_alpha', 0.8)
-                    fig, ax = DataVisualizer.plot_box(
-                        groups, filtered_samples, width=width, height=height,
-                        colors=colors, hatches=hatches,
-                        test_recommendation=test_recommendation,
-                        x_label=x_label, y_label=y_label,
-                        title=title, save_plot=save_plot,
-                        pairwise_results=pairwise_comparisons,
-                        file_name=file_base, legend_colors=colors, **plot_kwargs)
                 elif plot_type == "Raincloud":
                     fig, ax = DataVisualizer.plot_raincloud(
                         groups, filtered_samples, width=width, height=height,
@@ -1520,19 +1507,7 @@ class AnalysisManager:
                         pairwise_results=pairwise_comparisons,
                         file_name=file_base, legend_colors=colors, **plot_kwargs)
                 else:
-                    # Fallback to bar plot for unknown plot types
-                    logger.warning(f"WARNING: Unknown plot type '{plot_type}', falling back to Bar plot")
-                    plot_kwargs['show_points'] = plot_kwargs.get('show_points', True)
-                    plot_kwargs['point_size'] = plot_kwargs.get('point_size', 80)
-                    plot_kwargs['point_alpha'] = plot_kwargs.get('point_alpha', 0.8)
-                    fig, ax = DataVisualizer.plot_bar(
-                        groups, filtered_samples, width=width, height=height,
-                        colors=colors, hatches=hatches, compare=compare,
-                        test_recommendation=test_recommendation,
-                        x_label=x_label, y_label=y_label,
-                        title=title, save_plot=save_plot, error_type=error_type,
-                        pairwise_results=pairwise_comparisons,
-                        file_name=file_base, legend_colors=colors, **plot_kwargs)
+                    raise ValueError(f"Unknown plot type: {plot_type!r}")
                 analysis_log += "\nPlots were saved as:\n"
                 analysis_log += f"  {file_base}.pdf\n"
                 analysis_log += f"  {file_base}.png\n"
