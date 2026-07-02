@@ -27,7 +27,7 @@ def test_numeric_01_column_is_binary():
     assert _classify_binary_outcome([0, 1], "Died") is True
 
 
-def test_numeric_two_value_non_01_column_is_binary_if_not_grouping_named():
+def test_numeric_two_value_non_01_column_is_not_binary_even_if_not_grouping_named():
     # A numeric 2-value column that ISN'T 0/1 and ISN'T grouping-named should still
     # be rejected per the stated "0/1 (or two strings)" contract -- only is_01 or
     # is_str values count, not any 2-value numeric column.
@@ -40,3 +40,16 @@ def test_yes_no_string_column_is_binary():
 
 def test_yes_no_grouping_named_column_is_not_binary():
     assert _classify_binary_outcome(["Yes", "No"], "Treatment_Arm") is False
+
+
+def test_empty_unique_values_is_not_binary():
+    assert _classify_binary_outcome([], "Outcome") is False
+
+
+def test_single_value_column_is_not_binary():
+    assert _classify_binary_outcome([1], "Outcome") is False
+
+
+def test_mixed_type_unique_values_is_not_binary():
+    # Neither all-numeric-01 nor all-string, so neither is_01 nor is_str holds.
+    assert _classify_binary_outcome([0, "No"], "Outcome") is False
