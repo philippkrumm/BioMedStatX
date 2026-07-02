@@ -56,14 +56,38 @@ All verified in `src/analysis/statisticaltester.py`, which routes through
   otherwise (`_stat_test_multi_groups`, `statisticaltester.py:669`,
   `:686`-`691`), keyed on `assumptions.residuals_normal` /
   `assumptions.equal_variance` (`:694`-`707`).
-- **Assumption checks are Shapiro-Wilk + Levene.** `check_normality_and_variance`
-  fits the model and tests residuals with `stats.shapiro(...)`
-  (`assumption_checks.py:172`, `:215`), and tests variance homogeneity with
-  `stats.levene(*validated_levene_data, center='median')`
-  (`assumption_checks.py:285`). `center='median'` makes it the Brown-Forsythe
-  variant of Levene; the code's own docstring still calls it "Levene test"
-  (`assumption_checks.py:49`), so the recipe's "Levene" label is faithful to the
-  code. Same nuance already accepted in the `one_way_anova` audit.
+- **Assumption checks are Shapiro-Wilk + Brown-Forsythe, not Levene.** Corrected
+  after spec review; the first version of this note and recipe wrongly called the
+  variance check "Levene". `check_normality_and_variance` fits the model and
+  tests residuals with `stats.shapiro(...)` (`assumption_checks.py:172`, `:215`),
+  and tests variance homogeneity with `stats.levene(*validated_levene_data,
+  center='median')` (`assumption_checks.py:285`), but the code explicitly labels
+  the result `test_name = "Brown-Forsythe"` on every real path
+  (`assumption_checks.py:274` pre-transformation, `:534` post-transformation; the
+  only other assignments in that branch are the dependent-design bypass strings
+  `"N/A (Paired)"` / `"N/A (Repeated Measures / Mixed)"`, never `"Levene"`). That
+  string is what reaches the user: `report_summaries.py:387` renders
+  `f"Variance homogeneity ({_var_name})"` where `_var_name =
+  variance_test.get("test_name", "Levene")`; the `"Levene"` in that `.get()` is a
+  fallback default that is dead code in practice because every populated
+  `variance_test` dict already carries `"Brown-Forsythe"` from
+  `assumption_checks.py`. So the exported HTML report's assumption table row
+  literally reads "Variance homogeneity (Brown-Forsythe)". Every other
+  user-facing surface agrees: `html_exporter.py:400` methods text says "Levene's
+  test (Brown-Forsythe variant, center = median)", i.e. it names Brown-Forsythe
+  as the variant actually run; `analysis_core.py:1042`, `:1045`, `:1064`, `:1067`
+  log "Brown-Forsythe test"; `statisticaltester.py:1212`, `:1221` log the same.
+  Only an internal module docstring (`assumption_checks.py:49`, never shown to a
+  user) says "Levene test". **Precedent check, also corrected:** the first
+  version of this note claimed this matched "the same nuance already accepted in
+  the `one_way_anova` audit". That was wrong. `one_way_anova.md` claim 13
+  explicitly labels the variance check "Brown-Forsythe", and the shipped
+  `one_way_anova` recipe text never uses the word "Levene" at all (it stays
+  generic: "the groups have similar spread"). A repo-wide grep of
+  `help_content.py` confirms "Levene" appeared nowhere else; this audit's first
+  draft was the sole, inaccurate introduction of the word. Fixed to
+  "Brown-Forsythe for equal variance" in the recipe, matching the label the
+  report actually displays.
 - **Post-hoc is auto and adjusted.** When the omnibus test is significant, the
   app runs `PostHocEngine().execute(...)` and stores `pairwise_comparisons`
   (`statisticaltester.py:765`-`779`); adjustment for the number of comparisons is
@@ -126,7 +150,7 @@ now says exactly that.
 | 2 | Two independent groups: t-Test, or Mann-Whitney U when not normal | correct | `stats.ttest_ind` (`:566`), `stats.mannwhitneyu(alternative='two-sided')` (`:639`); MWU chosen when non-parametric recommendation |
 | 3 | Two paired groups: paired t-Test, or Wilcoxon signed-rank when differences not normal | correct | dependent branch; Shapiro on within-pair differences (`assumption_checks.py:167`-`172`); full detail in `dependent_samples` audit |
 | 4 | Three or more independent groups: one-way ANOVA, or Kruskal-Wallis when assumptions fail | correct | strategy `"kruskal_wallis"` vs ANOVA (`statisticaltester.py:686`-`691`) keyed on residual normality / equal variance (`:694`-`707`) |
-| 5 | Decision uses Shapiro-Wilk (normality) and Levene (variance homogeneity) | correct | `stats.shapiro` on residuals (`assumption_checks.py:172`,`:215`); `stats.levene(..., center='median')` (`:285`); docstring "Levene test" (`:49`). center='median' = Brown-Forsythe variant, labelled Levene in code (accepted, matches `one_way_anova` audit) |
+| 5 | Decision uses Shapiro-Wilk (normality) and a median-centered Levene call, displayed as Brown-Forsythe (variance homogeneity) | correct (label fixed after spec review) | `stats.shapiro` on residuals (`assumption_checks.py:172`,`:215`); `stats.levene(..., center='median')` (`:285`) is the underlying scipy call, but the code assigns `test_name = "Brown-Forsythe"` on every real path (`:274`,`:534`), which is what reaches the report (`report_summaries.py:387`). First draft of this recipe and note wrongly said "Levene" and wrongly claimed precedent from `one_way_anova`; that recipe actually says "Brown-Forsythe" (its audit note claim 13) and never uses "Levene". Recipe now says "Brown-Forsythe for equal variance". |
 | 6 | You don't choose parametric vs non-parametric; app switches automatically | correct | recommendation drives strategy without user input (`statisticaltester.py:281`, `:686`-`691`); register matches audited `one_way_anova` `help_content.py:92` |
 | 7 | Post-hoc pairwise comparisons auto-added when the main test is significant, with p-values adjusted for the number of comparisons | correct | post-hoc gated on `p<alpha` (`statisticaltester.py:744`-`765`), `PostHocEngine().execute(...)` populates `pairwise_comparisons` (`:765`-`779`); adjustment is the engine's (named methods in per-family audits) |
 | 8 (reworded) | Points the reader to the sibling recipes for full logic and data layout | correct (recipe-economy) | sibling recipes `one_way_anova` (`help_content.py:80`) and `dependent_samples` (`:565`) own the mechanics; titles cross-referenced verbatim |
@@ -164,6 +188,16 @@ now says exactly that.
   the Help Hub list-structure tests. No `id`/`category` change. No emoji or
   typographic dashes introduced (verified: one `<h2>`, zero `<h3>`, no forbidden
   dash codepoints).
+- **Post-review fix (same bug class as the letters/brackets fix):** spec review
+  caught that the first draft's assumption-check bullet said "Levene for equal
+  variance" (`help_content.py:645`). Traced independently and confirmed wrong:
+  `assumption_checks.py:274`/`:534` sets `test_name = "Brown-Forsythe"` on every
+  real path, which flows through `report_summaries.py:387` into the exported
+  report's assumption table, so the report literally reads "Variance homogeneity
+  (Brown-Forsythe)". Fixed to "Brown-Forsythe for equal variance". The note's
+  precedent claim ("matches the `one_way_anova` audit") was also wrong and is
+  corrected in the claim-5 row and the ground-truth bullet above; `one_way_anova`
+  actually used "Brown-Forsythe", never "Levene".
 
 ## Unclear / possible code bug
 

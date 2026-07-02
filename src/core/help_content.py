@@ -642,7 +642,7 @@ HELP_RECIPES = [
                         <li>A summary banner with the selected test, its p-value, the effect size, and a significant / not significant verdict.</li>
                         <li>A decision path that traces how the app arrived at that test.</li>
                         <li>The main result table: test statistic, p-value, effect size, and degrees of freedom.</li>
-                        <li>The assumption checks (Shapiro-Wilk for normality, Levene for equal variance), each with its own p-value and pass or fail status.</li>
+                        <li>The assumption checks (Shapiro-Wilk for normality, Brown-Forsythe for equal variance), each with its own p-value and pass or fail status.</li>
                         <li>A per-group table of counts, means, medians, standard deviations, and standard errors.</li>
                         <li>Pairwise post-hoc comparisons, when they ran, listing each pair's statistic, p-value, and effect size.</li>
                         <li>Interactive charts, the searchable raw values, and a methods paragraph you can paste into a manuscript.</li>
