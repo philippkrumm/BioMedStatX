@@ -350,7 +350,7 @@ def _ap_init_ui(self):
     corr_tr_layout.setSpacing(6)
 
     # Mode toggle: Correlation (default) vs. Simple Linear Regression
-    self.corr_regression_toggle = QCheckBox("Als Lineare Regression analysieren (Y = a + bX)")
+    self.corr_regression_toggle = QCheckBox("Analyze as Linear Regression (Y = a + bX)")
     self.corr_regression_toggle.setObjectName("panelDescription")
     self.corr_regression_toggle.setChecked(False)
     self.corr_regression_toggle.stateChanged.connect(self.on_mapping_changed)

@@ -455,7 +455,7 @@ HELP_RECIPES = [
 
 <h3>Two ways to trigger regression</h3>
 <ul>
-<li><b>Simple regression</b> (one predictor, no additional controls): Drag only Factor 1. Then tick the checkbox <i>"Als Lineare Regression analysieren (Y = a + bX)"</i> that appears below the buckets. Without that tick, the app runs Correlation instead.</li>
+<li><b>Simple regression</b> (one predictor, no additional controls): Drag only Factor 1. Then tick the checkbox <i>"Analyze as Linear Regression (Y = a + bX)"</i> that appears below the buckets. Without that tick, the app runs Correlation instead.</li>
 <li><b>Multiple regression</b> (predictor + control variables): Drag Factor 1 and one or more Covariates. The Regression mode activates automatically when Covariates is populated.</li>
 </ul>
 
