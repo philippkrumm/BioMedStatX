@@ -553,6 +553,7 @@ HELP_RECIPES = [
 <ul>
 <li>Dependent Variable has exactly two distinct values.</li>
 <li>Every covariate is numeric; a Factor 1 predictor can be text or numeric.</li>
+<li>No column appears in both Factor 1 and Covariates simultaneously.</li>
 <li>One row per subject.</li>
 <li>Rule of thumb: at least 10 events (rows where the outcome occurred) per predictor in the model.</li>
 </ul>
