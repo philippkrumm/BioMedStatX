@@ -509,20 +509,20 @@ HELP_RECIPES = [
 
 <h3>When do you use this?</h3>
 <p>Your outcome can only be <b>one of two values</b>: yes/no, 0/1, survived/died, complication/no-complication. You want to know which measurements predict that outcome.</p>
-<p>Examples: "Which pre-operative measurements predict post-operative complications (yes/no)?" "Does dosage predict whether a patient recovers completely (0/1)?"</p>
-<p>The app detects this automatically: if your Dependent Variable column has exactly two distinct values, logistic regression runs without any manual selection.</p>
+<p>Examples: "Which pre-operative measurements predict post-operative complications (yes/no)?" "Does treatment group predict whether a patient recovers completely (0/1)?"</p>
+<p>The app detects this automatically: when your Dependent Variable column has exactly two distinct values, logistic regression runs without any manual selection.</p>
 
 <h3>What your data must look like</h3>
-<p>One row per subject. The outcome column must have exactly two values. Using 0 and 1 is the clearest format. Text labels (e.g. "Yes" / "No") also work, as long as there are only two.</p>
+<p>One row per subject. The outcome column must have exactly two values. Using 0 and 1 is the clearest format, but two text labels (e.g. "Yes" and "No") work too. The app picks one value as the reference and models the odds of the other.</p>
 <table>
-<tr><th>Side_Effect</th><th>Dosage_mg</th><th>Age</th><th>BP_baseline</th></tr>
-<tr><td>0</td><td>10</td><td>62</td><td>145</td></tr>
-<tr><td>1</td><td>40</td><td>71</td><td>120</td></tr>
-<tr><td>0</td><td>20</td><td>59</td><td>135</td></tr>
-<tr><td>1</td><td>50</td><td>68</td><td>115</td></tr>
-<tr><td>0</td><td>30</td><td>63</td><td>125</td></tr>
-<tr><td>1</td><td>60</td><td>72</td><td>110</td></tr>
-<tr><td>1</td><td>70</td><td>65</td><td>108</td></tr>
+<tr><th>Side_Effect</th><th>Treatment</th><th>Age</th><th>BP_baseline</th></tr>
+<tr><td>0</td><td>Placebo</td><td>62</td><td>145</td></tr>
+<tr><td>1</td><td>Drug</td><td>71</td><td>120</td></tr>
+<tr><td>0</td><td>Placebo</td><td>59</td><td>135</td></tr>
+<tr><td>1</td><td>Drug</td><td>68</td><td>115</td></tr>
+<tr><td>0</td><td>Placebo</td><td>63</td><td>125</td></tr>
+<tr><td>1</td><td>Drug</td><td>72</td><td>110</td></tr>
+<tr><td>1</td><td>Drug</td><td>65</td><td>108</td></tr>
 </table>
 
 <h3>Common mistake: outcome has more than two values</h3>
@@ -532,28 +532,29 @@ HELP_RECIPES = [
 <tr><td>Mild</td><td>30</td></tr>
 <tr><td>Severe</td><td>50</td></tr>
 </table>
-<p><b>Why this fails:</b> Three outcome levels (None / Mild / Severe) cannot be handled by standard logistic regression. Consider collapsing to two levels first, for example None vs. Any side effect.</p>
+<p><b>Why this fails:</b> Three outcome levels (None / Mild / Severe) cannot be handled by standard logistic regression. Collapse them to two levels first, for example None vs. any side effect.</p>
 
 <h3>What to drag where</h3>
+<p>Factor 1 and Covariates are handled differently. A column in <b>Factor 1</b> is treated as a category: each of its values is compared against a reference value. A column in <b>Covariates</b> is treated as a number and enters the model on a per-unit scale. Put a grouping predictor (treatment, sex) in Factor 1, and put a measurement you want a per-unit odds ratio for (age, dose, blood pressure) in Covariates.</p>
 <table>
 <tr><th>Bucket</th><th>What to drag here</th><th>In this example</th></tr>
 <tr><td><b>Dependent Variable</b></td><td>The binary outcome column (0/1 or two-level text)</td><td>Side_Effect</td></tr>
-<tr><td><b>Factor 1</b></td><td>The main numeric predictor</td><td>Dosage_mg</td></tr>
-<tr><td><b>Covariates</b></td><td>Additional predictors to include in the model</td><td>Age, BP_baseline</td></tr>
+<tr><td><b>Factor 1</b></td><td>A grouping predictor, compared level by level</td><td>Treatment</td></tr>
+<tr><td><b>Covariates</b></td><td>Numeric predictors, each on a per-unit scale</td><td>Age, BP_baseline</td></tr>
 <tr><td>Factor 2</td><td>Leave empty</td><td>-</td></tr>
 <tr><td>Subject ID</td><td>Leave empty. Each subject appears once</td><td>-</td></tr>
 </table>
 
 <h3>Reading the result</h3>
-<p>The main output is the <b>Odds Ratio (OR)</b> per predictor. OR = 2.5 means: for every one-unit increase in that predictor, the odds of the event are 2.5 times higher. OR &lt; 1 means the predictor reduces the odds. OR = 1 means no effect.</p>
-<p>The AUC (area under the ROC curve) tells you how well the model discriminates between the two outcomes: 0.5 = no better than chance; 0.70 to 0.80 = acceptable; above 0.80 = good.</p>
+<p>The main output is the <b>Odds Ratio (OR)</b> for each predictor. For a Factor 1 group, the OR compares that group against the reference group: OR = 2.5 means the event is 2.5 times as likely in that group. For a numeric covariate, the OR is per one-unit increase: OR = 1.05 for Age means the odds rise 5% for each additional year. OR &lt; 1 means lower odds; OR = 1 means no effect. The report lists every OR with its 95% confidence interval.</p>
+<p>The AUC (area under the ROC curve) measures how well the model separates the two outcomes. The report shows the ROC curve and reads the AUC as: below 0.6 poor, 0.6 to 0.7 acceptable, 0.7 to 0.8 good, 0.8 to 0.9 excellent, 0.9 and above outstanding. An AUC of 0.5 is no better than chance.</p>
 
 <h3>Before you click Start: checklist</h3>
 <ul>
 <li>Dependent Variable has exactly two distinct values.</li>
-<li>All predictors and covariates are numbers.</li>
+<li>Every covariate is numeric; a Factor 1 predictor can be text or numeric.</li>
 <li>One row per subject.</li>
-<li>Rule of thumb: at least 10 events (rows where outcome = 1) per predictor included in the model.</li>
+<li>Rule of thumb: at least 10 events (rows where the outcome occurred) per predictor in the model.</li>
 </ul>
 """,
     },
