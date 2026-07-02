@@ -630,49 +630,25 @@ HELP_RECIPES = [
         "html": """
             <h2>Statistical tests and HTML report</h2>
             <ul>
-                <li><b>How does the program select the test?</b>
+                <li><b>How the test is chosen:</b> the program reads how many groups you have and whether they are independent or paired, then selects the test for you.
                     <ul>
-                        <li>The program automatically detects the appropriate test based on group count and data structure.</li>
-                        <li><b>Two independent groups:</b>
-                            <ul>
-                                <li><b>t-Test</b> (parametric): Used when data is normally distributed and variances are comparable.</li>
-                                <li><b>Mann-Whitney-U Test</b> (non-parametric): Used when assumptions for t-test are not met.</li>
-                            </ul>
-                        </li>
-                        <li><b>Two dependent groups (e.g. paired measurements):</b>
-                            <ul>
-                                <li><b>Paired t-Test</b> (parametric): For normally distributed differences.</li>
-                                <li><b>Wilcoxon signed-rank test</b> (non-parametric): For non-normally distributed differences.</li>
-                            </ul>
-                        </li>
-                        <li><b>More than two independent groups:</b>
-                            <ul>
-                                <li><b>One-Way ANOVA</b> (parametric): For normally distributed data with equal variances.</li>
-                                <li><b>Kruskal-Wallis Test</b> (non-parametric): When ANOVA assumptions are violated.</li>
-                            </ul>
-                        </li>
-                        <li>The decision is based on normality tests (Shapiro-Wilk) and variance homogeneity (Levene test). When assumptions are violated, a non-parametric test is automatically selected.</li>
-                        <li>Post-hoc tests (e.g. pairwise comparisons) are automatically added when significant differences are found.</li>
-                        <li><i>Note: for detailed data templates, including long-format examples, see the related recipes in this hub.</i></li>
+                        <li><b>Two independent groups:</b> a t-Test, or the Mann-Whitney U test when the data is not normal.</li>
+                        <li><b>Two paired groups:</b> a paired t-Test, or the Wilcoxon signed-rank test when the paired differences are not normal.</li>
+                        <li><b>Three or more independent groups:</b> a one-way ANOVA, or the Kruskal-Wallis test when the ANOVA assumptions do not hold.</li>
                     </ul>
-                </li>
-                <li><b>Interpreting results:</b>
+                    You do not switch between the parametric and rank-based version yourself. The app checks whether your data is normally distributed and whether the groups have similar spread, then picks accordingly. When the main test comes out significant, it also compares each pair of groups and adjusts the p-values for the number of comparisons. For the full decision logic and how to lay out your data, open the matching recipe: "Comparing groups (t-Test / One-Way ANOVA)" or "Dependent (paired) samples".</li>
+                <li><b>What the report contains:</b> each analysis is written to one self-contained HTML file. It opens in any browser without an internet connection, and you can print it or hand it over as a single document. The sections, in order:
                     <ul>
-                        <li><b>p-values</b> indicate the probability that observed differences are due to chance.</li>
-                        <li><b>Significance indicators</b> (letters or bars) show which groups differ significantly.</li>
-                        <li>Key statistics (means, standard deviations, test statistics) are clearly displayed.</li>
-                    </ul>
-                </li>
-                <li><b>HTML report export:</b>
-                    <ul>
-                        <li>Results are written to a self-contained HTML report covering each analysis.</li>
-                        <li>Sections reflect the test or plot type (e.g. "ANOVA Results", "Pairwise Comparisons").</li>
-                        <li>Each section shows group names, means, test statistics, p-values, and significance markers.</li>
-                        <li>Open the report in any web browser to review, print, or share results.</li>
-                    </ul>
-                </li>
+                        <li>A summary banner with the selected test, its p-value, the effect size, and a significant / not significant verdict.</li>
+                        <li>A decision path that traces how the app arrived at that test.</li>
+                        <li>The main result table: test statistic, p-value, effect size, and degrees of freedom.</li>
+                        <li>The assumption checks (Shapiro-Wilk for normality, Levene for equal variance), each with its own p-value and pass or fail status.</li>
+                        <li>A per-group table of counts, means, medians, standard deviations, and standard errors.</li>
+                        <li>Pairwise post-hoc comparisons, when they ran, listing each pair's statistic, p-value, and effect size.</li>
+                        <li>Interactive charts, the searchable raw values, and a methods paragraph you can paste into a manuscript.</li>
+                    </ul></li>
+                <li><b>Reading the significance markers:</b> on the report charts, significant pairs get a bracket with stars: * for p&lt;0.05, ** for p&lt;0.01, *** for p&lt;0.001. Each bracket has its own checkbox in the pairwise table, so you can show only the comparisons you care about. Compact letters that group conditions with no significant difference are a separate option of the plot dialog, described in "Graph visualization".</li>
             </ul>
-            <p style='color:gray; font-size:90%'>Note: see the related recipes in this hub for detailed long-format templates covering both advanced and basic models.</p>
         """,
     },
 ]
