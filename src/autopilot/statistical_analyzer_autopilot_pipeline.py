@@ -1051,6 +1051,23 @@ def _ap_load_sheet(self, index):
         QMessageBox.critical(self, "Error", f"Error loading worksheet: {exc}")
 
 
+def _classify_binary_outcome(unique_values, dv_col_name):
+    """Whether unique_values (from a single DV column) represent a binary outcome:
+    exactly 2 values that are 0/1 (or two strings), and the column name does not
+    hint at a grouping variable.
+    """
+    is_01 = set(unique_values) <= {0, 1, 0.0, 1.0}
+    is_str = all(isinstance(v, str) for v in unique_values)
+    group_hints = {"group", "arm", "treatment", "condition", "sex",
+                   "gender", "cohort", "batch", "grp"}
+    name_is_grouping = any(h in dv_col_name.lower() for h in group_hints)
+    return (
+        len(unique_values) == 2
+        and (is_01 or is_str)
+        and not name_is_grouping
+    )
+
+
 def _ap_build_analysis_context(self):
     dv_columns = self.dv_bucket.get_assigned_columns()
     factor_columns = [column for column in [
@@ -1111,17 +1128,7 @@ def _ap_build_analysis_context(self):
         _unique = _series.unique()
         # Conservative check: exactly 2 values that are 0/1 (or two strings),
         # AND column name does not hint at a grouping variable.
-        _is_01 = set(_unique) <= {0, 1, 0.0, 1.0}
-        _is_str = all(isinstance(v, str) for v in _unique)
-        _group_hints = {"group", "arm", "treatment", "condition", "sex",
-                        "gender", "cohort", "batch", "grp"}
-        _name_is_grouping = any(h in dv_col.lower() for h in _group_hints)
-        is_binary = (
-            len(_unique) == 2
-            and pd.api.types.is_numeric_dtype(self.df[dv_col]) or _is_str
-            and (_is_01 or _is_str)
-            and not _name_is_grouping
-        )
+        is_binary = _classify_binary_outcome(_unique, dv_col)
         if is_binary:
             context["outcome_type"] = "binary"
 
