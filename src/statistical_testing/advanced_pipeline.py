@@ -253,17 +253,8 @@ def perform_advanced_test_pipeline(
                 advanced_posthoc_updates = dict(advanced_posthoc_result.metadata or {})
                 if advanced_posthoc_updates.get("pairwise_comparisons"):
                     res["pairwise_comparisons"] = advanced_posthoc_updates.get("pairwise_comparisons", [])
-                    current_posthoc = res.get("posthoc_test", "")
                     new_posthoc = advanced_posthoc_updates.get("posthoc_test") or advanced_posthoc_result.test_name
-                    should_override = (
-                        not current_posthoc
-                        or current_posthoc == "Two-Way ANOVA Post-hoc Tests"
-                        or "parametric paired t-tests" in current_posthoc.lower()
-                        or "pairwise paired t-tests" in current_posthoc.lower()
-                        or ("Pingouin" in str(current_posthoc) and new_posthoc and "Tukey" in str(new_posthoc))
-                    )
-                    if should_override:
-                        res["posthoc_test"] = new_posthoc
+                    res["posthoc_test"] = new_posthoc
                 elif advanced_posthoc_updates.get("error"):
                     warnings_list = res.setdefault("warnings", [])
                     if advanced_posthoc_updates["error"] not in warnings_list:
