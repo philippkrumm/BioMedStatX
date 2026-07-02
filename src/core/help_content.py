@@ -582,7 +582,7 @@ HELP_RECIPES = [
             "<li><b>More than two groups:</b> a repeated-measures ANOVA, or the Friedman test when the data is not normal</li>"
             "</ul>"
             "<p>You do not choose between the parametric and rank-based version yourself. The app checks whether the paired differences are normally distributed and switches automatically.</p>"
-            "<p>For the multi-group designs, see the Repeated Measures ANOVA recipe, or the Mixed ANOVA recipe when the subjects are also split into separate groups.</p>"
+            "<p>For the multi-group designs, see \"Same subjects measured multiple times (Repeated Measures ANOVA)\", or \"Different groups, each measured multiple times (Mixed ANOVA)\" when the subjects are also split into separate groups.</p>"
         ),
     },
     {
