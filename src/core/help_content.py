@@ -593,30 +593,31 @@ HELP_RECIPES = [
         "keywords": ["plot", "graph", "chart", "figure", "visualization", "export", "bar", "box"],
         "html": """
             <h2>Graph visualization</h2>
+            <p>After an analysis finishes, open the plot dialog to build a figure from the same data and save it as PNG, PDF, and Excel.</p>
             <ul>
-                <li><b>Plot types:</b> Bar, box, violin, and strip plots are generated from your data. Each type visualizes group distributions differently:
+                <li><b>Plot types:</b> the dialog offers four types. Pick one from the Type dropdown.
                     <ul>
-                        <li><b>Bar:</b> Shows group means with error bars.</li>
-                        <li><b>Box:</b> Displays medians, quartiles, and outliers.</li>
-                        <li><b>Violin:</b> Combines boxplot with a kernel density estimate.</li>
-                        <li><b>Strip:</b> Shows all individual data points as dots.</li>
+                        <li><b>Bar:</b> group means with error bars.</li>
+                        <li><b>Box:</b> medians, quartiles, and outliers.</li>
+                        <li><b>Violin:</b> a box plot wrapped in a kernel density estimate.</li>
+                        <li><b>Raincloud:</b> a half violin, a box, and the individual points side by side.</li>
                     </ul>
                 </li>
-                <li><b>Switching plot types:</b> Use the plot configuration or appearance dialog to select your preferred plot type.</li>
-                <li><b>Appearance adjustments:</b>
+                <li><b>Appearance:</b>
                     <ul>
-                        <li>Change <b>colors</b> and <b>hatches</b> for each group.</li>
-                        <li>Choose <b>error bar type</b>: Standard deviation (SD) or standard error (SEM).</li>
-                        <li>Set <b>error bar style</b>: With caps or line only.</li>
-                        <li>Customize <b>fonts</b>, <b>axes</b>, and <b>grid lines</b> for clarity.</li>
+                        <li>Set the <b>color</b> and <b>hatch</b> pattern for each group.</li>
+                        <li>Choose the <b>error bar metric</b>: standard deviation (SD), standard error (SE), or confidence interval (CI).</li>
+                        <li>Choose the <b>error bar style</b>: caps or a plain line.</li>
+                        <li>Adjust <b>fonts</b>, <b>axes</b>, <b>grid lines</b>, and export DPI.</li>
                     </ul>
                 </li>
-                <li><b>Overlay features:</b>
+                <li><b>Overlays:</b>
                     <ul>
-                        <li>Show <b>individual data points</b> on box, violin, or strip plots.</li>
-                        <li>Add <b>statistical annotations</b>: Letters (grouping) or bars (significance lines) to highlight significant differences.</li>
+                        <li>Turn on <b>individual data points</b> and choose how they are laid out: jitter, beeswarm, or strip.</li>
+                        <li>Add <b>significance annotations</b>: compact letters that group non-differing conditions, or brackets that mark each significant pair.</li>
                     </ul>
                 </li>
+                <li><b>Redesign in the report:</b> the exported HTML report embeds an interactive plot designer. It re-renders the figure in the browser and exports publication-ready SVG or PNG without reopening the app. It adds two more types, Forest and Estimation, when post-hoc comparisons supply effect sizes and confidence intervals.</li>
             </ul>
         """,
     },
