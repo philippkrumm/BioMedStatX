@@ -198,8 +198,12 @@ def _optimize_boxcox_for_regression(y: np.ndarray, x_matrix: np.ndarray):
 class CorrelationModel:
     """Pearson or Spearman correlation with 95 % CI (Fisher z-transform).
 
-    method='auto' applies Shapiro-Wilk to both variables and uses Pearson when
-    both are normally distributed (p > alpha), otherwise Spearman.
+    method='auto' picks Pearson or Spearman based on sample size and shape, not
+    on the Shapiro-Wilk p-value (Shapiro-Wilk is computed and reported as a
+    diagnostic, but the branch never reads it): n < 20 always uses Spearman;
+    20 <= n < 100 uses Pearson only if both variables have |skewness| <= 1.0
+    and |excess kurtosis| <= 2.0; n >= 100 uses Pearson unless either variable
+    has |skewness| > 2.0 or |excess kurtosis| > 4.0.
     Pairwise deletion: only rows without NaN in x_col or y_col are used.
     """
 
