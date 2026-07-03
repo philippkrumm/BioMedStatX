@@ -113,6 +113,52 @@ class _AssociationMixin:
         }
 
     @staticmethod
+    def _build_linear_regression_coefficient_table_html(results: dict) -> dict | None:
+        """Renders the Linear Regression (OLS) coefficient table as an inline
+        HTML block. Mirrors _build_beta_coefficient_table_html's shape, but
+        reads the correct key for this model (coefficient_table, set by
+        SimpleLinearRegressionModel.as_results_dict) and uses a t-column (OLS)
+        instead of z (GLM — beta regression's own case)."""
+        coef_table = results.get("coefficient_table") or []
+        if not coef_table:
+            return None
+        rows_html = ""
+        for row in coef_table:
+            p_val = row.get("p_value")
+            is_sig = isinstance(p_val, (int, float)) and p_val < 0.05
+            coef_display = _FormattingMixin._format_metric(row.get("coefficient"))
+            if is_sig:
+                coef_display = f"<strong>{coef_display}</strong>"
+            p_style = "color:var(--success)" if is_sig else "color:var(--muted)"
+            rows_html += (
+                f"<tr>"
+                f"<td>{row.get('parameter', '')}</td>"
+                f"<td class='num-cell'>{coef_display}</td>"
+                f"<td class='num-cell'>{_FormattingMixin._format_metric(row.get('std_err'))}</td>"
+                f"<td class='num-cell'>{_FormattingMixin._format_metric(row.get('t_value'))}</td>"
+                f"<td class='num-cell' style='{p_style}'>{_FormattingMixin._format_p_value(p_val)}</td>"
+                f"<td class='num-cell'>{_FormattingMixin._format_metric(row.get('ci_lower'))}</td>"
+                f"<td class='num-cell'>{_FormattingMixin._format_metric(row.get('ci_upper'))}</td>"
+                f"</tr>"
+            )
+        html = (
+            "<div class='table-shell'>"
+            "<table>"
+            "<thead><tr>"
+            "<th>Parameter</th><th>Coefficient</th><th>SE</th><th>t</th>"
+            "<th>p-value</th><th>95% CI Lower</th><th>95% CI Upper</th>"
+            "</tr></thead>"
+            f"<tbody>{rows_html}</tbody>"
+            "</table></div>"
+        )
+        return {
+            "title": "Coefficients",
+            "subtitle": "OLS coefficients with standard errors and 95% confidence intervals.",
+            "html": html,
+            "div_id": "biomedstatx-linreg-coef-table",
+        }
+
+    @staticmethod
     def _extract_association_payload(results: dict) -> dict | None:
         def _pair_points(points):
             x_out = []

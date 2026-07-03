@@ -619,6 +619,12 @@ class _ChartsMixin:
             beta_chart = _ChartsMixin._build_beta_regression_chart(results)
             if beta_chart:
                 charts.append(beta_chart)
+        elif model_type == "LinearRegression":
+            # Coefficient table as inline HTML block — was computed
+            # (correlation_models.py) but never rendered anywhere.
+            linreg_coef_block = _AssociationMixin._build_linear_regression_coefficient_table_html(results)
+            if linreg_coef_block:
+                charts.append(linreg_coef_block)
         elif model_type == "CorrelationMatrix":
             # Heatmaps replace meaningless boxplot — no group data, matrix data only
             charts.extend(_ChartsMixin._build_correlation_matrix_charts(results))
