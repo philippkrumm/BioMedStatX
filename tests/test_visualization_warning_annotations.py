@@ -9,6 +9,47 @@ import matplotlib.pyplot as plt
 from visualization.datavisualizer import DataVisualizer
 
 
+def test_linthresh_uses_5th_percentile_not_min():
+    # One artifact-tiny value (0.00001) alongside a real noise band (~1.0-1.3)
+    # and real signal (50-200). A min-based threshold would collapse to
+    # ~0.000005; the 5th-percentile estimator should sit near the noise band.
+    groups = ["A"]
+    samples = {"A": [0.00001, 1.0, 1.2, 1.1, 1.3, 1.05, 50.0, 100.0, 200.0]}
+    count, thresh = DataVisualizer._analyze_nonpositive_values(groups, samples)
+    assert count == 0  # no values <= 0 in this sample
+    assert thresh is not None
+    assert thresh > 0.01, f"linthresh collapsed toward the single artifact value: {thresh}"
+
+
+def test_analyze_counts_nonpositive_and_returns_none_thresh_when_all_zero():
+    groups = ["A"]
+    samples = {"A": [0.0, 0.0, 0.0]}
+    count, thresh = DataVisualizer._analyze_nonpositive_values(groups, samples)
+    assert count == 3
+    assert thresh is None
+
+
+def test_analyze_handles_single_nonzero_value_without_crash():
+    groups = ["A"]
+    samples = {"A": [0.0, 0.0, 5.0]}
+    count, thresh = DataVisualizer._analyze_nonpositive_values(groups, samples)
+    assert count == 2
+    assert thresh == 5.0
+
+
+def test_notice_annotation_uses_neutral_style_distinct_from_warning():
+    fig, ax = plt.subplots()
+    DataVisualizer._draw_notice_annotation(ax, "Data Notice: test")
+    DataVisualizer._draw_warning_annotation(ax, "Data Warning: test")
+    notice_text = next(t for t in ax.texts if "Data Notice" in t.get_text())
+    warning_text = next(t for t in ax.texts if "Data Warning" in t.get_text())
+    assert (
+        notice_text.get_bbox_patch().get_facecolor()
+        != warning_text.get_bbox_patch().get_facecolor()
+    ), "notice and warning annotations must be visually distinct"
+    plt.close(fig)
+
+
 def _emm_grouped_pairwise():
     return [
         {"group1": "ctrl:T0", "group2": "drug:T0", "test": "EMM + multivariate-t",

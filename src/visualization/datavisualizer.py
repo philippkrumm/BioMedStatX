@@ -2516,6 +2516,61 @@ class DataVisualizer:
                     ha='center', va='bottom', fontsize=font_size, color='black')
 
     @staticmethod
+    def _analyze_nonpositive_values(groups, samples):
+        """
+        Single pass over samples: returns (count_nonpositive, linthresh).
+        `count_nonpositive` is how many values are <= 0 or NaN (i.e. would be
+        dropped/undefined on a plain log axis). `linthresh` is the 5th
+        percentile of |v| over all non-zero values — used as matplotlib's
+        symlog linear-region threshold — or None if there are no non-zero
+        values to derive a threshold from (e.g. all values are exactly 0),
+        in which case callers must fall back to the plain-log-plus-warning
+        path since symlog has nothing to anchor on.
+
+        5th percentile (not min) is used deliberately: a single technical
+        artifact reading near zero (e.g. one pipetting-error value in a
+        background-subtracted assay) would collapse a min-based threshold to
+        near-zero, forcing the real noise floor into the log domain and
+        distorting it. The percentile is robust to that single-point failure
+        mode.
+        """
+        keys = groups if groups else list((samples or {}).keys())
+        count_nonpositive = 0
+        abs_vals = []
+        for g in keys:
+            for v in (samples or {}).get(g, []) or []:
+                try:
+                    v = float(v)
+                except (TypeError, ValueError):
+                    continue
+                if v != v:  # NaN
+                    count_nonpositive += 1
+                    continue
+                if v <= 0:
+                    count_nonpositive += 1
+                if v != 0.0:
+                    abs_vals.append(abs(v))
+        linthresh = float(np.percentile(abs_vals, 5)) if abs_vals else None
+        return count_nonpositive, linthresh
+
+    @staticmethod
+    def _draw_notice_annotation(ax, text):
+        """
+        Draw a neutral, low-severity annotation for auto-adapted-but-lossless
+        plot behavior (e.g. symlog auto-selected) — visually distinct from
+        _draw_warning_annotation's red styling, which is reserved for cases
+        where data was actually dropped or degraded.
+        """
+        ax.text(
+            0.5, 1.02, text,
+            transform=ax.transAxes,
+            ha='center', va='bottom',
+            fontsize=8, fontweight='bold', color='white',
+            bbox=dict(boxstyle='round,pad=0.4', fc='#4A5568', ec='none', alpha=0.9),
+            zorder=1000, clip_on=False,
+        )
+
+    @staticmethod
     def _draw_warning_annotation(ax, text):
         """
         Draw a high-contrast warning box directly on the axes so it survives
