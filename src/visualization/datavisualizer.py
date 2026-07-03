@@ -7,7 +7,7 @@ import scipy.stats as stats
 import string
 import os
 from scipy.stats import ttest_ind, mannwhitneyu
-from matplotlib.ticker import ScalarFormatter, FuncFormatter
+from matplotlib.ticker import ScalarFormatter, FuncFormatter, SymmetricalLogLocator, LogFormatterMathtext
 
 import logging
 logger = logging.getLogger(__name__)
@@ -1895,26 +1895,36 @@ class DataVisualizer:
         if x_limits:
             ax.set_xlim(x_limits)
 
-        omitted = 0
-        if (logx or logy) and samples:
-            keys = groups if groups else list(samples.keys())
-            for g in keys:
-                for v in samples.get(g, []) or []:
-                    try:
-                        v = float(v)
-                    except (TypeError, ValueError):
-                        continue
-                    if v != v or v <= 0:  # v != v excludes NaN
-                        omitted += 1
-
         if logx:
             ax.set_xscale('log', base=10)
-        if logy:
-            ax.set_yscale('log', base=10)
+            if samples:
+                count_x, _ = DataVisualizer._analyze_nonpositive_values(groups, samples)
+                if count_x > 0:
+                    DataVisualizer._draw_warning_annotation(
+                        ax, f"Data Warning: {count_x} values ≤ 0 omitted from log-scale axis.")
 
-        if omitted > 0:
-            DataVisualizer._draw_warning_annotation(
-                ax, f"Data Warning: {omitted} values ≤ 0 omitted from log-scale axis.")
+        if logy:
+            count_y, linthresh = (
+                DataVisualizer._analyze_nonpositive_values(groups, samples) if samples else (0, None)
+            )
+            if count_y > 0 and linthresh is not None:
+                # Lossless path: symlog preserves near-zero/negative readings
+                # (e.g. background-subtracted assay data) instead of dropping them.
+                ax.set_yscale('symlog', linthresh=linthresh)
+                ax.yaxis.set_major_locator(SymmetricalLogLocator(base=10, linthresh=linthresh))
+                ax.yaxis.set_major_formatter(LogFormatterMathtext(base=10, linthresh=linthresh))
+                DataVisualizer._draw_notice_annotation(
+                    ax, f"Data Notice: Values ≤ 0 detected. Auto-applied symlog scale "
+                    f"(linthresh = {linthresh:.4g}).")
+            elif count_y > 0:
+                # No non-zero magnitude anywhere (e.g. all values are exactly 0)
+                # — nothing to derive a threshold from; fall back to the plain
+                # log scale and report the omission honestly.
+                ax.set_yscale('log', base=10)
+                DataVisualizer._draw_warning_annotation(
+                    ax, f"Data Warning: {count_y} values ≤ 0 omitted from log-scale axis.")
+            else:
+                ax.set_yscale('log', base=10)
 
         # --- TICK CONTROL: Ensure ticks are always visible unless explicitly removed ---
         # Always show major ticks on both axes
