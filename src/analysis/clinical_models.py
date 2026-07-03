@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 from abc import ABC, abstractmethod
 from enum import Enum
 
+from statistical_testing.validators import ModelDesignError
+
 class DesignType(str, Enum):
     INDEPENDENT = "INDEPENDENT"
     REPEATED = "REPEATED"
@@ -114,6 +116,9 @@ class ANCOVAModel(BaseStatisticalModel):
     def fit(self, df, dv, between_factors, covariates, alpha=0.05, control_group=None):
         import statsmodels.formula.api as smf
         from statsmodels.stats.anova import anova_lm
+
+        if not between_factors:
+            raise ModelDesignError("ANCOVA requires at least one between-subjects factor.")
 
         self._df = df.dropna(subset=[dv] + between_factors + covariates).copy()
         self._alpha = alpha
