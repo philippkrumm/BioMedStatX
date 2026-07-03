@@ -2688,17 +2688,27 @@ class StatisticalTester:
             results.update(corrections_applied)
             
         except Exception as e:
-            # Comprehensive fallback
+            # Per CHANGELOG.md: "When sphericity cannot be formally tested,
+            # the Greenhouse-Geisser correction is now applied by default."
+            # Attempt that same conservative default here, not just in the
+            # inner fallback — falls back to the uncorrected p-value only if
+            # _apply_sphericity_corrections itself also can't be computed.
             results["sphericity_test"] = {
                 "test_name": "Mauchly's Test for Sphericity",
                 "W": None,
                 "p_value": None,
                 "sphericity_assumed": None,
                 "note": f"Sphericity test failed: {str(e)}",
-                "interpretation": "Could not determine sphericity - proceeding with caution"
+                "interpretation": "Could not determine sphericity - applying conservative correction"
             }
-            results["corrected_p_value"] = StatisticalTester._pingouin_p_value(row)
-            results["correction_used"] = "None (sphericity test failed)"
+            try:
+                corrections_applied = StatisticalTester._apply_sphericity_corrections(
+                    row, error_row, True, aov
+                )
+                results.update(corrections_applied)
+            except Exception:
+                results["corrected_p_value"] = StatisticalTester._pingouin_p_value(row)
+                results["correction_used"] = "None (sphericity test failed)"
             
         return results
     
