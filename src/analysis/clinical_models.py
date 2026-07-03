@@ -651,6 +651,9 @@ class LinearMixedModel(BaseStatisticalModel):
         import statsmodels.formula.api as smf
         from scipy import stats as scipy_stats
 
+        if not fixed_effects:
+            raise ModelDesignError("Linear Mixed Model requires at least one fixed effect.")
+
         self._alpha = alpha
         self._control_group = control_group
 

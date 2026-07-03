@@ -29,3 +29,16 @@ def test_ancova_without_between_factors_raises_model_design_error():
 def test_ancova_without_covariates_raises_model_design_error():
     with pytest.raises(ModelDesignError, match="at least one covariate"):
         ANCOVAModel().fit(_ancova_df(), dv="Y", between_factors=["Group"], covariates=[])
+
+
+def _lmm_df():
+    return pd.DataFrame({
+        "Y": [1.0, 2.0, 1.5, 2.5, 1.2, 2.2, 1.8, 2.8],
+        "Time": ["T1", "T2", "T1", "T2", "T1", "T2", "T1", "T2"],
+        "Subject": ["S1", "S1", "S2", "S2", "S3", "S3", "S4", "S4"],
+    })
+
+
+def test_lmm_without_fixed_effects_raises_model_design_error():
+    with pytest.raises(ModelDesignError, match="fixed effect"):
+        LinearMixedModel().fit(_lmm_df(), dv="Y", fixed_effects=[], random_intercept="Subject")
