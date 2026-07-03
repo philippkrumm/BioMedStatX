@@ -125,6 +125,26 @@ def _looks_like_subject(column_name, series=None):
     return unique_ratio >= 0.60 or unique_count >= 8 or id_like_ratio >= 0.40
 
 
+def _reject_missing_subject_ids(df, subject_col):
+    """
+    Raises ValueError if subject_col contains any NaN. Every row needs a
+    subject ID before repeated-measures structure (wide-format detection,
+    balance detection, RM-ANOVA vs LMM routing) can be determined correctly
+    — pandas silently drops NaN keys in groupby/nunique, which would
+    otherwise let incomplete subjects vanish from those checks without any
+    warning, biasing decisions that depend on them.
+    """
+    if subject_col is None:
+        return
+    n_missing = int(df[subject_col].isna().sum())
+    if n_missing > 0:
+        raise ValueError(
+            f"Subject ID column '{subject_col}' has {n_missing} missing "
+            f"value(s). Every row needs a subject ID before repeated-measures "
+            f"analysis can run — fix the data and reload."
+        )
+
+
 def _detect_wide_format(df):
     """
     Returns {"subject_col": str, "value_cols": list[str]} if df looks like
@@ -152,6 +172,7 @@ def _detect_wide_format(df):
         return None
 
     subject_col = subject_candidates[0]
+    _reject_missing_subject_ids(df, subject_col)
 
     # Value columns = all numeric columns that are not the subject column and
     # have at least one real observation (an all-NaN column has no data to
