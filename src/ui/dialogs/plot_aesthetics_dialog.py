@@ -1567,6 +1567,35 @@ class PlotAestheticsDialog(QDialog):
         if self.groups and self.samples:
             self.update_preview()
     
+    def _apply_log_scale_gating(self):
+        """
+        Disable "Log Y" (on self.style_tab) when self.samples contains
+        non-positive values. log(<=0) is undefined; matplotlib silently drops
+        those points on a log-scale axis with no visible warning, so gate it
+        here instead. StyleTab itself only receives `config`, not `samples`,
+        so this reaches into the already-built tab's checkbox directly.
+        """
+        has_nonpositive = False
+        for values in self.samples.values():
+            for v in (values or []):
+                try:
+                    v = float(v)
+                except (TypeError, ValueError):
+                    continue
+                if v == v and v <= 0:  # v == v excludes NaN
+                    has_nonpositive = True
+                    break
+            if has_nonpositive:
+                break
+
+        if has_nonpositive:
+            self.style_tab.logy_check.setChecked(False)
+            self.style_tab.logy_check.setEnabled(False)
+            self.style_tab.logy_check.setToolTip("Log scale unavailable: data contains values ≤ 0.")
+        else:
+            self.style_tab.logy_check.setEnabled(True)
+            self.style_tab.logy_check.setToolTip("")
+
     def init_ui(self):
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(10, 10, 10, 10)
@@ -1622,6 +1651,7 @@ class PlotAestheticsDialog(QDialog):
         self.typography_tab = TypographyTab(self.config)
         self.colors_tab = ColorsTab(self.groups, self.config, self.context)
         self.style_tab = StyleTab(self.config)
+        self._apply_log_scale_gating()
         self.symbols_tab = SymbolsTab(self.groups, self.config)
         self.raincloud_tab = RaincloudTab(self.groups, self.config)
         self.error_tab = ErrorBarsTab(self.config)
