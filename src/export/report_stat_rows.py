@@ -667,8 +667,16 @@ class _StatRowsMixin:
                 if rte_rows:
                     rows.append({"label": "Relative Treatment Effects (RTE)", "value": "RTE near 0.5 = no effect"})
                     for rte_row in rte_rows:
-                        between = rte_row.get("between_group", "")
-                        within = rte_row.get("within_level", "")
+                        between = rte_row.get("between_group")
+                        within = rte_row.get("within_level")
+                        if between is None or within is None:
+                            logger.warning(
+                                "RTE row missing expected key(s) (between_group=%r, "
+                                "within_level=%r); check Brunner-Langer/ATS engine "
+                                "output shape.", between, within,
+                            )
+                            between = between if between is not None else "?"
+                            within = within if within is not None else "?"
                         rte_val = rte_row.get("RTE")
                         n_cell = rte_row.get("n")
                         group_label = f"RTE: {between} / {within}"
