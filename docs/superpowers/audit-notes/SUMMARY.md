@@ -117,6 +117,41 @@ clean.
     `correlation` audit (`correlation.md` item 3). Cheap fix: update the docstring to
     match `fit`'s real logic.
 
+## Follow-up items found after this audit (now fixed)
+
+Two more structural gaps surfaced during quality review of the fixes for items 1-9
+above (not part of the original 12-recipe pass, so not numbered with it). Both are
+now fixed.
+
+- **Help Hub's binary-outcome hint disagreed with real test routing on
+  grouping-named columns.** `_ap_is_binary_outcome_for_help` lacked the same
+  "column name doesn't look like a grouping variable" guard that the real routing
+  function `_classify_binary_outcome` has (the fix for item 8 above), so a column
+  like `Treatment_Arm` coded Yes/No could get suggested the wrong Help Hub recipe
+  even though real analysis correctly treated it as non-binary. Fixed by making the
+  hint delegate to `_classify_binary_outcome` directly (commit `cb45f39`).
+- **`ANCOVAModel`, `LinearMixedModel`, and `LogisticRegressionModel.fit()` had no
+  structural pre-flight checks** for empty `between_factors`/`covariates`/
+  `fixed_effects`/`predictors` or a missing `random_intercept`, unlike the sibling
+  `mixed_anova`/`repeated_measures_anova` subject-column check (item 9 above).
+  Investigation traced the actual failure modes: `ANCOVAModel` and
+  `LogisticRegressionModel` would raise a patsy `PatsyError` from a malformed
+  formula, `LinearMixedModel`'s missing `random_intercept` would raise a pandas
+  `KeyError`, and — the one silent case — an empty `fixed_effects` list would not
+  raise at all, silently degrading to a meaningless intercept-only model. All of
+  these are already caught by existing broad exception handlers in both dispatch
+  paths (`analysis_core.py`'s clinical dispatch and `statisticaltester.py`'s
+  `_run_ancova`/`_run_lmm`/`_run_logistic_regression`, reached via
+  `advanced_pipeline.py`), so this was never a crash risk — only a message-quality
+  gap (an opaque `PatsyError`/`KeyError` string reaching the user instead of a
+  clear `ModelDesignError`). Confirmed via routing trace that today's autopilot UI
+  never reaches these test types with empty structural fields, so — like item 9 —
+  this is a defensive fix, not a fix for a currently-reachable UI bug. Fixed with
+  five `ModelDesignError` pre-flight checks plus one `ValueError`→
+  `ModelDesignError` conversion for consistency (spec:
+  `docs/superpowers/specs/2026-07-03-clinical-model-preflight-validation-design.md`,
+  plan: `docs/superpowers/plans/2026-07-03-clinical-model-preflight-validation.md`).
+
 ## Recorded for completeness, not bugs (deliberate design choices)
 
 - **Welch's t-test/ANOVA is used whenever data is normal, regardless of the
