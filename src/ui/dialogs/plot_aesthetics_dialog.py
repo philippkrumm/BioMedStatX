@@ -1569,11 +1569,14 @@ class PlotAestheticsDialog(QDialog):
     
     def _apply_log_scale_gating(self):
         """
-        Disable "Log Y" (on self.style_tab) when self.samples contains
-        non-positive values. log(<=0) is undefined; matplotlib silently drops
-        those points on a log-scale axis with no visible warning, so gate it
-        here instead. StyleTab itself only receives `config`, not `samples`,
-        so this reaches into the already-built tab's checkbox directly.
+        Update the "Log Y" tooltip (on self.style_tab) when self.samples
+        contains non-positive values. Sprint 1 hard-disabled the checkbox
+        here; Sprint 2 replaces that with a "smart toggle" — _format_axes
+        (datavisualizer.py) auto-switches to a symlog scale for this data
+        instead of dropping points, so the checkbox stays usable and only the
+        tooltip changes. StyleTab itself only receives `config`, not
+        `samples`, so this reaches into the already-built tab's checkbox
+        directly.
         """
         has_nonpositive = False
         for values in self.samples.values():
@@ -1588,12 +1591,12 @@ class PlotAestheticsDialog(QDialog):
             if has_nonpositive:
                 break
 
+        self.style_tab.logy_check.setEnabled(True)
         if has_nonpositive:
-            self.style_tab.logy_check.setChecked(False)
-            self.style_tab.logy_check.setEnabled(False)
-            self.style_tab.logy_check.setToolTip("Log scale unavailable: data contains values ≤ 0.")
+            self.style_tab.logy_check.setToolTip(
+                "Values ≤ 0 detected. Symmetric log scale (symlog) will be used "
+                "automatically for lossless display.")
         else:
-            self.style_tab.logy_check.setEnabled(True)
             self.style_tab.logy_check.setToolTip("")
 
     def init_ui(self):

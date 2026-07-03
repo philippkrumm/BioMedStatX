@@ -15,14 +15,16 @@ app = QApplication.instance() or QApplication([])
 from ui.dialogs.plot_aesthetics_dialog import PlotAestheticsDialog
 
 
-def test_logy_checkbox_disabled_when_data_has_nonpositive_values():
+def test_logy_checkbox_stays_enabled_with_symlog_tooltip_when_data_has_nonpositive_values():
+    # Sprint 2: the checkbox is no longer hard-disabled — _format_axes now
+    # auto-adapts to symlog for this data instead of dropping points, so the
+    # user keeps the ability to toggle log scaling on. Only the tooltip changes.
     groups = ["A", "B"]
     samples = {"A": [1.0, 2.0, -0.5], "B": [3.0, 4.0, 5.0]}
     dialog = PlotAestheticsDialog(groups=groups, samples=samples, show_export_controls=False)
     try:
-        assert dialog.style_tab.logy_check.isEnabled() is False
-        assert dialog.style_tab.logy_check.isChecked() is False
-        assert "≤ 0" in dialog.style_tab.logy_check.toolTip()
+        assert dialog.style_tab.logy_check.isEnabled() is True
+        assert "symlog" in dialog.style_tab.logy_check.toolTip().lower()
     finally:
         dialog.close()
 
