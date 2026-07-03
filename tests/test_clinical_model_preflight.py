@@ -59,3 +59,15 @@ def _logistic_df():
 def test_logistic_without_predictors_raises_model_design_error():
     with pytest.raises(ModelDesignError, match="at least one predictor"):
         LogisticRegressionModel().fit(_logistic_df(), dv="Outcome", predictors=[])
+
+
+def _logistic_df_three_levels():
+    return pd.DataFrame({
+        "Outcome3": [0, 1, 2, 0, 1, 2, 0, 1],
+        "X": [1.0, 2.0, 1.5, 2.5, 1.2, 2.8, 1.9, 2.1],
+    })
+
+
+def test_logistic_wrong_outcome_level_count_raises_model_design_error():
+    with pytest.raises(ModelDesignError, match="2 outcome levels"):
+        LogisticRegressionModel().fit(_logistic_df_three_levels(), dv="Outcome3", predictors=["X"])

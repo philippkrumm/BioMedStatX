@@ -1088,7 +1088,7 @@ class LogisticRegressionModel(BaseStatisticalModel):
         # Encode DV as 0/1 if needed
         unique_vals = sorted(self._df[self._dv].unique())
         if len(unique_vals) != 2:
-            raise ValueError(f"Logistic regression requires exactly 2 outcome levels, found {len(unique_vals)}")
+            raise ModelDesignError(f"Logistic regression requires exactly 2 outcome levels, found {len(unique_vals)}")
         if set(unique_vals) != {0, 1}:
             self._df[self._dv] = (self._df[self._dv] == unique_vals[1]).astype(int)
 
