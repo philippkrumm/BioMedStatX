@@ -153,8 +153,11 @@ def _detect_wide_format(df):
 
     subject_col = subject_candidates[0]
 
-    # Value columns = all numeric columns that are not the subject column
-    value_cols = [c for c in numeric_cols if c != subject_col]
+    # Value columns = all numeric columns that are not the subject column and
+    # have at least one real observation (an all-NaN column has no data to
+    # pivot/analyze and would otherwise silently reach analysis_core.py as an
+    # empty group, producing a cryptic error far from the real cause).
+    value_cols = [c for c in numeric_cols if c != subject_col and df[c].notna().any()]
     if not (2 <= len(value_cols) <= 8):
         return None
 
