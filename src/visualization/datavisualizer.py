@@ -990,7 +990,8 @@ class DataVisualizer:
         DataVisualizer._format_axes(
             ax, y_axis_format, y_limits, x_limits,
             grid_style, grid_alpha, spine_style, tick_direction, offset_axes, axis_offset_points,
-            logx, logy, axis_break_enabled, axis_break_start, axis_break_end
+            logx, logy, axis_break_enabled, axis_break_start, axis_break_end,
+            groups=groups, samples=samples,
         )
         # Fix D: Apply axis_thickness to spines and tick marks
         for spine in ax.spines.values():
@@ -1186,7 +1187,8 @@ class DataVisualizer:
         DataVisualizer._format_axes(
             ax, y_axis_format, y_limits, x_limits,
             grid_style, grid_alpha, spine_style, tick_direction, offset_axes, axis_offset_points,
-            logx, logy, axis_break_enabled, axis_break_start, axis_break_end
+            logx, logy, axis_break_enabled, axis_break_start, axis_break_end,
+            groups=groups, samples=samples,
         )
         # Fix D: Apply axis_thickness to spines and tick marks
         for spine in ax.spines.values():
@@ -1392,7 +1394,8 @@ class DataVisualizer:
         DataVisualizer._format_axes(
             ax, y_axis_format, y_limits, x_limits,
             grid_style, grid_alpha, spine_style, tick_direction, offset_axes, axis_offset_points,
-            logx, logy, axis_break_enabled, axis_break_start, axis_break_end
+            logx, logy, axis_break_enabled, axis_break_start, axis_break_end,
+            groups=groups, samples=samples,
         )
         # Fix D: Apply axis_thickness to spines and tick marks
         for spine in ax.spines.values():
@@ -1872,7 +1875,8 @@ class DataVisualizer:
     def _format_axes(ax, y_format, y_limits, x_limits, grid_style, grid_alpha, spine_style,
                      tick_direction='out', offset_axes=False, axis_offset_points=10,
                      logx=False, logy=False, axis_break_enabled=False,
-                     axis_break_start=20.0, axis_break_end=80.0):
+                     axis_break_start=20.0, axis_break_end=80.0,
+                     groups=None, samples=None):
         """Format axes according to specifications"""
         # Y-axis formatting
         if y_format == 'scientific':
@@ -1891,10 +1895,26 @@ class DataVisualizer:
         if x_limits:
             ax.set_xlim(x_limits)
 
+        omitted = 0
+        if (logx or logy) and samples:
+            keys = groups if groups else list(samples.keys())
+            for g in keys:
+                for v in samples.get(g, []) or []:
+                    try:
+                        v = float(v)
+                    except (TypeError, ValueError):
+                        continue
+                    if v != v or v <= 0:  # v != v excludes NaN
+                        omitted += 1
+
         if logx:
             ax.set_xscale('log', base=10)
         if logy:
             ax.set_yscale('log', base=10)
+
+        if omitted > 0:
+            DataVisualizer._draw_warning_annotation(
+                ax, f"Data Warning: {omitted} values ≤ 0 omitted from log-scale axis.")
 
         # --- TICK CONTROL: Ensure ticks are always visible unless explicitly removed ---
         # Always show major ticks on both axes

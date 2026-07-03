@@ -37,3 +37,35 @@ def test_grouped_emm_failure_draws_visible_warning(monkeypatch):
     )
     assert "flat pooling" in warning_texts[0]
     plt.close(fig)
+
+
+def test_logscale_with_nonpositive_data_draws_warning():
+    fig, ax = plt.subplots()
+    groups = ["A", "B"]
+    # Group A has two non-positive values (-0.5, 0.0); group B is all positive.
+    samples = {"A": [1.0, 2.0, -0.5, 0.0], "B": [3.0, 4.0]}
+
+    DataVisualizer.plot_bar(
+        groups, samples, ax=ax, save_plot=False, logy=True, show_error_bars=False
+    )
+
+    warning_texts = [t.get_text() for t in ax.texts if "Data Warning" in t.get_text()]
+    assert len(warning_texts) == 1, (
+        "log-scale axis with non-positive data must draw an on-canvas warning"
+    )
+    assert "2 values" in warning_texts[0]
+    plt.close(fig)
+
+
+def test_logscale_with_all_positive_data_draws_no_warning():
+    fig, ax = plt.subplots()
+    groups = ["A", "B"]
+    samples = {"A": [1.0, 2.0, 3.0], "B": [3.0, 4.0, 5.0]}
+
+    DataVisualizer.plot_bar(
+        groups, samples, ax=ax, save_plot=False, logy=True, show_error_bars=False
+    )
+
+    warning_texts = [t.get_text() for t in ax.texts if "Data Warning" in t.get_text()]
+    assert len(warning_texts) == 0
+    plt.close(fig)
