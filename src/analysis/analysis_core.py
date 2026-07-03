@@ -594,7 +594,21 @@ class AnalysisManager:
                 if clinical_test in ('ancova', 'two_way_ancova'):
                     model = ANCOVAModel()
                     between_factors = analysis_context.get('between_factors') or analysis_context.get('factor_columns', [])
-                    model.fit(df, dv=value_cols[0], between_factors=between_factors, covariates=covariates)
+
+                    ancova_control = None
+                    primary_factor = between_factors[0] if between_factors else None
+                    _control_cb = kwargs.get('control_group_callback')
+                    if _control_cb and primary_factor:
+                        try:
+                            primary_levels = sorted(
+                                str(v) for v in df[primary_factor].dropna().unique()
+                            )
+                            ancova_control = _control_cb(primary_levels)
+                        except Exception as exc:
+                            logger.warning("ANCOVA control-group selection failed in core: %s", exc)
+
+                    model.fit(df, dv=value_cols[0], between_factors=between_factors,
+                              covariates=covariates, control_group=ancova_control)
                     test_results = model.as_results_dict()
 
                 elif clinical_test == 'lmm':
