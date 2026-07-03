@@ -4,20 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## [2.0.0] - 2026-06-29
 
-Welcome to BioMedStatX 2.0.0! We've done a massive under-the-hood statistical audit to ensure our results are more robust, conservative, and statistically sound than ever before. Here is what's new and what has changed.
+This release is the result of a statistical audit. The changes below make the default behavior more conservative and correct some effect-size and p-value computations. Several of these are behavioral changes that can alter reported results, so read the breaking-changes section before upgrading.
 
-### 🛑 Breaking Changes (Behavioral Updates)
-- **Smarter Beta Regression P-Values**: When running Beta regressions, the main p-value you see is now a true Omnibus Likelihood-Ratio (LR) test. This gives you a much better overall picture of the model's significance compared to just looking at the first predictor.
-- **Conservative Sphericity Defaults**: Safety first! If the data doesn't allow us to formally test for sphericity (e.g., due to incomplete tables), we now conservatively apply the Greenhouse-Geisser correction by default. Previously, we optimistically assumed sphericity was met, which could inflate Type-I error rates.
-- **True Hedges' g**: We now strictly apply the $J$-correction factor to all effect sizes labeled as Hedges' g. This ensures small sample biases are properly penalized. (In earlier versions, some Welch's test branches accidentally reported uncorrected Cohen's d under the Hedges label).
-- **Strict Dunnett-RM**: Dunnett's test is specifically designed for comparing treatments against a single control group. We've tightened our Repeated Measures implementation to strictly perform control-only comparisons, preventing accidental (and statistically flawed) all-pairwise comparisons.
+### Breaking changes (behavioral)
 
-### 🐛 Bug Fixes & Stability
-- **Rich Analysis Logs Are Back**: Fixed a glitch where the beautifully detailed analysis logs were accidentally discarded during standard exports. You'll now see the full story in your HTML reports again.
-- **Working Directory Safety**: We've wrapped our standard export paths in robust error handlers. If an export fails, it will no longer contaminate the working directory for subsequent datasets.
-- **Convergence Transparency**: Logistic and Beta models now strictly monitor and report their convergence status. If a model fails to converge (or if our Firth penalized fallback fails), you will be clearly warned rather than presented with misleading outputs.
-- **Invalid p-Value Guards**: We've added strict boundaries. The system will now gracefully intercept mathematically impossible p-values (like negative numbers or NaNs) and flag them as `invalid`, rather than blindly formatting them as `< 0.001`.
+- Beta regression now reports an omnibus likelihood-ratio (LR) test as the main p-value instead of the p-value of the first predictor. The LR test reflects overall model significance.
+- When sphericity cannot be formally tested (for example, with incomplete tables), the Greenhouse-Geisser correction is now applied by default. Earlier versions assumed sphericity was met, which could inflate the Type-I error rate.
+- The J-correction factor is now applied to every effect size labeled Hedges' g. Some Welch's test branches previously reported uncorrected Cohen's d under the Hedges label.
+- Repeated-measures Dunnett now performs control-only comparisons. Earlier versions could fall through to all-pairwise comparisons, which Dunnett's test is not designed for.
 
-### 🔬 Statistical Corrections
-- **Degrees of Freedom Consistency (`ddof=1`)**: We've standardized standard deviation computations across the board (including Cohen's d for Repeated Measures and our bootstrapping methods) to correctly use sample standard deviations (`ddof=1`) instead of population estimators (`ddof=0`).
-- **Flexible Confidence Intervals**: Confidence intervals for bootstraps and effect sizes now strictly respect your dynamically chosen `alpha` level, rather than hardcoding a 95% (1.96) cutoff.
+### Bug fixes and stability
+
+- Detailed analysis logs are no longer discarded during standard exports. They appear again in the HTML reports.
+- Standard export paths are wrapped in error handlers. A failed export no longer leaves the working directory in a state that affects later datasets.
+- Logistic and Beta models now check and report convergence status. If a model fails to converge, or if the Firth penalized fallback fails, the output says so instead of presenting a misleading result.
+- Invalid p-values (negative numbers, NaN) are now flagged as `invalid` rather than formatted as `< 0.001`.
+
+### Statistical corrections
+
+- Standard deviation computations now use the sample estimator (`ddof=1`) consistently, including Cohen's d for repeated measures and the bootstrap methods. Earlier code used the population estimator (`ddof=0`) in some places.
+- Confidence intervals for bootstraps and effect sizes now use the chosen `alpha` level instead of a hardcoded 95% (1.96) cutoff.
