@@ -2496,6 +2496,22 @@ class DataVisualizer:
                     ha='center', va='bottom', fontsize=font_size, color='black')
 
     @staticmethod
+    def _draw_warning_annotation(ax, text):
+        """
+        Draw a high-contrast warning box directly on the axes so it survives
+        figure export (PNG/SVG) instead of only appearing in the backend log.
+        Used when a plot silently degrades or loses data rather than erroring.
+        """
+        ax.text(
+            0.5, 1.02, text,
+            transform=ax.transAxes,
+            ha='center', va='bottom',
+            fontsize=8, fontweight='bold', color='white',
+            bbox=dict(boxstyle='round,pad=0.4', fc='#CC3300', ec='none', alpha=0.9),
+            zorder=1000, clip_on=False,
+        )
+
+    @staticmethod
     def add_reference_line(ax, y=0, style='--', color='grey', linewidth=0.7, alpha=0.5, label=None):
         """
         Add a horizontal reference line (e.g., baseline).
@@ -2844,6 +2860,9 @@ class DataVisualizer:
                 except Exception as exc:
                     logger.warning("grouped EMM plot failed (%s); using flat plot_bar", exc)
                     DataVisualizer.plot_bar(groups, samples, **bar_kwargs)
+                    DataVisualizer._draw_warning_annotation(
+                        ax, "Structural Warning: Within-Between interaction split "
+                        "failed. Showing flat pooling.")
             else:
                 DataVisualizer.plot_bar(groups, samples, **bar_kwargs)
 
