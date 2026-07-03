@@ -448,19 +448,35 @@ class _SummariesMixin:
                 "status_class": _FormattingMixin._bool_class(status_value),
             })
             if status_value is False:
-                corr = (sphericity.get("correction") or sphericity.get("correction_applied") or "").lower()
-                gg_eps = sphericity.get("greenhouse_geisser") or sphericity.get("gg_epsilon") or sphericity.get("epsilon_gg")
-                hf_eps = sphericity.get("huynh_feldt") or sphericity.get("hf_epsilon") or sphericity.get("epsilon_hf")
+                # Primary source: statisticaltester.py writes the correction label
+                # to the top-level "correction_used" key and the epsilon values
+                # nested under "sphericity_corrections", NOT into the
+                # "sphericity_test" sub-dict this function reads for W/p_value.
+                top_correction = str(results.get("correction_used") or "")
+                sph_corrections = results.get("sphericity_corrections") or {}
+                gg_block = sph_corrections.get("greenhouse_geisser") or {}
+                hf_block = sph_corrections.get("huynh_feldt") or {}
+                gg_eps = gg_block.get("epsilon") if isinstance(gg_block, dict) else None
+                hf_eps = hf_block.get("epsilon") if isinstance(hf_block, dict) else None
+                corr = top_correction.lower()
+                if not corr:
+                    # Fallback for older/serialized payloads that only populated
+                    # the sphericity_test sub-dict directly.
+                    corr = (sphericity.get("correction") or sphericity.get("correction_applied") or "").lower()
+                    if gg_eps is None:
+                        gg_eps = sphericity.get("greenhouse_geisser") or sphericity.get("gg_epsilon") or sphericity.get("epsilon_gg")
+                    if hf_eps is None:
+                        hf_eps = sphericity.get("huynh_feldt") or sphericity.get("hf_epsilon") or sphericity.get("epsilon_hf")
                 if "huynh" in corr or "hf" in corr:
                     label = "Huynh-Feldt"
-                    eps = hf_eps or gg_eps
-                elif gg_eps or "greenhouse" in corr or "gg" in corr:
+                    eps = hf_eps if hf_eps is not None else gg_eps
+                elif gg_eps is not None or "greenhouse" in corr or "gg" in corr:
                     label = "Greenhouse-Geisser"
                     eps = gg_eps
                 else:
                     label, eps = "Greenhouse-Geisser", gg_eps
                 if label:
-                    eps_str = f" (ε = {_FormattingMixin._format_metric(eps)})" if eps else ""
+                    eps_str = f" (ε = {_FormattingMixin._format_metric(eps)})" if eps is not None else ""
                     sphericity_correction_note = f"Sphericity violated → {label} correction applied{eps_str}"
         _icons = {"is-significant": "✓ ", "is-danger": "✗ ", "is-neutral": "~ "}
         for row in rows:
