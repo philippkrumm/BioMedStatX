@@ -44,6 +44,7 @@ from autopilot.statistical_analyzer_autopilot_ui import (
     ResultCockpitWidget,
     SheetSelectionDialog,
     _detect_wide_format,
+    _reject_missing_subject_ids,
     _infer_column_kind,
     _looks_like_subject,
     _pivot_wide_to_long,
@@ -1103,6 +1104,8 @@ def _ap_build_analysis_context(self):
         filter_col, filter_val = filter_spec
         if filter_col in analysis_df.columns:
             analysis_df = analysis_df[analysis_df[filter_col] == filter_val]
+
+    _reject_missing_subject_ids(analysis_df, subject_column)
 
     factor1_levels = _sorted_unique(analysis_df[factor_columns[0]].dropna().tolist())
     selected_factor1_groups = [group for group in context["selected_groups"] if group in factor1_levels]
