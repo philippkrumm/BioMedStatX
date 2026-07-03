@@ -42,3 +42,8 @@ def _lmm_df():
 def test_lmm_without_fixed_effects_raises_model_design_error():
     with pytest.raises(ModelDesignError, match="fixed effect"):
         LinearMixedModel().fit(_lmm_df(), dv="Y", fixed_effects=[], random_intercept="Subject")
+
+
+def test_lmm_without_random_intercept_raises_model_design_error():
+    with pytest.raises(ModelDesignError, match="subject/ID column"):
+        LinearMixedModel().fit(_lmm_df(), dv="Y", fixed_effects=["Time"], random_intercept=None)

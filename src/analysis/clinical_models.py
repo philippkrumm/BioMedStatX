@@ -653,6 +653,8 @@ class LinearMixedModel(BaseStatisticalModel):
 
         if not fixed_effects:
             raise ModelDesignError("Linear Mixed Model requires at least one fixed effect.")
+        if random_intercept is None:
+            raise ModelDesignError("Linear Mixed Model requires a subject/ID column for the random intercept.")
 
         self._alpha = alpha
         self._control_group = control_group
