@@ -1073,6 +1073,9 @@ class LogisticRegressionModel(BaseStatisticalModel):
         import statsmodels.formula.api as smf
         import statsmodels.api as sm
 
+        if not predictors:
+            raise ModelDesignError("Logistic regression requires at least one predictor.")
+
         all_cols = [dv] + predictors + (covariates or [])
         self._df = df.dropna(subset=all_cols).copy()
 

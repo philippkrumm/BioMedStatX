@@ -47,3 +47,15 @@ def test_lmm_without_fixed_effects_raises_model_design_error():
 def test_lmm_without_random_intercept_raises_model_design_error():
     with pytest.raises(ModelDesignError, match="subject/ID column"):
         LinearMixedModel().fit(_lmm_df(), dv="Y", fixed_effects=["Time"], random_intercept=None)
+
+
+def _logistic_df():
+    return pd.DataFrame({
+        "Outcome": [0, 1, 0, 1, 0, 1, 0, 1],
+        "X": [1.0, 2.0, 1.5, 2.5, 1.2, 2.8, 1.9, 2.1],
+    })
+
+
+def test_logistic_without_predictors_raises_model_design_error():
+    with pytest.raises(ModelDesignError, match="at least one predictor"):
+        LogisticRegressionModel().fit(_logistic_df(), dv="Outcome", predictors=[])
