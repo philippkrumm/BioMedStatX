@@ -119,6 +119,8 @@ class ANCOVAModel(BaseStatisticalModel):
 
         if not between_factors:
             raise ModelDesignError("ANCOVA requires at least one between-subjects factor.")
+        if not covariates:
+            raise ModelDesignError("ANCOVA requires at least one covariate.")
 
         self._df = df.dropna(subset=[dv] + between_factors + covariates).copy()
         self._alpha = alpha

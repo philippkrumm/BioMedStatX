@@ -24,3 +24,8 @@ def _ancova_df():
 def test_ancova_without_between_factors_raises_model_design_error():
     with pytest.raises(ModelDesignError, match="between-subjects factor"):
         ANCOVAModel().fit(_ancova_df(), dv="Y", between_factors=[], covariates=["Cov"])
+
+
+def test_ancova_without_covariates_raises_model_design_error():
+    with pytest.raises(ModelDesignError, match="at least one covariate"):
+        ANCOVAModel().fit(_ancova_df(), dv="Y", between_factors=["Group"], covariates=[])
