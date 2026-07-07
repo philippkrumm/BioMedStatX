@@ -911,14 +911,14 @@ class AnalysisManager:
                     between_factor, within_factor = additional_factors[0], additional_factors[1]
                 else:
                     from analysis.statisticaltester import StatisticalTester
-                    return StatisticalTester.make_blocked_result(code="INVALID_DESIGN", reason="Mixed ANOVA requires two factors (between and within)", test_name="mixed_anova")
+                    return StatisticalTester.make_blocked_result(code="INVALID_DESIGN", reason="Mixed ANOVA requires two factors (between and within)")
                 # Step 3: Call prepare_advanced_test first
                 prep = StatisticalTester.prepare_advanced_test(
                     df, 'mixed_anova', value_cols[0], subject_column, [between_factor], [within_factor]
                 )
                 if "error" in prep:
                     from analysis.statisticaltester import StatisticalTester
-                    return StatisticalTester.make_blocked_result("PREP_ERROR", prep["error"], test_name=kwargs.get('test', 'unknown_test'))
+                    return StatisticalTester.make_blocked_result("PREP_ERROR", prep["error"])
 
                 # Step 4: Pass outputs to perform_advanced_test
                 results = StatisticalTester.perform_advanced_test(
@@ -957,7 +957,7 @@ class AnalysisManager:
                 )
                 if "error" in prep:
                     from analysis.statisticaltester import StatisticalTester
-                    return StatisticalTester.make_blocked_result("PREP_ERROR", prep["error"], test_name=kwargs.get('test', 'unknown_test'))
+                    return StatisticalTester.make_blocked_result("PREP_ERROR", prep["error"])
 
                 # Step 4: Pass outputs to perform_advanced_test
                 results = StatisticalTester.perform_advanced_test(
@@ -1002,7 +1002,7 @@ class AnalysisManager:
                 )
                 if "error" in prep:
                     from analysis.statisticaltester import StatisticalTester
-                    return StatisticalTester.make_blocked_result("PREP_ERROR", prep["error"], test_name=kwargs.get('test', 'unknown_test'))
+                    return StatisticalTester.make_blocked_result("PREP_ERROR", prep["error"])
 
                 # Step 4: Pass outputs to perform_advanced_test
                 results = StatisticalTester.perform_advanced_test(
