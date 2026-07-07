@@ -1,214 +1,128 @@
-# AUDIT: BioMedStatX @ b16cf24 — UI-to-Analysis Bridge / Entry Point
+# AUDIT: BioMedStatX @ 3fd4796 — UI-to-Analysis Bridge / Entry Point (Round 2)
 
 **Scope.** `src/analysis/statistical_analyzer.py` (628 lines), `src/autopilot/statistical_analyzer_autopilot_ui.py`
 (2453 lines), `src/autopilot/statistical_analyzer_autopilot_pipeline.py` (2341 lines). All three read in full,
-line 1 to EOF, no excerpting. Environment: local single-user PyQt5 desktop app, no CI, no multi-tenancy —
-correctness bar is statistical/data validity, not web-security posture (`references/my-environment.md`).
+line 1 to EOF. This is a **second independent pass** over the same subsystem round 1 audited at `b16cf24`
+(`docs/superpowers/audit-notes/release-2.0-audit-round1/01-ui-analysis-bridge.md`). Environment: local
+single-user PyQt5 desktop app, no CI, no multi-tenancy — correctness bar is statistical/data validity, not
+web-security posture (`references/my-environment.md`).
 
-**Verdict.** The bridge layer is generally well-structured (clear mixin boundary, a real pre-flight
-validation helper for subject IDs, several previously-fixed footguns visible in git history), but the
-subject-ID NaN guard added this session (`_reject_missing_subject_ids`, commits 3771884/5723f525/c9a0349)
-does **not** cover the auto-mapping heuristic path, and I found one new, mechanically-confirmed **live bug**:
-`_ap_build_analysis_context` permanently mutates `self.df` in place with a compounding boundary transform
-every time it runs — and it runs on *every mapping change*, not just on "Start Analysis." Nothing here is a
-security emergency (single-user local tool), but two findings (P1, P2) produce silently-wrong statistical
-results, which is the correctness bar that matters for this app.
+**Verdict.** No code changed in these three files since round 1 (`git log` shows the last touches are
+subject-ID-guard commits `c9a0349`/`5723f55`/`3771884`, all predating and consistent with round 1's report) —
+**all four of round 1's findings (P1–P4) are confirmed still open**, verified by direct re-inspection of the
+same line ranges. This pass corrects one factual imprecision in round 1 (the P1 "compounding" claim overstates
+the mechanism — measured below, it self-limits after one application) and adds **two new, independently
+verified findings**: the global crash handler itself throws before it can show the user-facing error dialog
+(U1), and multi-DV batch mode computes the RM-ANOVA-vs-LMM decision from only the first DV column and silently
+reuses it for every other column in the batch (U2). Nothing here is a live security emergency; the bar that
+matters is silently-wrong statistical output and a crash path that fails exactly when it's needed.
 
 ## What I mechanically verified (not eyeballed)
 
 | Check | Command | Result |
 |---|---|---|
-| File sizes | `wc -l` on all 3 files | 628 / 2453 / 2341 lines — all read in full |
-| `except Exception` count | `grep -n "except Exception"` per file | `statistical_analyzer.py`: 11; `..._ui.py`: 4; `..._pipeline.py`: 15 |
-| Bare `except:` count | `grep -n "except:"` per file | `statistical_analyzer.py`: 1 (line 617); others: 0 |
-| `groupby(...)` call sites | `grep -n "groupby("` across all 3 files | 5 hits, all in `..._pipeline.py`: lines 601, 1166, 1189, 1226, 1235 |
-| `raise ValueError` sites | `grep -n "raise ValueError"` across all 3 files | 14 hits — 2 in `..._ui.py` (141, 1024), 12 in `..._pipeline.py` |
-| `self.df[...] =` in-place mutation | `grep -n 'self\.df\[.*\]\s*='` in pipeline | 1 hit: line 1150 (see P1) |
-| `self.df =` reassignment sites | `grep -n 'self\.df\s*='` in pipeline | 9 hits, all in load/pivot/range-extraction paths |
-| Call order: `_maybe_pivot()` vs `_apply_mapping_heuristics()` | `grep -n` both symbols in `_ap_load_file`/`_ap_load_sheet` | pivot (line 997/1038) always precedes heuristics (line 1009/1042) |
-| `_reject_missing_subject_ids` call sites | `grep -n` across `..._ui.py` + `..._pipeline.py` | 2 real call sites: inside `_detect_wide_format` (ui.py:175) and `_ap_build_analysis_context` (pipeline.py:1108) — **not** in `_ap_apply_mapping_heuristics` |
-| `model_type ==` string-dispatch count | `grep -n 'model_type =='` in pipeline | 11 occurrences across 4 formatting functions, all matching bare string literals `"LogisticRegression"`/`"LMM"`/`"ANCOVA"`/`"BetaRegression"` |
-| Help-recipe ID drift check | `grep -n '"id":'` in `core/help_content.py` vs literals in pipeline | All currently match (no live drift), but coupling is by string literal, not a shared constant/enum |
-| Blocked-result handling coverage | `grep -n "blocked"` in pipeline | Only `result` (single mode) and `lead_result` (multi mode's first DV) are checked — other multi-mode DVs' blocked status is never surfaced |
-| `group_hints` substring false-positive | `python3 -c` reproduction (below) | Confirmed: `"ArmLength_mm"`, `"BatchNumber"`, `"Grouping_Note"` all false-positive as "grouping name" via substring match |
-
-Reproduction for the substring false-positive:
-```
-group_hints = {'group','arm','treatment','condition','sex','gender','cohort','batch','grp'}
-'ArmLength_mm' -> True   (contains "arm")
-'BatchNumber'  -> True   (contains "batch")
-'Grouping_Note'-> True   (contains "group" - intended here, but shows the mechanism)
-```
+| File sizes | `wc -l` on all 3 files | 628 / 2453 / 2341 lines — all read in full, confirmed unchanged from round-1's line counts |
+| Git history on these 3 files | `git log --oneline -3 -- <files>` | Last 3 commits touching them: `c9a0349`, `5723f55`, `3771884` (subject-ID guard work) — nothing since round 1's audit commit |
+| Round-1 P1 status (self.df mutation) | Re-read `pipeline.py:1145-1155` verbatim | Byte-identical to round 1's quote — **unfixed** |
+| Round-1 P2 status (heuristic subject-ID guard gap) | Re-read `pipeline.py:596-606` verbatim | Byte-identical — **unfixed** |
+| Round-1 P3 status (LMM check uses unfiltered `self.df`) | Re-read `pipeline.py:1220-1241` verbatim | Byte-identical — **unfixed** |
+| Round-1 P4 status (multi-mode blocked-result visibility) | Re-read `pipeline.py:1786-1817` verbatim | Byte-identical — **unfixed** |
+| P1 mechanism check — is the SV transform actually unbounded/compounding? | `python3` numeric simulation, 3 repeated calls of `(x*(n-1)+0.5)/n` starting from boundary values 0.0/1.0 | **Correction to round 1**: after exactly 1 application, `_min`/`_max` are strictly interior (e.g. 0.0625/0.9375 for n=8), so `_has_boundary` (`== 0.0 or == 1.0`) is `False` on every subsequent call — the mutation is idempotent-after-first-hit, not unboundedly compounding. Still a real, undesired, silent side effect from a "build context" function — see U-corrected-P1 below. |
+| `injected_df` filter re-application (traced end to end) | Read `analysis_core.py:208-233` | `filter_spec` and `selected_groups` ARE correctly re-applied server-side against the raw `injected_df` before the real test runs (`analysis_core.py:224-233`) — this specific concern is **not** a bug; see note under U2 |
+| `inferred_test` dispatch fidelity | Read `analysis_core.py:264-269` | `analysis_context.get("inferred_test")` is passed through verbatim as `local_kwargs["test"]` — no re-derivation at the dispatch layer, confirming any upstream misclassification (P3, U2) reaches the actual model dispatch, not just a UI label |
+| Global exception hook — reproduced the crash | `python3` repro of `logger.info("%s %s", msg, file=sys.stderr)` against stdlib `logging` | Raises `TypeError: Logger._log() got an unexpected keyword argument 'file'` every time; confirmed `src/core/logger_config.py` uses vanilla `logging.StreamHandler`/`RotatingFileHandler`, no custom `Logger` subclass that would tolerate `file=` |
+| Bare `except:` count | `git grep -n "except:"` per file | `statistical_analyzer.py`: 1 (line 617); other two: 0 (matches round 1) |
+| `except Exception` count | `git grep -c "except Exception"` per file | `statistical_analyzer.py`: 11; `..._ui.py`: 4; `..._pipeline.py`: 15 (matches round 1) |
+| `self.df[...] =` in-place mutation sites | `git grep -n 'self\.df\[.*\] *='` in pipeline+ui | 1 hit: `pipeline.py:1150` (the P1 mutation) — no other in-place column mutation exists in either file |
+| `dict(context)` shallow-copy sites | `git grep -n "dict(context)"` in pipeline | 4 sites: `1356` (single-DV), `1789` (per-DV in multi-mode loop), `1802` (lead DV), `1880` (plot reconfigure) — `1789` is the site of U2: `inferred_test` is never recomputed per DV, only shallow-copied from the once-computed `context` |
+| Multi-mode `inferred_test` recomputation check | Read `pipeline.py:1786-1793`, confirm `dv_col_for_balance = dv_columns[0]` at `pipeline.py:1223` | Confirmed: LMM-vs-RM-ANOVA balance check (which decides `inferred_test`) runs exactly once per "Start Analysis" click, keyed to `dv_columns[0]` only; the loop at `1788-1793` reuses that single `inferred_test` string for every subsequent DV column via `dict(context)` |
+| `_reject_missing_subject_ids` call-site count | `git grep -n "_reject_missing_subject_ids"` across both files | 2 real call sites — `ui.py:175` (`_detect_wide_format`) and `pipeline.py:1108` (`_ap_build_analysis_context`) — matches round 1; still not called from `_ap_apply_mapping_heuristics` (P2 still open) |
+| Window geometry: `resize`/`move` then unconditional `setGeometry` | Read `statistical_analyzer.py:109-115` | `self.resize(width, height)` + `self.move(...)` (screen-relative, 72% of primary screen, centered) computed then immediately overwritten by unconditional `self.setGeometry(100, 50, 1600, 1300)` two lines later — dead computation; masked in practice by `window.showMaximized()` at startup (`statistical_analyzer.py:624`), but visible if the user un-maximizes |
 
 ## Findings — severity ranked
 
 ### HIGH
 
-**P1 — `_ap_build_analysis_context` permanently mutates `self.df` with a compounding transform, and it runs on every mapping change.** `src/autopilot/statistical_analyzer_autopilot_pipeline.py:1148-1151`:
+**U1 — The global uncaught-exception handler itself raises a `TypeError`, so the user-facing crash dialog never appears.** `src/analysis/statistical_analyzer.py:501`, inside `_install_global_excepthook`'s `_excepthook`, which is assigned directly to `sys.excepthook` at line 514 (the last line of defense for anything not caught elsewhere):
 ```python
-if _has_boundary:
-    # Apply Smithson-Verkuilen transformation to push boundary values inside (0,1)
-    self.df[dv_col] = (self.df[dv_col] * (_n - 1) + 0.5) / _n
-    context["beta_sv_transformed"] = True
+logger.info("%s %s", msg, file=sys.stderr)
 ```
-This is the Smithson-Verkuilen boundary transform for beta-regression-eligible DVs (proportions with 0/1
-boundary values). The bug: `_ap_build_analysis_context` is not a one-shot "commit" step — it is called from
-`_ap_on_mapping_changed` (pipeline.py:895, inside a try/except purely to read `context["is_corr_family"]`)
-on **every single drag/drop or bucket change**, and again from `_ap_determine_and_run_test` (pipeline.py:1746)
-on every "Start Auto Analysis" click, and again from `_ap_configure_plot_from_result`'s context rebuild.
-Each call re-reads `self.df[dv_col]`'s *current* min/max, and if a boundary value (exactly 0.0 or 1.0) is
-still present it rewrites `self.df[dv_col]` again. Because the transform pulls values toward 0.5, repeated
-application over several mapping-change events compounds monotonically toward 0.5, silently degrading the
-outcome variable the user thinks they mapped. There is no "already transformed" guard — `context.get("beta_sv_transformed")`
-is set on the *context* dict (discarded every call), never checked against `self.df` state before mutating.
-**Impact:** A user who maps a proportion DV, tweaks any other bucket (e.g. adds a covariate, changes Factor 2),
-and then runs the analysis gets a DV that has been SV-transformed 2+ times instead of once — silently wrong
-beta-regression inputs, no error, no warning. This is exactly the "silently produces a wrong-but-plausible
-result instead of erroring" anti-pattern class this session has been hunting. **Fix:** never mutate `self.df`
-inside a context-building/preview function. Either (a) apply the SV transform on a copy (`analysis_df`, which
-the function already builds at line 1102, and pass that copy through `injected_df`) and leave `self.df`
-untouched, or (b) if in-place mutation is intentional for downstream consistency, guard it with an idempotency
-flag stored on `self` (e.g. `self._sv_transformed_columns: set`) checked before mutating again, and only ever
-apply it from the actual "run analysis" path, never from `on_mapping_changed`'s preview call.
+Reproduced directly against this app's actual logging setup (`src/core/logger_config.py` — a vanilla `logging.getLogger()` root logger with `StreamHandler`/`RotatingFileHandler`, no custom `Logger` subclass):
+```
+TypeError: Logger._log() got an unexpected keyword argument 'file'
+```
+`Logger.info(msg, *args, **kwargs)` forwards `**kwargs` straight into `Logger._log()`, which has no `file` parameter — that kwarg belongs to `print()`, not `logging`. This line is not wrapped in its own `try/except` (unlike the file-write two lines above it and the dialog-show block below it, both of which do have their own `except Exception: pass`), so the `TypeError` propagates out of `_excepthook` itself. When an exception hook raises, CPython's runtime prints a separate "Error in sys.excepthook" traceback to the real stderr and swallows the rest of the handler — meaning **line 503's `QMessageBox.critical(...)` never executes for any uncaught exception, ever.**
+**Impact:** the crash-log file write at lines 495-500 does still succeed (it's self-protected), so `crash_log.txt` retains a record — but the entire point of this handler, showing the user a "Ein Fehler ist aufgetreten..." dialog with next steps, is dead code that has never fired since this was written. In a PyInstaller-frozen build with no attached console (the normal end-user launch path), an uncaught exception anywhere outside Qt's event loop (e.g. during `StatisticalAnalyzerApp.__init__`, or in any non-Qt thread) currently just makes the app vanish with zero visible explanation to the user, who has no console to see the "Error in sys.excepthook" fallback either.
+**Fix:** delete the stray `file=sys.stderr` kwarg and collapse the format string to one `%s` (`logger.info("%s", msg)`), or switch to `logger.error(msg)` (arguably the correct level for a crash anyway — `info` under-signals severity for an uncaught exception in the log file too). Add a regression test that calls `_excepthook` with a synthetic exception and asserts `QMessageBox.critical` was invoked (mock the dialog) — this exact class of bug (an unguarded statement between two guarded ones) is easy to reintroduce silently.
 
 ### MEDIUM
 
-**P2 — Subject-ID NaN guard added this session does not cover the auto-mapping heuristic path.** `src/autopilot/statistical_analyzer_autopilot_pipeline.py:596-605`:
+**U2 — Multi-dataset mode computes the LMM-vs-RM-ANOVA test decision once from `dv_columns[0]` only, then silently reuses it for every other DV column in the batch.** `src/autopilot/statistical_analyzer_autopilot_pipeline.py:1223` (decision) and `:1788-1793` (reuse):
 ```python
-if subject_column and factor_candidates:
-    factor1_col = factor_candidates[0]
-    try:
-        subject_span = self.df.groupby(subject_column)[factor1_col].nunique(dropna=True)
-        if subject_span.max() > 1:
-            self.subject_bucket.assign_column(subject_column, _infer_column_kind(self.df[subject_column]))
-    except Exception:
-        pass  # silently skip if validation fails
-```
-`_reject_missing_subject_ids` (added in commits 3771884/5723f52/c9a0349) is wired into exactly two call
-sites: inside `_detect_wide_format` (`ui.py:175`, only fires when data happens to match the wide-format
-shape signature) and inside `_ap_build_analysis_context` (`pipeline.py:1108`, only fires when the user
-clicks "Start Auto Analysis"). `_ap_apply_mapping_heuristics` — which runs unconditionally on every file
-load (`pipeline.py:1009`) and sheet switch (`pipeline.py:1042`), *before* any analysis is requested — has
-its own unguarded `groupby(subject_column)[factor1_col].nunique(dropna=True)` at line 601, wrapped in a bare
-`except Exception: pass`. For the common case of **already-long-format** data (most real-world uploads: one
-row per measurement, a Subject-ID column, a Group column) with missing subject IDs, `_detect_wide_format`
-returns `None` immediately (the long-format shape doesn't match the wide-format signature), so
-`_reject_missing_subject_ids` never fires on load. pandas' `groupby` then silently drops the NaN-keyed rows
-before computing `nunique`, so `subject_span.max()` is computed from an incomplete subject set — exactly the
-footgun this session already fixed twice elsewhere in this same file, just not here. The result: whether
-Subject ID auto-assigns to the bucket (and thus whether the auto-pilot even offers RM-ANOVA/LMM routing)
-silently depends on a `nunique` computed over rows missing their subject ID, with any failure swallowed by
-`except Exception: pass` and no user-visible warning either way.
-**Impact:** the auto-mapping heuristic can silently fail to detect a legitimate repeated-measures design (or
-succeed with corrupted span counts) when the raw file has incomplete subject IDs — the user only learns
-something is wrong if they later happen to click "Start Analysis" and hit the *other* guard's hard error,
-by which point they may already have accepted whatever bucket auto-assignment resulted. **Fix:** call
-`_reject_missing_subject_ids(self.df, subject_column)` (or a softer warning variant, since this is only a
-heuristic, not a hard analysis gate) before line 601's `groupby`, and don't blanket-swallow the resulting
-exception — at minimum log it or set a UI hint, rather than `pass`.
-
-**P3 — LMM-upgrade heuristic uses unfiltered `self.df` instead of the filter-applied `analysis_df`, silently ignoring the active row filter, and swallows all errors.** `src/autopilot/statistical_analyzer_autopilot_pipeline.py:1220-1241`:
-```python
-elif subject_column and context["within_factors"]:
-    within_factor = context["within_factors"][0]
-    dv_col_for_balance = dv_columns[0] if dv_columns else None
-    try:
-        counts = self.df.groupby([subject_column, within_factor]).size().unstack(fill_value=0)
-        has_structural_missing = (counts == 0).any().any()
-        ...
-    except Exception:
-        pass
-```
-Every other computation in `_ap_build_analysis_context` (levels, group counts, binary/proportion detection,
-between/within role assignment at lines 1166 and 1189) operates on `analysis_df` — the copy with the active
-`FilterBucketWidget` row-filter applied (built at pipeline.py:1102-1106). This one block reverts to the raw,
-unfiltered `self.df`. If a user has restricted the analysis to a subset of rows via the Filter bucket (e.g.
-"OP-Group = 1"), the LMM-vs-RM-ANOVA balance check silently evaluates missingness over the *whole* dataset,
-not the filtered subset — it can flag "structural missing" (and upgrade to LMM) or fail to flag it based on
-rows the user explicitly excluded from the analysis. Combined with the bare `except Exception: pass`, any
-failure here (e.g. a `KeyError` if `within_factor` isn't in `self.df`, which can happen after a filter drops
-a level entirely) is invisible — the test silently stays at its prior (possibly wrong) `inferred_test`.
-**Impact:** wrong model family selected (RM-ANOVA vs LMM) for filtered analyses with missing visits; user
-gets no indication the check even ran into trouble. **Fix:** replace `self.df` with `analysis_df` in this
-block (matching the rest of the function), and split the `except Exception: pass` into a narrower catch that
-at minimum logs via `logger.debug`/`logger.warning` so a real bug doesn't silently look like "no missingness
-detected."
-
-**P4 — Multi-dataset mode never surfaces a blocked result for any non-lead DV column.** `src/autopilot/statistical_analyzer_autopilot_pipeline.py:1786-1816`:
-```python
-all_results = {}
-for dv_column in context["dv_columns"]:
-    ...
-    all_results[dv_column] = self._execute_single_analysis(per_dv_context, dv_column, output_dir, skip_plots=True)
+# inside _ap_build_analysis_context, runs ONCE per "Start Analysis" click:
+dv_col_for_balance = dv_columns[0] if dv_columns else None
 ...
-lead_result = all_results[lead_dv]
-if lead_result.get("blocked"):
-    self._handle_blocked_result(lead_result)
-    ...
-    return
-self._render_result_summary(...)
+if has_structural_missing or has_nan_missing:
+    context["inferred_test"] = "lmm"
+...
+# inside _ap_determine_and_run_test, multi-mode loop:
+for dv_column in context["dv_columns"]:
+    per_dv_context = dict(context)          # shallow copy — inferred_test carried over verbatim
+    per_dv_context["dv_columns"] = [dv_column]
+    per_dv_context["current_dv"] = dv_column
+    all_results[dv_column] = self._execute_single_analysis(per_dv_context, dv_column, output_dir, skip_plots=True)
 ```
-`_handle_blocked_result` — the codepath that surfaces a data-quality block (zero variance, all-NaN group,
-too few observations) to the user — is only ever called for the single-mode `result` (line 1776) or the
-**first** DV column (`lead_result`, line 1805) in multi mode. If DV column #2 through #N in a multi-dataset
-run comes back `blocked` (e.g. one gene column in a panel happens to be constant across all samples), that
-blocked dict is stored into `all_results[dv_column]` and passed straight to
-`ExportDispatcher.export_multi_dataset_results` and into `self.current_multi_results` with no user-facing
-warning at all — silently mixed in among the successful per-DV results. **Impact:** a multi-gene/multi-marker
-batch analysis can silently include one or more "blocked" (i.e. non-existent, data-quality-refused) results
-that the user has no way to distinguish from a real completed analysis in the UI, only by opening the
-combined HTML report and noticing a missing test statistic. **Fix:** after the loop, scan `all_results.values()`
-for any `blocked` entries (not just the lead one) and surface them — e.g. append their reasons to the
-success/subtitle message, or route through a small non-blocking warning dialog listing which DV columns were
-skipped and why, without preventing export of the DVs that did succeed.
+`_ap_build_analysis_context` is called exactly once (`pipeline.py:1746`, before the multi-mode loop starts), and its Case-1/Case-2 missingness check at lines 1223-1236 only ever inspects `dv_columns[0]`'s NaN pattern (`dv_col_for_balance = dv_columns[0]`). The resulting `context["inferred_test"]` (`"lmm"` or whatever it was before) is then baked into every `per_dv_context` via `dict(context)` for the rest of the multi-DV loop — there is no per-DV re-evaluation. Confirmed this string reaches the actual model dispatch unmodified: `analysis_core.py:265-269` takes `analysis_context.get("inferred_test")` verbatim as `local_kwargs["test"]`, with no re-derivation at that layer either.
+**Impact:** in a legitimate multi-gene/multi-marker repeated-measures panel (Subject ID + a within-factor, multiple DV columns), if column 1 (e.g. Gene_A) happens to have complete visits for every subject but column 3 (e.g. Gene_C) has some missing measurements (or vice versa), the whole batch is forced through whichever test column 1's missingness pattern happened to select — an RM-ANOVA run on a DV that actually has missing visits (biased/less-efficient handling of the imbalance), or an unnecessary LMM run on a perfectly balanced DV. This is silent: nothing in the UI or export indicates the decision was made from a different column than the one being analyzed.
+**Fix:** move the missingness check inside the per-DV loop (or into `_ap_execute_single_analysis`, which already receives `dv_column` and rebuilds `single_context`), keyed to the DV column actually being analyzed in that iteration, rather than deciding once from `dv_columns[0]` for the whole batch.
 
 ### LOW
 
-**P5 — Binary-outcome "grouping name" guard uses unanchored substring matching, producing false positives on plausible clinical column names.** `src/autopilot/statistical_analyzer_autopilot_pipeline.py:1049-1063`:
+**U3 (correction to round-1 P1) — the Smithson-Verkuilen mutation is a one-shot silent side effect, not an unboundedly compounding one, but the underlying design flaw (mutating `self.df` from a "build context" function invoked on every mapping-change tick) is still real and still open.** `src/autopilot/statistical_analyzer_autopilot_pipeline.py:1148-1151`. Round 1's P1 characterized this as compounding "monotonically toward 0.5" across repeated mapping-change events; direct numerical simulation here (3 repeated calls of `(x*(n-1)+0.5)/n` starting from an array containing exact 0.0/1.0 boundary values) shows `_has_boundary` (`_min == 0.0 or _max == 1.0`) evaluates `False` after exactly one application, because the transformed boundary values are now strictly interior — so the mutation does not keep compounding across dozens of mapping-change ticks as the original framing suggested. It is still a real bug: `_ap_build_analysis_context` — called from `on_mapping_changed` (fired on every bucket drag/drop, covariate change, or toggle — `pipeline.py:895`) as well as from the actual "Start Analysis" click (`pipeline.py:1746`) — silently rewrites `self.df[dv_col]` in place on the *first* occasion a boundary-containing proportion DV is mapped, with no user confirmation and no "already transformed" flag checked against `self.df` itself (only against the discarded-per-call `context` dict). A user who maps a proportion DV, notices nothing, then unmaps it and remaps a different column as DV would find the first column has already been silently permanently altered in the in-memory table (and in the live preview) the moment mapping merely *looked* like beta-regression-eligible — before "Start Analysis" was ever clicked.
+**Impact:** same root cause as round-1 P1, just a corrected magnitude — one silent, irreversible (within the session; only a file reload undoes it) mutation of the user's data from what should be a pure preview/heuristic path, not a progressively worsening one. Still worth the same fix.
+**Fix:** unchanged from round 1 — operate on `analysis_df` (already built at `pipeline.py:1102`) and thread the transformed copy through `injected_df`, leaving `self.df` untouched until an actual "Start Analysis" commit; or gate the mutation behind an explicit self-state flag checked before writing, and only trigger it from `_ap_determine_and_run_test`, never from `on_mapping_changed`'s preview call.
+
+**U4 — `resize`/`move` screen-relative window sizing is dead code, immediately overwritten by a fixed 1600×1300 `setGeometry`.** `src/analysis/statistical_analyzer.py:103-115`:
 ```python
-group_hints = {"group", "arm", "treatment", "condition", "sex",
-               "gender", "cohort", "batch", "grp"}
-name_is_grouping = any(h in dv_col_name.lower() for h in group_hints)
+width = int(_sw * 0.72)
+height = int(_sh * 0.72)
+self.resize(width, height)
+self.move((_sw - width) // 2, (_sh - height) // 2)
+self.setWindowTitle(...)
+self.setGeometry(100, 50, 1600, 1300)   # overwrites the resize/move above unconditionally
 ```
-Confirmed by direct execution: `"ArmLength_mm"` and `"BatchNumber"` both match `name_is_grouping = True`
-purely because they contain "arm"/"batch" as substrings, not because they're actually a treatment-arm or
-batch-id column. A genuine binary clinical measurement named e.g. `"ArmLength_Category"` (Short/Long) would
-be excluded from binary-outcome (and thus logistic-regression) auto-detection for the wrong reason.
-**Impact:** low — this only affects an auto-detection heuristic (Help Hub recipe suggestion and
-logistic-regression auto-routing), not a hard validation gate; a user can still map columns manually. But it
-is a silent misclassification with a concrete falsifiable counterexample. **Fix:** switch to word-boundary
-matching (e.g. split on non-alphanumeric and check whole tokens) or a stricter regex (`\bgroup\b` etc.)
-instead of raw substring containment.
+The screen-relative sizing (72% of the primary screen, centered) is computed and applied, then two lines later unconditionally discarded by a fixed `setGeometry(100, 50, 1600, 1300)`. In practice this is masked because `__main__` calls `window.showMaximized()` immediately after construction (`statistical_analyzer.py:624`), so most users never see the intermediate un-maximized geometry. But if the user un-maximizes the window later in the session, it reverts to the fixed 1600×1300 at (100, 50) rather than the screen-relative size — on a laptop display smaller than 1700×1350 (with taskbar/menu-bar chrome), part of the window can render off-screen or require manual repositioning.
+**Impact:** low — cosmetic, recoverable by the user (drag/resize), and mostly masked by the immediate maximize. Not a data-correctness issue.
+**Fix:** delete the `setGeometry(100, 50, 1600, 1300)` call (the `resize`/`move` above it already does the intended job), or make it conditional (`if not screen-relative computation succeeded`).
 
-**P6 — Help-Hub recipe IDs are free-floating string literals duplicated between the pipeline and `core/help_content.py`, with no shared constant.** `src/autopilot/statistical_analyzer_autopilot_pipeline.py:268,280,293,309,761-782` vs `src/core/help_content.py` (`"id": "one_way_anova"`, etc.).
-Currently all IDs match (verified via `grep` on both files), so this is not a live bug. But the coupling is
-by bare string literal in two independently-edited files with no enum/constant and no test asserting the two
-lists stay in sync — a future rename of a recipe ID in `help_content.py` would silently break
-`_ap_resolve_help_recipe_for_bucket`'s routing (the "i" info-button dialog would just fall back to showing
-plain text with no "Suggested recipe" line and no working "Open in Help Hub" button — `ui.py:670-685` — no
-exception, no visible error, just a quietly degraded UI). Matches the project's known "String-Coupling &
-State Desync" anti-pattern class. **Fix:** define the recipe IDs as a shared enum or module-level constant
-list in `core/help_content.py`, imported by the pipeline instead of re-typed as literals; optionally add a
-cheap unit test asserting every `help_recipe_id=` / return value in the pipeline exists in `HELP_RECIPES`.
-
-**P7 — `_ap_apply_mapping_heuristics`'s Subject-ID auto-assignment silently no-ops on any exception, including ones unrelated to "validation."** `src/autopilot/statistical_analyzer_autopilot_pipeline.py:604-605`: the comment says "silently skip if validation fails," but the bare `except Exception` also catches genuine bugs (e.g. a `KeyError` from a column-name typo, a `TypeError` from an unexpected dtype) with identical silent behavior. This is a narrower instance of the general fault-swallowing pattern seen throughout the file (15 `except Exception` sites in the pipeline file, see mechanized count above); flagged separately from P2 because the fix is trivial (log at debug level) and doesn't require restructuring the guard logic.
-**Fix:** at minimum, `logger.debug(f"Subject-ID auto-assignment heuristic skipped: {exc}")` instead of a bare `pass`, so a real bug shows up in the log file the app already writes (`biomedstatx.log`, surfaced via "Report a Problem" in `statistical_analyzer.py:313-333`) instead of vanishing entirely.
+**U5 — Bare `except:` around stylesheet loading swallows all exceptions including `KeyboardInterrupt`.** `src/analysis/statistical_analyzer.py:614-619`:
+```python
+try:
+    stylesheet = _load_auto_pilot_stylesheet()
+    logger.info(...)
+except:
+    stylesheet = ""
+    logger.info("No stylesheet found")
+```
+Confirmed via `git grep -n "except:"` — this is the only bare `except:` across all three files (matches round 1's count). Bare `except:` catches `BaseException`, including `KeyboardInterrupt`/`SystemExit`, not just stylesheet-loading errors. Worst-case impact here is cosmetic (an unstyled but functional app), so this is LOW severity in this environment, but it's a two-line fix while already touching the neighboring U1 crash-handler code.
+**Fix:** narrow to `except Exception:`.
 
 ## Strengths (verified)
 
-- **`_reject_missing_subject_ids` is a well-designed, correctly-worded guard where it is wired in.** `ui.py:128-145` has an accurate docstring naming the exact pandas footgun it defends against (`groupby`/`nunique` silently dropping NaN keys), and its `ValueError` message (`"Subject ID column '{subject_col}' has {n_missing} missing value(s)..."`) is precise and matches the condition that triggers it — verified by reading both call sites (`ui.py:175` inside `_detect_wide_format`, `pipeline.py:1108` inside `_ap_build_analysis_context`) and confirming the raised message would actually fire under real missing-ID data.
-- **The wide-format detector (`_detect_wide_format`, `ui.py:148-197`) is conservative and well-reasoned**: it requires exactly one subject-like column, 2-8 numeric value columns with `notna().any()` (explicitly guarding against all-NaN columns reaching analysis as an empty group — a comment at `ui.py:178-180` correctly explains why), no 2-level categorical column (to avoid misreading long-format Group columns as wide conditions), and a high subject-uniqueness ratio. Each guard has a comment explaining the discriminating signal, and the function fails closed (`return None`) rather than guessing.
-- **The mixin binding architecture (`AutopilotMixin`, `pipeline.py:2274-2327`) is clean and exactly matches what the project's `CLAUDE.md` documents** — module-level `_ap_*` functions bound as class attributes at definition time, restoring MRO/`super()`/static-analysis support versus the deprecated `attach_autopilot_methods` monkey-patch (kept only as a documented, `DeprecationWarning`-emitting shim at `pipeline.py:2330-2341`). No legacy fallback code was reintroduced.
-- **Pre-flight bounds validation for transform functions is genuinely good.** `_check_bounds` (`pipeline.py:1290-1300`) checks `log10`/`boxcox` against `min_val <= 0`, `log10(x+1)` against `min_val <= -1`, and `sqrt` against negative values — each with an accurate, actionable `ValueError` message naming the offending column and suggesting a concrete alternative (e.g. "Consider using log10(x+1) instead"). This is exactly the "defensive validation" pattern the project is trying to establish everywhere.
-- **The "Single source of truth" `injected_df` pattern is correctly and consistently applied** at both call sites that need it (`_ap_execute_single_analysis` at `pipeline.py:1362-1363` and `_ap_configure_plot_from_result` at `pipeline.py:1886-1887`), each with the same explanatory comment about why re-reading from disk would silently diverge from on-screen state — good self-documentation of a design decision that matters.
-- **The data-quality "blocked" result path (`show_block`/`_handle_blocked_result`) is a real, deliberate UX control**, not an afterthought: `ResultCockpitWidget.show_block` (`ui.py:1422-1441`) explicitly blanks every metric card to `"—"` rather than leaving stale/misleading numbers on screen, with a clear rationale in its docstring. (Its one gap — not covering every multi-mode DV — is P4 above, not a design flaw in the mechanism itself.)
-- **Operator-precedence and string-coupling bugs already found this session (git history: commits ea940a7, cb45f39, c9a0349) were verified fixed** — `_classify_binary_outcome` (`pipeline.py:1049-1063`) is now a single extracted, directly-testable function used consistently by both the real-routing call site (`pipeline.py:1128`) and the Help-Hub-hint call site (`pipeline.py:731`), eliminating the duplication that caused the earlier inconsistency.
+- **Round 1's confirmed-fixed subject-ID work is holding.** `_reject_missing_subject_ids` (`ui.py:128-145`) remains correctly wired at both its call sites (`ui.py:175` inside `_detect_wide_format`, `pipeline.py:1108` inside `_ap_build_analysis_context`), and its `ValueError` message is still accurate and specific. No regression since round 1.
+- **`analysis_core.py`'s server-side re-application of `filter_spec` and `selected_groups` against `injected_df` is correct and thorough** (`analysis_core.py:208-233`) — verified by tracing the full path from `single_context["injected_df"] = self.df` (raw, unfiltered) at `pipeline.py:1363` through to `working_df` re-filtering at the analysis-core layer. This closes what could otherwise have been a serious filter-bypass bug: the actual statistical computation always sees the correctly filtered/subset data, even though the raw `self.df` is what gets injected. Only the *test-family decision* (P3/U2), not the *computation itself*, is affected by unfiltered-data bugs in this subsystem.
+- **The mixin binding architecture (`AutopilotMixin`, `pipeline.py:2274-2327`) remains clean and matches `CLAUDE.md`'s documented architecture exactly** — module-level `_ap_*` functions bound as class attributes at definition time, the deprecated `attach_autopilot_methods` monkey-patch kept only as a `DeprecationWarning`-emitting shim (`pipeline.py:2330-2341`). No legacy fallback code has been reintroduced since round 1.
+- **`_detect_wide_format`'s guards remain well-reasoned and unchanged** (`ui.py:148-197`): exactly one subject-like column, 2-8 numeric value columns with an explicit `notna().any()` guard against all-NaN columns reaching analysis as a silently-empty group, a 2-level-categorical exclusion to avoid misreading long-format Group columns as wide conditions, and a high-uniqueness-ratio discriminator. Fails closed (`return None`) rather than guessing.
+- **Pre-flight bounds validation for variable transforms is genuinely solid** (`_check_bounds`, `pipeline.py:1290-1300`): accurate per-transform domain checks (`log10`/`boxcox` vs. `<= 0`, `log10(x+1)` vs. `<= -1`, `sqrt` vs. negative) with actionable error messages naming the offending column and a concrete alternative. Verified these fire under exactly the condition each message claims.
+- **The range-selection dialog's cross-design validation (`_on_apply`, `ui.py:2403-2450`) is thorough and correctly scoped per design mode** — paired-design block-height mismatch, bivariate X/Y count mismatch, and the "no assignment at all" guard are each checked with an accurate, specific warning dialog before `accept()` is allowed, preventing several classes of malformed coordinate-extraction input from ever reaching `extract_from_coordinates`/`extract_paired_from_coordinates`.
+- **The dispatch-layer `inferred_test` pass-through is simple and traceable** — `analysis_core.py:265-269` takes the upstream string verbatim with no silent re-interpretation, which made it possible to verify with certainty that P3/U2's upstream misclassifications genuinely reach the real dispatch rather than being caught and corrected downstream. A more defensive design might have hidden this; this one is at least honestly traceable end to end.
 
 ## Recommended remediation order
 
-1. **P1 (self.df mutation bug)** — highest value, cheapest fix: stop mutating `self.df` from a function called on every mapping-change tick; operate on the local `analysis_df` copy instead and pass it through `injected_df` like every other consumer of the context already does. This is a pure correctness fix with no UI/architecture change.
-2. **P2 (subject-ID guard gap in auto-mapping heuristic)** — same guard function already exists (`_reject_missing_subject_ids`); this is a one-line call-site addition plus deciding whether to hard-fail or soft-warn from a heuristic (recommend soft-warn, since this path runs before the user has committed to an analysis).
-3. **P3 (LMM heuristic uses wrong df)** — one-line fix (`self.df` → `analysis_df`), plus narrowing the `except Exception: pass` to at least log.
-4. **P4 (multi-mode blocked-result visibility)** — moderate UI work: extend the post-loop summary to enumerate blocked DVs; no architecture change needed, `_handle_blocked_result`'s reason-extraction logic can be reused per-DV.
-5. **P7 (bare except logging)** — trivial, bundle with P2/P3 since they're the same function neighborhood.
-6. **P5 (substring-match false positive) and P6 (recipe-ID string coupling)** — lowest urgency; both are heuristic-quality issues with no silent-corruption risk, good candidates for a later cleanup pass rather than a dedicated fix cycle.
+1. **U1 (excepthook itself crashes)** — highest value, cheapest fix (one line: drop `file=sys.stderr`, fix the format string). This silently disables the app's entire crash-visibility mechanism for end users; fix before anything else in this batch.
+2. **Round-1 P1 / U3 (self.df mutation in build-context)** — same fix round 1 already specified: operate on `analysis_df`/`injected_df`, never mutate `self.df` from a function invoked on every mapping-change tick. Still the highest-value *data-correctness* fix outstanding from round 1.
+3. **Round-1 P3 (LMM heuristic uses unfiltered `self.df`)** — one-line fix (`self.df` → `analysis_df` at `pipeline.py:1226/1232`), bundle with U2 since both are in the same missingness-detection neighborhood and both concern the LMM-vs-RM-ANOVA decision being computed from the wrong scope of data.
+4. **U2 (multi-DV mode reuses one DV's test decision for all DVs)** — move the missingness check into the per-DV loop; natural to fix alongside P3 since it's the same block, just needs to run once per DV instead of once per batch.
+5. **Round-1 P2 (subject-ID guard gap in heuristic path) and P4 (multi-mode blocked-result visibility)** — both still open, both already have a clear fix specified in round 1's report; no new information changes that guidance.
+6. **U4 (dead geometry code) and U5 (bare except)** — trivial, bundle into the same PR as U1 since both are in the immediately surrounding code in `statistical_analyzer.py`.
+7. **Round-1 P5/P6/P7 (substring false-positive, help-recipe string coupling, heuristic except-swallow)** — lowest urgency, unchanged from round 1's assessment; good candidates for a later cleanup pass.

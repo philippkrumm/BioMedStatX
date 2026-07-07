@@ -1,102 +1,252 @@
-# AUDIT: BioMedStatX @ b16cf24 — Advanced Statistical Testing Engines
+# AUDIT: BioMedStatX — Advanced Statistical Testing Engines @ 3fd4796
 
-**Scope:** `src/statistical_testing/` — advanced_pipeline.py, mixed_assumptions.py,
-posthoc_fallback.py, assumption_checks.py, validators.py, decision_logic.py, models.py,
-tester_core.py, and `engines/` (advanced_posthoc.py, comparison.py, posthoc.py,
-transformation.py, extraction.py, assumption_bridge.py, reporting.py, recommendation.py,
-finalization.py, distribution.py, correlation.py).
+**Scope:** `src/statistical_testing/mixed_assumptions.py`, `posthoc_fallback.py`,
+`assumption_checks.py`, `advanced_pipeline.py`, `validators.py`, `decision_logic.py`,
+`engines/{advanced_posthoc,comparison,transformation,extraction,assumption_bridge,reporting}.py`
+(5,013 lines total, all read in full). Round 2 of a 7-subsystem pre-2.0 audit.
 
-**Verdict.** The package's dispatch logic (which test to run, which post-hoc family to
-apply) is driven almost entirely by exact-match comparisons against internal enum-like
-strings (`test == "mixed_anova"`, `posthoc_choice in ("paired_custom", "paired_fdr")`) set
-by upstream code, not by fuzzy substring matching against user-facing labels — the
-"string-coupling" anti-pattern class from the prior `advanced_pipeline.py` fix does **not**
-recur elsewhere in this package; a targeted `.lower()`/substring grep across the whole
-subtree returned zero hits outside doc/HTML formatting code. However, two independent,
-reachable correctness bugs were found in the *same family* (label/state desync, not string
-matching per se): (1) Mixed ANOVA's within-factor/interaction sphericity correction
-(Greenhouse-Geisser/Huynh-Feldt) is computed and shown in the HTML report but never written
-back to the canonical `p_value` that gates post-hoc dispatch, so post-hoc can fire on an
-uncorrected p < alpha while the report displays a corrected p > alpha for the same effect;
-and (2) the advanced-model post-hoc engine silently substitutes an arbitrary first-group
-"control" (or, on dialog-cancel, an inconsistent method/comparisons pairing) where the
-simpler `posthoc_fallback.py` sibling path degrades safely to Tukey. Neither is a live
-emergency (both are gated behind "test was significant" + "Dunnett/EMM chosen" +
-"headless or cancelled"), but both produce a silently wrong or misleading result on a
-reachable path and should be fixed before 2.0.
+**Verdict.** Not a live emergency (single-user desktop app, no external attack surface), but
+there is a **confirmed, still-open correctness bug**: the Mixed ANOVA within-factor sphericity
+correction in `mixed_assumptions.py` is computed, stored under its own key, and even rendered in
+the decision-tree diagram — but never overwrites the canonical `p_value` field that gates the
+significance verdict and post-hoc dispatch in `_run_mixed_anova` (`src/analysis/statisticaltester.py`).
+This is the same bug class the prior audit round found and partially fixed (commit `d0e5394`) —
+but that fix landed only in the sibling RM-ANOVA path (`_perform_comprehensive_sphericity_test`),
+never in the Mixed-ANOVA twin owned by this batch's `MixedAnovaAssumptionEngine`. Worse: live
+verification against the installed pingouin 0.6.1 shows the Mixed-ANOVA correction *computation*
+itself is dead code on the real data shape — `mixed_anova()` never returns the `GG-eps`/`p-GG`/
+`W-spher`/`p-spher` columns this engine looks for, so even a correct wiring fix would still not
+apply a real GG/HF correction without also computing epsilon independently. Outside that cluster,
+the batch is solid: `validators.py` is exemplary defensive-programming, and the Holm/Holm-Šidák/
+FDR corrections in `posthoc_fallback.py` were checked against their actual statsmodels method
+kwargs and are correctly labeled.
 
 ## What I mechanically verified (not eyeballed)
 
 | Check | Command / method | Result |
 |---|---|---|
-| Fuzzy string-matching on method labels (`"tukey" in method.lower()` style) anywhere in package | `grep -rn '\.lower()'` and `grep -rnE '"[a-zA-Z -]+"\s+in\s+[a-zA-Z_.]+(\.lower\(\))?\b'` over `src/statistical_testing/` | **Zero hits.** All `test ==`, `posthoc_choice ==`/`in (...)`, `model_class ==`, `test_recommendation in (...)` comparisons are exact-match against internal string constants set by upstream dispatch code (e.g. `test` is one of a fixed set: `"mixed_anova"`, `"two_way_anova"`, `"repeated_measures_anova"`, `"ancova"`, `"lmm"`, `"logistic_regression"`), not against free-text UI labels. |
-| `StatisticalTesterCore` / `TestEngine` protocol (tester_core.py) actually instantiated anywhere | `grep -rn "StatisticalTesterCore" src/` (excluding `.pyc`) | Only self-reference inside `tester_core.py`. **Orphaned** — dead code, not wired into `advanced_pipeline.py` or `analysis/statisticaltester.py`. |
-| `engines/posthoc.py` (`PostHocEngine`, distinct from `AdvancedPostHocEngine`) called from anywhere | `grep -rn "PostHocEngine\b" src/` | Zero external callers. Orphaned scaffold — dead code. |
-| `engines/distribution.py`, `engines/correlation.py` wired in | Read both files + `grep -rn "DistributionEngine\b\|CorrelationEngine\b"` | Both self-declare `"... is a scaffold and not wired yet."` in their own `error` payload and have zero callers beyond `engines/__init__.py`'s export list — confirmed intentional placeholders, not accidentally-orphaned logic. |
-| Mixed ANOVA sphericity-corrected p-value reaching the canonical `results["p_value"]` used for post-hoc significance gating | Read `src/analysis/statisticaltester.py:1470-1818` (`_run_mixed_anova`) end to end; grepped `results\["p_value"\]` assignments in that range | `results["p_value"]` is set once at line ~1548-1555 from the **uncorrected** pingouin interaction row, before `_test_mixed_anova_within_sphericity` runs (line 1701-1706) and is never overwritten afterward. Contrast: RM ANOVA's sibling function has an explicit "E1" fix (`statisticaltester.py:1972-1974`, comment: *"write the correction-selected p-value back to the canonical field"*) that Mixed ANOVA lacks. |
-| Whether the corrected p-value is nonetheless *displayed* to the user | Read `src/export/report_stat_rows.py:414-437` | Confirmed: the HTML report **does** apply `within_sphericity_corrections`/`recommended_correction` to the displayed p-value with a `(GG)`/`(HF)` suffix for Mixed ANOVA rows — i.e., the report can show a corrected non-significant p-value for the same effect whose uncorrected value drove post-hoc dispatch. Display and dispatch disagree. |
-| Box's M test implementation | Read `src/statistical_testing/mixed_assumptions.py:1169-1278` | Uses a hand-rolled p-value approximation (`p_value = 1.0 if box_m < 0 else min(0.5, np.exp(-abs(box_m) / 10))`), explicitly commented `"this is an approximation"`/`"consider using specialized software for exact test"`. Not a real chi-square/F reference distribution. |
-| Whether Box's M / compound-symmetry / covariance-pattern results feed back into which correction is *applied* (vs. only displayed as a recommendation) | `grep -rn "box_m_test\|assess_compound_symmetry" src/` outside `mixed_assumptions.py`; read `_generate_interaction_recommendations` | These three (`_perform_box_m_test`, `_assess_compound_symmetry`, `_test_interaction_covariance_patterns`) are computed and folded into `interaction_assumptions["overall_recommendations"]` (human-readable strings), but **no code path reads `box_m_test["assumption_met"]` or `compound_symmetry["overall_compound_symmetry"]` to change which sphericity correction is applied** — they are diagnostic-only, correctly labeled as recommendations, not silently mis-gating anything (lower severity than the sphericity p-value gap above). |
-| Control-group dialog wiring for Dunnett/EMM-MVT post-hoc in the advanced-model path | Read `src/statistical_testing/engines/advanced_posthoc.py:78-127` | On `posthoc_method in ("dunnett","emm_mvt")` with **no** `control_group_callback` provided: falls back to `group_names[0]` (arbitrary alphabetically-first group) silently, no user visibility. On a callback that returns `None` (user cancels): `control_group` stays `None`, falls through to the `else` branch (`selected_comparisons = all_comparisons`), but `posthoc_kwargs["method"]` remains `"dunnett"`/`"emm_mvt"` with no `control_group` key — a self-inconsistent payload passed to `PostHocFactory.perform_posthoc_for_anova`. |
-| Same fallback in the simpler/legacy post-hoc path, for comparison | Read `src/statistical_testing/posthoc_fallback.py:586-596` | On dialog cancel, explicitly **downgrades `posthoc_choice` to `"tukey"`** — keeps method label and computed comparisons consistent. The advanced-model path (above) does not mirror this safety net. |
-| `validate_test_design`/`validate_samples_for_test` genuinely gate every advanced-pipeline dispatch path (no bypass) | Read `advanced_pipeline.py:56,94`; grepped for other callers of `_run_mixed_anova_logged`/`_run_two_way_anova_logged`/`_run_repeated_measures_anova_logged`/`_run_ancova_logged`/`_run_lmm_logged` outside `advanced_pipeline.py`/`statisticaltester.py` | Confirmed single chokepoint — `perform_advanced_test_pipeline` is the only caller of every `_run_*_logged` method; `validate_test_design` (design-shape check) and `validate_samples_for_test` (data-quality gate) both run unconditionally near the top, before any test-specific branch. |
-| `validate_samples_for_test` skip for `test == "logistic_regression"` — is it actually unvalidated? | `advanced_pipeline.py:93` skip condition; grepped `validate_outcome` callers | Not unvalidated — `validate_outcome` (the single-vector sibling gate in `validators.py`) is called one layer up in `src/analysis/analysis_core.py` before the advanced pipeline is invoked. Validation chokepoint is split across two layers for this one test type, but not bypassed. Documented as a LOW note, not a gap. |
-| Every small `engines/*.py` fragment has a live caller | Read all 15 files; grepped each class name across `src/` | 12 of 15 confirmed wired (ExtractionEngine, TransformationEngine, RecommendationEngine, AssumptionBridgeEngine, AdvancedPostHocEngine, FinalizationEngine, ReportingEngine all called from `advanced_pipeline.py`; ComparisonEngine called from `analysis/statisticaltester.py`). 3 of 15 orphaned/scaffold: `tester_core.py` (dead), `engines/posthoc.py` (dead), `engines/distribution.py` + `engines/correlation.py` (declared scaffolds, correctly labeled). |
+| Prior-round fix location | `git show d0e5394` | Fix touched only `src/analysis/statisticaltester.py` (RM-ANOVA `_perform_comprehensive_sphericity_test`); `mixed_assumptions.py` untouched |
+| Mixed-ANOVA sphericity call sites | `git grep -n "_test_mixed_anova_within_sphericity\|within_corrected_p_value\|within_correction_used"` across `*.py` | Only written in `mixed_assumptions.py`; only read by `src/visualization/decisiontreevisualizer.py:283` (display-only) |
+| Where `results["p_value"]` is set for Mixed ANOVA | Read `src/analysis/statisticaltester.py:1470-1706` (`_run_mixed_anova`) | Set once from the raw interaction `p_col` at line 1548-1549, **before** the within-sphericity block (lines 1701-1706) runs; never reassigned afterward |
+| Contrast: RM-ANOVA does wire it | Read `src/analysis/statisticaltester.py:1966-1996` | Line 1973-1974: `if sphericity_results.get("final_p_value") is not None: results["p_value"] = sphericity_results["final_p_value"]` — correct pattern, absent in the Mixed-ANOVA function |
+| Regression test coverage for the Mixed-ANOVA path | `git grep -ln "within_corrected_p_value\|within_correction_used\|MixedAnovaAssumptionEngine\|_test_mixed_anova_within_sphericity" tests/*.py` | 0 matches (the RM-ANOVA sibling has `tests/test_sphericity_outer_exception.py`; Mixed ANOVA has nothing) |
+| Real pingouin `mixed_anova()` schema | Live `python3` run: `pg.mixed_anova(data=df, dv='dv', within='within', between='between', subject='subject')`, pingouin 0.6.1 | Columns: `['Source','SS','DF1','DF2','MS','F','p_unc','np2','eps']` — Source values are exactly `between`/`within`/`Interaction`; **no** `GG-eps`, `p-GG`, `HF-eps`, `p-HF`, `W-spher`, `p-spher`, or `sphericity` columns |
+| Contrast: real `rm_anova()` schema | Same script, `pg.rm_anova(..., correction=True)` | Columns include `p_GG_corr`, `sphericity`, `W_spher`, `p_spher` — the RM path's columns genuinely exist, unlike Mixed ANOVA's |
+| Interaction-row string filter reachability | `aov["Source"].str.contains(within_factor, regex=False) & aov["Source"].str.contains("*", regex=False)` (mixed_assumptions.py:615-616) tested against real Source values | Always `False` — pingouin's `Interaction` label contains no `*` character; block at lines 618-625 is unreachable dead code |
+| Bare `except:` | `git grep -n "^\s*except:"` across the 12 files | 1 hit: `mixed_assumptions.py:1235` (Box's M log-determinant on a singular matrix; falls back to `np.log(1e-10)`, non-blocking) |
+| Broad `except Exception` count per file | `git grep -c "except Exception"` per file | mixed_assumptions.py 22, posthoc_fallback.py 14, assumption_checks.py 8, advanced_pipeline.py 3, validators.py 1, comparison.py 4, advanced_posthoc.py 5, transformation.py 1, decision_logic.py/extraction.py/assumption_bridge.py/reporting.py 0 |
+| Every `raise ...Error(...)` in-batch | `git grep -n "raise .*Error("` across the 12 files | 25 call sites, all in `validators.py`, `mixed_assumptions.py`, `comparison.py`; each spot-checked against its guard condition — messages accurate to the firing condition |
+| Holm / Holm-Šidák / FDR correctness in `posthoc_fallback.py` | Read lines 611-693; verified `method='holm-sidak'`/`'fdr_bh'`/`'holm'` kwargs match the human-readable labels attached ("Holm-Šidák", "FDR (Benjamini-Hochberg)", "Holm-Bonferroni") | Correct — labels match `statsmodels.stats.multitest.multipletests` method semantics |
+| Line counts match expected scope | `wc -l` on all 12 files | 5,013 total, matches the assigned batch exactly |
 
 ## Findings — severity ranked
 
 ### HIGH
 
-**AT1 — Mixed ANOVA sphericity correction is computed and displayed but never gates post-hoc dispatch or the canonical p-value.** `src/analysis/statisticaltester.py:1548-1555` sets `results["p_value"]` from the uncorrected pingouin interaction row; `_test_mixed_anova_within_sphericity` (called at `statisticaltester.py:1703`, implemented in `src/statistical_testing/mixed_assumptions.py:386-499`) computes Greenhouse-Geisser/Huynh-Feldt corrected p-values into `within_sphericity_results` and merges them via `results.update(...)` at line 1706 — but no line thereafter writes a corrected value back into `results["p_value"]`. Compare the sibling RM ANOVA function, which has an explicit fix at `statisticaltester.py:1972-1974` (comment: *"E1: write the correction-selected p-value back to the canonical field"*) — Mixed ANOVA never received the equivalent fix. Downstream, `src/statistical_testing/advanced_pipeline.py:237` gates post-hoc entirely on this same uncorrected `res["p_value"]` (`if res.get("p_value") is not None and res["p_value"] < alpha`). Meanwhile `src/export/report_stat_rows.py:427-437` **does** apply the correction when rendering the HTML report row, appending a `(GG)`/`(HF)` suffix.
-**Impact:** For a Mixed ANOVA whose interaction/within-effect violates sphericity (a common real-world case with ≥3 within-levels), the uncorrected p can sit below alpha while the correctly-corrected p sits above it (or vice versa near the boundary). The report will show a non-significant corrected p-value in the ANOVA table, yet pairwise post-hoc comparisons will still have run and appear in the same report — because dispatch used the stale, uncorrected value. This is a genuine statistical-validity bug reachable on any Mixed ANOVA with sphericity violation, not a hypothetical.
-**Fix:** In `_run_mixed_anova` (statisticaltester.py:1470), after `results.update(within_sphericity_results)` (line 1706), mirror the RM ANOVA E1 pattern: extract the corrected p-value for whichever row currently drives `results["p_value"]`/`results["statistic"]` (the interaction row when present, else the within-factor row) and overwrite `results["p_value"]` before returning. Add a regression test with synthetic sphericity-violating within-subject data asserting `results["p_value"]` reflects the GG/HF-corrected value, not the raw Mauchly-uncorrected one.
+**AT1 — Mixed ANOVA within-factor sphericity correction computed but never gates the
+significance verdict or post-hoc dispatch (same bug class as the RM-ANOVA fix in `d0e5394`,
+still open here).**
+`src/statistical_testing/mixed_assumptions.py:414-499` (`_test_mixed_anova_within_sphericity`)
+computes `within_corrected_p_value` / `within_correction_used` and returns them as extra dict
+keys. The caller, `src/analysis/statisticaltester.py:1701-1706`, merges them into `results` via
+`results.update(within_sphericity_results)` — but `results["p_value"]` was already set at
+`statisticaltester.py:1548-1549` from the raw, uncorrected `interaction["p_value"]`, and is never
+reassigned afterward. The within-factor and interaction post-hoc dispatch gates at
+`statisticaltester.py:1573-1650` (`int_row[p_col]`, `within_row[p_col]`) also read the raw
+`p_col`, not any corrected value. **Impact:** a Mixed ANOVA with within-factor sphericity
+violation reports (and gates post-hoc on / off, and the top-level significant/non-significant
+verdict) using the *uncorrected* p-value, silently reintroducing inflated Type-I error exactly
+like the bug the prior round fixed for RM-ANOVA — except here it was never fixed at all. The
+`within_correction_used` string does get rendered in the decision-tree diagram
+(`src/visualization/decisiontreevisualizer.py:283`), so a user sees "Greenhouse-Geisser applied"
+next to a verdict that was actually computed from the uncorrected number — a directly misleading
+report. **Fix:** in `_run_mixed_anova` (`statisticaltester.py`), after
+`results.update(within_sphericity_results)`, mirror the RM-ANOVA pattern at line 1973-1974:
+`if within_sphericity_results.get("within_corrected_p_value") is not None: results["p_value"] = within_sphericity_results["within_corrected_p_value"]` — but only do this once AT2 (below) is
+also fixed, since currently the "corrected" value is frequently just the uncorrected p-value
+relabeled (see AT2). Add a regression test mirroring
+`tests/test_sphericity_outer_exception.py` but targeting `MixedAnovaAssumptionEngine` directly.
+
+**AT2 — The GG/HF correction lookup in `_apply_corrections_to_effect_row` checks column names
+(`GG-eps`, `p-GG`, `HF-eps`, `p-HF`) that pingouin's `mixed_anova()` never returns; the
+"correction" silently degrades to the uncorrected p-value on every real run.**
+`src/statistical_testing/mixed_assumptions.py:641-725`. Verified live against the installed
+pingouin 0.6.1: `pg.mixed_anova(...)` returns columns
+`['Source','SS','DF1','DF2','MS','F','p_unc','np2','eps']` — a single `eps` column, no
+`GG-eps`/`p-GG`/`HF-eps`/`p-HF` (those column names are RM-ANOVA-table-specific, from
+`pg.rm_anova(..., correction=True)`, which does return `p_GG_corr`). Because line 661
+(`if 'GG-eps' in effect_row and 'p-GG' in effect_row:`) and line 678 always fail to find these
+keys on a real Mixed-ANOVA row, `gg_epsilon = None` (line 674) and `hf_epsilon = None` (line 691)
+on every real call, so the function always falls to the `else` branch at lines 714-718:
+`"correction_used": "None (corrections not available)"`, with `final_p_value` equal to the raw
+uncorrected p. The same blind spot affects the fallback extractor,
+`_extract_mixed_sphericity_from_anova_table` (lines 502-567): it checks for `'W-spher'`,
+`'p-spher'`, `'sphericity'` columns (also confirmed absent from the real table), so it always
+hits the `else` at lines 542-553 and reports `"Indeterminate (Defaulting to GG correction)"` — a
+correction that, per this finding, can never actually be computed from the data pingouin gives
+it. **Impact:** even after fixing AT1's wiring, the "corrected" p-value routed into
+`results["p_value"]` would still be numerically identical to the uncorrected one — the sphericity
+correction for Mixed ANOVA is a no-op end to end, not merely disconnected. **Fix:** compute
+epsilon explicitly (pingouin does return a plain `eps` column on the `mixed_anova()` table, or
+compute GG epsilon manually from the covariance matrix the way `pg.epsilon()` does) and apply the
+correction to `DF1`/`DF2` and re-derive the p-value from `scipy.stats.f.sf`, rather than expecting
+pre-computed `GG-eps`/`p-GG` columns that this pingouin version's Mixed-ANOVA table does not
+provide.
+
+**AT3 — Interaction-effect sphericity-correction block is unreachable dead code: the row filter
+requires a literal `*` in `Source`, which pingouin's Mixed ANOVA table never contains.**
+`src/statistical_testing/mixed_assumptions.py:614-616`:
+```python
+interaction_rows = aov[aov["Source"].str.contains(within_factor, regex=False) &
+                      aov["Source"].str.contains("*", regex=False)]
+```
+Verified live: pingouin 0.6.1's Mixed-ANOVA `Source` column contains exactly the strings
+`between`, `within` (the raw column names passed in) and the literal word `Interaction` — never a
+`factor_a * factor_b`-style label with an asterisk. `"Interaction".__contains__("*")` is `False`.
+This mask is therefore always empty, so `corrections["within_sphericity_corrections"]["interactions"]`
+is never populated by `_apply_mixed_anova_sphericity_corrections` (lines 614-625), even though the
+sibling function `_test_interaction_sphericity` (line 951: `if 'GG-eps' in interaction_row and
+'HF-eps' in interaction_row:`) clearly expects this data to exist somewhere. **Impact:** low on
+its own (the whole GG/HF-column premise is broken per AT2 regardless), but it means the
+interaction-level correction path was written and never exercised even in a hypothetical
+column-fixed future — the recommendation text "Interaction effects also require sphericity
+corrections" (`_generate_within_factor_recommendations`, line 765) can never actually fire.
+**Fix:** once AT2's column-availability issue is resolved, match interaction rows against the
+literal pingouin label `"Interaction"` (or, for a design with a named third factor, the
+`f"{a} * {b}"` pattern pingouin does use in `anova()`/`rm_anova()` for two-way — check the actual
+label per pingouin function, don't assume the same delimiter everywhere).
 
 ### MEDIUM
 
-**AT2 — Advanced-model Dunnett/EMM-MVT post-hoc silently substitutes an arbitrary control group when no selection callback is provided.** `src/statistical_testing/engines/advanced_posthoc.py:93-97`:
-```python
-if posthoc_method in ("dunnett", "emm_mvt"):
-    if control_group_callback:
-        control_group = control_group_callback(group_names)
-    elif group_names:
-        control_group = group_names[0]
-```
-When `control_group_callback` is `None` (any headless/batch/programmatic invocation of `perform_advanced_test_pipeline` — the function signature explicitly allows this), the "control" group becomes whatever is first in `group_names`' sort order, with no warning surfaced to the caller or the report. Compare `src/statistical_testing/posthoc_fallback.py:586-596`, the sibling logic for the simpler post-hoc path, which explicitly downgrades to `"tukey"` (a method that needs no control group) when no control can be resolved — a visible, safe degradation instead of a silent guess.
-**Impact:** A Dunnett-vs-control test silently run against the wrong "control" produces scientifically misleading comparisons with no indication in the report that the control group was auto-selected rather than user-chosen. Medium rather than High because it requires the specific precondition of headless/no-dialog invocation (the interactive UI path always supplies a real callback).
-**Fix:** Mirror `posthoc_fallback.py`'s pattern — when `control_group_callback` is absent (or unavailable), downgrade `posthoc_method` to `"tukey"` and record a note in the returned `warnings`/`analysis_note`, rather than guessing a control group.
+**AT4 — Sample-quality pre-flight (`validate_samples_for_test`) is skipped for
+`logistic_regression` in the shared advanced pipeline, with no equivalent gate substituted.**
+`src/statistical_testing/advanced_pipeline.py:93`: `if test not in ["logistic_regression"]:` wraps
+the entire `validate_samples_for_test(...)` call. `ExtractionEngine` (engines/extraction.py:66-73)
+does build per-level samples for `logistic_regression` but nothing validates them for the
+zero-variance / Inf / n-below-minimum conditions the shared gate exists to catch (per
+`validators.py`'s own docstring: "Run before any statistical test so that pathological inputs
+become a clean labeled block instead of a crash or a silently-wrong result"). **Impact:**
+scoped to logistic regression only — a perfectly-separated or zero-variance predictor level can
+reach `LogisticRegressionModel.fit()` (in `clinical_models.py`, outside this batch) without the
+same pre-flight net every other advanced test gets, risking either an opaque statsmodels
+convergence warning or a silently wrong coefficient rather than the clean `BLOCK_MESSAGES`-style
+error. **Fix:** either route `logistic_regression` through `validate_samples_for_test` with
+`dependent=False` (it already has per-level `samples`/`groups` from `ExtractionEngine`), or add an
+explicit comment plus a `validate_outcome`-style single-vector check (already exists in
+`validators.py:419-438`) scoped to logistic regression's binary outcome column.
 
-**AT3 — Same engine: a cancelled control-group dialog leaves `posthoc_method` and `selected_comparisons` mutually inconsistent.** `src/statistical_testing/engines/advanced_posthoc.py:94-116`. If `control_group_callback(group_names)` returns `None` (user explicitly cancels), `control_group` stays `None`. Execution then falls through the `if/elif` chain to the final `else` at line 115-116 (`selected_comparisons = all_comparisons`), but `posthoc_method` was never reset — line 124 still writes `"method": posthoc_method` (i.e. `"dunnett"` or `"emm_mvt"`) into `posthoc_kwargs`, and line 126's `if control_group:` guard means no `control_group` kwarg is added. The resulting call to `PostHocFactory.perform_posthoc_for_anova(..., method="dunnett", selected_comparisons=<all pairs>)` (no `control_group`) is passed a request that doesn't match any of the three intended shapes (Dunnett-with-control, Tukey-all-pairs, or custom-pairs) — its behavior depends entirely on whatever `PostHocFactory`'s Dunnett branch does when `control_group` is absent (out of this audit's file set — verify in `analysis/stats_functions.py`).
-**Impact:** Best case, the factory raises/returns an error surfaced as a warning (annoying but safe). Worst case, it silently proceeds with a wrong or default reference level. Either way it's an avoidable inconsistent state.
-**Fix:** When `control_group_callback` returns `None`, explicitly reset `posthoc_method` to `"tukey"` (same remediation as AT2, same code location) rather than leaving the method label stale while the comparison set changes underneath it.
+**AT5 — `_perform_welch_anova`'s manual Welch F/df computation silently falls back to the
+non-robust `f_oneway` result on ANY exception, including a benign one, without setting a flag the
+caller can detect.**
+`src/statistical_testing/mixed_assumptions.py:263-294`. The `try` block (manual Welch calculation)
+catches bare `except Exception:` (line 291) and falls back to
+`welch_f, p_val_welch = f_oneway(*group_data)` (line 293) — i.e., silently returns the *standard*
+ANOVA result mislabeled as `"welch_f_statistic"`/`"welch_p_value"` in the returned dict (keys at
+lines 298-299). **Impact:** the whole point of this function is to give a variance-robust
+alternative when Levene's test flags heterogeneity; if the manual computation throws (e.g. a
+`ZeroDivisionError` from a group with `var=0`, or a numerically degenerate `weights` sum), the
+caller receives a result dict that *looks* like a Welch correction (same keys, same shape) but is
+actually numerically identical to the standard F-test — an assumption-check contradicting itself
+downstream in the recommendation text (`_generate_between_assumption_recommendations` compares
+`levene_met`/`brown_met` against a "robust_alternatives.welch_anova" that, under this fallback, is
+not actually robust). **Fix:** on the inner exception, set an explicit
+`"welch_calculation_degraded": True` flag (or reuse the existing `error` key pattern seen
+elsewhere in this file) so `_generate_between_assumption_recommendations` and any HTML export
+consumer can detect and disclose the degradation instead of silently presenting a fallback as if
+it were the requested statistic.
 
 ### LOW
 
-**AT4 — `src/statistical_testing/mixed_assumptions.py:1169-1278`'s Box's M test uses a hand-rolled, explicitly-approximate p-value formula, not a validated reference distribution.** The docstring/comments self-disclose this (`"Box's M approximation"`, `"this is a simplification"`, `"consider using specialized software for exact test"`), and the result correctly carries `"test_name": "Box's M Test (Approximation)"` plus a `"note"` field. Verified (see chokepoint checks above) that this value only feeds into a human-readable recommendation string, never into which correction is actually applied — so it cannot silently mis-gate a result. Ranked LOW rather than MEDIUM because it is honestly labeled as an approximation in its own output and does not affect dispatch; still, a p-value this crude (`min(0.5, np.exp(-abs(box_m)/10))` has no principled basis and cannot exceed 0.5) risks being copy-pasted into a manuscript as if it were a real test statistic.
-**Fix:** Either replace with `statsmodels`' or a vetted implementation of the chi-square approximation to Box's M, or rename the field/label more forcefully (e.g. suppress the numeric p-value entirely and keep only a qualitative "covariance patterns look similar/different" signal) so it can't be mistaken for a citable statistic.
+**AT6 — `_perform_box_m_test`'s p-value is a documented, non-standard approximation
+(`min(0.5, exp(-|boxM|/10))`), and its own bare `except:` at line 1235 masks a singular-covariance
+failure with an arbitrary `1e-10` floor rather than reporting the singularity.**
+`src/statistical_testing/mixed_assumptions.py:1169-1278`. The docstring is honest about the
+approximation ("This is an approximation — consider using specialized software for exact test",
+line 1260), which is good practice; but the bare `except:` at line 1235
+(`log_det_sum += n_i * np.log(1e-10)`) silently absorbs a `LinAlgError` from a singular per-group
+covariance matrix (e.g., from a between-group cell with fewer subjects than within-levels, or
+perfectly collinear repeated measures) and folds it into the same statistic as a well-conditioned
+case, rather than surfacing "covariance matrix singular for group X" the way `validators.py`'s
+`DataQualityError` pattern does elsewhere in this codebase. **Impact:** low — this is an
+assumption-check side-channel (Box's M is informational, not gating), and the function is already
+labeled experimental. **Fix:** catch `np.linalg.LinAlgError` specifically, and surface a
+`"note": "Covariance matrix singular for one or more groups; Box's M approximation unreliable"`
+rather than folding a synthetic floor value into the aggregate statistic silently.
 
-**AT5 — `src/statistical_testing/tester_core.py` (`StatisticalTesterCore`, `TestEngine` Protocol) is orphaned dead code.** Confirmed via `grep -rn "StatisticalTesterCore" src/` — zero references outside the file itself and stale `.pyc` cache artifacts. It duplicates/precedes the actual dispatch mechanism now used (`AnalysisManager`/`advanced_pipeline.perform_advanced_test_pipeline` calling the `engines/*.py` classes directly), and looks like an earlier design iteration that was superseded but never deleted.
-**Fix:** Delete `tester_core.py` (and its stale `__pycache__` artifacts) unless there's a near-term plan to route through it; if kept intentionally as a future direction, add a top-of-file comment saying so, since its current state (unimported, matching no active pattern) reads as accidental leftover rather than deliberate scaffolding.
-
-**AT6 — `src/statistical_testing/engines/posthoc.py` (`PostHocEngine`) is orphaned dead code, easily confused with the actually-used `AdvancedPostHocEngine` in `engines/advanced_posthoc.py`.** Zero callers found via `grep -rn "PostHocEngine\b" src/` besides its own file and the package's `__init__.py` export list. Unlike `distribution.py`/`correlation.py`, it does not self-label as a scaffold — it reads as complete, working code, which makes it more likely a future maintainer wires it in by mistake alongside (or instead of) `AdvancedPostHocEngine`, silently changing which code path handles post-hoc for advanced designs.
-**Fix:** Either delete it, or rename/comment it clearly as superseded-by-`AdvancedPostHocEngine` to prevent accidental dual-wiring.
-
-**AT7 — Validation chokepoint for `logistic_regression` is split across two layers.** `advanced_pipeline.py:93` explicitly excludes `test == "logistic_regression"` from `validate_samples_for_test`'s pre-flight gate; the equivalent single-vector gate (`validate_outcome`) is instead invoked one layer up, in `src/analysis/analysis_core.py`, before `perform_advanced_test_pipeline` is ever called. Not a bug (verified `analysis_core.py` does call `validate_outcome`), but it means "read `advanced_pipeline.py` alone" does not tell you the full validation story for this one test type — a maintainer skimming only this package could reasonably (and wrongly) conclude logistic regression is unvalidated.
-**Fix:** Add a one-line comment at `advanced_pipeline.py:93` pointing to where logistic regression's validation actually happens (`analysis_core.py`), so the chokepoint's completeness is discoverable without cross-package archaeology.
+**AT7 — `_generate_between_assumption_recommendations` and related recommendation-builders return
+plain lists of free-text strings (some prefixed `"⚠️"`/`"✅"`/`"INFO:"` inconsistently) rather than
+a small structured type, making them brittle to consume for anything beyond direct display.**
+`src/statistical_testing/mixed_assumptions.py:328-384`, `728-778`, `1359-1439`. Not a correctness
+bug — purely a maintainability note. Emoji/prefix conventions are inconsistent (`"⚠️"` vs
+`"INFO:"` vs no prefix at all, e.g. line 363 vs line 344), which makes it hard for any downstream
+consumer (HTML export, a future non-English UI) to filter/style these by severity without
+string-parsing. **Fix (optional, low priority):** introduce a
+`RecommendationItem(level: Literal["ok","warn","info"], text: str)`-style TypedDict/dataclass:
+low urgency for a single-user desktop tool, but worth doing opportunistically if this code is
+touched again for AT1-AT3.
 
 ## Strengths (verified)
 
-- **No fuzzy/substring method-matching anywhere in this package.** Every dispatch decision (`test ==`, `posthoc_choice in (...)`, `model_class ==`) is an exact match against a small, internally-controlled string vocabulary set by upstream code, not a `.lower()`-normalized substring test against a free-text UI label. The specific anti-pattern this audit was asked to hunt for (a prior bug class in `advanced_pipeline.py`'s override-label logic) does not recur in `mixed_assumptions.py`, `posthoc_fallback.py`, `assumption_checks.py`, `validators.py`, `decision_logic.py`, or any `engines/*.py` file — confirmed by an exhaustive `grep` sweep, not a sample check.
-- **`validate_samples_for_test`/`validate_test_design` (validators.py) genuinely is a chokepoint for the advanced-pipeline dispatch.** Confirmed no `_run_*_logged` method is ever called from outside `advanced_pipeline.py`, so there is no code path in this subsystem that reaches a live statistical test without first passing the pre-flight design and data-quality gates. The gate itself (`validate_samples_for_test`, `validators.py:348-416`) is thorough: Inf detection, empty-group detection, minimum-n, numeric-overflow guard (`_max_safe_abs`, correctly scaled by `sqrt(float64_max/n)` rather than a flat epsilon), zero-variance detection via `np.allclose` with sane rtol/atol, imbalance warnings, and a dependent-design constant-difference (singular covariance) check across all pairs, not just adjacent ones.
-- **`posthoc_fallback.py`'s Dunnett control-group fallback (simple/legacy path) is the correct, safe pattern**: on a cancelled/failed control-group selection it downgrades the *method label itself* to Tukey rather than leaving a stale label paired with substituted behavior — this is exactly what AT2/AT3 recommend the advanced-model sibling do too.
-- **Box's M / compound-symmetry / covariance-pattern diagnostics are correctly scoped as informational-only** — despite being computed with an admittedly crude approximation (AT4), none of them silently feed back into which correction is *applied*; they only populate a human-readable "recommendations" list. The engineering discipline of keeping diagnostic-only computations from leaking into dispatch is respected everywhere except the one gap in AT1.
-- **Bounded Box-Cox lambda estimation** (`validators.py:166-201`, reused by both `assumption_checks.py` and `engines/transformation.py`) guards against optimizer divergence on skewed assay data by rejecting an out-of-bounds ML lambda and falling back to log-transform (lambda=0), with the rationale clearly documented in the docstring — a correctness fix that's consistently applied in both call sites rather than duplicated-and-drifted.
-- **The Freedman-Lane / Brunner-Langer non-parametric fallback post-hoc paths in `engines/advanced_posthoc.py`** (lines 255-499) correctly gate candidate comparisons on the *significance of the specific effect* (main effect A, main effect B, or interaction) before offering them to the user, rather than offering every possible pairwise comparison regardless of whether its parent effect was significant — a real methodological safeguard against inflated Type I error from unmotivated post-hoc tests.
+- **`validators.py` is genuinely strong defensive-programming.** `validate_samples_for_test`
+  (lines 348-416) is a single, well-documented pre-flight chokepoint that catches Inf values,
+  empty groups, below-minimum-n, numeric overflow (via a correctly-derived
+  `sqrt(float64_max/n)` bound, not a naive global constant — see the docstring at lines 22-27),
+  zero-variance groups, too-few-groups, and — for dependent designs — constant *pairwise*
+  differences across every pair (not just adjacent ones), which is exactly what an RM-ANOVA
+  covariance matrix needs to stay non-singular. No bare excepts; every raised exception is a
+  named `ValidationError` subclass with a clear, template-driven message
+  (`BLOCK_MESSAGES`, lines 315-324) shared between the UI and the HTML report.
+- **`bounded_boxcox_lambda`** (`validators.py:166-201`) correctly guards the exact Box-Cox
+  "blow-up" pattern named in the audit brief: it rejects an ML lambda estimate outside `[-3, 3]`
+  and hard-falls-back to log rather than clamping to the boundary (which the docstring correctly
+  identifies as "methodologically invalid"). This same helper is reused consistently in both
+  `assumption_checks.py:369` and `engines/transformation.py:70`, so the guard isn't duplicated or
+  drifted between the two call sites.
+- **The significance-gated candidate-comparison logic** the Freedman-Lane / Brunner-Langer
+  non-parametric fallback methods use (`engines/advanced_posthoc.py:256-499`) is unusually
+  careful: post-hoc candidate pairs are
+  significance-gated per-effect (marginal pairs offered only when that main effect is significant,
+  cell/interaction pairs only when the interaction is significant), consistently reusing the same
+  `_mwu_posthoc_comp`/`_wilcoxon_posthoc_comp`/`_apply_holm` helpers so the reported statistics
+  match the all-pairs code path exactly — a real effort to avoid multiple-testing inflation from
+  an uncontrolled "test everything" post-hoc sweep.
+- **Holm / Holm-Šidák / FDR labels in `posthoc_fallback.py` match their actual statsmodels
+  method kwargs** (verified at lines 625-628, 663-668): `'holm-sidak'` labeled "Holm-Šidák",
+  `'fdr_bh'` labeled "FDR (Benjamini-Hochberg)", `'holm'` labeled "Holm-Bonferroni" — no
+  mislabeled-correction-method bug in this file, unlike prior findings elsewhere in the codebase
+  (the Games-Howell/Dunnett fixes noted in project memory).
+- **`decision_logic.py` is a clean, small, testable pure-function module** — `DecisionInput`/
+  `AssumptionState` are frozen dataclasses, `select_comparison_test` is a straightforward
+  branch table with no hidden state, and `extract_assumption_state` explicitly documents its
+  backward-compatibility fallback path for legacy `test_info` shapes rather than silently
+  guessing.
+- **The engines/ layer (`comparison.py`, `transformation.py`, `extraction.py`,
+  `assumption_bridge.py`, `reporting.py`) is a consistent, well-factored `execute(payload) ->
+  StatisticalResult` pattern** with an explicit unsupported-mode error branch in every single
+  `execute()` method (never a silent no-op default) — a good structural guard against the
+  string-coupled-mode-drift bug class named in the audit brief.
+- **`assumption_checks.py`'s transformation-selection logic correctly separates the normality
+  concern from the variance concern** (comment at line 315-317: "Welch-ANOVA (and RM corrections)
+  handles variance heteroscedasticity. Transformation is strictly for correcting non-normality.")
+  and guards every transformation branch (log10, Box-Cox, arcsin-sqrt) against the zero-variance
+  edge case with an explicit fallback and a logged warning (lines 414-434), rather than letting
+  `NaN`/`Inf` propagate silently into the downstream model fit.
 
 ## Recommended remediation order
 
-1. **AT1 (HIGH)** — fix first; it's a genuine statistical-correctness bug with a clear, scoped fix (mirror the existing RM ANOVA E1 pattern) and a straightforward regression test (synthetic sphericity-violating data, assert corrected p-value reaches `results["p_value"]`).
-2. **AT2 + AT3 (MEDIUM, same code, fix together)** — one small change in `engines/advanced_posthoc.py:93-101` (downgrade to Tukey on missing/cancelled control group, mirroring `posthoc_fallback.py:586-596`) resolves both.
-3. **AT6 (LOW but cheap)** — delete or clearly mark `engines/posthoc.py` as superseded; low effort, removes a foot-gun for future maintainers before they accidentally wire it in.
-4. **AT5 (LOW, cheap)** — delete `tester_core.py` and its stale `.pyc` files, or document why it's being kept.
-5. **AT7 (LOW, docs-only)** — one-line comment pointing to where logistic regression validation actually lives.
-6. **AT4 (LOW, judgment call)** — decide whether Box's M needs a real reference distribution or should drop its numeric p-value entirely; lowest urgency since it's honestly labeled and doesn't affect dispatch.
+1. **AT2 first, then AT1** — fixing the wiring (AT1) before the underlying computation (AT2) would
+   just relabel the uncorrected p-value as "corrected," which is worse than the status quo
+   (false confidence). Compute a real epsilon/correction from the actual `eps` column (or
+   `pg.epsilon()`) for Mixed ANOVA, verify it against a golden-R Mixed ANOVA fixture the way
+   `tests/test_golden_r_advanced.py` already does for other designs, *then* wire
+   `results["p_value"]` the same way the RM-ANOVA path does at `statisticaltester.py:1973-1974`.
+   Add a regression test mirroring `tests/test_sphericity_outer_exception.py` scoped to
+   `MixedAnovaAssumptionEngine`.
+2. **AT3** — trivial one-line fix (match the literal `"Interaction"` label) once AT2 lands;
+   otherwise defer, since it's currently moot (no columns to correct with anyway).
+3. **AT4** — quick, bounded fix: route `logistic_regression` through the existing
+   `validate_samples_for_test`/`validate_outcome` gate; low effort, closes a real gap.
+4. **AT5** — add the degraded-fallback flag; cheap, improves honesty of an already-existing
+   code path without changing its numeric behavior.
+5. **AT6, AT7** — low priority; bundle into the same PR as AT1-AT3 if that file is being touched
+   anyway, otherwise defer indefinitely (neither gates a verdict).

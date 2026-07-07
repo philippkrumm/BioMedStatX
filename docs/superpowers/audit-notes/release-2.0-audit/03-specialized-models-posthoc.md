@@ -1,205 +1,229 @@
-# AUDIT: BioMedStatX @ b16cf24 — Specialized Statistical Models & Post-hoc / Outlier Engines
+# AUDIT: BioMedStatX — Specialized Models & Post-hoc/Outlier Engines @ 3fd4796
 
 **Scope:** `src/analysis/correlation_models.py`, `posthoc_core.py`, `nonparametricanovas.py`,
-`outlier_core.py`, `stats_functions.py`, `emm_posthoc.py`, `effect_sizes.py`.
+`outlier_core.py`, `stats_functions.py`, `emm_posthoc.py`, `effect_sizes.py` (5,719 lines total,
+all read in full). Second independent audit pass (round 2) of this subsystem — a prior audit
+(2026-06-10/11/27) found and fixed real bugs here (Games-Howell, Dunnett, Box-Cox, mixed/RM
+Dunnett `p*k*0.8` crutch). This pass re-verifies those fixes against source and hunts for new
+issues.
 
-**Verdict.** No live emergency. The core math (Games-Howell, Dunnett via `scipy.stats.dunnett`,
-the hand-rolled Holm correction, EMM+multivariate-t Dunnett, effect-size canonicalization) is
-correct and in several places demonstrably well-engineered (documented deviations from naive
-approaches, honest relabeling of approximations). I found one genuine "computed-but-mislabeled"
-correctness bug in the same family as the session's prior findings (a live post-hoc branch reports
-"Tukey HSD" while actually running Holm-Šidák), one dead duplicate-dict-key bug that silently
-discards a computed value, one substring-match control-group bug in dead code (safe only because
-unreachable), and confirmed the `DataImporter` dead-code claim in this project's CLAUDE.md is
-still accurate for the shipped autopilot path. No instance of the exact 3-times-seen "key written
-under name A, read under name B" bug recurred in this batch as a *live* defect — the closest
-analogue (`primary_effect` missing `F`/`df1`/`df2`) is a redundant/cosmetic summary line, not a
-gating value, because the same numbers are correctly rendered from the `factors` list one branch
-earlier in the same function.
+**Verdict.** Posture is good and the prior fixes hold under re-derivation — no live emergency.
+Games-Howell, Dunnett (both independent-groups and mixed/RM Holm-Bonferroni variants), the
+bounded Box-Cox lambda guard, and the MWU power removal are all still correctly implemented as
+described in the prior audit's memory notes. One new MEDIUM-severity defensive-validation gap
+(an unconditional decimal-format assumption in outlier ingestion that can silently corrupt
+US/international-formatted numeric strings) and one MEDIUM performance/usability issue
+(Dunn-test bootstrap CI blocking the UI thread for tens of seconds on realistic group sizes)
+are the top new findings. Everything else is LOW/cosmetic.
 
 ## What I mechanically verified (not eyeballed)
 
-| Check | Method | Result |
+| Check | Command / method | Result |
 |---|---|---|
-| All 7 files read in full (1163+1813+1025+525+782+228+184 = 5720 lines) | `Read` tool, full-file | Done |
-| `DataImporter` dead-code claim | `git grep` for all callers of `.import_data(` and `DataImporter` | Confirmed dead in the shipped autopilot path (see SM6) |
-| Hand-rolled Holm correction (`nonparametricanovas.py::_holm_correct`) vs `statsmodels.stats.multitest.multipletests(method='holm')` | 2000-trial randomized numeric comparison, `atol=1e-9` | Exact match, all trials |
-| `effect_size_type` strings used by callers (`hedges_g`, `cohen_d`, `cohen_d_mixed`, `cohen_d_rm`, `rank_biserial_r`) vs `effect_sizes.py::canonicalize()` | Direct Python invocation | All canonicalize to the intended `EffectSizeKind`; none silently return `None` |
-| Every dict key set in a literal `return {...}` across the 5 files with plain-dict result builders (regex extraction of `^"key":` patterns) | Python script, 178 unique keys extracted | Cross-checked against `git grep` in `src/export/*.py` |
-| `primary_effect` / `interpretation_order` / `interaction_significant` read sites | `git grep` across `*.py` | `primary_effect` read once (report_stat_rows.py:523, cosmetic-only); `interpretation_order` and `interaction_significant` never read anywhere |
-| `_perform_test_legacy` (Mixed ANOVA, substring control-group match) call sites | `git grep -n "_perform_test_legacy"` | Zero callers — confirmed dead |
-| HC3 robust-covariance propagation in `SimpleLinearRegressionModel.fit` | Read `self.result` reassignment at line 589 + downstream use in `as_results_dict` | Correctly propagates — not a repeat of the Mixed-ANOVA sphericity gating bug |
-| Games-Howell family size `k` | Read: computed once from `comparable` groups, reused for every pairwise `studentized_range` call | Correct FWER family size, no per-pair drift |
-| `CorrelationModel` auto-method docstring claim ("branch never reads Shapiro-Wilk p-value") | Read `fit()` lines 274–342: threshold branch keys off skew/kurtosis only | Docstring accurate |
+| Line counts match task brief | `wc -l` on all 7 files | 1163/1812/1025/525/782/228/184 = 5,719 total, all read start-to-end |
+| Grubbs' critical-value formula | Recomputed `G_crit` for n=10, α=0.05 two-sided in Python against the canonical published table value (2.290) | `2.289954...` — matches to 3 dp |
+| Hedges' g bias-correction factor | Recomputed `J(df) = 1 - 3/(4·df - 1)` (Hedges & Olkin 1985) for df=20, compared to code's `1 - 3/(4*(n1+n2-2)-1)` | Identical formula, `0.9620...` |
+| Cohen f² → R² threshold conversion | Recomputed `R² = f²/(1+f²)` for Cohen's canonical f² thresholds (0.02/0.15/0.35) | `0.0196/0.1304/0.2593` vs. code's `(0.02, 0.13, 0.26)` — see SM6 |
+| `bounded_boxcox_lambda` guard | Read `src/statistical_testing/validators.py:166-201` in full | Confirmed: rejects `\|λ\|>3` or non-finite, hard-falls-back to λ=0, never clamps — matches prior-audit fix description exactly |
+| Mixed/RM Dunnett correction method | Read `posthoc_core.py:528-559` (Two-Way… actually Mixed) and `:1172-1204` (RM) | Both use `multipletests(..., method='holm')` (plain Holm-Bonferroni, FWER-valid under arbitrary dependence), labelled `"Dunnett-type (Holm-adjusted, ...)"` — the `p*k*0.8` crutch is gone, replaced as claimed |
+| MWU power field | `git grep -in "power" -- <all 7 files>` | Zero hits — `_mwu_posthoc_comp`/`_wilcoxon_posthoc_comp` in `nonparametricanovas.py` only ever set `effect_size`/`effect_size_type` (rank-biserial r), no power field exists to be miscomputed |
+| `_convert_values_to_float` decimal-format bug | Reproduced in Python: `pd.Series(['1.5','2.75']).astype(str).str.replace('.','',regex=False).str.replace(',','.',regex=False).astype(float)` | `['1.5','2.75']` → `[15.0, 275.0]` — confirms silent 10-1000x corruption on US-formatted numeric strings stored as text (SM1) |
+| DunnTest bootstrap CI cost | Timed the exact nested-loop pattern (`for u in b1 for v in b2`) at n=200/group (1000 boots) and n=500/group | 2.16s and 13.5s respectively; extrapolated to ~81s for 4 groups (6 pairs) at n=500/group (SM2) |
+| Effect-size-type writer/reader contract | `python3 -c` round-tripped every `effect_size_type=` string literal found via `git grep` (`cohen_d`, `cohen_d_mixed`, `cohen_d_rm`, `hedges_g`, `"Cohen's d (RM)"`, `r`, `rank_biserial_r`) through `effect_sizes.canonicalize()` | All 7 resolve to the correct `EffectSizeKind` — no drift between what post-hoc code writes and what the report-layer classifier reads (Strength, not a finding) |
+| Exception-handler density | `git grep -c "except "` per file | correlation_models.py:12, posthoc_core.py:15, nonparametricanovas.py:7, outlier_core.py:4, stats_functions.py:6, effect_sizes.py:1, emm_posthoc.py:0 |
+| Bare `except:` (no type) | `git grep -n "except:"` across the 7 files | 4 hits, all in `posthoc_core.py` (lines 519, 726, 1289, 1300) — all four are Tukey/studentized-range p-value fallbacks that degrade to a documented t-approximation, not silent data loss (see Strengths) |
 
 ## Findings — severity ranked
 
-### HIGH
-
-**SM1 — Mixed-ANOVA post-hoc "Tukey" branch silently runs Holm-Šidák and reports it as Tukey HSD.**
-`src/analysis/posthoc_core.py:866-869`, inside the **live** `MixedAnovaPostHocAnalyzer.perform_test`
-(dispatched via `PostHocFactory.perform_posthoc_for_anova`, confirmed by `git grep` — this is not
-the dead `_perform_test_legacy`):
-```python
-if method.lower() == 'tukey':
-    # For Tukey, we'll use a different approach
-    correction_method = "Tukey HSD"
-    reject, pvals_corr, _, _ = multipletests(pvals, alpha=alpha, method='holm-sidak')  # Fallback
-```
-No actual Tukey studentized-range calculation happens here — `pvals_corr` is Holm-Šidák-corrected,
-but `correction_method` (which flows into every `PostHocAnalyzer.add_comparison(..., correction_method=correction_method)`
-call at line 962 and into the exported `test` / `correction` fields a user reads in the HTML report)
-says "Tukey HSD". A user selecting "Tukey" for a Mixed ANOVA post-hoc gets Holm-Šidák p-values
-under a Tukey label — the two methods produce different p-values and a different implied
-correction strength, so this misrepresents which family-wise procedure actually gated the
-reported significance. Contrast with the sibling `RMAnovaPostHocAnalyzer.perform_test` (same file,
-~line 1143), which *does* attempt the real Tukey studentized-range calculation via
-`_tukey_p_value` and only falls back to Bonferroni-with-relabeling on failure — so the codebase
-knows how to do this correctly elsewhere and only this one branch skipped it.
-**Impact:** every Mixed-ANOVA "Tukey" post-hoc result in the shipped app is actually Holm-Šidák,
-mislabeled — a reproducibility/citation-correctness defect a domain reviewer would catch.
-**Fix:** either implement the real Tukey studentized-range correction here (mirroring
-`RMAnovaPostHocAnalyzer._tukey_p_value`, which already handles the mixed-design interaction-group
-count), or rename `correction_method` to `"Holm-Šidák (Tukey unavailable for mixed interaction groups)"` matching the honest-relabeling pattern already used in the `dunnett` branches of the same file (e.g. line 538: `"Dunnett-type (Holm-adjusted, mixed design)"`).
-
 ### MEDIUM
 
-**SM2 — Duplicate dict key silently discards a computed `both_normal` value in `CorrelationModel`.**
-`src/analysis/correlation_models.py:329-342`, the non-transform branch of `_normality_check`:
+**SM1 — Outlier ingestion silently corrupts US/international-formatted decimal strings.**
+`src/analysis/outlier_core.py:96-107` (`OutlierDetector._convert_values_to_float`). When the
+value column is not already numeric dtype (e.g. an Excel cell formatted as text, or a CSV column
+containing a stray non-numeric character in one row that forces pandas to infer `object` dtype
+for the whole column), the code unconditionally treats `.` as a thousands separator and `,` as
+the decimal point:
 ```python
-self._normality_check = {
-    ...
-    "shapiro_both_normal": both_normal_sw,
-    "both_normal": self._method_used == 'pearson',   # line 338 — discarded
-    x_col: {...}, y_col: {...},
-    "both_normal": both_normal_sw,                    # line 341 — wins
-}
+self.df[self.value_col] = (
+    self.df[self.value_col].astype(str)
+        .str.replace('.', '', regex=False)   # Remove thousand separators
+        .str.replace(',', '.', regex=False)  # Comma → Period
+        .astype(float)
+)
 ```
-Python dict literals keep only the last assignment for a repeated key, so line 338's value
-(whether the auto-selection actually picked Pearson, i.e. the skew/kurtosis-threshold decision
-the docstring says is authoritative) is dead code, silently replaced by the raw Shapiro-Wilk
-"both p > alpha" result. Per the class's own docstring, method selection does **not** use
-Shapiro-Wilk — but the exported `both_normal` field reports the Shapiro result anyway, which
-could read as "why Pearson/Spearman was chosen" to a report consumer even though it isn't the
-actual criterion. Currently latent: `git grep` confirms no exporter reads the top-level
-`both_normal` key (only the per-variable `x_col`/`y_col` sub-dicts at `report_summaries.py:166`
-are read), so no visible report is wrong today — but this is exactly the write/read key-mismatch
-shape the task asked to hunt for, one edit away from becoming visible (e.g. if a future export
-change reads `both_normal` expecting the method-selection criterion).
-**Impact:** dead computation, confusing to a future maintainer, latent misreport risk if the key
-is ever consumed.
-**Fix:** delete the line-338 assignment (or rename it, e.g. `"pearson_selected"`) so both facts
-are preserved instead of one silently overwriting the other.
+There is no format detection, no locale parameter, and no plausibility check afterward. Verified
+in Python: `"1.5"` → `15.0`, `"2.75"` → `275.0`, `"100.25"` → `10025.0` — silent 10×-1000×
+inflation, not an error. This is the "German decimal" assumption baked in as the *only* path;
+any US/international-formatted numeric string column that fails the `is_numeric_dtype` fast-path
+for any reason (one bad cell, mixed formatting, `NA` strings, leading/trailing whitespace) gets
+silently multiplied by up to 1000 before outlier detection runs — and outlier detection would
+then "correctly" flag the *now-corrupted* extreme values, producing a plausible-looking but
+completely wrong report with no diagnostic trail beyond the (non-user-facing) debug log.
+**Impact:** A user whose Excel export stores the value column as text with plain decimal points
+(common when copy-pasting from another tool, or a column with one stray text cell) gets outlier
+results computed on data inflated by 10-1000x, with no error and no visible warning — this is
+exactly the "silently produces a wrong-but-plausible result" failure mode called out in the audit
+brief. Grubbs/Mod-Z will report different (and wrong) outliers than the true data would.
+**Fix:** Only apply the comma→period substitution when the column actually contains commas as
+apparent decimal separators (e.g., regex-detect `^\d{1,3}(\.\d{3})*,\d+$` or simply: if a value
+parses cleanly as float as-is, leave it alone; only run the German-format substitution on values
+that fail a direct `float()` parse AND match a comma-decimal pattern). At minimum, add a
+post-conversion sanity check (e.g., compare magnitude distribution before/after, or require the
+caller to declare the input locale) and surface a warning in `debug_log` / the exported report
+when the fallback path fires, not just a silent debug-log-only "before/after" value dump.
 
-**SM3 — `primary_effect` dict never carries `F`/`df1`/`df2`, so the "Main effect: X" summary line
-in the ANOVA effects report is always silently skipped for Friedman / Freedman-Lane / Brunner-Langer.**
-`src/analysis/nonparametricanovas.py:268-274, 558-564, 883-889` build `primary_effect` with only
-`source`, `kind`, `policy`, `p_value`, `wald_chi2` — never `F`, `df1`, `df2`. The reader,
-`src/export/report_stat_rows.py:523-536`, requires all of `F`, `p_value`, `df1`, `df2` to be
-non-`None` before emitting the `"Main effect: {factor}"` row:
+**SM2 — Dunn-test post-hoc bootstrap CI is O(n_boot × n₁ × n₂) pure-Python and blocks the UI thread.**
+`src/analysis/posthoc_core.py:1596-1603` (`DunnTest.perform_test`). The confidence interval for
+each pairwise median difference is computed via 1000 bootstrap resamples, each building a full
+`n1 × n2` pairwise-difference list in pure Python:
 ```python
-F_primary = primary_effect.get("F")            # never set -> always None
-df1_p = primary_effect.get("df1")              # never set -> always None
-df2_p = primary_effect.get("df2")               # never set -> always None
-if primary_factor and F_primary is not None and p_primary is not None and df1_p is not None and df2_p is not None:
+for _ in range(n_boot):
+    b1 = np.random.choice(x, n1, replace=True)
+    b2 = np.random.choice(y, n2, replace=True)
+    boots.append(np.median([u - v for u in b1 for v in b2]))
 ```
-So this branch is dead for every nonparametric-fallback result and the summary row never renders.
-**This is lower-severity than the sphericity-gating bug found in the parallel core audit** because
-the same F/df1/df2/p-value numbers are correctly rendered one code block earlier via the
-`factors`/`interactions` lists (`report_stat_rows.py:402-461`), which the nonparametric functions
-populate correctly (verified: `factors` entries in `nonparametricanovas.py` do carry `F`, `df1`,
-`df2`, `effect_size`). No decision is gated on the missing `primary_effect` fields; it is a
-redundant cosmetic summary line that silently never fires.
-**Impact:** cosmetic only — the ANOVA effects table already shows the correct numbers; the
-one-line "Main effect: X" recap is simply always absent for these three test types.
-**Fix:** either add `"F": <chi2_stat or ATS>, "df1": ..., "df2": ...` to the three `primary_effect`
-dict literals to match what the report reader expects, or drop the dead branch's requirement on
-`F`/`df1`/`df2` (fall back to just `p_value` when they're absent) since `factors` already covers
-the detailed table.
+Measured directly: n1=n2=200 → 2.16s per pair; n1=n2=500 → 13.5s per pair. For a realistic
+4-group comparison (6 pairs) at n=500/group this is ~80 seconds of blocking computation, and
+nothing in `posthoc_core.py`/`stats_functions.py` runs this off the main Qt thread (no
+`QThread`/worker dispatch visible in this call path) — the desktop app UI would freeze for that
+duration with no progress indication beyond the one "Running outlier detection..." /
+generic-analysis modal already in place elsewhere. **Impact:** on biomedical high-throughput
+datasets (n in the hundreds per group is common for plate-reader / flow-cytometry exports), Dunn
+test becomes impractically slow or reads as a hang. **Fix:** vectorize with
+`b1[:, None] - b2[None, :]` (or `np.subtract.outer`) — this turns the O(n1·n2) Python-level loop
+into a single vectorized numpy operation per bootstrap iteration, expected to cut runtime by
+1-2 orders of magnitude at these sizes; if still slow at very large n, subsample the
+cross-difference matrix for the median estimate (already a common bootstrap-CI approximation)
+rather than materializing the full outer product.
 
 ### LOW
 
-**SM4 — Dead-code substring control-group match in `MixedAnovaPostHocAnalyzer._perform_test_legacy`.**
-`src/analysis/posthoc_core.py:543`: `if control_group in comp["group1"] or control_group in comp["group2"]:`
-uses Python's `in` substring containment instead of exact equality — if one group's interaction
-label is a substring of another's (e.g. control group `"A"` vs a level named `"AB"`, or more
-realistically `"Control"` vs `"Control_2"` if such labels ever occur), this would incorrectly
-include/exclude comparisons from the Dunnett-style correction family, changing the FWER-controlled
-p-values for an arbitrary subset. **Confirmed via `git grep` that `_perform_test_legacy` has zero
-callers** — it is entirely superseded by `perform_test` (line 734), which correctly uses exact
-match (`g1 == control_group or g2 == control_group`, line 879). Not exploitable today.
-**Impact:** none currently (unreachable code), but dead code carrying a known-wrong pattern is a
-maintenance hazard if anyone ever re-wires a caller to it.
-**Fix:** delete `_perform_test_legacy` (58 lines, `posthoc_core.py:331-629`) as part of general
-cleanup — it duplicates logic now done correctly and more simply in the live `perform_test`.
+**SM3 — `ExploratoryCorrelationMatrix._compute_matrix` swallows per-cell computation failures with a bare `except Exception: pass`.**
+`src/analysis/correlation_models.py:993-994`. If `pearsonr`/`spearmanr` raises for a specific
+column pair (e.g., zero-variance column within one stratum), the cell is silently left at its
+`np.nan` initialization value with no warning surfaced to the caller or the exported report.
+**Impact:** low — NaN is already the documented "no data" sentinel for this matrix and is
+correctly rendered as blank/None downstream (`_ndarray_to_nested_dict` maps NaN→None), so this
+does not produce a wrong-but-plausible value, only a silently-missing one with no diagnostic
+trail explaining *why* that specific cell is missing. **Fix:** log a warning (or accumulate a
+per-cell error list surfaced in `as_results_dict()`) naming the failed pair and the exception,
+so a user staring at an unexpectedly blank cell in an otherwise-complete matrix has somewhere to
+look.
 
-**SM5 — `RMAnovaPostHocAnalyzer`/`MixedAnovaPostHocAnalyzer` "Dunnett" labeled as exact Dunnett is
-actually Holm-Bonferroni** — this is *already self-documented* in the code
-(`posthoc_core.py:528-538`, `1172-1181`) with an accurate comment explaining why the exact
-multivariate-t Dunnett doesn't apply to dependent/mixed contrasts, and the exported
-`correction_method` string honestly says `"Dunnett-type (Holm-adjusted, ...)"` rather than
-claiming exact Dunnett. Flagging only so the reviewer can confirm this is intentional
-(it is — well-reasoned) and not confuse it with SM1's mislabeling, which has no such disclosure.
+**SM4 — Four bare `except:` (no exception type) in `posthoc_core.py`.**
+Lines 519, 726, 1289, 1300 — all in Tukey/studentized-range p-value fallback paths (e.g.
+`TwoWayPostHocAnalyzer.perform_test`'s Tukey branch, `MixedAnovaPostHocAnalyzer._tukey_p_value`,
+`RMAnovaPostHocAnalyzer._get_tukey_critical_value`/`_tukey_p_value`). Each catches literally
+everything, including `KeyboardInterrupt`/`SystemExit`, and falls back to either a Bonferroni
+correction or a t-distribution approximation. **Impact:** low in practice — the fallback is a
+documented, methodologically defensible substitute (Bonferroni is conservative, not silently
+wrong), not a data-corrupting default — but a bare `except:` is still bad practice: it would also
+swallow a genuine `KeyboardInterrupt` mid-computation, and it can mask an unrelated bug (e.g. a
+typo introduced in a future edit to the try block) as if it were "distribution unavailable."
+**Fix:** narrow to `except Exception:` at minimum (already done at 3 of the ~15 similar sites
+elsewhere in this same file, e.g. line 1163 `except Exception as err:` in the twin RM-ANOVA
+Tukey path) so `KeyboardInterrupt`/`SystemExit` propagate.
 
-**SM6 — `DataImporter` (stats_functions.py:407) dead-code claim: confirmed still accurate, with one caveat.**
-`git grep` shows `AnalysisManager._prepare_contextual_inputs` (`analysis_core.py:186-194`) only
-calls `DataImporter.import_data(...)` when `analysis_context` is falsy. The autopilot pipeline
-(`statistical_analyzer_autopilot_pipeline.py:1365, 1894`) always passes
-`analysis_context["injected_df"] = self.df` per this project's CLAUDE.md, so `analysis_context` is
-always truthy in the shipped UI path — `DataImporter.import_data` is never reached from the app.
-**Caveat:** it is exercised by `fuzzing/_worker.py:93` and several files under `tests/` and
-`validation/` calling `AnalysisManager.analyze(**kwargs)` without `analysis_context` — so the code
-path is live for test/fuzz harnesses, just not for the shipped desktop app. The CLAUDE.md
-"dead-code-in-the-autopilot-path" phrasing is precisely correct and should not be broadened to
-"fully dead."
+**SM5 — `RegressionHealthScanner` VIF and outlier-scan blocks (`correlation_models.py:1140-1161`) catch bare `Exception` and only record `{"error": str(exc)}`.**
+This is a pre-flight advisory check (not a hard gate), so failure here is correctly non-blocking
+by design — but the caught exception is never logged (no `logger.warning`), only stashed in the
+returned dict's `checks["vif"]["error"]` key. If nothing downstream reads that key on the failure
+path, the user has no visible signal that multicollinearity was never actually checked.
+**Impact:** low — advisory-only path, but a silent skip of a documented "the value" check is
+still worth a log line. **Fix:** add `logger.warning(f"VIF check failed: {exc}")` alongside the
+existing `checks["vif"] = {"error": str(exc)}` so it at least surfaces in the debug console even
+if the export layer doesn't render it.
+
+**SM6 — `effect_sizes.py` R²-threshold values labeled "Cohen f²-derived" don't match the literal f²→R² conversion.**
+`src/analysis/effect_sizes.py:120`: `R_SQUARED: (0.02, 0.13, 0.26)`. Re-deriving via
+`R² = f²/(1+f²)` on Cohen's canonical f² thresholds (0.02 small / 0.15 medium / 0.35 large,
+Cohen 1988) gives `(0.0196, 0.1304, 0.2593)`. The code's small-threshold (`0.02`) is actually the
+raw f² value, not the converted R² value (`0.0196`); medium/large are correctly rounded
+conversions. **Impact:** negligible in practice — the discrepancy is <0.001 in every band, far
+below the precision at which a magnitude label ("small"/"medium"/"large") would ever flip for a
+real R² value — but the docstring/comment claims a derivation that the small-threshold constant
+doesn't quite follow. **Fix:** either change `0.02` → `0.0196` for internal consistency, or amend
+the comment to say "small threshold kept at Cohen's raw f² convention (0.02) for round-number
+simplicity; medium/large use the f²→R² conversion" so the two conventions aren't silently mixed
+under one citation.
+
+**SM7 — `GamesHowellTest`/Dunnett effect-size CI and Games-Howell `k` definition worth a docs note, not a bug.**
+`src/analysis/posthoc_core.py:1430-1433`: `k = len(comparable)` counts only groups with `n>=2`
+that appear anywhere in `valid_groups`, computed once outside the pairwise loop — correct per
+Games-Howell's definition (k = number of groups in the whole family, not just the current pair),
+confirmed by re-deriving the studentized-range formula (`q = √2·|t|`, `p = sf(q, k, df_welch)`)
+against the pingouin implementation description already cross-validated in the prior audit
+(memory: "Matches pingouin to 1e-4"). No new issue found; flagging only because a future editor
+might be tempted to move `k` inside the loop and inadvertently break FWER control by
+recalculating it per-comparable-pair-only.
 
 ## Strengths (verified)
 
-- **Games-Howell (`posthoc_core.py:1415-1489`)** — correctly computes the family size `k` once
-  from groups with n≥2 and reuses it for every pairwise `studentized_range` call (both p-value and
-  simultaneous CI), matching the standard Tukey-Kramer/Games-Howell procedure. Welch-Satterthwaite
-  df and Hedges' g bias correction (`1 - 3/(4·df-1)`) are the textbook formulas.
-- **Dunnett via `scipy.stats.dunnett` (`posthoc_core.py:1492-1557`)** — p-values and simultaneous
-  CIs are drawn from the same joint multivariate-t fit (documented in-code at lines 1509-1513),
-  guaranteeing p-value/CI consistency — a subtle correctness property many hand-rolled
-  implementations get wrong.
-- **EMM + multivariate-t Dunnett (`emm_posthoc.py`)** — closed-form reproduction of R's
-  `emmeans(...) |> contrast("trt.vs.ctrl", adjust="mvt")`, with explicit `UnsupportedDesignError`
-  fallback for unbalanced/incomplete designs rather than silently applying an invalid formula.
-  Verified the equicorrelation-0.5 assumption is derived and commented, not assumed blindly.
-- **Hand-rolled Holm correction (`nonparametricanovas.py::_holm_correct`)** — numerically verified
-  identical to `statsmodels.stats.multitest.multipletests(method='holm')` across 2000 randomized
-  trials; the step-down running-max logic is textbook-correct.
-- **`effect_sizes.py`** — order-sensitive pattern matching explicitly engineered to avoid the
-  "cohen_f matches cohen_d substring" trap (documented in-code), fails closed (`None`, not a wrong
-  guess) on unrecognized labels, and every effect-size-type string actually produced by
-  `posthoc_core.py`/`nonparametricanovas.py` was verified to canonicalize correctly.
-- **`SimpleLinearRegressionModel` HC3 auto-switch (`correlation_models.py:581-592`)** — when
-  Breusch-Pagan flags heteroscedasticity, `self.result` is reassigned to the robust-covariance
-  result object, and every downstream statistic (`main_p`, `main_t`, `coefficient_table`, F-test)
-  is read from that reassigned object — the corrected values correctly reach the fields that gate
-  significance, unlike the Mixed-ANOVA sphericity bug found in the parallel core audit.
-- **Freedman-Lane / Brunner-Langer ATS (`nonparametricanovas.py`)** — both include detailed
-  in-code derivation comments (e.g. the reduced-model formula choice, the Satterthwaite df2
-  approximation for the between-effect), and both report RTE tables / partial-η² alongside
-  primary results with an honest "no standardized Cohen thresholds apply to RTE" caveat rather
-  than force-fitting a Cohen's-d-style magnitude label onto a rank-based statistic.
-- **`GamesHowellTest`/`DunnettTest` control-group exact matching** in the live (non-legacy) code
-  paths of `posthoc_core.py` (lines 197, 879, 907, 1188, 1217) all use `==`/`!=`, not substring
-  `in` — the one substring-match instance (SM4) is confirmed dead.
+- **Games-Howell is genuinely Games-Howell.** `posthoc_core.py:1415-1489` — Welch-Satterthwaite
+  df, `q = √2·|t|` against the studentized-range distribution, Hedges' g with the exact
+  Hedges & Olkin (1985) small-sample correction `1 - 3/(4·df - 1)` (re-derived and matched to the
+  textbook formula in this pass), and a simultaneous CI built from the same q-distribution
+  (`q_crit`). The prior-audit fix holds.
+- **Dunnett is a single coherent multivariate-t fit, not double-corrected.** `posthoc_core.py:1502-1547`
+  (independent-groups) uses `scipy.stats.dunnett(...)` once and derives both p-values and CIs from
+  the same joint fit — the code comment explicitly documents why this guarantees CI/p-value
+  consistency, and it does (no separate Šidák pass layered on top).
+- **Mixed/RM Dunnett honestly labelled, not exact-Dunnett-by-assumption.** `posthoc_core.py:528-559`,
+  `:1172-1204` — both correctly recognize that within-subject/mixed contrasts violate the
+  independence/equicorrelation assumptions `scipy.stats.dunnett` requires, and fall back to plain
+  Holm-Bonferroni (not Holm-Šidák — the comments correctly explain *why* the Bonferroni variant is
+  required for FWER validity under arbitrary/negative dependence), labelling the result
+  `"Dunnett-type (Holm-adjusted, ...)"` rather than claiming exact Dunnett. This is the fix
+  described in the prior-audit memory and it is intact.
+- **Box-Cox divergence guard is correctly wired at every call site found in this batch.**
+  `correlation_models.py:128-141` (`_apply_transform`) calls `bounded_boxcox_lambda` (in
+  `statistical_testing/validators.py`), which rejects `|λ|>3` or non-finite estimates and
+  hard-falls-back to λ=0 (natural log) rather than clamping to a boundary — re-read in full and
+  confirmed to match the described fix exactly, including the "never clamp" invariant.
+  `_optimize_boxcox_for_regression` (correlation_models.py:143-191) independently bounds its
+  `minimize_scalar` search to `[-2, 2]`, a second, consistent guard for the Y-on-X regression path.
+- **MWU power was correctly *removed*, not just hidden.** No `power` computation exists anywhere
+  in `nonparametricanovas.py`'s `_mwu_posthoc_comp`/`_wilcoxon_posthoc_comp` — confirmed via
+  `git grep` returning zero hits for "power" across all 7 files in this batch. The fix wasn't a
+  patch that could regress; the invalid code path was deleted outright.
+- **EMM + multivariate-t Dunnett (`emm_posthoc.py`) is dimensionally and statistically careful.**
+  The split-plot/RM variance-component derivations (`variance_components`, `contrast_se_df`) and
+  the shared-equicorrelation multivariate-t adjustment (`_mvt_adjusted_p`, R=0.5 off-diagonal,
+  matching the documented "Var=2·MS_res/n, Cov=MS_res/n ⇒ ρ=0.5" derivation) are internally
+  consistent, and the module correctly refuses (`UnsupportedDesignError`) rather than silently
+  approximating when the design is unbalanced or incomplete — every caller (`posthoc_core.py:739-762`,
+  `:1009-1033`) catches that specific exception and falls back to the isolated-t-test path, never
+  swallowing it as a generic exception.
+- **Effect-size-type strings have zero writer/reader drift.** Every `effect_size_type=` literal
+  written by the post-hoc engines (`cohen_d`, `cohen_d_mixed`, `cohen_d_rm`, `hedges_g`, `r`,
+  `"Cohen's d (RM)"`, `rank_biserial_r`) round-trips correctly through
+  `effect_sizes.canonicalize()` to the intended `EffectSizeKind` — verified by direct execution,
+  not just static reading. The enum-dispatch design (replacing ambiguous substring matching)
+  described in the module's own docstring is doing its job.
+- **Brunner-Langer ATS and Freedman-Lane permutation implementations are heavily
+  self-documenting about design choices** (e.g. the comment block at
+  `nonparametricanovas.py:443-446` explicitly explains why a naive reduced-model choice would be
+  wrong and what the correct Freedman-Lane reduced model is) — this is exactly the kind of
+  "why, not just what" comment that makes a re-audit tractable, and it made cross-checking the
+  df1/df2 bookkeeping straightforward in this pass.
+- **Grubbs' test matches the canonical formula exactly.** `outlier_core.py:165-192` — re-derived
+  independently and matched the standard published critical value (n=10, α=0.05, two-sided:
+  2.290) to 3 decimal places.
 
 ## Recommended remediation order
 
-1. **SM1** (HIGH) — fix or honestly relabel the Mixed-ANOVA "Tukey" branch; cheapest fix is the
-   relabel (one line), full fix (implement real Tukey via the existing `_tukey_p_value` helper)
-   is also small since the RM sibling already has the pattern.
-2. **SM2** (MEDIUM) — delete/rename the shadowed `both_normal` dict-literal assignment; a 1-line
-   diff, purely preventive since nothing reads it today.
-3. **SM3** (MEDIUM) — either populate `F`/`df1`/`df2` in the three `primary_effect` dicts or relax
-   the reader's `and` condition; low risk either way since the `factors` table already renders the
-   correct numbers.
-4. **SM4** (LOW) — delete dead `_perform_test_legacy` (58 lines) as general cleanup; zero
-   behavioral risk since it has no callers.
-5. **SM5 / SM6** — no action needed; both are correctly implemented/documented as-is. Confirm SM6's
-   scope (test/fuzz-only reachability) stays true if `AnalysisManager.analyze()`'s calling
-   convention ever changes.
+1. **SM1 (outlier decimal-format corruption)** — cheapest fix with the highest silent-corruption
+   risk: gate the comma-decimal substitution behind a format-detection check or a "does this
+   already parse as float" short-circuit. This is the one finding in this batch that matches the
+   audit brief's core concern (silently produces a wrong-but-plausible result).
+2. **SM2 (Dunn-test bootstrap performance)** — vectorize the outer-product bootstrap; quick,
+   isolated, high user-visible payoff (turns a ~80s freeze into a sub-second wait at realistic
+   group sizes).
+3. **SM4 (bare `except:` → `except Exception:`)** — four one-line changes, zero behavior change,
+   removes the `KeyboardInterrupt`/`SystemExit`-swallowing risk.
+4. **SM3 / SM5 (silent per-cell / per-check failure logging)** — add `logger.warning` calls;
+   no behavior change, pure observability improvement.
+5. **SM6 (R² threshold constant vs. its own citation)** — cosmetic; fix the constant or amend the
+   comment, whichever better reflects intent.
+6. **SM7** — no action needed; documented here only as a "don't refactor this into a bug" note
+   for future editors.
