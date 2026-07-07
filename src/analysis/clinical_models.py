@@ -345,11 +345,14 @@ class ANCOVAModel(BaseStatisticalModel):
                 "group1": str(a),
                 "group2": str(b),
                 "estimate": float(e),
-                "se": float(s),
-                "t": float(tv),
+                "std_err": float(s),
+                "statistic": float(tv),
                 "df": ddf,
                 "p_value": float(p),
                 "significant": bool(p < self._alpha),
+                "test": "ANCOVA EMM Contrast",
+                "corrected": True,
+                "correction": "multivariate-t" if method == "vs_control" else "Holm-Bonferroni",
             })
         return contrasts
 

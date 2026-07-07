@@ -74,7 +74,7 @@ def test_vs_control_family_shape_and_mvt_pvalues():
     for c in contrasts:
         assert 0.0 <= c["p_value"] <= 1.0
         assert isinstance(c["significant"], bool)
-        assert c["se"] > 0 and c["df"] > 0
+        assert c["std_err"] > 0 and c["df"] > 0
 
 
 def test_pairwise_family_shape():
