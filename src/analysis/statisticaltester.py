@@ -1704,6 +1704,67 @@ class StatisticalTester:
                     df, dv, subject, rm_factor, aov, alpha
                 )
                 results.update(within_sphericity_results)
+
+                # E1 (Mixed ANOVA): if sphericity was violated, wire the
+                # Greenhouse-Geisser corrected p-value into the canonical
+                # fields the verdict/post-hoc dispatch actually reads -
+                # mirrors RM-ANOVA's existing fix one function away (tagged
+                # "E1" below). The Interaction row gets the SAME epsilon as
+                # the within-factor row: pingouin never computes a separate
+                # one for it, but both terms share the same error term/
+                # denominator df (confirmed from pingouin's mixed_anova()
+                # source), so this is the standard SPSS/afex/JASP
+                # convention, not an approximation.
+                main_effect_corr = within_sphericity_results.get(
+                    "within_sphericity_corrections", {}
+                ).get("main_effect")
+                if main_effect_corr is not None:
+                    epsilon = main_effect_corr["greenhouse_geisser"]["epsilon"]
+
+                    for f in results["factors"]:
+                        if f["factor"] == rm_factor:
+                            f["p_unc"] = f["p_value"]
+                            f["p_value"] = main_effect_corr["final_p_value"]
+                            f["df1"] = main_effect_corr["greenhouse_geisser"]["corrected_df1"]
+                            f["df2"] = main_effect_corr["greenhouse_geisser"]["corrected_df2"]
+
+                    if results["interactions"]:
+                        inter = results["interactions"][0]
+                        inter_df1_corr = inter["df1"] * epsilon
+                        inter_df2_corr = inter["df2"] * epsilon
+                        inter_p_corr = float(stats.f.sf(inter["F"], inter_df1_corr, inter_df2_corr))
+
+                        inter["p_unc"] = inter["p_value"]
+                        inter["p_value"] = inter_p_corr
+                        inter["df1"] = inter_df1_corr
+                        inter["df2"] = inter_df2_corr
+
+                        interaction_key = f"{rm_factor} * {between_factor}"
+                        results["within_sphericity_corrections"]["interactions"] = {
+                            interaction_key: {
+                                "effect": f"interaction ({interaction_key})",
+                                "greenhouse_geisser": {
+                                    "epsilon": epsilon,
+                                    "corrected_df1": inter_df1_corr,
+                                    "corrected_df2": inter_df2_corr,
+                                    "p_value": inter_p_corr,
+                                    "conservative": True,
+                                    "description": f"Greenhouse-Geisser correction for interaction ({interaction_key})"
+                                },
+                                "recommended_correction": "greenhouse_geisser",
+                                "final_p_value": inter_p_corr,
+                                "correction_used": f"Greenhouse-Geisser (ε = {epsilon:.3f})"
+                            }
+                        }
+
+                        # Top-level canonical fields: the Interaction row
+                        # currently always drives these (see the "Set
+                        # top-level fields" block earlier in this function).
+                        # F itself does not change under a sphericity
+                        # correction - only df/p do.
+                        results["p_value"] = inter_p_corr
+                        results["df1"] = inter_df1_corr
+                        results["df2"] = inter_df2_corr
             else:
                 logger.debug("DEBUG: Using statsmodels for Mixed ANOVA")
                 # Fallback with statsmodels
