@@ -1083,6 +1083,7 @@ class AnalysisManager:
                     analysis_log += "\nTransformation: No transformation performed.\n"
 
             posthoc_results = None
+            posthoc_choice = None
 
             if test_results is not None and test_results.get('p_value') is not None and test_results['p_value'] < 0.05 and len(groups) > 2:
                 # Significant result: perform post-hoc tests
