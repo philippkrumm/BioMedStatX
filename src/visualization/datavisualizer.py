@@ -1717,17 +1717,10 @@ class DataVisualizer:
         if logx:
             ax.set_xscale('log', base=10)
             
-        # Entscheide, ob Buchstaben oder Bars angezeigt werden sollen
-        show_letters = True
-        show_bars = False
-        if posthoc_method is not None and isinstance(posthoc_method, str):
-            method_lower = posthoc_method.lower()
-            if method_lower in ["pairwise t-test", "pairwise t test", "pairwise mann-whitney", "pairwise mann whitney", "pairwise_mannwhitney", "pairwise_ttest"]:
-                show_letters = False
-                show_bars = True
-        elif pairwise_results is not None and len(pairwise_results) > 0:
-            show_letters = False
-            show_bars = True
+        # Entscheide, ob Buchstaben oder Bars angezeigt werden sollen - via
+        # the shared helper Bar/Box/Violin already use, for parity (VZ8).
+        show_bars = DataVisualizer._result_uses_brackets(pairwise_results, posthoc_method)
+        show_letters = not show_bars
         if show_letters and show_significance_letters:
             DataVisualizer._add_significance_letters_raincloud(
                 ax, groups, samples, test_recommendation,
