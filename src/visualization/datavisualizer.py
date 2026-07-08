@@ -2384,9 +2384,12 @@ class DataVisualizer:
             logger.error(f"Error adding significance letters: {str(e)}")
             import traceback
             traceback.print_exc()
+            DataVisualizer._draw_warning_annotation(
+                ax, "Warning: significance letters could not be computed and are not shown."
+            )
 
     @staticmethod
-    def _add_significance_letters_raincloud(ax, groups, samples, test_recommendation, 
+    def _add_significance_letters_raincloud(ax, groups, samples, test_recommendation,
                                           height_offset, font_size, positions=None, pairwise_results=None):
         """Add significance letters for horizontal raincloud plots"""
         try:
@@ -2447,6 +2450,9 @@ class DataVisualizer:
                                     alpha=0.8))
         except Exception as e:
             logger.error(f"Error adding raincloud significance letters: {str(e)}")
+            DataVisualizer._draw_warning_annotation(
+                ax, "Warning: significance letters could not be computed and are not shown."
+            )
 
     @staticmethod
     def set_global_font(family="Arial", main_text_family="Times New Roman", use_latex=False):
