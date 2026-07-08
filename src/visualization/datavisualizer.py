@@ -808,7 +808,7 @@ class DataVisualizer:
     """Advanced data visualization class with extensive customization options"""
     
     # Default colors for plots
-    DEFAULT_COLORS = ['#3357FF', '#FF5733', '#33FF57', '#F033FF', '#FF3366', '#33FFEC']
+    DEFAULT_COLORS = ['#3357FF', '#FF5733', '#2E7D32', '#F033FF', '#FF3366', '#00897B']
     
     @staticmethod
     def _auto_adjust_figure_size(width, height, groups, plot_type='Bar'):
