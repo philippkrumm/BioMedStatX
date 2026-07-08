@@ -278,25 +278,38 @@ class MixedAnovaAssumptionEngine:
                 )
                 
                 welch_f = numerator / denominator
-                
+
                 # Approximate degrees of freedom
                 df1 = len(group_data) - 1
-                df2 = (len(group_data)**2 - 1) / (3 * sum((1 - w/sum(weights))**2 / (n - 1) 
+                df2 = (len(group_data)**2 - 1) / (3 * sum((1 - w/sum(weights))**2 / (n - 1)
                                                          for w, n in zip(weights, group_sizes)))
-                
+
+                # A zero-variance group makes weights/grand_mean/welch_f non-finite
+                # (numpy divide-by-zero warns and returns inf/nan, it doesn't raise) -
+                # force the except path below so this isn't silently returned as a
+                # valid Welch result.
+                if not (np.isfinite(welch_f) and np.isfinite(df2)):
+                    raise ValueError("non-finite Welch statistic (likely a zero-variance group)")
+
                 # P-value from F-distribution
                 f = stats.f
                 p_val_welch = 1 - f.cdf(welch_f, df1, df2)
-                
+                welch_calculation_degraded = False
+
             except Exception:
-                # Fallback to scipy's implementation if available
-                welch_f, p_val_welch = f_oneway(*group_data)
+                # Fallback to the standard f_oneway result computed above - this
+                # is NOT a variance-robust result, it's the standard f_oneway
+                # relabeled. welch_calculation_degraded (below) tells the
+                # caller so it isn't presented as if it were actually robust.
+                welch_f, p_val_welch = f_stat_standard, p_val_standard
+                welch_calculation_degraded = True
                 df1, df2 = len(group_data) - 1, sum(group_sizes) - len(group_data)
-            
+
             return {
                 "test_name": "Welch's ANOVA (Unequal Variances)",
                 "welch_f_statistic": float(welch_f),
                 "welch_p_value": float(p_val_welch),
+                "welch_calculation_degraded": welch_calculation_degraded,
                 "standard_f_statistic": float(f_stat_standard),
                 "standard_p_value": float(p_val_standard),
                 "df1": int(df1),
