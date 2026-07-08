@@ -386,10 +386,10 @@ class ColorsTab(QWidget):
         self.hatch_combos = {}
         self.dialog_ref = None  # Reference to main dialog will be set later
         self.journal_palettes = {
-            'Nature': ['#4E79A7', '#F28E2B', '#E15759', '#76B7B2', '#59A14F', '#EDC948', '#B07AA1', '#FF9DA7'],
-            'Science': ['#0072B2', '#D55E00', '#009E73', '#CC79A7', '#56B4E9', '#E69F00', '#999999'],
-            'NEJM': ['#BC3C29', '#0072B5', '#E18727', '#20854E', '#7876B1', '#6F99AD', '#FFDC91'],
-            'Lancet': ['#00468B', '#ED0000', '#42B540', '#0099B4', '#925E9F', '#FDAF91', '#AD002A']
+            'Nature': ['#4E79A7', '#B75C03', '#E15759', '#3F817C', '#59A14F', '#907207', '#B07AA1', '#EB0018'],
+            'Science': ['#0072B2', '#D55E00', '#009E73', '#CC79A7', '#0F7CBA', '#9C6C00', '#767676'],
+            'NEJM': ['#BC3C29', '#0072B5', '#B16310', '#20854E', '#7876B1', '#6F99AD', '#9C6A00'],
+            'Lancet': ['#00468B', '#ED0000', '#2C882A', '#0099B4', '#925E9F', '#D73C00', '#AD002A']
         }
         self.init_ui()
         
