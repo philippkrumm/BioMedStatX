@@ -1909,12 +1909,24 @@ class DataVisualizer:
             ax.set_xlim(x_limits)
 
         if logx:
-            ax.set_xscale('log', base=10)
-            if samples:
-                count_x, _ = DataVisualizer._analyze_nonpositive_values(groups, samples)
-                if count_x > 0:
-                    DataVisualizer._draw_warning_annotation(
-                        ax, f"Data Warning: {count_x} values ≤ 0 omitted from log-scale axis.")
+            count_x, linthresh_x = (
+                DataVisualizer._analyze_nonpositive_values(groups, samples) if samples else (0, None)
+            )
+            if count_x > 0 and linthresh_x is not None:
+                # Lossless path: symlog preserves near-zero/negative readings
+                # instead of dropping them - mirrors the logy branch below.
+                ax.set_xscale('symlog', linthresh=linthresh_x)
+                ax.xaxis.set_major_locator(SymmetricalLogLocator(base=10, linthresh=linthresh_x))
+                ax.xaxis.set_major_formatter(LogFormatterMathtext(base=10, linthresh=linthresh_x))
+                DataVisualizer._draw_notice_annotation(
+                    ax, f"Data Notice: Values ≤ 0 detected. Auto-applied symlog scale "
+                    f"(linthresh = {linthresh_x:.4g}).")
+            elif count_x > 0:
+                ax.set_xscale('log', base=10)
+                DataVisualizer._draw_warning_annotation(
+                    ax, f"Data Warning: {count_x} values ≤ 0 omitted from log-scale axis.")
+            else:
+                ax.set_xscale('log', base=10)
 
         if logy:
             count_y, linthresh = (
