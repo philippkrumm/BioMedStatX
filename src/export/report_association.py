@@ -31,7 +31,7 @@ class _AssociationMixin:
             p_style = "color:var(--success)" if is_sig else "color:var(--muted)"
             rows_html += (
                 f"<tr>"
-                f"<td>{row.get('parameter', '')}</td>"
+                f"<td>{_FormattingMixin._esc(row.get('parameter', ''))}</td>"
                 f"<td class='num-cell'>{or_display}</td>"
                 f"<td class='num-cell'>{_FormattingMixin._format_metric(row.get('ci_lower'))}</td>"
                 f"<td class='num-cell'>{_FormattingMixin._format_metric(row.get('ci_upper'))}</td>"
@@ -84,7 +84,7 @@ class _AssociationMixin:
             p_style = "color:var(--success)" if is_sig else "color:var(--muted)"
             rows_html += (
                 f"<tr>"
-                f"<td>{row.get('parameter', '')}</td>"
+                f"<td>{_FormattingMixin._esc(row.get('parameter', ''))}</td>"
                 f"<td class='num-cell'>{coef_display}</td>"
                 f"<td class='num-cell'>{_FormattingMixin._format_metric(row.get('std_err'))}</td>"
                 f"<td class='num-cell'>{_FormattingMixin._format_metric(row.get('z_value'))}</td>"
@@ -132,7 +132,7 @@ class _AssociationMixin:
             p_style = "color:var(--success)" if is_sig else "color:var(--muted)"
             rows_html += (
                 f"<tr>"
-                f"<td>{row.get('parameter', '')}</td>"
+                f"<td>{_FormattingMixin._esc(row.get('parameter', ''))}</td>"
                 f"<td class='num-cell'>{coef_display}</td>"
                 f"<td class='num-cell'>{_FormattingMixin._format_metric(row.get('std_err'))}</td>"
                 f"<td class='num-cell'>{_FormattingMixin._format_metric(row.get('t_value'))}</td>"
