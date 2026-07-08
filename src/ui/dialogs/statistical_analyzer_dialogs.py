@@ -379,7 +379,6 @@ class HelpHubDialog(QDialog):
             self._current_recipe = None
             self.recipe_title.setText("Recipe not found")
             self.recipe_browser.setHtml("<p>Recipe content is unavailable.</p>")
-            self.copy_button.setEnabled(False)
             return
 
         self._current_recipe = recipe
