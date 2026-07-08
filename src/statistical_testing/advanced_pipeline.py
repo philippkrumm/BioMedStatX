@@ -15,6 +15,7 @@ from .engines.reporting import ReportingEngine
 from .engines.transformation import TransformationEngine
 from .validators import (
     ValidationError,
+    validate_outcome,
     validate_samples_for_test,
     validate_test_design,
 )
@@ -90,7 +91,22 @@ def perform_advanced_test_pipeline(
 
         valid_groups = [g for g in groups if g in transformed_samples and len(transformed_samples[g]) > 0]
         # Data-quality pre-flight on the extracted cells
-        if test not in ["logistic_regression"]:
+        if test == "logistic_regression":
+            # logistic_regression's shape (binary outcome + predictors) doesn't
+            # fit validate_samples_for_test's group-based gate - use the
+            # single-vector degeneracy gate on the outcome column instead.
+            # Previously this test had NO pre-flight gate at all (AT4).
+            _outcome_issue = validate_outcome(df[dv], label=dv, min_n_block=2)
+            if _outcome_issue is not None:
+                logger.warning("Advanced pre-flight blocked: %s", _outcome_issue.message)
+                blocked = StatisticalTester.make_blocked_result(
+                    _outcome_issue.message, code=_outcome_issue.code,
+                    details={"test": test},
+                )
+                blocked["test_info"] = test_info
+                blocked["recommendation"] = recommendation
+                return blocked
+        else:
             _quality = validate_samples_for_test(
                 transformed_samples, valid_groups, dependent=False, min_n_block=2,
             )
