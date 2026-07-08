@@ -418,6 +418,28 @@ class InteractiveDecisionTreeWidget(QGraphicsView):
         self.user_interacted = True
         super().mousePressEvent(event)
 
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key_Plus, Qt.Key_Equal):
+            self.user_interacted = True
+            factor = self._zoom_factor
+            current_scale = self.transform().m11()
+            if self._min_zoom <= current_scale * factor <= self._max_zoom:
+                self.scale(factor, factor)
+            event.accept()
+        elif event.key() == Qt.Key_Minus:
+            self.user_interacted = True
+            factor = 1.0 / self._zoom_factor
+            current_scale = self.transform().m11()
+            if self._min_zoom <= current_scale * factor <= self._max_zoom:
+                self.scale(factor, factor)
+            event.accept()
+        elif event.key() == Qt.Key_0:
+            self.user_interacted = False
+            self.refit_view()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if self.tree_data and not self.user_interacted:
