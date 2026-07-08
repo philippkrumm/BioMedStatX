@@ -97,13 +97,26 @@ class OutlierDetector:
                 self.debug_log.append("Column is already numeric, no conversion needed")
                 return
             
-            # Convert German decimal numbers
+            def _parse_numeric_string(raw):
+                text = str(raw).strip()
+                try:
+                    # If it already parses as a plain float, it's not
+                    # German-formatted - leave it alone. This is the fix for
+                    # the silent 10-1000x inflation of US/international-
+                    # formatted decimal strings like "1.5" -> 15.0.
+                    return float(text)
+                except ValueError:
+                    pass
+                # Only reached for strings that fail a direct parse - assume
+                # German format (dot=thousands, comma=decimal). If this also
+                # fails, let the ValueError propagate rather than silently
+                # producing a wrong number.
+                german_converted = text.replace('.', '').replace(',', '.')
+                return float(german_converted)
+
             self.df[self.value_col] = (
                 self.df[self.value_col]
-                    .astype(str)
-                    .str.replace('.', '', regex=False)   # Remove thousand separators
-                    .str.replace(',', '.', regex=False)  # Comma → Period
-                    .astype(float)
+                    .apply(_parse_numeric_string)
             )
             
             self.debug_log.append(f"Sample values after conversion: {self.df[self.value_col].head(3).tolist()}")
