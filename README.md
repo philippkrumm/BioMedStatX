@@ -159,8 +159,8 @@ BioMedStatX/
 ├─ LICENSE                        # MIT License
 ├─ CONTRIBUTING.md                # Detailed contributing guidelines
 ├─ CODE_OF_CONDUCT.md             # Contributor Covenant Code of Conduct
-├─ Start_BioMedStatX_on_Linux.sh  # Launcher for Linux/macOS source/binary startup
-├─ start.bat                      # Launcher for Windows source/binary startup
+├─ start.sh                       # Launcher for Linux/macOS source/binary startup
+├─ run.bat                        # Launcher for Windows source/binary startup
 ├─ src/                   # Main application source code
 ├─ docs/                          # User-facing documentation
 │  ├─ HowTo.md                           # Screenshot-based user guide (GUI)
