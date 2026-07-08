@@ -1063,6 +1063,28 @@ def _classify_binary_outcome(unique_values, dv_col_name):
     )
 
 
+def _ap_lmm_vs_rmanova_needed(df, subject_column, within_factor, dv_column):
+    """True if this DV column has structural or NaN-driven missingness across
+    the within-factor's levels for this subject_column, requiring an LMM
+    instead of RM-ANOVA/paired-ttest for THIS specific column. Each DV column
+    in a multi-DV batch can have a different missingness pattern (round-2
+    audit finding U2) - callers must invoke this per DV column, not just
+    once for the whole batch.
+    """
+    try:
+        counts = df.groupby([subject_column, within_factor]).size().unstack(fill_value=0)
+        if (counts == 0).any().any():
+            return True
+        if dv_column:
+            valid = df[[subject_column, within_factor, dv_column]].dropna(subset=[dv_column])
+            valid_counts = valid.groupby([subject_column, within_factor]).size().unstack(fill_value=0)
+            if (valid_counts == 0).any().any():
+                return True
+        return False
+    except Exception:
+        return False
+
+
 def _ap_build_analysis_context(self):
     dv_columns = self.dv_bucket.get_assigned_columns()
     factor_columns = [column for column in [
@@ -1221,24 +1243,12 @@ def _ap_build_analysis_context(self):
     elif subject_column and context["within_factors"]:
         within_factor = context["within_factors"][0]
         dv_col_for_balance = dv_columns[0] if dv_columns else None
-        try:
-            # Case 1: structural missingness (whole Subject×Timepoint combos absent)
-            counts = self.df.groupby([subject_column, within_factor]).size().unstack(fill_value=0)
-            has_structural_missing = (counts == 0).any().any()
-
-            # Case 2: row exists but DV is NaN (patient present at visit but no measurement)
-            has_nan_missing = False
-            if dv_col_for_balance and not has_structural_missing:
-                valid = self.df[[subject_column, within_factor, dv_col_for_balance]].dropna(
-                    subset=[dv_col_for_balance]
-                )
-                valid_counts = valid.groupby([subject_column, within_factor]).size().unstack(fill_value=0)
-                has_nan_missing = (valid_counts == 0).any().any()
-
-            if has_structural_missing or has_nan_missing:
-                context["inferred_test"] = "lmm"
-        except Exception:
-            pass
+        # Snapshot the test choice as it stood before the LMM upgrade check,
+        # so the multi-DV loop (_ap_determine_and_run_test) can fall back to
+        # it for any DV column that doesn't itself need LMM (U2 fix).
+        context["_test_before_lmm_upgrade"] = context["inferred_test"]
+        if _ap_lmm_vs_rmanova_needed(self.df, subject_column, within_factor, dv_col_for_balance):
+            context["inferred_test"] = "lmm"
 
     # 3. Covariates present → ANCOVA upgrade (only for non-clinical tests)
     if covariate_columns and context["inferred_test"] in ("independent_ttest", "one_way_anova"):
@@ -1789,6 +1799,17 @@ def _ap_determine_and_run_test(self):
                 per_dv_context = dict(context)
                 per_dv_context["dv_columns"] = [dv_column]
                 per_dv_context["current_dv"] = dv_column
+                # U2 fix: re-derive the LMM-vs-base-test decision for THIS
+                # column instead of reusing the once-computed batch decision.
+                subject_column = context.get("subject_column")
+                within_factors = context.get("within_factors")
+                base_test = context.get("_test_before_lmm_upgrade")
+                if subject_column and within_factors and base_test is not None:
+                    per_dv_context["inferred_test"] = (
+                        "lmm"
+                        if _ap_lmm_vs_rmanova_needed(self.df, subject_column, within_factors[0], dv_column)
+                        else base_test
+                    )
                 QApplication.processEvents()
                 all_results[dv_column] = self._execute_single_analysis(per_dv_context, dv_column, output_dir, skip_plots=True)
 
