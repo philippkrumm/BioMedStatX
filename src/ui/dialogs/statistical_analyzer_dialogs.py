@@ -387,68 +387,6 @@ class HelpHubDialog(QDialog):
         self.recipe_browser.setHtml(recipe.get("html", "<p>No content available.</p>"))
 
 
-class ColumnSelectionDialog(QDialog):
-    """Dialog for selecting measurement columns for a dataset"""
-    def __init__(self, available_columns, parent=None):
-        if not available_columns:
-            QMessageBox.critical(parent, "Error", "No measurement columns available! Dialog will not open.")
-            raise ValueError("No measurement columns passed to ColumnSelectionDialog.")
-        super().__init__(parent)
-        _configure_dialog(self, object_name="columnSelectionDialog")
-        self.setWindowTitle("Select Measurement Columns")
-        self.resize(400, 500)
-        
-        layout = QVBoxLayout(self)
-        layout.setObjectName("lyoColumnSelection")
-        
-        # Explanation
-        label = QLabel("Select the columns to be used for analysis:")
-        layout.addWidget(label)
-        
-        # NEW OPTION: Multi-dataset analysis
-        self.multi_dataset_check = QCheckBox("Separate analysis per dataset with shared HTML report")
-        self.multi_dataset_check.setToolTip("Analyzes each dataset separately, but combines all results in a shared HTML report")
-        layout.addWidget(self.multi_dataset_check)
-        
-        # Checkboxes for each column
-        scroll_area = QScrollArea()
-        scroll_area.setObjectName("scrollColumns")
-        scroll_area.setWidgetResizable(True)
-        scroll_content = QWidget()
-        scroll_content.setObjectName("widColumnContainer")
-        scroll_layout = QVBoxLayout(scroll_content)
-        scroll_layout.setObjectName("lyoColumnCheckboxes")
-        
-        self.column_checks = {}
-        for column in available_columns:
-            check = QCheckBox(str(column))
-            check.setObjectName(f"chkColumn_{str(column).replace(' ', '_')}")
-            self.column_checks[column] = check
-            scroll_layout.addWidget(check)
-        
-        scroll_area.setWidget(scroll_content)
-        # Limit height for many columns
-        scroll_area.setMaximumHeight(300)
-        layout.addWidget(scroll_area)
-        
-        # Buttons
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        button_box.setObjectName("btnDialogButtons")
-        button_box.accepted.connect(self.accept)
-        button_box.rejected.connect(self.reject)
-        layout.addWidget(button_box)
-    
-    def get_selected_columns(self):
-        selected = [column for column, check in self.column_checks.items() if check.isChecked()]
-        if not selected:
-            QMessageBox.warning(self, "Warning", "Please select at least one measurement column!")
-        return {
-            "columns": selected,
-            "multi_dataset": self.multi_dataset_check.isChecked(),
-            "combine": False
-        }
-
-
 class PairwiseComparisonDialog(QDialog):
     """Dialog for selecting groups for pairwise comparisons"""
     def __init__(self, available_groups, parent=None):
