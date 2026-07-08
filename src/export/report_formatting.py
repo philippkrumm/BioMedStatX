@@ -10,6 +10,7 @@ Internal cross-calls reference ``_FormattingMixin`` directly (not
 ``HTMLExporter``) to keep this module free of any import back into
 ``html_exporter`` (no circular import).
 """
+import html
 import math
 import random
 from pathlib import Path
@@ -33,6 +34,14 @@ logger = get_logger(__name__)
 
 class _FormattingMixin:
     """Stateless formatting / numeric helpers mixed into ``HTMLExporter``."""
+
+    @staticmethod
+    def _esc(value: Any) -> str:
+        """HTML-escape a value for safe interpolation into a raw f-string HTML
+        block (i.e. anywhere NOT already covered by Jinja's autoescape=True -
+        see report_association.py's chart-table builders, which render via
+        `{{ chart.html | safe }}` and therefore bypass autoescaping)."""
+        return html.escape(str(value))
 
     @staticmethod
     def _normalize_for_json(value: Any):
