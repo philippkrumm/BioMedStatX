@@ -1594,12 +1594,14 @@ class DunnTest(PostHocAnalyzer):
             z = (U - n1 * n2 / 2) / np.sqrt(n1 * n2 * (n1 + n2 + 1) / 12)
             effect_r = abs(z) / np.sqrt(n1 + n2)
 
-            # Bootstrap CI
+            # Bootstrap CI - np.subtract.outer(b1, b2) computes the identical
+            # n1×n2 pairwise-difference matrix as the equivalent nested
+            # Python loop, vectorized (was ~13.5s per pair at n=500/group).
             boots = []
             for _ in range(n_boot):
                 b1 = np.random.choice(x, n1, replace=True)
                 b2 = np.random.choice(y, n2, replace=True)
-                boots.append(np.median([u - v for u in b1 for v in b2]))
+                boots.append(np.median(np.subtract.outer(b1, b2)))
             ci_low, ci_high = np.percentile(boots, [100*alpha/2, 100*(1-alpha/2)])
 
             # Median difference
