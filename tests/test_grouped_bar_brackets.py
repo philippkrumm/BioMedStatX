@@ -68,9 +68,11 @@ def test_grouped_bracket_positions_only_within_stratum_and_stacked():
         {"group1": "Ctrl:T1", "group2": "TrtB:T1", "p_value": 0.001, "significant": True},
         {"group1": "Ctrl:T2", "group2": "TrtA:T2", "p_value": 0.04, "significant": True},
     ]
+    fig, ax = plt.subplots()
     brackets = DataVisualizer._grouped_bracket_positions(
-        centers, label_map, pairwise, y_max=10.0, line_height=0.08
+        ax, centers, label_map, pairwise, y_max=10.0, line_height=0.08
     )
+    plt.close(fig)
     assert len(brackets) == 3
     for b in brackets:
         assert b["x1"] < b["x2"]

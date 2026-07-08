@@ -494,21 +494,24 @@ class DataVisualizer:
         return centers
 
     @staticmethod
-    def _grouped_bracket_positions(centers, label_map, pairwise_results,
+    def _grouped_bracket_positions(ax, centers, label_map, pairwise_results,
                                    y_max, line_height):
         """Build bracket dicts for treatment-vs-control comparisons using bar
         patch centers. Each comparison's two groups resolve (via label_map) to
         (between, within) cells; their center x become x1/x2. Heights are
         stacked with the existing x-overlap collision check. Comparisons whose
-        groups are not both resolvable/keyed are skipped (defensive).
+        groups are not both resolvable/keyed are skipped (defensive) - a
+        dropped-count notice is drawn on `ax` when this happens (VZ2).
         """
         base_height = y_max * 1.05
         step = y_max * line_height
         prepared = []
+        dropped = 0
         for comp in pairwise_results:
             g1, g2 = comp.get("group1"), comp.get("group2")
             c1, c2 = label_map.get(g1), label_map.get(g2)
             if c1 is None or c2 is None or c1 not in centers or c2 not in centers:
+                dropped += 1
                 continue
             x1, x2 = centers[c1], centers[c2]
             if x1 > x2:
@@ -530,6 +533,11 @@ class DataVisualizer:
                              "p_value": d["comp"].get("p_value"),
                              "comp": d["comp"]})
             used.append((x1, x2, height))
+
+        if dropped > 0:
+            DataVisualizer._draw_notice_annotation(
+                ax, f"Notice: {dropped} comparison(s) could not be positioned and were omitted."
+            )
         return brackets
 
     @staticmethod
@@ -574,7 +582,7 @@ class DataVisualizer:
                 ax, between_order=between_order, within_order=within_order)
             y_max = DataVisualizer._get_plot_max_height_robust(ax, None)
             brackets = DataVisualizer._grouped_bracket_positions(
-                centers, label_map, pairwise_results, y_max, comparison_line_height)
+                ax, centers, label_map, pairwise_results, y_max, comparison_line_height)
             for bracket in brackets:
                 DataVisualizer._draw_single_bracket(
                     ax, bracket, bracket_line_width, comparison_font_size,
@@ -729,7 +737,12 @@ class DataVisualizer:
             }
             brackets.append(bracket)
             used_positions.append((pos1, pos2, current_height))
-        
+
+        if len(comparisons) < len(pairwise_results):
+            dropped = len(pairwise_results) - len(comparisons)
+            DataVisualizer._draw_notice_annotation(
+                ax, f"Notice: {dropped} comparison(s) could not be positioned and were omitted."
+            )
         return brackets
 
     @staticmethod
