@@ -1868,10 +1868,9 @@ class PlotAestheticsDialog(QDialog):
         if hasattr(self, 'file_name_edit') and self.file_name_edit is not None:
             raw_name = self.file_name_edit.text().strip()
             if raw_name and _re.search(r'[<>:"/\\|?*]', raw_name):
-                QMessageBox.warning(self, "Invalid filename",
-                    'File name contains invalid characters: < > : " / \\ | ? *\n'
-                    'Please use only letters, digits, spaces, hyphens, or underscores.')
-                return config
+                sanitized_name = _re.sub(r'[<>:"/\\|?*]', '_', raw_name)
+                self.file_name_edit.setText(sanitized_name)
+                raw_name = sanitized_name
             config['file_name'] = raw_name or None
         config['create_plot'] = True
         config['dependent'] = self.dependent
