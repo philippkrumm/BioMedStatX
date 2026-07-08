@@ -813,7 +813,7 @@ class _SummariesMixin:
                 figure.add_trace(
                     go.Box(
                         y=numeric,
-                        name=str(group_name),
+                        name=_FormattingMixin._esc(group_name),
                         marker=dict(color=color, size=7, opacity=0.7),
                         line=dict(color=color),
                         fillcolor="rgba(15,118,110,0.12)" if idx == 0 else None,

@@ -285,7 +285,8 @@ class _ChartsMixin:
                         y_vals.append(cell["mean"])
                         y_err.append(cell["se"])
                         hover_texts.append(
-                            f"{factor_x}={x_val}, {factor_line}={line_level}<br>"
+                            f"{_FormattingMixin._esc(factor_x)}={_FormattingMixin._esc(x_val)}, "
+                            f"{_FormattingMixin._esc(factor_line)}={_FormattingMixin._esc(line_level)}<br>"
                             f"Mean: {cell['mean']:.3f} ± {cell['se']:.3f} SE<br>n={cell['n']}"
                         )
                     else:
@@ -296,7 +297,7 @@ class _ChartsMixin:
                     x=x_levels_order,
                     y=y_vals,
                     mode="lines+markers",
-                    name=f"{factor_line}={line_level}",
+                    name=f"{_FormattingMixin._esc(factor_line)}={_FormattingMixin._esc(line_level)}",
                     line=dict(color=color, width=2),
                     marker=dict(size=8, color=color),
                     error_y=dict(type="data", array=y_err, visible=True,
@@ -532,7 +533,8 @@ class _ChartsMixin:
                         y_vals.append(cell["mean"])
                         y_err.append(cell["se"])
                         hover_texts.append(
-                            f"{factor_between}={b_level}, {factor_within}={w_level}<br>"
+                            f"{_FormattingMixin._esc(factor_between)}={_FormattingMixin._esc(b_level)}, "
+                            f"{_FormattingMixin._esc(factor_within)}={_FormattingMixin._esc(w_level)}<br>"
                             f"Mean: {cell['mean']:.3f} ± {cell['se']:.3f} SE<br>n={cell['n']}"
                         )
                     else:
@@ -543,7 +545,7 @@ class _ChartsMixin:
                     x=within_sorted,
                     y=y_vals,
                     mode="lines+markers",
-                    name=f"{factor_between}={b_level}",
+                    name=f"{_FormattingMixin._esc(factor_between)}={_FormattingMixin._esc(b_level)}",
                     line=dict(color=color, width=2.5),
                     marker=dict(size=9, color=color),
                     error_y=dict(type="data", array=y_err, visible=True,
@@ -737,8 +739,7 @@ class _ChartsMixin:
                 numeric = _FormattingMixin._coerce_numeric_sequence(values)
                 if not numeric:
                     continue
-                import html
-                escaped_group_name = html.escape(str(group_name))
+                escaped_group_name = _FormattingMixin._esc(group_name)
                 group_order.append(str(group_name))
                 label = f"{escaped_group_name} (n={len(numeric)})"
                 color = palette[idx % len(palette)]
