@@ -488,6 +488,7 @@ HELP_RECIPES = [
 <h3>Reading the result</h3>
 <p>The main output is the <b>coefficient (β)</b> for the primary predictor, with its p-value. If β = -2.5 for Dosage_mg, it means: for every additional mg of dosage, blood pressure decreases by 2.5 points on average, holding age and baseline BP constant.</p>
 <p>The report also shows <b>R²</b>: the share of variation in the outcome the model accounts for. A significant β with a low R² means the predictor matters but leaves most of the outcome unexplained.</p>
+<p>The exported report also lists a full coefficient table (parameter, coefficient, standard error, t-statistic, p-value, and 95% confidence interval) for every predictor and covariate in the model, not just the primary one.</p>
 
 <h3>Before you click Start: checklist</h3>
 <ul>
