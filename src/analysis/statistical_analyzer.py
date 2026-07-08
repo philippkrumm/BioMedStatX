@@ -498,7 +498,7 @@ def _install_global_excepthook():
                 f.write(f"\n=== {datetime.datetime.now()} ===\n{msg}\n")
         except Exception:
             pass
-        logger.info("%s %s", msg, file=sys.stderr)
+        logger.error("%s", msg)
         # Show dialog if a QApplication exists
         try:
             if QApplication.instance():
