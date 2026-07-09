@@ -1269,7 +1269,7 @@ class _ChartsMixin:
                     figure.add_trace(go.Bar(
                         x=[label],
                         y=[mean],
-                        name=f"{label} (n={n})",
+                        name=f"{_FormattingMixin._esc(label)} (n={n})",
                         error_y=dict(type="data", array=[sd], visible=True, color=color),
                         marker_color=color,
                         marker_opacity=0.82,
