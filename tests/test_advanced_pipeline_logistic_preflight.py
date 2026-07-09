@@ -35,6 +35,38 @@ def test_constant_binary_outcome_is_blocked_before_fitting():
     assert result.get("block_code") == "VAR_ZERO"
 
 
+def test_text_labeled_binary_outcome_is_not_blocked():
+    # R1 (round-3 audit): AT4's pre-flight gate coerces the raw outcome through
+    # pd.to_numeric BEFORE the model's own text-to-0/1 encoding step
+    # (LogisticRegressionModel.fit(), clinical_models.py:1092-1096, which
+    # explicitly supports and correctly encodes a 2-level text outcome like
+    # "yes"/"no"). Coercing "yes"/"no" through pd.to_numeric turns every value
+    # to NaN, so a perfectly valid, balanced text-labeled outcome was
+    # incorrectly blocked as EMPTY_GROUP.
+    import numpy as np
+    rng = np.random.RandomState(0)
+    n = 60
+    predictor = rng.randn(n)
+    outcome_numeric = (predictor + rng.randn(n) * 0.5 > 0).astype(int)
+    df = pd.DataFrame({
+        "Outcome": ["yes" if v == 1 else "no" for v in outcome_numeric],
+        "Predictor": predictor,
+    })
+
+    result = perform_advanced_test_pipeline(
+        df=df,
+        test="logistic_regression",
+        dv="Outcome",
+        subject=None,
+        between=["Predictor"],
+        within=None,
+        force_parametric=True,
+    )
+
+    assert result.get("blocked") is not True, f"a valid text-labeled outcome should not be blocked: {result}"
+    assert result.get("error") is None, f"a valid text-labeled outcome should not error: {result}"
+
+
 def test_normal_binary_outcome_is_not_blocked():
     import numpy as np
     rng = np.random.RandomState(0)

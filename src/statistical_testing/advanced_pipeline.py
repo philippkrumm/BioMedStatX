@@ -96,7 +96,22 @@ def perform_advanced_test_pipeline(
             # fit validate_samples_for_test's group-based gate - use the
             # single-vector degeneracy gate on the outcome column instead.
             # Previously this test had NO pre-flight gate at all (AT4).
-            _outcome_issue = validate_outcome(df[dv], label=dv, min_n_block=2)
+            #
+            # validate_outcome coerces via pd.to_numeric, which turns a
+            # 2-level TEXT outcome (e.g. "yes"/"no") entirely to NaN - but
+            # LogisticRegressionModel.fit() (clinical_models.py) explicitly
+            # supports and correctly encodes exactly that shape via its own
+            # unique-value identity check. Mirror that encoding here first,
+            # so a valid text-labeled outcome isn't miscoerced into looking
+            # empty (round-3 audit finding R1).
+            _outcome_raw = df[dv]
+            _unique_outcome_vals = sorted(_outcome_raw.dropna().unique())
+            if len(_unique_outcome_vals) == 2 and set(_unique_outcome_vals) != {0, 1}:
+                _outcome_for_check = (_outcome_raw == _unique_outcome_vals[1]).astype(float)
+                _outcome_for_check[_outcome_raw.isna()] = float("nan")
+            else:
+                _outcome_for_check = _outcome_raw
+            _outcome_issue = validate_outcome(_outcome_for_check, label=dv, min_n_block=2)
             if _outcome_issue is not None:
                 logger.warning("Advanced pre-flight blocked: %s", _outcome_issue.message)
                 blocked = StatisticalTester.make_blocked_result(
