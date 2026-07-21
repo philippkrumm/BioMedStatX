@@ -161,3 +161,78 @@ Fuzzer (fuzzing/) = exploratory, NOT in CI; findings distilled into CATALOG + re
 - 5b: ANCOVA fit/adjusted_means/emm (90-600), Firth inner loop (1142-1205), HL/calibration/ROC (1366-1499)
 - 6b: html_exporter context assembly (273-447), report_charts plot builders, report_association
 - Not audited as chunks: advanced_pipeline.py, validators.py/robustness layer, visualization/
+
+---
+
+## 🟡 V21-1 — legacy mixed-interaction post-hoc is dead code (⚠️ pingouin-version-coupled)
+
+**Location:** `statisticaltester.py:1587-1592`, inside `_run_mixed_anova` (def :1470).
+Live call chain: `_run_mixed_anova` ← `_run_mixed_anova_logged` (:1294) ← `advanced_pipeline.py:196`.
+**Status:** OPEN (deferred to v2.1). No user-visible defect remains in v2.0 — see "fixed" below.
+
+### What is wrong
+The inline interaction post-hoc reads four keys off `pg.pairwise_tests(...)` that do not
+match the library's output:
+
+| access | line | exists on pingouin 0.6.1? |
+|---|---|---|
+| `r['Time']` | 1587-1588 | only if the within factor is *literally* named `Time` |
+| `r['Type']` | 1589 | ❌ no |
+| `r["p-corr"]` | 1591 | ❌ no (it is `p_corr`) |
+| `r["significant"]` | 1592 | ❌ no |
+
+Actual columns (verified, pingouin 0.6.1, between+within):
+`['Contrast','<within>','A','B','Paired','Parametric','T','dof','alternative','p_unc','p_corr','p_adjust','BF10','hedges']`
+
+`r['Time']` is a hardcoded column name in a tool whose factors are user-named — structurally
+fragile independent of the version issue. The app's own Excel template uses `Timepoint`
+(`assets/BioMedStatX_Excel_Template.xlsx`, sheets RM_1F / Mixed ANOVA / RM_EMM_1F).
+
+### Why it is NOT a v2.0 blocker (proven, not assumed)
+The path was driven end-to-end with the within column renamed literally to `Time`: it gets
+past `r['Time']` and then dies on `'Type'`. So the branch **cannot complete for any column
+name** on pingouin ≥0.6 — it is dead code, not merely hard to reach. It therefore never emits
+numbers, and when the omnibus is significant `AdvancedPostHocEngine` (Feature B) replaces
+`pairwise_comparisons` wholesale anyway (`advanced_pipeline.py:285-288`). No wrong values can
+reach a user.
+
+### ⚠️ This verdict is coupled to pingouin 0.6.1
+On **every** pingouin upgrade, re-verify which of these holds:
+- **(a)** branch still dead → keep as is;
+- **(b)** branch runs further but breaks on a *new* column schema → re-assess;
+- **(c)** branch runs and works → the v2.0 mitigations below become wrong and must be revisited.
+
+In cases (b)/(c) both v2.0 fixes must be re-checked, not assumed:
+- **Fix 1** (`statisticaltester.py:~1698`): the raw exception no longer goes into
+  `results["warnings"]`, only to `logger.warning`. Justified *only* because the branch is
+  known-dead and superseded. If it can run again, suppressing its error hides a real failure
+  from the user — it lands in a log nobody reads.
+- **Fix 2** (right after): top-level `posthoc_test` is consolidated from
+  `within_posthoc_test` / `between_posthoc_test` when the main-effects branch produced
+  contrasts.
+
+### Recommendation (prioritized): **remove, do not repair**
+Feature B (`analysis/mixed_simple_effects.py` + `MixedAnovaPostHocAnalyzer`) has already
+superseded this branch functionally and is R-verified (golden: `tests/golden/references_feature_b*.json`),
+Levene-gated for the pooled/isolated error term, and covered by routing + gating tests
+(`tests/test_feature_b_golden.py`). Repairing the legacy branch means maintaining **two
+parallel mixed-interaction post-hoc implementations**, one of them obsolete, untested and
+built on hardcoded column names. Deleting it is less v2.1 work than fixing a path that will
+likely be dropped anyway.
+
+**If "repair" is chosen instead**, the precedent to copy already exists in the same file:
+`statisticaltester.py:2391` does `p_corr → p_unc → p-unc` as a fallback chain. Apply the same
+for the p-column and replace `r['Time']` with the actual `rm_factor` variable.
+
+### Fixed in v2.0 (user-visible symptoms only)
+- spurious `"Post-hoc failed: 'Time'"` in `results["warnings"]` next to a correct Feature-B
+  result → now `logger.warning` only;
+- `posthoc_test: None` (contrasts shown with no method name in the report) whenever the
+  omnibus was n.s. and the advanced engine did not run → now consolidated.
+
+Related live bug found and fixed during the same investigation: `posthoc_core.py` read
+pingouin's uncorrected-p column as `"p-unc"` while ≥0.6 emits `p_unc`; the `KeyError` was
+swallowed, so the Feature-B effect gate silently degraded to simple main effects for *every*
+design. Now reads both spellings, logs at WARNING, and exposes `gating_applied` /
+`gating_fallback_reason` in the result. Regression guard:
+`tests/test_feature_b_golden.py::test_gating_through_the_real_analyzer_entry_point`.
