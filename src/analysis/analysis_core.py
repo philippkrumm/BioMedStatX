@@ -1,5 +1,6 @@
 import logging
 import os
+from core.level_order import natural_order
 from datetime import datetime
 
 import numpy as np
@@ -244,10 +245,10 @@ class AnalysisManager:
             analysis_context = analysis_context.copy()
             analysis_context["group_factor_map"] = group_factor_map
             if not groups_to_use:
-                groups_to_use = sorted(working_df[display_group_col].dropna().unique(), key=lambda item: str(item))
+                groups_to_use = natural_order(working_df[display_group_col].dropna().unique())
         else:
             if not groups_to_use:
-                groups_to_use = sorted(working_df[display_group_col].dropna().unique(), key=lambda item: str(item))
+                groups_to_use = natural_order(working_df[display_group_col].dropna().unique())
 
         groups_to_use = [str(g) for g in groups_to_use]
         working_df[display_group_col] = working_df[display_group_col].astype(str)

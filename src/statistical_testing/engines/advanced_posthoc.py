@@ -1,4 +1,5 @@
 import logging
+from core.level_order import natural_order
 from itertools import combinations
 from typing import Any, Mapping
 
@@ -58,14 +59,14 @@ class AdvancedPostHocEngine:
             if test == "two_way_anova":
                 group_names = []
                 factors = between
-                for factor_a_val in sorted(df_transformed[factors[0]].unique()):
-                    for factor_b_val in sorted(df_transformed[factors[1]].unique()):
+                for factor_a_val in natural_order(df_transformed[factors[0]].unique()):
+                    for factor_b_val in natural_order(df_transformed[factors[1]].unique()):
                         group_names.append(f"{factors[0]}={factor_a_val}, {factors[1]}={factor_b_val}")
             elif test == "mixed_anova":
                 group_names = []
                 b_factor, w_factor = between[0], within[0]
-                for b_val in sorted(df_transformed[b_factor].unique()):
-                    for w_val in sorted(df_transformed[w_factor].unique()):
+                for b_val in natural_order(df_transformed[b_factor].unique()):
+                    for w_val in natural_order(df_transformed[w_factor].unique()):
                         group_names.append(f"{b_factor}={b_val}, {w_factor}={w_val}")
             elif test == "repeated_measures_anova":
                 w_factor = within[0]
@@ -265,8 +266,8 @@ class AdvancedPostHocEngine:
         from itertools import combinations as _comb
 
         factor_a, factor_b = between[0], between[1]
-        a_levels = sorted(df[factor_a].dropna().unique())
-        b_levels = sorted(df[factor_b].dropna().unique())
+        a_levels = natural_order(df[factor_a].dropna().unique())
+        b_levels = natural_order(df[factor_b].dropna().unique())
 
         sig_a = sig_b = sig_ab = False
         logger.debug(f"DEBUG SPECS: factor_a={factor_a}, factor_b={factor_b}, factors={res.get('factors', [])}")
@@ -385,8 +386,8 @@ class AdvancedPostHocEngine:
         from itertools import combinations as _comb
 
         bf, wf = between[0], within[0]
-        b_levels = sorted(df[bf].dropna().unique())
-        w_levels = sorted(df[wf].dropna().unique())
+        b_levels = natural_order(df[bf].dropna().unique())
+        w_levels = natural_order(df[wf].dropna().unique())
 
         sig_b = sig_w = sig_bw = False
         for f in res.get("factors", []):
@@ -439,7 +440,7 @@ class AdvancedPostHocEngine:
         # Subject-aligned wide matrix for paired within comparisons.
         wide = None
         if subject is not None and any(s[2] == "within" for s in specs):
-            w_levels = sorted(df[wf].dropna().unique())
+            w_levels = natural_order(df[wf].dropna().unique())
             wide = (
                 df.pivot_table(index=subject, columns=wf, values=dv, aggfunc="mean")
                 .reindex(columns=w_levels)

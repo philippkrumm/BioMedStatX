@@ -1,6 +1,7 @@
 # pyright: reportAttributeAccessIssue=false
 # pyright: reportOptionalMemberAccess=false
 import os
+from core.level_order import natural_order
 import sys
 
 import numpy as np
@@ -518,7 +519,7 @@ def _ap_rebuild_column_cards(self):
         # For categorical/text columns: show unique distinct values instead of
         # first 3 rows (which are often duplicates like "WT, WT, WT").
         if column_kind != "numeric":
-            uniques = series.dropna().astype(str).unique().tolist()
+            uniques = natural_order(series.dropna().astype(str))
             preview_values = uniques[:5]
             suffix = "" if len(uniques) <= 5 else f"  (+{len(uniques)-5} more)"
             preview_text = "Levels: " + (", ".join(preview_values) if preview_values else "—") + suffix

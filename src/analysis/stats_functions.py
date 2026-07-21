@@ -1,4 +1,5 @@
 import pandas as pd
+from core.level_order import natural_order
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
@@ -426,7 +427,7 @@ class DataImporter:
         for col in value_cols:
             if col not in df.columns:
                 raise ValueError(f"The value column '{col}' was not found. Available columns: {', '.join(df.columns)}")
-        groups = sorted(df[group_col].unique())
+        groups = natural_order(df[group_col].unique())
         samples = {}
         if combine_columns:
             for group in groups:

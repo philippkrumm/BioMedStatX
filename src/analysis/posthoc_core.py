@@ -1,4 +1,5 @@
 import numpy as np
+from core.level_order import natural_order
 import pandas as pd
 from itertools import combinations
 
@@ -136,8 +137,8 @@ class TwoWayPostHocAnalyzer(PostHocAnalyzer):
                 # Build all interaction group labels
                 interaction_groups = []
                 group_to_values = {}
-                for level_b in sorted(df[factors[0]].unique()):
-                    for level_a in sorted(df[factors[1]].unique()):
+                for level_b in natural_order(df[factors[0]].unique()):
+                    for level_a in natural_order(df[factors[1]].unique()):
                         label = f"{factors[0]}={level_b}, {factors[1]}={level_a}"
                         mask = (df[factors[0]] == level_b) & (df[factors[1]] == level_a)
                         values = df.loc[mask, dv].values
@@ -392,8 +393,8 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
             logger.debug(f"DEBUG MIXED POSTHOC: normalized_selected = {normalized_selected}")
             
             # Validate mixed design data structure
-            between_levels = sorted(df[between_factor].unique())
-            within_levels = sorted(df[within_factor].unique())
+            between_levels = natural_order(df[between_factor].unique())
+            within_levels = natural_order(df[within_factor].unique())
             
             logger.debug(f"DEBUG MIXED POSTHOC: between_levels = {between_levels}, within_levels = {within_levels}")
             
@@ -1051,7 +1052,7 @@ class RMAnovaPostHocAnalyzer(PostHocAnalyzer):
             
             # Get within-subject factor and levels
             within_factor = within[0]
-            within_levels = sorted(df[within_factor].unique())
+            within_levels = natural_order(df[within_factor].unique())
             
             # Validate that we have repeated measures data
             subject_counts = df.groupby(subject)[within_factor].nunique()
