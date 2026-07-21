@@ -596,6 +596,7 @@ class DataVisualizer:
             ax.set_title(title)
 
         if save_plot and file_name:
+            DataVisualizer._grow_bottom_for_rotated_xlabels(fig, ax)
             for ext in file_formats:
                 fig.savefig(f"{file_name}.{ext}", dpi=dpi, bbox_inches="tight")
         return ax
@@ -2099,6 +2100,10 @@ class DataVisualizer:
         original_dir = os.getcwd()
         
         get_output_path = _lazy_get_output_path()
+        # Reserve room for rotated x-tick labels so they aren't clipped in the saved
+        # file, for every plot type and format.
+        if getattr(fig, "axes", None):
+            DataVisualizer._grow_bottom_for_rotated_xlabels(fig, fig.axes[0])
         for fmt in formats:
             if fmt == 'pdf':
                 pdf_path = get_output_path(file_name, "pdf")
@@ -3064,6 +3069,9 @@ class DataVisualizer:
         StylingManager.apply_unified_styling(ax, config, is_preview=is_preview)
 
         DataVisualizer._apply_padding_mm(ax.figure, config)
+        # Rotated x-tick labels would be clipped by the fixed padding above; grow the
+        # bottom margin to fit them (live preview + every plot type).
+        DataVisualizer._grow_bottom_for_rotated_xlabels(ax.figure, ax)
 
         # Fix E: Apply grayscale regardless of preview/export mode
         if config.get('grayscale_preview', False):
@@ -3134,6 +3142,42 @@ class DataVisualizer:
                 fig.subplots_adjust(left=left, right=right, bottom=bottom, top=top)
         except Exception as e:
             logger.info(f"Warning: Could not apply padding: {e}")
+
+    @staticmethod
+    def _grow_bottom_for_rotated_xlabels(fig, ax, pad_frac=0.02):
+        """Grow the bottom margin so rotated x-tick labels fit inside the figure.
+
+        Rotated (e.g. 45 deg) x-tick labels extend below the axes; with a fixed
+        bottom margin they get clipped both in the on-screen preview and in
+        non-tight renders. This measures how far the labels (plus the x-axis label)
+        overhang the figure's bottom edge and increases the bottom margin just
+        enough to fit them, with a small pad. It only ever *increases* the bottom
+        margin, so the user's padding and the (right-side) legend placement are
+        preserved. Applies to every plot type routed through plot_from_config /
+        _save_plot.
+        """
+        try:
+            ticklabels = [t for t in ax.get_xticklabels() if t.get_text()]
+            if not ticklabels:
+                return
+            if not any((round(float(t.get_rotation())) % 180) != 0 for t in ticklabels):
+                return  # not rotated -> nothing to reserve
+            fig.canvas.draw()  # realize label positions so extents are measurable
+            renderer = fig.canvas.get_renderer()
+            boxes = [t.get_window_extent(renderer) for t in ticklabels]
+            if ax.xaxis.label.get_text():
+                boxes.append(ax.xaxis.label.get_window_extent(renderer))
+            lowest = min(b.y0 for b in boxes)  # display coords; 0 = figure bottom
+            fig_h = fig.bbox.height
+            overhang = (pad_frac * fig_h - lowest) / fig_h
+            if overhang <= 0:
+                return  # labels already fit
+            cur_bottom = ax.get_position().y0
+            new_bottom = min(0.9, cur_bottom + overhang)
+            if new_bottom > cur_bottom + 1e-3:
+                fig.subplots_adjust(bottom=new_bottom)
+        except Exception as exc:
+            logger.debug(f"rotated x-label fit skipped: {exc}")
 
     @staticmethod
     def _apply_grayscale_preview(ax):
