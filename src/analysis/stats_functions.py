@@ -505,10 +505,20 @@ class UIDialogManager:
 
         # RadioButtons for post-hoc tests - options depend on context
         if progress_text and ("two_way_anova" in progress_text or "mixed_anova" in progress_text or "repeated_measures_anova" in progress_text):
-            options = [
-                ("Tukey-HSD Test (all pairs, strict FWER control)", "tukey"),
-                ("Specific comparisons – strict correction (Holm-\u0160id\u00e1k)", "paired_custom"),
-            ]
+            if "two_way_anova" in progress_text:
+                # Two-Way ANOVA Tukey uses statsmodels pairwise_tukeyhsd (correct
+                # for independent samples). RM/Mixed get NO Tukey option: a
+                # studentized-range post-hoc assumes the sphericity the omnibus
+                # corrects for by default (Greenhouse-Geisser), and the prior
+                # hand-rolled RM/Mixed Tukey was removed (pre-2.0 audit, SC2).
+                options = [
+                    ("Tukey-HSD Test (all pairs, strict FWER control)", "tukey"),
+                    ("Specific comparisons – strict correction (Holm-\u0160id\u00e1k)", "paired_custom"),
+                ]
+            else:
+                options = [
+                    ("Specific comparisons – strict correction (Holm-\u0160id\u00e1k)", "paired_custom"),
+                ]
             if "mixed_anova" in progress_text:
                 options.append(
                     ("Dunnett vs control, each timepoint (EMM + multivariate-t)", "emm_mvt")

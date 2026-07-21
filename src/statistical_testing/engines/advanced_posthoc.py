@@ -83,7 +83,15 @@ class AdvancedPostHocEngine:
             posthoc_method = "paired_custom"
             control_group = None
             try:
-                default_method = "paired_custom" if test == "two_way_anova" else "tukey"
+                # RM/Mixed default to paired_custom (Holm-Šidák over type-correct
+                # per-pair tests). The prior "tukey" default was a hand-rolled
+                # studentized-range that fed the paired-t df (n-1) and a per-pair
+                # SD into scipy's studentized_range — too-conservative p-values,
+                # and incoherent with the Greenhouse-Geisser-corrected omnibus
+                # (studentized range assumes the sphericity the omnibus corrects
+                # for). Removed pre-2.0 (audit SC2). Two-Way keeps its own,
+                # correct statsmodels Tukey via TwoWayPostHocAnalyzer.
+                default_method = "paired_custom"
                 if posthoc_method_callback:
                     posthoc_method = posthoc_method_callback(test, dv, default_method)
                 else:

@@ -494,35 +494,7 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
             p_values = [comp["p_val"] for comp in comparisons]
             n_comparisons = len(comparisons)
             
-            if method.lower() == 'tukey':
-                # Enhanced Tukey HSD for mixed designs
-                correction_method = "Tukey HSD (Mixed)"
-                try:
-                    # Try to use pingouin for proper Tukey implementation
-                    pg = get_pingouin_module()
-                    if pg is not None:
-                        corrected_p_values = []
-                        for comp in comparisons:
-                            # Use appropriate Tukey correction based on comparison type
-                            if comp["comparison_type"] == "within_subject":
-                                # More liberal correction for within-subject comparisons
-                                q_stat = abs(comp["t_stat"]) * np.sqrt(2)
-                                p_tukey = MixedAnovaPostHocAnalyzer._tukey_p_value(q_stat, len(within_levels), comp["n_pairs"] - 1)
-                            else:
-                                # Standard Tukey for between-subject comparisons
-                                q_stat = abs(comp["t_stat"]) * np.sqrt(2)
-                                p_tukey = MixedAnovaPostHocAnalyzer._tukey_p_value(q_stat, len(interaction_groups), comp["n_pairs"] - 1)
-                            corrected_p_values.append(p_tukey)
-                    else:
-                        # Fallback to Bonferroni
-                        corrected_p_values = [min(1.0, p * n_comparisons) for p in p_values]
-                        correction_method = "Bonferroni (Tukey unavailable)"
-                except:
-                    # Fallback to Bonferroni if Tukey calculation fails
-                    corrected_p_values = [min(1.0, p * n_comparisons) for p in p_values]
-                    correction_method = "Bonferroni (Tukey calculation failed)"
-                    
-            elif method.lower() == 'bonferroni':
+            if method.lower() == 'bonferroni':
                 correction_method = "Bonferroni"
                 corrected_p_values = [min(1.0, p * n_comparisons) for p in p_values]
                 
@@ -718,19 +690,6 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
         # For mixed comparisons, treat as independent samples (conservative approach)
         return MixedAnovaPostHocAnalyzer._between_subject_test(group1_data, group2_data, dv, alpha)
     
-    @staticmethod 
-    def _tukey_p_value(q_stat, k, df):
-        """Calculate p-value for Tukey's q statistic."""
-        studentized_range = get_scipy_stats().studentized_range
-        try:
-            return 1 - studentized_range.cdf(q_stat, k, df)
-        except:
-            # Fallback to t-distribution approximation
-            t = get_scipy_stats().t
-            import math
-            t_equiv = q_stat / math.sqrt(2)
-            return 2 * (1 - t.cdf(abs(t_equiv), df))
-
     @staticmethod
     def perform_test(df, between, within, dv, subject, alpha=0.05, selected_comparisons=None, method='tukey', control_group=None):
         """
@@ -1141,32 +1100,7 @@ class RMAnovaPostHocAnalyzer(PostHocAnalyzer):
             p_values = [comp["p_val"] for comp in comparisons]
             n_comparisons = len(comparisons)
             
-            if method.lower() == 'tukey':
-                # Implement proper Tukey HSD for repeated measures
-                correction_method = "Tukey HSD (RM)"
-                try:
-                    # Try to use pingouin for proper Tukey implementation
-                    pg = get_pingouin_module()
-                    if pg is not None:
-                        # Use Tukey's studentized range statistic for RM design
-                        corrected_p_values = []
-                        
-                        for comp in comparisons:
-                            # Convert t-statistic to Tukey's q statistic
-                            q_stat = abs(comp["t_stat"]) * np.sqrt(2)
-                            p_tukey = RMAnovaPostHocAnalyzer._tukey_p_value(q_stat, len(within_levels), comp["df"])
-                            corrected_p_values.append(p_tukey)
-                    else:
-                        # Fallback to conservative Bonferroni
-                        corrected_p_values = [min(1.0, p * n_comparisons) for p in p_values]
-                        correction_method = "Bonferroni (Tukey unavailable)"
-                except Exception as err:
-                    logger.exception(f"Tukey calculation failed: {err}")
-                    # Fallback to Bonferroni if Tukey calculation fails
-                    corrected_p_values = [min(1.0, p * n_comparisons) for p in p_values]
-                    correction_method = "Bonferroni (Tukey calculation failed)"
-                    
-            elif method.lower() == 'bonferroni':
+            if method.lower() == 'bonferroni':
                 correction_method = "Bonferroni"
                 corrected_p_values = [min(1.0, p * n_comparisons) for p in p_values]
                 
@@ -1280,31 +1214,6 @@ class RMAnovaPostHocAnalyzer(PostHocAnalyzer):
             logger.exception(f"ERROR RM POSTHOC: {str(e)}")
             return result
     
-    @staticmethod
-    def _get_tukey_critical_value(k, df, alpha=0.05):
-        """Get critical value for Tukey's HSD test (simplified implementation)."""
-        # This is a simplified implementation - in practice, use statistical tables
-        studentized_range = get_scipy_stats().studentized_range
-        try:
-            return studentized_range.ppf(1 - alpha, k, df)
-        except:
-            # Fallback approximation
-            import math
-            return math.sqrt(2) * 2.0  # Very rough approximation
-    
-    @staticmethod 
-    def _tukey_p_value(q_stat, k, df):
-        """Calculate p-value for Tukey's q statistic (simplified implementation)."""
-        studentized_range = get_scipy_stats().studentized_range
-        try:
-            return 1 - studentized_range.cdf(q_stat, k, df)
-        except:
-            # Fallback to t-distribution approximation
-            t = get_scipy_stats().t
-            import math
-            t_equiv = q_stat / math.sqrt(2)
-            return 2 * (1 - t.cdf(abs(t_equiv), df))
-        
 class PostHocStatistics:
     """UPDATED: Statistical calculations for various post-hoc tests."""
     
