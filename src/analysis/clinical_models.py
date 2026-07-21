@@ -1545,9 +1545,28 @@ class LogisticRegressionModel(BaseStatisticalModel):
         converged = getattr(self.result, "converged", True) if self._model_variant != "Firth Penalized Likelihood" else True
         if getattr(self, "_firth_failed", False):
             converged = False
+
+        # A rank-deficient / unidentified design (e.g. collinear predictors like
+        # x1 == x2) can leave the optimizer — standard or Firth — reporting
+        # "converged" while the coefficient standard errors are non-finite. That
+        # is not an identified fit; flag it instead of presenting a misleading
+        # result with NaN standard errors.
+        try:
+            _bse = self._firth_bse if self._model_variant == "Firth Penalized Likelihood" else self.result.bse
+            _bse = np.asarray(_bse, dtype=float)
+            _identified = _bse.size > 0 and bool(np.all(np.isfinite(_bse)))
+        except Exception:
+            _identified = False
+        if not _identified:
+            converged = False
+
         warnings_list = []
         if not converged:
-            warnings_list.append("Logistic regression did not converge. Results may be unreliable.")
+            warnings_list.append(
+                "Logistic regression did not converge to an identified solution "
+                "(e.g. non-finite standard errors from collinear predictors). "
+                "Results may be unreliable."
+            )
 
         res = {
             "design_type": self.design_type.value,

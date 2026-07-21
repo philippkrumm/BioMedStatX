@@ -56,3 +56,6 @@ refactor_imports.py
 # Local example images / scratch assets
 decision_tree_example.png
 
+# Local audit/working prompts (workflow tooling, not project files)
+biomedstatx_v2_release_audit_prompt.md
+
