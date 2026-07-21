@@ -8,6 +8,7 @@ HTML serialization, significance brackets and plot-data prep. Stateless
 """
 
 import math
+from core.level_order import natural_order
 
 import numpy as np
 from scipy import stats
@@ -380,10 +381,7 @@ class _ChartsMixin:
         if not level_stats:
             return None
         levels = list(level_stats.keys())
-        try:
-            levels_sorted = sorted(levels, key=lambda x: float(x))
-        except (ValueError, TypeError):
-            levels_sorted = sorted(levels)
+        levels_sorted = natural_order(levels)
         means = [level_stats[lv].get("mean") for lv in levels_sorted]
         ses = [float(level_stats[lv].get("stderr") or level_stats[lv].get("se") or 0) for lv in levels_sorted]
         try:

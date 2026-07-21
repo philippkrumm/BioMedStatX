@@ -1,4 +1,5 @@
 import logging
+from core.level_order import natural_order
 
 import numpy as np
 import pandas as pd
@@ -35,7 +36,7 @@ class PosthocFallbackEngine:
     def _build_rm_aligned_samples(df, dv, subject, within_factor):
         samples = {}
         complete_subjects = []
-        within_levels = sorted(df[within_factor].dropna().unique())
+        within_levels = natural_order(df[within_factor].dropna().unique())
 
         subject_level_counts = df.groupby(subject)[within_factor].nunique()
         expected_levels = len(within_levels)
@@ -353,8 +354,8 @@ class PosthocFallbackEngine:
                 factor_a, factor_b = between
                 samples = {}
                 group_labels = []
-                for a_val in sorted(df[factor_a].dropna().unique()):
-                    for b_val in sorted(df[factor_b].dropna().unique()):
+                for a_val in natural_order(df[factor_a].dropna().unique()):
+                    for b_val in natural_order(df[factor_b].dropna().unique()):
                         label = f"{factor_a}={a_val}, {factor_b}={b_val}"
                         subset = df[(df[factor_a] == a_val) & (df[factor_b] == b_val)][dv].dropna().tolist()
                         if subset:
@@ -394,11 +395,11 @@ class PosthocFallbackEngine:
                 within_factor = within[0]
 
                 # Between-subject comparisons within each within-factor level
-                for within_level in sorted(df[within_factor].dropna().unique()):
+                for within_level in natural_order(df[within_factor].dropna().unique()):
                     subset = df[df[within_factor] == within_level].copy()
                     samples = {}
                     groups = []
-                    for between_level in sorted(subset[between_factor].dropna().unique()):
+                    for between_level in natural_order(subset[between_factor].dropna().unique()):
                         label = str(between_level)
                         values = subset[subset[between_factor] == between_level][dv].dropna().tolist()
                         if values:
@@ -423,7 +424,7 @@ class PosthocFallbackEngine:
                                 result["error"] = posthoc["error"]
 
                 # Within-subject comparisons within each between-factor level
-                for between_level in sorted(df[between_factor].dropna().unique()):
+                for between_level in natural_order(df[between_factor].dropna().unique()):
                     subset = df[df[between_factor] == between_level].copy()
                     valid_groups, samples = PosthocFallbackEngine._build_rm_aligned_samples(
                         subset,

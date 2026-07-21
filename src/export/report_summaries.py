@@ -8,6 +8,7 @@ call sites unchanged via the MRO.
 """
 
 import numpy as np
+from core.level_order import natural_order
 from scipy import stats
 
 from export.report_charts import _ChartsMixin
@@ -485,6 +486,12 @@ class _SummariesMixin:
         _has_transform = _trafo_label.lower() not in ("", "none", "identity", "no transformation")
         _test_info = results.get("test_info") if isinstance(results.get("test_info"), dict) else {}
         transform_warning = results.get("transform_warning") or _test_info.get("transform_warning")
+        # Level-ordering transparency: natural_order logs a warning (once per
+        # analysis) when it falls back to a pure alphabetical guess for >=2
+        # unrecognized non-numeric levels. Kept as a debug-log diagnostic only --
+        # not surfaced in the user report, where it fired on every composite
+        # interaction-cell label and read as noise rather than actionable advice.
+        natural_order(results.get("groups") or [], notes=[])
         return {
             "rows": rows,
             "transformation": _trafo_label or "None",

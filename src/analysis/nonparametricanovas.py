@@ -1,6 +1,7 @@
 # --- Minimal test for posthoc_marginaleffects ---
 
 import logging
+from core.level_order import natural_order
 logger = logging.getLogger(__name__)
 from analysis.clinical_models import DesignType
 # (Moved to end of file to ensure all symbols are defined)
@@ -502,8 +503,8 @@ def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05, n_permu
 
         # --- Descriptive stats ---
         descriptive = {}
-        for a_val in sorted(df[safe_a].unique()):
-            for b_val in sorted(df[safe_b].unique()):
+        for a_val in natural_order(df[safe_a].unique()):
+            for b_val in natural_order(df[safe_b].unique()):
                 subset = df[(df[safe_a] == a_val) & (df[safe_b] == b_val)][safe_dv].dropna()
                 key = f"{factor_a}={a_val}, {factor_b}={b_val}"
                 n = len(subset)
@@ -581,8 +582,8 @@ def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05, n_permu
         posthoc_name = None
         from itertools import combinations as _comb
         raw = []
-        a_levels = sorted(df[safe_a].unique())
-        b_levels = sorted(df[safe_b].unique())
+        a_levels = natural_order(df[safe_a].unique())
+        b_levels = natural_order(df[safe_b].unique())
 
         if p_perm_A < alpha and len(a_levels) >= 2:
             for v1, v2 in _comb(a_levels, 2):
@@ -704,8 +705,8 @@ def perform_brunner_langer_ats(data, dv, between_factor, within_factor, subject_
     try:
         df = data[[dv, between_factor, within_factor, subject_col]].dropna().copy()
 
-        between_levels = sorted(df[between_factor].dropna().unique())
-        within_levels  = sorted(df[within_factor].dropna().unique())
+        between_levels = natural_order(df[between_factor].dropna().unique())
+        within_levels  = natural_order(df[within_factor].dropna().unique())
         a = len(between_levels)
         t = len(within_levels)
 
