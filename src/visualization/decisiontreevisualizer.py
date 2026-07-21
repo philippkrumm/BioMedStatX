@@ -139,21 +139,6 @@ class DecisionTreeVisualizer:
         return FlowchartVisualizer.visualize(results, output_path)
 
     @staticmethod
-    def _mixed_posthoc_node(posthoc_test: str) -> str:
-        """Map a Mixed-ANOVA post-hoc test name to its decision-tree node.
-
-        Treatment-vs-control / EMM contrasts are between-group comparisons, so
-        they belong on the between-groups branch, not the within-subject one
-        (which would mislead the user about what was actually compared).
-        """
-        ph = (posthoc_test or "").lower()
-        if "tukey" in ph:
-            return "MIXED_TUKEY"
-        if any(kw in ph for kw in ("between", "dunnett", "emm", "multivariate")):
-            return "MIXED_BETWEEN"
-        return "MIXED_WITHIN"
-
-    @staticmethod
     def get_tree_json(results: dict) -> dict | None:
         """
         Returns the decision tree topology as a JSON-serializable dict.
@@ -319,10 +304,13 @@ class DecisionTreeVisualizer:
                 'MIXED_DESIGN':        {"label": "Mixed design\n(between + within factors)", "pos": (4, 2)},
                 'IND_ONE_WAY':   {"label": "Welch's ANOVA", "pos": (-9.5, 1)},
                 'IND_TWO_WAY':   {"label": "Two-way ANOVA", "pos": (-6.5, 1)},
-                'IND_POSTHOC':   {"label": "Which specific groups differ?", "pos": (-8, 0)},
-                'IND_TUKEY':     {"label": "Tukey HSD /\nGames-Howell", "pos": (-10.5, -1)},
-                'IND_DUNNETT':   {"label": "Dunnett Test", "pos": (-8.0, -1)},
-                'IND_HOLM_SIDAK':{"label": "Pairwise t-tests\n(Holm-Šidák)", "pos": (-5.5, -1)},
+                'IND_OW_POSTHOC':  {"label": "Which groups differ?", "pos": (-9.8, 0)},
+                'IND_GAMES_HOWELL':{"label": "Games-Howell\n(all pairs, unequal var)", "pos": (-11.6, -1)},
+                'IND_DUNNETT':     {"label": "Dunnett\n(vs one control)", "pos": (-9.8, -1)},
+                'IND_OW_HOLM':     {"label": "Pairwise t-tests\n(Holm-Šidák)", "pos": (-8.0, -1)},
+                'IND_TW_POSTHOC':  {"label": "Which cells differ?", "pos": (-6.2, 0)},
+                'IND_TUKEY':       {"label": "Tukey HSD\n(all pairs)", "pos": (-6.9, -1)},
+                'IND_TW_HOLM':     {"label": "Pairwise t-tests\n(Holm-Šidák)", "pos": (-5.3, -1)},
                 'RM_MAUCHLY':            {"label": k1_m_sph_label, "pos": (-2, 1)},
                 'RM_SPHERICITY_OK':      {"label": "Even correlation\n-> no correction needed", "pos": (-3.5, 0)},
                 'RM_SPHERICITY_VIOLATED':{"label": "Uneven correlation\n-> correction needed", "pos": (-0.5, 0)},
@@ -332,8 +320,7 @@ class DecisionTreeVisualizer:
                 'RM_ANOVA_STANDARD':     {"label": "RM ANOVA", "pos": (-3.5, -1)},
                 'RM_ANOVA_CORRECTED':    {"label": "RM ANOVA\n(Corrected)", "pos": (-0.5, -3)},
                 'RM_POSTHOC':            {"label": "Which time points differ?", "pos": (-2, -4)},
-                'RM_TUKEY':              {"label": "Tukey HSD\n(RM)", "pos": (-3.5, -5)},
-                'RM_EMM':                {"label": "EMM contrasts\n(multivariate-t)", "pos": (-2.0, -5)},
+                'RM_EMM':                {"label": "Dunnett vs baseline\n(EMM + mvt)", "pos": (-2.5, -5)},
                 'RM_PAIRED_TESTS':       {"label": "Pairwise Paired t-tests\n(Holm-Šidák)", "pos": (-0.5, -5)},
                 'MIXED_MAUCHLY':             {"label": k1_m_sph_label, "pos": (4, 1)},
                 'MIXED_SPHERICITY_OK':       {"label": "Even correlation\n-> no correction needed", "pos": (2.5, 0)},
@@ -343,10 +330,13 @@ class DecisionTreeVisualizer:
                 'MIXED_HF_CORRECTION':       {"label": "Huynh-Feldt\n(less conservative)", "pos": (6.5, -2)},
                 'MIXED_ANOVA_STANDARD':      {"label": "Mixed ANOVA", "pos": (2.5, -1)},
                 'MIXED_ANOVA_CORRECTED':     {"label": "Mixed ANOVA\n(Within Corrected)", "pos": (5.5, -3)},
-                'MIXED_POSTHOC':             {"label": "Which groups / time points differ?", "pos": (4, -4)},
-                'MIXED_TUKEY':   {"label": "Mixed Tukey\n(Between/Within)", "pos": (1.5, -5)},
-                'MIXED_BETWEEN': {"label": "Between groups\n(different subjects)", "pos": (4.0, -5)},
-                'MIXED_WITHIN':  {"label": "Within group\n(same subjects over time)", "pos": (6.5, -5)},
+                'MIXED_POSTHOC':             {"label": "Significant interaction?\n(Group x Time)", "pos": (4, -4)},
+                'MIXED_SME':         {"label": "Yes -> Simple main effects", "pos": (2.5, -5)},
+                'MIXED_ME':          {"label": "No -> Main effects only", "pos": (5.5, -5)},
+                'MIXED_BETWEEN':     {"label": "Simple Between-Subjects\n(groups per timepoint, Indep. t)", "pos": (1.3, -6)},
+                'MIXED_WITHIN':      {"label": "Simple Within-Subjects\n(time per group, Paired t)", "pos": (3.3, -6)},
+                'MIXED_MARG_BETWEEN':{"label": "Main Effect of Group\n(Independent t, Holm-Šidák)", "pos": (5.0, -6)},
+                'MIXED_MARG_WITHIN': {"label": "Main Effect of Time\n(Paired t, Holm-Šidák)", "pos": (7.0, -6)},
                 'G2': {"label": "Non-parametric test\n(rank-based)", "pos": (10, 5)},
                 'H2': {"label": "How many groups?", "pos": (10, 4)},
                 'I2_2': {"label": "2 groups", "pos": (8, 3)},
@@ -383,8 +373,9 @@ class DecisionTreeVisualizer:
                 ('I1_2','J1_INDEP'),('I1_2','J1_DEP'),('J1_INDEP','K1_2_IND'),('J1_DEP','K1_2_DEP'),
                 ('I1_M','INDEPENDENT_GROUPS'),('I1_M','REPEATED_MEASURES'),('I1_M','MIXED_DESIGN'),
                 ('INDEPENDENT_GROUPS','IND_ONE_WAY'),('INDEPENDENT_GROUPS','IND_TWO_WAY'),
-                ('IND_ONE_WAY','IND_POSTHOC'),('IND_TWO_WAY','IND_POSTHOC'),
-                ('IND_POSTHOC','IND_TUKEY'),('IND_POSTHOC','IND_DUNNETT'),('IND_POSTHOC','IND_HOLM_SIDAK'),
+                ('IND_ONE_WAY','IND_OW_POSTHOC'),('IND_TWO_WAY','IND_TW_POSTHOC'),
+                ('IND_OW_POSTHOC','IND_GAMES_HOWELL'),('IND_OW_POSTHOC','IND_DUNNETT'),('IND_OW_POSTHOC','IND_OW_HOLM'),
+                ('IND_TW_POSTHOC','IND_TUKEY'),('IND_TW_POSTHOC','IND_TW_HOLM'),
                 ('REPEATED_MEASURES','RM_MAUCHLY'),
                 ('RM_MAUCHLY','RM_SPHERICITY_OK'),('RM_MAUCHLY','RM_SPHERICITY_VIOLATED'),
                 ('RM_SPHERICITY_OK','RM_ANOVA_STANDARD'),
@@ -392,7 +383,7 @@ class DecisionTreeVisualizer:
                 ('RM_CHOOSE_CORRECTION','RM_GG_CORRECTION'),('RM_CHOOSE_CORRECTION','RM_HF_CORRECTION'),
                 ('RM_GG_CORRECTION','RM_ANOVA_CORRECTED'),('RM_HF_CORRECTION','RM_ANOVA_CORRECTED'),
                 ('RM_ANOVA_STANDARD','RM_POSTHOC'),('RM_ANOVA_CORRECTED','RM_POSTHOC'),
-                ('RM_POSTHOC','RM_TUKEY'),('RM_POSTHOC','RM_EMM'),('RM_POSTHOC','RM_PAIRED_TESTS'),
+                ('RM_POSTHOC','RM_EMM'),('RM_POSTHOC','RM_PAIRED_TESTS'),
                 ('MIXED_DESIGN','MIXED_MAUCHLY'),
                 ('MIXED_MAUCHLY','MIXED_SPHERICITY_OK'),('MIXED_MAUCHLY','MIXED_SPHERICITY_VIOLATED'),
                 ('MIXED_SPHERICITY_OK','MIXED_ANOVA_STANDARD'),
@@ -400,7 +391,9 @@ class DecisionTreeVisualizer:
                 ('MIXED_CHOOSE_CORRECTION','MIXED_GG_CORRECTION'),('MIXED_CHOOSE_CORRECTION','MIXED_HF_CORRECTION'),
                 ('MIXED_GG_CORRECTION','MIXED_ANOVA_CORRECTED'),('MIXED_HF_CORRECTION','MIXED_ANOVA_CORRECTED'),
                 ('MIXED_ANOVA_STANDARD','MIXED_POSTHOC'),('MIXED_ANOVA_CORRECTED','MIXED_POSTHOC'),
-                ('MIXED_POSTHOC','MIXED_TUKEY'),('MIXED_POSTHOC','MIXED_BETWEEN'),('MIXED_POSTHOC','MIXED_WITHIN'),
+                ('MIXED_POSTHOC','MIXED_SME'),('MIXED_POSTHOC','MIXED_ME'),
+                ('MIXED_SME','MIXED_BETWEEN'),('MIXED_SME','MIXED_WITHIN'),
+                ('MIXED_ME','MIXED_MARG_BETWEEN'),('MIXED_ME','MIXED_MARG_WITHIN'),
                 ('G2','H2'),('H2','I2_2'),('H2','I2_M'),
                 ('I2_2','J2_INDEP'),('I2_2','J2_DEP'),('J2_INDEP','K2_2_IND'),('J2_DEP','K2_2_DEP'),
                 ('I2_M','NP_INDEPENDENT_GROUPS'),('I2_M','NP_REPEATED_MEASURES'),('I2_M','NP_MIXED_DESIGN'),
@@ -543,9 +536,7 @@ class DecisionTreeVisualizer:
                                 highlighted.add(('RM_ANOVA_STANDARD','RM_POSTHOC'))
                             
                             ph = posthoc_test.lower()
-                            if "tukey" in ph:
-                                highlighted.add(('RM_POSTHOC','RM_TUKEY'))
-                            elif "emm" in ph or "dunnett" in ph or "multivariate" in ph:
+                            if "emm" in ph or "dunnett" in ph or "multivariate" in ph:
                                 highlighted.add(('RM_POSTHOC','RM_EMM'))
                             else:
                                 highlighted.add(('RM_POSTHOC','RM_PAIRED_TESTS'))
@@ -562,26 +553,30 @@ class DecisionTreeVisualizer:
                                 highlighted.add(('MIXED_ANOVA_CORRECTED','MIXED_POSTHOC'))
                             else:
                                 highlighted.add(('MIXED_ANOVA_STANDARD','MIXED_POSTHOC'))
-                            highlighted.add((
-                                'MIXED_POSTHOC',
-                                DecisionTreeVisualizer._mixed_posthoc_node(posthoc_test),
-                            ))
+                            _ph = (posthoc_test or "").lower()
+                            if "marginal" in _ph and "within" in _ph:
+                                highlighted.update([('MIXED_POSTHOC','MIXED_ME'), ('MIXED_ME','MIXED_MARG_WITHIN')])
+                            elif "marginal" in _ph and "between" in _ph:
+                                highlighted.update([('MIXED_POSTHOC','MIXED_ME'), ('MIXED_ME','MIXED_MARG_BETWEEN')])
+                            elif "emm" in _ph or "dunnett" in _ph or "multivariate" in _ph:
+                                highlighted.update([('MIXED_POSTHOC','MIXED_SME'), ('MIXED_SME','MIXED_BETWEEN')])
+                            else:
+                                highlighted.update([('MIXED_POSTHOC','MIXED_SME'), ('MIXED_SME','MIXED_WITHIN'), ('MIXED_SME','MIXED_BETWEEN')])
                     elif "two-way" in test_name_text or "two way" in test_name_text:
                         highlighted.update([('I1_M','INDEPENDENT_GROUPS'),('INDEPENDENT_GROUPS','IND_TWO_WAY')])
                         if p_value is not None and p_value < alpha:
-                            highlighted.add(('IND_TWO_WAY','IND_POSTHOC'))
+                            highlighted.add(('IND_TWO_WAY','IND_TW_POSTHOC'))
                             ph = posthoc_test.lower()
-                            if "tukey" in ph or "games" in ph or "howell" in ph: highlighted.add(('IND_POSTHOC','IND_TUKEY'))
-                            elif "dunnett" in ph: highlighted.add(('IND_POSTHOC','IND_DUNNETT'))
-                            else: highlighted.add(('IND_POSTHOC','IND_HOLM_SIDAK'))
+                            if "tukey" in ph: highlighted.add(('IND_TW_POSTHOC','IND_TUKEY'))
+                            else: highlighted.add(('IND_TW_POSTHOC','IND_TW_HOLM'))
                     else:
                         highlighted.update([('I1_M','INDEPENDENT_GROUPS'),('INDEPENDENT_GROUPS','IND_ONE_WAY')])
                         if p_value is not None and p_value < alpha:
-                            highlighted.add(('IND_ONE_WAY','IND_POSTHOC'))
+                            highlighted.add(('IND_ONE_WAY','IND_OW_POSTHOC'))
                             ph = posthoc_test.lower()
-                            if "tukey" in ph or "games" in ph or "howell" in ph: highlighted.add(('IND_POSTHOC','IND_TUKEY'))
-                            elif "dunnett" in ph: highlighted.add(('IND_POSTHOC','IND_DUNNETT'))
-                            else: highlighted.add(('IND_POSTHOC','IND_HOLM_SIDAK'))
+                            if "games" in ph or "howell" in ph: highlighted.add(('IND_OW_POSTHOC','IND_GAMES_HOWELL'))
+                            elif "dunnett" in ph: highlighted.add(('IND_OW_POSTHOC','IND_DUNNETT'))
+                            else: highlighted.add(('IND_OW_POSTHOC','IND_OW_HOLM'))
 
             # active node set
             active_nodes = set()
