@@ -39,7 +39,6 @@ from autopilot.statistical_analyzer_autopilot_ui import (
     ConfettiOverlay,
     DecisionTreePanel,
     DraggableColumnCard,
-    FilterBucketWidget,
     MappingBucketWidget,
     PipelineTrackerWidget,
     ResultCockpitWidget,
@@ -316,7 +315,6 @@ def _ap_init_ui(self):
             "Multiple variables can be added simultaneously."
         ),
     )
-    self.filter_bucket = FilterBucketWidget(get_df=lambda: self.df)
 
     self.mapping_panel = QWidget()
     self.mapping_panel.setObjectName("mappingPanel")
@@ -324,7 +322,7 @@ def _ap_init_ui(self):
     _mapping_layout.setContentsMargins(0, 0, 0, 0)
     _mapping_layout.setSpacing(8)
     for bucket in (self.dv_bucket, self.factor1_bucket, self.factor2_bucket,
-                   self.subject_bucket, self.covariates_bucket, self.filter_bucket):
+                   self.subject_bucket, self.covariates_bucket):
         bucket.changed.connect(self.on_mapping_changed)
         _mapping_layout.addWidget(bucket)
     center_layout.addWidget(self.mapping_panel)
@@ -630,14 +628,7 @@ def _ap_get_available_analysis_groups(self):
     if factor_col not in self.df.columns:
         return []
 
-    working_df = self.df.copy()
-    active_filter = getattr(self, 'filter_bucket', None)
-    filter_spec = active_filter.get_filter() if active_filter else None
-    if filter_spec:
-        filter_col, filter_val = filter_spec
-        if filter_col in working_df.columns:
-            working_df = working_df[working_df[filter_col] == filter_val]
-    return _sorted_unique(working_df[factor_col].dropna().tolist())
+    return _sorted_unique(self.df[factor_col].dropna().tolist())
 
 
 def _ap_update_analysis_group_selection_ui(self):
@@ -944,7 +935,7 @@ def _ap_load_file(self):
     try:
         # Clear existing bucket assignments first!
         for bucket in (self.dv_bucket, self.factor1_bucket, self.factor2_bucket,
-                       self.subject_bucket, self.covariates_bucket, self.filter_bucket):
+                       self.subject_bucket, self.covariates_bucket):
             bucket.clear_assignments()
 
         path_lower = self.file_path.lower()
@@ -1031,7 +1022,7 @@ def _ap_load_sheet(self, index):
     try:
         # Clear existing bucket assignments first!
         for bucket in (self.dv_bucket, self.factor1_bucket, self.factor2_bucket,
-                       self.subject_bucket, self.covariates_bucket, self.filter_bucket):
+                       self.subject_bucket, self.covariates_bucket):
             bucket.clear_assignments()
 
         self.df = pd.read_excel(self.file_path, sheet_name=self.auto_sheet_combo.itemText(index))
@@ -1095,8 +1086,6 @@ def _ap_build_analysis_context(self):
     subject_columns = self.subject_bucket.get_assigned_columns()
     subject_column = subject_columns[0] if subject_columns else None
     covariate_columns = self.covariates_bucket.get_assigned_columns()
-    active_filter = getattr(self, 'filter_bucket', None)
-    filter_spec = active_filter.get_filter() if active_filter else None
 
     all_assigned = dv_columns + factor_columns + ([subject_column] if subject_column else []) + covariate_columns
     if len(set(all_assigned)) != len(all_assigned):
@@ -1117,16 +1106,11 @@ def _ap_build_analysis_context(self):
         "group_labels": [],
         "display_group_col": factor_columns[0],
         "inferred_test": None,
-        "filter": filter_spec,
         "selected_groups": list(self.analysis_selected_groups or []),
         "selected_group_column": factor_columns[0],
     }
 
     analysis_df = self.df.copy()
-    if filter_spec:
-        filter_col, filter_val = filter_spec
-        if filter_col in analysis_df.columns:
-            analysis_df = analysis_df[analysis_df[filter_col] == filter_val]
 
     _reject_missing_subject_ids(analysis_df, subject_column)
 
@@ -1708,16 +1692,8 @@ def _ap_format_context_analysis_scope(self, context, results):
     covariates = results.get("covariates") or context.get("covariates") or []
     covariate_text = ", ".join(map(str, covariates)) if covariates else "None"
 
-    filter_text = results.get("filter_applied")
-    if not filter_text and context.get("filter"):
-        filter_col, filter_val = context["filter"]
-        filter_text = f"{filter_col} = {filter_val}"
-    if not filter_text:
-        filter_text = "None"
-
     posthoc_text = self._format_posthoc_status(context, results)
     return (
-        f"Filter: {filter_text}\n"
         f"Covariates: {covariate_text}\n"
         f"Post-hoc: {posthoc_text}"
     )
