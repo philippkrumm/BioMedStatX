@@ -416,7 +416,7 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
                 "Parametric post-hoc tests (normality met):\n"
                 "  \u2022 Tukey HSD \u2014 all-pair comparisons, controls family-wise error rate\n"
                 "  \u2022 Dunnett \u2014 all groups vs. a single control group\n"
-                "  \u2022 Custom paired t-tests with Holm\u2013Sid\u00e1k correction\n\n"
+                "  \u2022 Pairwise t-tests (paired or independent, Holm-\u0160id\u00e1k)\n\n"
                 "Non-parametric post-hoc tests (normality violated):\n"
                 "  \u2022 Dunn test \u2014 rank-based all-pair comparisons with Holm\u2013Sid\u00e1k\n"
                 "  \u2022 Custom Mann\u2013Whitney U with Sid\u00e1k correction (assumes independence)\n"

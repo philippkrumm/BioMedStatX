@@ -1696,8 +1696,31 @@ class StatisticalTester:
                                     "effect_size_type": "cohen_d_rm"
                                 })
                 except Exception as ph_err:
-                    results["warnings"] = results.get("warnings", []) + [f"Post-hoc failed: {ph_err}"]
-                    
+                    # This inline interaction post-hoc cannot complete on pingouin >= 0.6:
+                    # pairwise_tests no longer emits 'Type', 'p-corr' or 'significant'
+                    # (verified columns: Contrast/<within>/A/B/Paired/Parametric/T/dof/
+                    # alternative/p_unc/p_corr/p_adjust/BF10/hedges). When the omnibus is
+                    # significant the AdvancedPostHocEngine supersedes this result anyway,
+                    # so pushing the raw KeyError into the user's report was a pure false
+                    # alarm ("Post-hoc failed: 'Type'" printed next to a correct result).
+                    # Keep it diagnosable in the log instead of alarming the user.
+                    logger.warning(
+                        "Inline mixed-ANOVA interaction post-hoc unavailable (%r); the advanced "
+                        "post-hoc engine supersedes it when the omnibus test is significant.",
+                        ph_err)
+
+                # The main-effects branch labels its two families separately
+                # (within_posthoc_test / between_posthoc_test) but never set the
+                # top-level posthoc_test. Whenever the advanced engine did NOT supersede
+                # this result (omnibus p >= alpha) the report therefore showed pairwise
+                # contrasts with no method name at all.
+                if not results.get("posthoc_test"):
+                    _inline_labels = [results.get(k) for k
+                                      in ("within_posthoc_test", "between_posthoc_test")
+                                      if results.get(k)]
+                    if _inline_labels:
+                        results["posthoc_test"] = " / ".join(_inline_labels)
+
                 # Enhanced Within-Factor Sphericity Testing for Mixed ANOVA
                 rm_factor = within[0]
                 within_sphericity_results = StatisticalTester._test_mixed_anova_within_sphericity(

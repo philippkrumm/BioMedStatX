@@ -26,7 +26,7 @@ def _canned_posthoc_result(new_label):
 @pytest.mark.parametrize(
     "test_name,stale_inline_label,real_method_name",
     [
-        ("two_way_anova", "Tukey HSD Test (Pingouin)", "Custom paired t-tests (Holm-Sidak)"),
+        ("two_way_anova", "Tukey HSD Test (Pingouin)", "Pairwise t-tests (independent, Holm-Sidak)"),
         ("mixed_anova", "Pairwise t-tests for interaction (Holm-Bonferroni)", "Tukey HSD (Mixed)"),
         ("repeated_measures_anova", "Paired t-tests (Holm-Bonferroni)", "Tukey HSD (RM)"),
     ],
