@@ -992,7 +992,6 @@ class AnalysisManager:
             elif kwargs.get('test') == 'repeated_measures_anova':
                 additional_factors = kwargs.get('additional_factors', [])
                 subject_column = kwargs.get('subject_column') or kwargs.get('analysis_context', {}).get('subject_column') or 'Subject'
-                print("DEBUG AC RM-ANOVA:", "additional_factors=", additional_factors, "kwargs=", {k:v for k,v in kwargs.items() if k != 'injected_df'})
                 if len(additional_factors) >= 1:
                     within_factor = additional_factors[0]  # RM-ANOVA uses within factor
                 else:
