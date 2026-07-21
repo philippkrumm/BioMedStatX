@@ -610,15 +610,6 @@ class _ChartsMixin:
             roc_block = _ChartsMixin._build_roc_chart(results)
             if roc_block:
                 charts.append(roc_block)
-        elif model_type == "BetaRegression":
-            # Coefficient table as inline HTML block
-            beta_coef_block = _AssociationMixin._build_beta_coefficient_table_html(results)
-            if beta_coef_block:
-                charts.append(beta_coef_block)
-            # Scatter + fitted curve replaces meaningless boxplot for proportion outcome
-            beta_chart = _ChartsMixin._build_beta_regression_chart(results)
-            if beta_chart:
-                charts.append(beta_chart)
         elif model_type == "LinearRegression":
             # Coefficient table as inline HTML block — was computed
             # (correlation_models.py) but never rendered anywhere.
@@ -847,67 +838,6 @@ class _ChartsMixin:
             logger.warning("ROC chart generation failed: %s", exc, exc_info=True)
             return None
 
-    @staticmethod
-    def _build_beta_regression_chart(results: dict) -> dict | None:
-        """Scatter plot of observed proportions vs primary predictor with fitted curve overlay."""
-        if results.get("model_type") != "BetaRegression":
-            return None
-        fitted = results.get("fitted_values") or []
-        xy_data = results.get("xy_data") or {}
-        x_values = _FormattingMixin._coerce_numeric_sequence(xy_data.get("x"))
-        y_values = _FormattingMixin._coerce_numeric_sequence(xy_data.get("y"))
-        if not x_values or not y_values or len(x_values) != len(fitted):
-            return None
-        try:
-            import plotly.graph_objects as go
-
-            x_arr = np.array(x_values, dtype=float)
-            y_arr = np.array(y_values, dtype=float)
-            fitted_arr = np.array(fitted, dtype=float)
-            sort_idx = np.argsort(x_arr)
-            x_label = _FormattingMixin._prettify_label(xy_data.get("x_label") or "Predictor")
-
-            figure = go.Figure()
-            figure.add_trace(go.Scatter(
-                x=x_arr,
-                y=y_arr,
-                mode="markers",
-                marker=dict(size=7, color="#0f766e", opacity=0.72),
-                name="Observed",
-                hovertemplate=f"{x_label}: %{{x:.3f}}<br>Observed: %{{y:.3f}}<extra></extra>",
-            ))
-            figure.add_trace(go.Scatter(
-                x=x_arr[sort_idx],
-                y=fitted_arr[sort_idx],
-                mode="lines",
-                line=dict(color="#b7791f", width=2.5),
-                name="Fitted",
-                hovertemplate="Fitted: %{y:.3f}<extra></extra>",
-            ))
-            figure.update_layout(
-                template="plotly_white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#fffdf8",
-                margin=dict(l=50, r=20, t=24, b=56),
-                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
-                xaxis_title=x_label,
-                yaxis_title="Proportion (outcome)",
-                yaxis=dict(range=[0, 1]),
-                showlegend=True,
-                legend=dict(x=0.75, y=0.06),
-            )
-            html = _ChartsMixin._figure_to_html(figure, div_id="biomedstatx-beta-chart")
-            if not html:
-                return None
-            return {
-                "title": "Beta Regression: Observed vs. Fitted",
-                "subtitle": "Proportion outcome (y-axis fixed [0, 1]). Orange line = model-fitted values.",
-                "html": html,
-                "div_id": "biomedstatx-beta-chart",
-            }
-        except Exception as exc:
-            logger.warning("Beta regression chart failed: %s", exc, exc_info=True)
-            return None
 
     @staticmethod
     def _build_correlation_matrix_charts(results: dict) -> list[dict]:

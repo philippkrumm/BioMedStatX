@@ -147,7 +147,7 @@ class DecisionTreeVisualizer:
         try:
             _model_type = results.get("model_type", "")
             if _model_type in ["Correlation", "LinearRegression", "LogisticRegression",
-                                "BetaRegression", "ANCOVA", "LMM", "CorrelationMatrix"]:
+                                "ANCOVA", "LMM", "CorrelationMatrix"]:
                 from visualization.flowchartvisualizer import FlowchartVisualizer
                 return FlowchartVisualizer.get_tree_json(results)
 

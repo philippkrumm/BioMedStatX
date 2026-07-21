@@ -1,9 +1,8 @@
 """Linear regression's coefficient_table (correlation_models.py:848,
 SimpleLinearRegressionModel.as_results_dict) was computed but had zero
 readers anywhere in the export layer. This wires it into the HTML report,
-mirroring the existing _build_beta_coefficient_table_html pattern but reading
-the correct key (coefficient_table, not coefficients) and using a t-column
-(OLS) instead of z-column (GLM, beta regression's own case).
+reading the correct key (coefficient_table, not coefficients) and rendering a
+t-column, which is what OLS reports -- not the z-column a GLM would.
 """
 import sys
 import os

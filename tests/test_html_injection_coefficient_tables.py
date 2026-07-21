@@ -1,4 +1,4 @@
-"""RE1: report_association.py's 3 coefficient-table builders interpolate a fitted model's raw
+"""RE1: report_association.py's coefficient-table builders interpolate a fitted model's raw
 parameter name into an HTML f-string with no escaping. Reproduces this end-to-end against a
 real statsmodels logit fit with a malicious category value, matching how round 1's audit
 originally demonstrated the injection - not a hand-crafted dict, a real patsy-encoded parameter
@@ -63,22 +63,6 @@ def test_or_table_html_escapes_the_malicious_parameter_name():
         "raw <script> tag from the group name survived unescaped into the exported HTML"
     )
     assert "&lt;script&gt;" in bundle["html"], "the escaped form must still be present"
-
-
-def test_beta_coefficient_table_html_escapes_the_malicious_parameter_name():
-    coef_table = [
-        {
-            "parameter": _MALICIOUS_GROUP,
-            "coefficient": 0.5,
-            "std_err": 0.1,
-            "z_value": 5.0,
-            "p_value": 0.001,
-            "ci_lower": 0.3,
-            "ci_upper": 0.7,
-        }
-    ]
-    bundle = _AssociationMixin._build_beta_coefficient_table_html({"coefficients": coef_table})
-    assert "<script>alert(1)</script>" not in bundle["html"]
 
 
 def test_linear_regression_coefficient_table_html_escapes_the_malicious_parameter_name():

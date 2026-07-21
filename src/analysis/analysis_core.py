@@ -266,7 +266,7 @@ class AnalysisManager:
         inferred_test = analysis_context.get("inferred_test")
         if inferred_test in {"two_way_anova", "mixed_anova", "repeated_measures_anova",
                              "ancova", "two_way_ancova", "lmm", "logistic_regression",
-                             "beta_regression", "correlation", "linear_regression"}:
+                             "correlation", "linear_regression"}:
             local_kwargs["test"] = inferred_test
         if analysis_context.get("subject_column"):
             local_kwargs["subject_column"] = analysis_context.get("subject_column")
@@ -455,7 +455,7 @@ class AnalysisManager:
         _test_type = kwargs.get('test', '')
         _analysis_context = kwargs.get('analysis_context', {}) or {}
         _is_continuous_analysis = _test_type in ('correlation', 'linear_regression',
-                                                   'logistic_regression', 'beta_regression',
+                                                   'logistic_regression',
                                                    'ancova', 'two_way_ancova', 'lmm')
         if _is_continuous_analysis:
             # For regression/correlation the "group_col" slot holds the predictor/factor variable
@@ -465,7 +465,6 @@ class AnalysisManager:
                 'correlation': 'Correlation',
                 'linear_regression': 'Linear Regression',
                 'logistic_regression': 'Logistic Regression',
-                'beta_regression': 'Beta Regression',
                 'ancova': 'ANCOVA',
                 'two_way_ancova': 'Two-Way ANCOVA',
                 'lmm': 'Linear Mixed Model',
@@ -539,9 +538,9 @@ class AnalysisManager:
 
             # --- Clinical model dispatch (ANCOVA, LMM, Logistic Regression, Correlation, Linear Regression) ---
             if kwargs.get('test') in ('ancova', 'two_way_ancova', 'lmm', 'logistic_regression',
-                                      'beta_regression', 'correlation', 'linear_regression'):
+                                      'correlation', 'linear_regression'):
                 from analysis.clinical_models import (ANCOVAModel, LinearMixedModel,
-                                             LogisticRegressionModel, BetaRegressionModel,
+                                             LogisticRegressionModel,
                                              DataHealthScanner)
 
                 clinical_test = kwargs['test']
@@ -577,7 +576,6 @@ class AnalysisManager:
                 _model_type_map = {
                     'ancova': 'ANCOVA', 'two_way_ancova': 'ANCOVA',
                     'lmm': 'LMM', 'logistic_regression': 'LogisticRegression',
-                    'beta_regression': 'BetaRegression',
                 }
                 try:
                     _scanner = DataHealthScanner(
@@ -642,50 +640,6 @@ class AnalysisManager:
                     predictors = analysis_context.get('factor_columns', [])
                     model.fit(df, dv=value_cols[0], predictors=predictors, covariates=covariates or None)
                     test_results = model.as_results_dict()
-
-                elif clinical_test == 'beta_regression':
-                    from core.methodology_trace import MethodologyTrace
-                    _beta_trace = MethodologyTrace()
-                    _beta_predictors = analysis_context.get('factor_columns', [])
-                    _beta_n = int(df[value_cols[0]].dropna().count())
-                    _beta_n_pred = analysis_context.get('beta_n_predictors') or max(1, len(covariates or []) + 1)
-                    _beta_epv = analysis_context.get('beta_epv') or (_beta_n / _beta_n_pred)
-                    _beta_bias = analysis_context.get('beta_bias_corrected', _beta_epv < 10)
-                    _beta_sv = analysis_context.get('beta_sv_transformed', False)
-                    _beta_n_unique = int(df[value_cols[0]].dropna().nunique())
-
-                    if _beta_sv:
-                        _beta_trace.add(1, "Data Transformation",
-                            "Boundary values (exact 0 or 1) were present in the outcome. "
-                            "Smithson-Verkuilen transformation applied: y_adj = (y × (n−1) + 0.5) / n. "
-                            "This pushes boundary values strictly inside (0,1) as required by Beta Regression.",
-                            detail=f"n={_beta_n}")
-
-                    if _beta_bias:
-                        _beta_trace.add(2, "Test Selection",
-                            "Outcome detected as proportion (all values strictly in (0,1), "
-                            f"{_beta_n_unique} unique values). "
-                            f"EPV = {_beta_n} / {_beta_n_pred} = {_beta_epv:.1f} < 10. "
-                            "Bias-corrected Beta Regression applied to compensate for "
-                            "small sample bias (Peduzzi et al., 1996, adapted). "
-                            "Note: EPV rule was derived for logistic regression — "
-                            "interpretation should be cautious.",
-                            detail=f"EPV={_beta_epv:.1f}, n={_beta_n}, predictors={_beta_n_pred}")
-                    else:
-                        _beta_trace.add(2, "Test Selection",
-                            "Outcome detected as proportion (all values strictly in (0,1), "
-                            f"{_beta_n_unique} unique values). "
-                            f"EPV = {_beta_n} / {_beta_n_pred} = {_beta_epv:.1f} ≥ 10. "
-                            "Standard Beta Regression applied.",
-                            detail=f"EPV={_beta_epv:.1f}, n={_beta_n}, predictors={_beta_n_pred}")
-
-                    model = BetaRegressionModel()
-                    model.fit(df, dv=value_cols[0], predictors=_beta_predictors,
-                              covariates=covariates or None, bias_corrected=_beta_bias)
-                    test_results = model.as_results_dict()
-                    test_results["methodology_trace"] = _beta_trace
-                    test_results["sv_transformed"] = _beta_sv
-                    test_results["epv"] = round(_beta_epv, 2)
 
                 elif clinical_test in ('correlation', 'linear_regression'):
                     from analysis.correlation_models import (CorrelationModel, SimpleLinearRegressionModel,
@@ -753,14 +707,14 @@ class AnalysisManager:
                 # filtered_samples has no meaningful group structure — skip it to avoid the group
                 # chart and descriptive table using X-values as bogus group labels.
                 # Instead, embed raw data as named columns for the Raw Data Vault.
-                _no_group_raw = clinical_test in ('correlation', 'linear_regression', 'logistic_regression', 'beta_regression')
+                _no_group_raw = clinical_test in ('correlation', 'linear_regression', 'logistic_regression')
                 if not _no_group_raw:
                     results['raw_data'] = {g: filtered_samples[g][:] for g in groups}
                 else:
                     if clinical_test in ('correlation', 'linear_regression'):
                         _raw_col_names = [c for c in ([x_col, y_col] + (covariates or [])) if c]
                         _raw_source = analysis_df
-                    else:  # logistic_regression / beta_regression
+                    else:  # logistic_regression
                         _predictors_used = analysis_context.get('factor_columns', [])
                         _raw_col_names = [c for c in ([value_cols[0]] + _predictors_used + (covariates or [])) if c]
                         _raw_col_names = list(dict.fromkeys(_raw_col_names))  # Make unique

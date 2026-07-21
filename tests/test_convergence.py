@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from analysis.clinical_models import LogisticRegressionModel, BetaRegressionModel
+from analysis.clinical_models import LogisticRegressionModel
 
 def test_convergence_keys():
     # 1. Logistic: Complete separation (should trigger Firth, which usually converges, but we test the mechanism)
@@ -20,19 +20,3 @@ def test_convergence_keys():
     res_log_fail = mod_log_fail.as_results_dict()
     assert res_log_fail.get("converged") is False
     assert any("not converge" in w or "unreliable" in w for w in res_log_fail.get("warnings", []))
-
-    # 2. Beta Regression: Quasi-separation / values perfectly predicting bounds
-    df_beta = pd.DataFrame({'x': [1, 2, 3, 4], 'y': [0.1, 0.4, 0.5, 0.9]})
-    mod_beta = BetaRegressionModel()
-    mod_beta.fit(df_beta, 'y', ['x'])
-    res_beta = mod_beta.as_results_dict()
-    assert "converged" in res_beta
-    
-    # Real non-converging Beta dataset (quasi-separation)
-    # Using extreme values close to 0 and 1 with a perfect predictor often breaks Beta MLE
-    df_beta_fail = pd.DataFrame({'x': [1, 2, 3, 4, 5, 6], 'y': [0.0001, 0.0001, 0.0001, 0.9999, 0.9999, 0.9999]})
-    mod_beta_fail = BetaRegressionModel()
-    mod_beta_fail.fit(df_beta_fail, 'y', ['x'])
-    res_beta_fail = mod_beta_fail.as_results_dict()
-    assert res_beta_fail["converged"] is False
-    assert any("not converge" in w for w in res_beta_fail.get("warnings", []))

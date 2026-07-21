@@ -418,7 +418,7 @@ def validate_samples_for_test(
 
 def validate_outcome(values, *, label="outcome", min_n_block=MIN_N_BLOCK):
     """Single-vector degeneracy gate for regression-style models (ANCOVA, LMM,
-    logistic/linear/beta regression, correlation) whose data shape doesn't fit
+    logistic/linear regression, correlation) whose data shape doesn't fit
     the group-based gate. Returns the first blocking ValidationIssue or None.
     Catches a constant / empty / too-small / Inf / overflow outcome or predictor
     that would make the fit meaningless or singular."""

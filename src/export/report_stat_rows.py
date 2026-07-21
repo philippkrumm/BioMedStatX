@@ -2,7 +2,7 @@
 
 Extracted from ``html_exporter.py`` (Phase 3 of the god-file split). Each
 method maps an analysis ``results`` dict to the list of display rows for one
-test family (ANCOVA, LMM, correlation matrix, beta/logistic regression,
+test family (ANCOVA, LMM, correlation matrix, logistic regression,
 factorial ANOVA, generic, pairwise). Stateless ``@staticmethod`` helpers;
 ``HTMLExporter`` mixes them in so existing call sites keep working via MRO.
 
@@ -271,56 +271,6 @@ class _StatRowsMixin:
             rows.append({"label": "Status", "value": "No structured statistical summary available."})
         return rows
 
-    @staticmethod
-    def _build_beta_statistical_rows(results: dict) -> list[dict]:
-        """Dedicated statistical rows for Beta Regression.
-        The coefficient table is rendered separately as an HTML block via chart_blocks."""
-        rows = [{"label": "── Model Fit ──", "value": ""}]
-        for label, key in [
-            ("Test", "test"),
-            ("Model type", "model_type"),
-            ("p-value (primary predictor)", "p_value"),
-        ]:
-            value = results.get(key)
-            if key in results and _FormattingMixin._has_display_value(value):
-                display = _FormattingMixin._format_p_value(value) if key.startswith("p_value") else _FormattingMixin._format_metric(value)
-                rows.append({"label": label, "value": display})
-
-        pseudo_r2 = results.get("pseudo_r_squared")
-        if pseudo_r2 is not None:
-            rows.append({"label": "Pseudo-R² (McFadden)", "value": _FormattingMixin._format_metric(pseudo_r2)})
-
-        phi = results.get("phi")
-        if phi is not None:
-            phi_f = float(phi)
-            if phi_f < 1:
-                phi_interp = "High variance relative to mean"
-            elif phi_f <= 5:
-                phi_interp = "Moderate dispersion"
-            else:
-                phi_interp = "Low dispersion — precise estimates"
-            rows.append({"label": "Dispersion parameter (φ)", "value": f"{_FormattingMixin._format_metric(phi)} — {phi_interp}"})
-
-        for label, key in [
-            ("AIC", "aic"),
-            ("BIC", "bic"),
-            ("N observations", "n_observations"),
-        ]:
-            value = results.get(key)
-            if value is not None:
-                rows.append({"label": label, "value": _FormattingMixin._format_metric(value)})
-
-        bc = results.get("bias_corrected")
-        if bc is not None:
-            rows.append({"label": "Bias corrected", "value": "Yes" if bc else "No"})
-            if bc:
-                bc_method = results.get("bias_correction_method")
-                if bc_method:
-                    rows.append({"label": "Bias correction method", "value": str(bc_method)})
-
-        if len(rows) <= 1:
-            rows.append({"label": "Status", "value": "No structured statistical summary available."})
-        return rows
 
     @staticmethod
     def _build_logistic_statistical_rows(results: dict) -> list[dict]:
@@ -567,9 +517,6 @@ class _StatRowsMixin:
 
         if model_type == "LogisticRegression":
             return _StatRowsMixin._build_logistic_statistical_rows(results)
-
-        if model_type == "BetaRegression":
-            return _StatRowsMixin._build_beta_statistical_rows(results)
 
         if model_type == "CorrelationMatrix":
             return _StatRowsMixin._build_corr_matrix_statistical_rows(results)

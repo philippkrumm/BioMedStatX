@@ -68,10 +68,6 @@ CATALOG: List[EdgeCase] = [
         df=pd.DataFrame({'x': [1, 2, 3, 4], 'y': [0, 0, 1, 1]}),
         kwargs={"dependent": "y", "covariates": ["x"]}
     ),
-    EdgeCase("beta_out_of_bounds", {}, "blocked", test_type="beta_regression",
-        df=pd.DataFrame({'y': [0.0, 0.5, 1.0, 1.5], 'x': [1, 2, 3, 4]}), # beta response must be in (0, 1)
-        kwargs={"dependent": "y", "covariates": ["x"]}
-    ),
     EdgeCase("rm_cross_level_missing", {}, "ok", test_type="repeated_measures_anova",
         df=pd.DataFrame({'Subject': [1, 1, 2, 2], 'Time': ['T1', 'T2', 'T1', 'T2'], 'Val': [5, NaN, 6, 7]}),
         kwargs={"subject": "Subject", "within": ["Time"], "dv": "Val"}

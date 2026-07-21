@@ -47,68 +47,6 @@ class _SummariesMixin:
                 "status_class": "is-significant" if converged else "is-error",
             })
 
-        # --- Beta Regression: residual normality, S-V transformation, EPV ---
-        if model_type == "BetaRegression":
-            residuals = _FormattingMixin._coerce_numeric_sequence(results.get("residuals"))
-            if residuals and len(residuals) >= 3:
-                try:
-                    from scipy import stats as _stats
-                    sw_stat, sw_p = _stats.shapiro(residuals)
-                    sw_normal = sw_p >= 0.05
-                    rows.append({
-                        "name": "Residual normality (Shapiro-Wilk)",
-                        "statistic": _FormattingMixin._format_metric(sw_stat),
-                        "p_value": _FormattingMixin._format_p_value(sw_p),
-                        "p_value_style": _FormattingMixin._p_heat_style(sw_p),
-                        "status_label": _FormattingMixin._bool_label(sw_normal),
-                        "status_class": _FormattingMixin._bool_class(sw_normal),
-                    })
-                except Exception:
-                    rows.append({
-                        "name": "Residual normality (Shapiro-Wilk)",
-                        "statistic": "—",
-                        "p_value": "—",
-                        "p_value_style": "",
-                        "status_label": "Assessed visually via Q-Q plot",
-                        "status_class": "is-neutral",
-                    })
-            else:
-                rows.append({
-                    "name": "Residual normality (Shapiro-Wilk)",
-                    "statistic": "—",
-                    "p_value": "—",
-                    "p_value_style": "",
-                    "status_label": "Assessed visually via Q-Q plot",
-                    "status_class": "is-neutral",
-                })
-
-            if results.get("sv_transformed"):
-                rows.append({
-                    "name": "Smithson-Verkuilen transformation",
-                    "statistic": "Applied",
-                    "p_value": "—",
-                    "p_value_style": "",
-                    "status_label": "Boundary values present — squeezed from [0,1] to strictly (0,1)",
-                    "status_class": "is-neutral",
-                })
-
-            epv = results.get("epv")
-            if epv is not None:
-                epv_f = float(epv)
-                if epv_f < 10:
-                    epv_label = f"EPV = {_FormattingMixin._format_metric(epv)} — Small sample relative to predictors — bias-corrected estimation applied"
-                    epv_class = "is-danger"
-                else:
-                    epv_label = f"EPV = {_FormattingMixin._format_metric(epv)} — Adequate sample size"
-                    epv_class = "is-significant"
-                rows.append({
-                    "name": "Events per variable (EPV)",
-                    "statistic": _FormattingMixin._format_metric(epv),
-                    "p_value": "—",
-                    "p_value_style": "",
-                    "status_label": epv_label,
-                    "status_class": epv_class,
-                })
 
         # --- CorrelationMatrix: method justification ---
         if model_type == "CorrelationMatrix":
@@ -353,8 +291,6 @@ class _SummariesMixin:
             })
 
         # --- Standard tests: normality_tests + fallback from test_info ---
-        elif model_type == "BetaRegression":
-            pass  # handled above in dedicated Beta Regression block
         elif model_type == "CorrelationMatrix":
             pass  # handled above in dedicated CorrelationMatrix block
         else:
