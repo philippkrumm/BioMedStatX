@@ -1,0 +1,547 @@
+{
+  "schema_version": 1,
+  "oracle": "R base t.test (Welch + Student + paired) & afex/emmeans (pooled within)",
+  "dataset": {
+    "generator": "validation/generate_golden_feature_b_het.py build_het_dataset() seed 456",
+    "y_bet_het": "between-heterogeneous raw values (Ctrl sd=1, Trt sd=5); BETWEEN contrasts only",
+    "y_win_mix": "T1-T2 difference variances heterogeneous (sd 0.8 vs 4.0); T2-T3 homogeneous (sd 1.0)"
+  },
+  "data": [
+    {
+      "subj": "S1",
+      "groupA": "Trt",
+      "time": "T1",
+      "y_bet_het": -8.822121659251604,
+      "y_win_mix": 10.324071437001537
+    },
+    {
+      "subj": "S1",
+      "groupA": "Trt",
+      "time": "T2",
+      "y_bet_het": 10.479477978508912,
+      "y_win_mix": 18.38488667574061
+    },
+    {
+      "subj": "S1",
+      "groupA": "Trt",
+      "time": "T3",
+      "y_bet_het": 6.687119908006766,
+      "y_win_mix": 19.349579277997073
+    },
+    {
+      "subj": "S2",
+      "groupA": "Trt",
+      "time": "T1",
+      "y_bet_het": 16.29119333596869,
+      "y_win_mix": 11.500203409200104
+    },
+    {
+      "subj": "S2",
+      "groupA": "Trt",
+      "time": "T2",
+      "y_bet_het": 8.956351179593751,
+      "y_win_mix": 20.780222921214623
+    },
+    {
+      "subj": "S2",
+      "groupA": "Trt",
+      "time": "T3",
+      "y_bet_het": 16.699910206499023,
+      "y_win_mix": 22.78624357045031
+    },
+    {
+      "subj": "S3",
+      "groupA": "Trt",
+      "time": "T1",
+      "y_bet_het": 25.928525734653853,
+      "y_win_mix": 13.93718108636703
+    },
+    {
+      "subj": "S3",
+      "groupA": "Trt",
+      "time": "T2",
+      "y_bet_het": 15.077521088910284,
+      "y_win_mix": 18.67892172385415
+    },
+    {
+      "subj": "S3",
+      "groupA": "Trt",
+      "time": "T3",
+      "y_bet_het": 15.418048294161782,
+      "y_win_mix": 18.81274562852783
+    },
+    {
+      "subj": "S4",
+      "groupA": "Trt",
+      "time": "T1",
+      "y_bet_het": 12.64635316506002,
+      "y_win_mix": 12.867104502331546
+    },
+    {
+      "subj": "S4",
+      "groupA": "Trt",
+      "time": "T2",
+      "y_bet_het": 13.265200203829203,
+      "y_win_mix": 14.770850809307188
+    },
+    {
+      "subj": "S4",
+      "groupA": "Trt",
+      "time": "T3",
+      "y_bet_het": 10.843651877858441,
+      "y_win_mix": 15.325869351814196
+    },
+    {
+      "subj": "S5",
+      "groupA": "Trt",
+      "time": "T1",
+      "y_bet_het": 5.547137903984428,
+      "y_win_mix": 12.979100051472095
+    },
+    {
+      "subj": "S5",
+      "groupA": "Trt",
+      "time": "T2",
+      "y_bet_het": 13.083492160050284,
+      "y_win_mix": 19.16860711325441
+    },
+    {
+      "subj": "S5",
+      "groupA": "Trt",
+      "time": "T3",
+      "y_bet_het": 4.6147131391421885,
+      "y_win_mix": 20.237287835715637
+    },
+    {
+      "subj": "S6",
+      "groupA": "Trt",
+      "time": "T1",
+      "y_bet_het": 0.9062608950340181,
+      "y_win_mix": 13.45628017328849
+    },
+    {
+      "subj": "S6",
+      "groupA": "Trt",
+      "time": "T2",
+      "y_bet_het": 13.35458085999995,
+      "y_win_mix": 14.36095920552509
+    },
+    {
+      "subj": "S6",
+      "groupA": "Trt",
+      "time": "T3",
+      "y_bet_het": 14.511939238797167,
+      "y_win_mix": 15.14884479635235
+    },
+    {
+      "subj": "S7",
+      "groupA": "Trt",
+      "time": "T1",
+      "y_bet_het": 15.098266065074116,
+      "y_win_mix": 10.448159411969348
+    },
+    {
+      "subj": "S7",
+      "groupA": "Trt",
+      "time": "T2",
+      "y_bet_het": 14.777035835543838,
+      "y_win_mix": 13.807262287901963
+    },
+    {
+      "subj": "S7",
+      "groupA": "Trt",
+      "time": "T3",
+      "y_bet_het": 11.368747074060316,
+      "y_win_mix": 15.135535031471301
+    },
+    {
+      "subj": "S8",
+      "groupA": "Trt",
+      "time": "T1",
+      "y_bet_het": 0.6894315219620211,
+      "y_win_mix": 12.483213675187052
+    },
+    {
+      "subj": "S8",
+      "groupA": "Trt",
+      "time": "T2",
+      "y_bet_het": 20.426436372862852,
+      "y_win_mix": 14.034985842804971
+    },
+    {
+      "subj": "S8",
+      "groupA": "Trt",
+      "time": "T3",
+      "y_bet_het": 12.33709691925261,
+      "y_win_mix": 14.572341107732958
+    },
+    {
+      "subj": "S9",
+      "groupA": "Trt",
+      "time": "T1",
+      "y_bet_het": 10.890332331214807,
+      "y_win_mix": 12.873625194050957
+    },
+    {
+      "subj": "S9",
+      "groupA": "Trt",
+      "time": "T2",
+      "y_bet_het": 4.2498181516269105,
+      "y_win_mix": 10.870537653226208
+    },
+    {
+      "subj": "S9",
+      "groupA": "Trt",
+      "time": "T3",
+      "y_bet_het": 17.44817335796136,
+      "y_win_mix": 12.566911234546088
+    },
+    {
+      "subj": "S10",
+      "groupA": "Trt",
+      "time": "T1",
+      "y_bet_het": 10.135212433671043,
+      "y_win_mix": 12.16797613070599
+    },
+    {
+      "subj": "S10",
+      "groupA": "Trt",
+      "time": "T2",
+      "y_bet_het": 10.105214499707388,
+      "y_win_mix": 16.233670899108755
+    },
+    {
+      "subj": "S10",
+      "groupA": "Trt",
+      "time": "T3",
+      "y_bet_het": 13.266289522775615,
+      "y_win_mix": 18.762452896754347
+    },
+    {
+      "subj": "S11",
+      "groupA": "Ctrl",
+      "time": "T1",
+      "y_bet_het": 10.171877325737817,
+      "y_win_mix": 9.95366934240654
+    },
+    {
+      "subj": "S11",
+      "groupA": "Ctrl",
+      "time": "T2",
+      "y_bet_het": 10.508851448153994,
+      "y_win_mix": 11.350125277838668
+    },
+    {
+      "subj": "S11",
+      "groupA": "Ctrl",
+      "time": "T3",
+      "y_bet_het": 10.199650873813818,
+      "y_win_mix": 11.646879374740974
+    },
+    {
+      "subj": "S12",
+      "groupA": "Ctrl",
+      "time": "T1",
+      "y_bet_het": 9.748820032877214,
+      "y_win_mix": 9.687712768508304
+    },
+    {
+      "subj": "S12",
+      "groupA": "Ctrl",
+      "time": "T2",
+      "y_bet_het": 9.843644653776925,
+      "y_win_mix": 11.049806638398678
+    },
+    {
+      "subj": "S12",
+      "groupA": "Ctrl",
+      "time": "T3",
+      "y_bet_het": 8.883231302276455,
+      "y_win_mix": 11.74618839395229
+    },
+    {
+      "subj": "S13",
+      "groupA": "Ctrl",
+      "time": "T1",
+      "y_bet_het": 9.820457848881864,
+      "y_win_mix": 10.989373315364194
+    },
+    {
+      "subj": "S13",
+      "groupA": "Ctrl",
+      "time": "T2",
+      "y_bet_het": 10.384730568968394,
+      "y_win_mix": 12.09815705579552
+    },
+    {
+      "subj": "S13",
+      "groupA": "Ctrl",
+      "time": "T3",
+      "y_bet_het": 10.2441249763852,
+      "y_win_mix": 12.820203676727019
+    },
+    {
+      "subj": "S14",
+      "groupA": "Ctrl",
+      "time": "T1",
+      "y_bet_het": 10.71654313579745,
+      "y_win_mix": 10.36831733059198
+    },
+    {
+      "subj": "S14",
+      "groupA": "Ctrl",
+      "time": "T2",
+      "y_bet_het": 10.068926769202704,
+      "y_win_mix": 11.582335766485578
+    },
+    {
+      "subj": "S14",
+      "groupA": "Ctrl",
+      "time": "T3",
+      "y_bet_het": 10.077597017165287,
+      "y_win_mix": 12.556075305637654
+    },
+    {
+      "subj": "S15",
+      "groupA": "Ctrl",
+      "time": "T1",
+      "y_bet_het": 9.701342269107636,
+      "y_win_mix": 9.043229829021836
+    },
+    {
+      "subj": "S15",
+      "groupA": "Ctrl",
+      "time": "T2",
+      "y_bet_het": 10.14524379944865,
+      "y_win_mix": 9.75111253099082
+    },
+    {
+      "subj": "S15",
+      "groupA": "Ctrl",
+      "time": "T3",
+      "y_bet_het": 10.896837054535125,
+      "y_win_mix": 11.34765612329605
+    },
+    {
+      "subj": "S16",
+      "groupA": "Ctrl",
+      "time": "T1",
+      "y_bet_het": 10.090387553429784,
+      "y_win_mix": 8.760487860705238
+    },
+    {
+      "subj": "S16",
+      "groupA": "Ctrl",
+      "time": "T2",
+      "y_bet_het": 9.941382083880292,
+      "y_win_mix": 10.138789446842978
+    },
+    {
+      "subj": "S16",
+      "groupA": "Ctrl",
+      "time": "T3",
+      "y_bet_het": 9.690045352128394,
+      "y_win_mix": 13.94611117399292
+    },
+    {
+      "subj": "S17",
+      "groupA": "Ctrl",
+      "time": "T1",
+      "y_bet_het": 9.772885923071117,
+      "y_win_mix": 10.032071803476834
+    },
+    {
+      "subj": "S17",
+      "groupA": "Ctrl",
+      "time": "T2",
+      "y_bet_het": 10.241517438780319,
+      "y_win_mix": 10.103373857281957
+    },
+    {
+      "subj": "S17",
+      "groupA": "Ctrl",
+      "time": "T3",
+      "y_bet_het": 11.159975390601353,
+      "y_win_mix": 11.952638341538359
+    },
+    {
+      "subj": "S18",
+      "groupA": "Ctrl",
+      "time": "T1",
+      "y_bet_het": 10.117350863326926,
+      "y_win_mix": 10.406220268369857
+    },
+    {
+      "subj": "S18",
+      "groupA": "Ctrl",
+      "time": "T2",
+      "y_bet_het": 10.446731789919625,
+      "y_win_mix": 13.394916522380607
+    },
+    {
+      "subj": "S18",
+      "groupA": "Ctrl",
+      "time": "T3",
+      "y_bet_het": 10.918389448310396,
+      "y_win_mix": 12.678792965903774
+    },
+    {
+      "subj": "S19",
+      "groupA": "Ctrl",
+      "time": "T1",
+      "y_bet_het": 10.475550377356685,
+      "y_win_mix": 9.54460062954742
+    },
+    {
+      "subj": "S19",
+      "groupA": "Ctrl",
+      "time": "T2",
+      "y_bet_het": 9.774634783206693,
+      "y_win_mix": 11.111473340396406
+    },
+    {
+      "subj": "S19",
+      "groupA": "Ctrl",
+      "time": "T3",
+      "y_bet_het": 10.155113597075841,
+      "y_win_mix": 11.635451987695422
+    },
+    {
+      "subj": "S20",
+      "groupA": "Ctrl",
+      "time": "T1",
+      "y_bet_het": 9.378503904437018,
+      "y_win_mix": 10.092894956372598
+    },
+    {
+      "subj": "S20",
+      "groupA": "Ctrl",
+      "time": "T2",
+      "y_bet_het": 10.261092308199697,
+      "y_win_mix": 11.694229817564809
+    },
+    {
+      "subj": "S20",
+      "groupA": "Ctrl",
+      "time": "T3",
+      "y_bet_het": 10.216461051639246,
+      "y_win_mix": 12.96604230431648
+    }
+  ],
+  "results": {
+    "assumptions": {
+      "welch": "base-R t.test(var.equal=FALSE): Welch-Satterthwaite df. Matches scipy ttest_ind(equal_var=False).",
+      "student": "base-R t.test(var.equal=TRUE): pooled variance, df=n1+n2-2.",
+      "iso_within": "base-R t.test(paired=TRUE) per group, df=n-1 (isolated error term).",
+      "emmeans_pooled_within": "afex::aov_ez(type=3) + pairs(emmeans(~time|groupA)): pooled residual error."
+    },
+    "between_y_bet_het": {
+      "welch": {
+        "Ctrl:T1|Trt:T1": {
+          "t": 0.3454821805007,
+          "df": 9.029612100988,
+          "p": 0.7376440624305
+        },
+        "Ctrl:T2|Trt:T2": {
+          "t": -1.625800497112,
+          "df": 9.062246555047,
+          "p": 0.138204862748
+        },
+        "Ctrl:T3|Trt:T3": {
+          "t": -1.562035800977,
+          "df": 9.454675005391,
+          "p": 0.1510953533221
+        }
+      },
+      "student": {
+        "Ctrl:T1|Trt:T1": {
+          "t": 0.3454821805007,
+          "df": 18,
+          "p": 0.733736585817
+        },
+        "Ctrl:T2|Trt:T2": {
+          "t": -1.625800497112,
+          "df": 18,
+          "p": 0.1213717647544
+        },
+        "Ctrl:T3|Trt:T3": {
+          "t": -1.562035800977,
+          "df": 18,
+          "p": 0.1356893368161
+        }
+      }
+    },
+    "within_y_win_mix": {
+      "isolated": {
+        "Ctrl:T1|Ctrl:T2": {
+          "t": -5.728416745347,
+          "df": 9,
+          "p": 0.0002839204902273,
+          "n": 10
+        },
+        "Ctrl:T1|Ctrl:T3": {
+          "t": -7.595048189098,
+          "df": 9,
+          "p": 3.343828040544e-05,
+          "n": 10
+        },
+        "Ctrl:T2|Ctrl:T3": {
+          "t": -2.926690551252,
+          "df": 9,
+          "p": 0.01684744896066,
+          "n": 10
+        },
+        "Trt:T1|Trt:T2": {
+          "t": -3.510508265296,
+          "df": 9,
+          "p": 0.006613337133268,
+          "n": 10
+        },
+        "Trt:T1|Trt:T3": {
+          "t": -4.346384523447,
+          "df": 9,
+          "p": 0.001860043558083,
+          "n": 10
+        },
+        "Trt:T2|Trt:T3": {
+          "t": -4.975910368974,
+          "df": 9,
+          "p": 0.0007637005295129,
+          "n": 10
+        }
+      },
+      "emmeans_pooled": {
+        "Ctrl:T1-T2": {
+          "t_ratio": -1.708339408055,
+          "df": 18,
+          "p": 0.2293127156845
+        },
+        "Ctrl:T1-T3": {
+          "t_ratio": -2.909269387747,
+          "df": 18,
+          "p": 0.02417500179008
+        },
+        "Ctrl:T2-T3": {
+          "t_ratio": -3.518662703415,
+          "df": 18,
+          "p": 0.006590491183205
+        },
+        "Trt:T1-T2": {
+          "t_ratio": -4.852969706927,
+          "df": 18,
+          "p": 0.0003584174560232
+        },
+        "Trt:T1-T3": {
+          "t_ratio": -5.916951000583,
+          "df": 18,
+          "p": 3.809493018991e-05
+        },
+        "Trt:T2-T3": {
+          "t_ratio": -3.705482273268,
+          "df": 18,
+          "p": 0.004387539885662
+        }
+      }
+    }
+  }
+}
