@@ -21,9 +21,18 @@ class ComparisonSelectionDialog(QDialog):
 
         # Scroll area for many comparisons
         scroll = QScrollArea(self)
+        scroll.setObjectName("comparisonScroll")
         scroll.setWidgetResizable(True)
         scroll_content = QWidget()
+        scroll_content.setObjectName("comparisonScrollContent")
         scroll_layout = QVBoxLayout(scroll_content)
+        # Align the list surface with the app's design system instead of the
+        # default platform grey of an unstyled QScrollArea.
+        scroll.setStyleSheet(
+            "#comparisonScroll { background: #f6fbfe; border: 1px solid #dbe7f0;"
+            " border-radius: 6px; }"
+            " #comparisonScrollContent { background: #f6fbfe; }"
+        )
 
         for comp in self.comparisons:
             text = f"{comp[0]}  vs  {comp[1]}"
