@@ -315,9 +315,9 @@ class TwoWayPostHocAnalyzer(PostHocAnalyzer):
             method_name_map = {
                 "tukey": "Tukey HSD",
                 "dunnett": "Dunnett Test",
-                "paired_custom": "Custom paired t-tests (Holm-Šidák)",
-                "paired_fdr": "Custom paired t-tests (FDR Benjamini-Hochberg)",
-                "holm": "Custom paired t-tests (Holm-Šidák)"
+                "paired_custom": "Pairwise t-tests (independent, Holm-Šidák)",
+                "paired_fdr": "Pairwise t-tests (independent, FDR Benjamini-Hochberg)",
+                "holm": "Pairwise t-tests (independent, Holm-Šidák)"
             }
             result["posthoc_test"] = method_name_map.get(method, f"Post-hoc test ({method})")
             

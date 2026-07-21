@@ -475,6 +475,34 @@ class UIDialogManager:
         dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
 
     @staticmethod
+    def _posthoc_prompt_text(progress_text):
+        """Design-aware guidance for the post-hoc selection dialog.
+
+        Which pairing is statistically appropriate depends on the design, so the
+        recommendation must NOT be a blanket "paired t-tests":
+          * repeated-measures -> within-subjects            -> paired t-tests
+          * two-way           -> between-subjects            -> independent pairwise t-tests
+          * mixed             -> both within- AND between    -> pairing chosen per
+            comparison automatically (a blanket "paired" hint would be wrong for
+            the between-subject pairs, the same artifact as the Two-Way label bug).
+        """
+        pt = progress_text or ""
+        if "repeated_measures_anova" in pt:
+            return ("The Repeated-Measures ANOVA has revealed significant differences. "
+                    "This is a within-subjects design, so paired t-tests are the appropriate "
+                    "follow-up for pairwise comparisons. Please select a post-hoc test:")
+        if "two_way_anova" in pt:
+            return ("The Two-Way ANOVA has revealed significant differences. This is a "
+                    "between-subjects design, so independent pairwise t-tests are the "
+                    "appropriate follow-up. Please select a post-hoc test:")
+        if "mixed_anova" in pt:
+            return ("The Mixed ANOVA has revealed significant differences. Mixed designs "
+                    "contain both within-subject and between-subject comparisons; the "
+                    "appropriate pairing (paired vs. independent) is selected automatically "
+                    "per comparison. Please select a post-hoc test:")
+        return "The ANOVA has revealed significant differences. Please select a post-hoc test:"
+
+    @staticmethod
     def select_posthoc_test_dialog(parent=None, progress_text=None, column_name=None, default_method=None, equal_variance=None):
         UIDialogManager._ensure_qt_application()
         dialog = QDialog(parent)
@@ -489,15 +517,7 @@ class UIDialogManager:
             title += f" {progress_text}"
         dialog.setWindowTitle(title)
 
-        info_text = "The ANOVA has revealed significant differences. Please select a post-hoc test:"
-        if progress_text and ("two_way_anova" in progress_text or "mixed_anova" in progress_text or "repeated_measures_anova" in progress_text):
-            info_text = ("The advanced ANOVA has revealed significant differences. For advanced ANOVAs, "
-                        "paired t-tests are often preferred to examine specific interaction effects. "
-                        "Please select a post-hoc test:")
-        elif progress_text and "two_way_anova" in progress_text:
-            info_text = ("The Two-Way ANOVA has revealed significant differences. For Two-Way ANOVA, "
-                        "paired t-tests are often preferred to examine specific interaction effects. "
-                        "Please select a post-hoc test:")
+        info_text = UIDialogManager._posthoc_prompt_text(progress_text)
         
         info = QLabel(info_text)
         info.setWordWrap(True)
