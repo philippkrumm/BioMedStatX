@@ -465,6 +465,19 @@ NONPARAMETRIC_POSTHOC_OPTIONS = (
     ("Mann-Whitney-U Tests (custom pairs, Holm-Bonferroni correction)", "mw_custom"),
 )
 
+# One-way post-hoc options. The omnibus on this path is always Welch's ANOVA
+# (select_comparison_test returns welch_anova unconditionally for >2 independent
+# normal groups), so every option here must hold under heteroscedasticity.
+# "paired_custom" used to be advertised as "Custom paired t-tests": that text
+# outlived the fix which stopped the branch from running ttest_rel on
+# independent groups, so the label the user read BEFORE choosing still promised
+# a paired test while an independent/Welch one ran.
+ONEWAY_POSTHOC_OPTIONS = (
+    ("Games-Howell Test (compares all pairs, robust to unequal variances)", "games_howell"),
+    ("Dunnett Test (compares all groups against ONE control group)", "dunnett"),
+    ("Selected pairs only (independent t-tests, Holm-Šidák)", "paired_custom"),
+)
+
 
 class UIDialogManager:
     @staticmethod
@@ -560,10 +573,7 @@ class UIDialogManager:
                 )
         else:
             # For One-Way ANOVA (Welch): offer unconditional robust options
-            options = []
-            options.append(("Games-Howell Test (compares all pairs, robust to unequal variances)", "games_howell"))
-            options.append(("Dunnett Test (compares all groups against ONE control group)", "dunnett"))
-            options.append(("Custom paired t-tests (you select specific pairs, Holm-\u0160id\u00e1k)", "paired_custom"))
+            options = list(ONEWAY_POSTHOC_OPTIONS)
 
         radio_buttons = []
         for label, value in options:

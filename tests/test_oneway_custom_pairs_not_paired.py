@@ -131,6 +131,22 @@ def test_custom_pairs_uses_welch_when_the_omnibus_was_welch(monkeypatch):
     assert "Welch" in comp["test"], comp["test"]
 
 
+def test_the_dialog_text_names_the_test_the_branch_actually_runs(monkeypatch):
+    """The option label is what the user reads BEFORE choosing. It outlived the
+    ttest_rel -> ttest_ind fix and still promised a paired test."""
+    from analysis.stats_functions import ONEWAY_POSTHOC_OPTIONS
+
+    labels = dict((value, label) for label, value in ONEWAY_POSTHOC_OPTIONS)
+    assert set(labels) == {"games_howell", "dunnett", "paired_custom"}
+
+    _stub_dialogs(monkeypatch, [("A", "B")])
+    comp = _run(_independent_samples(), ["A", "B"])["pairwise_comparisons"][0]
+
+    assert "Paired" not in comp["test"], comp["test"]
+    assert "paired" not in labels["paired_custom"].lower(), labels["paired_custom"]
+    assert "independent" in labels["paired_custom"].lower(), labels["paired_custom"]
+
+
 def test_dependent_designs_still_get_a_paired_test(monkeypatch):
     """Guard against over-correcting: when the caller really does pass
     dependent data with an explicit paired_custom choice, keep ttest_rel."""
