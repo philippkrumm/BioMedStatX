@@ -22,6 +22,19 @@ upgrading.
   formula has been removed. Two-Way ANOVA keeps its correct `statsmodels`
   Tukey HSD. Non-normal designs continue to route to the nonparametric
   Friedman + Wilcoxon/Conover path automatically.
+- **Mixed ANOVA with a non-significant interaction now uses the effect-driven
+  post-hoc instead of a row-order-dependent one.** When the interaction was not
+  significant — the ordinary situation when there is a real main effect — the
+  follow-up came from an inline routine that paired observations by their
+  position in the imported file rather than by subject. Reordering the rows of
+  the same data set changed the result: in a measured example a timepoint
+  contrast moved from p = 0.012 to p = 0.298, and comparison directions
+  flipped. The contrasts were reported under the label "Paired t-tests
+  (Holm-Bonferroni)", so nothing in the output looked wrong. The follow-up for
+  this case now comes from the same effect-driven path described below, which
+  pairs by subject. If you re-run a mixed analysis whose interaction was not
+  significant, expect the pairwise p-values to change — the previous ones
+  depended on the row order of your file.
 - Mixed-ANOVA post-hoc is now effect-driven: the follow-up is chosen by which
   omnibus effects are significant. A significant interaction yields simple main
   effects (within-subject contrasts per group, plus between-group contrasts per

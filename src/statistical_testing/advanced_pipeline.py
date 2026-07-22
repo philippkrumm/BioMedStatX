@@ -265,7 +265,22 @@ def perform_advanced_test_pipeline(
                 if key in assumption_updates:
                     res[key] = assumption_updates[key]
 
-            if res.get("p_value") is not None and res["p_value"] < alpha:
+            _run_posthoc = res.get("p_value") is not None and res["p_value"] < alpha
+
+            # Mixed designs only. res["p_value"] carries the INTERACTION's p for a
+            # mixed ANOVA (statisticaltester.py sets it from the GG-corrected
+            # interaction row), so this gate switched the post-hoc off whenever the
+            # interaction was not significant -- the common case when there is a
+            # real main effect. The effect-driven post-hoc is built precisely for
+            # that situation (it returns marginal_within / marginal_between), so it
+            # has to be reached before it can decide. Guarded on the test name, so
+            # RM and Two-Way keep the original condition unchanged.
+            if not _run_posthoc and test == "mixed_anova":
+                _effect_ps = [f.get("p_value") for f in (res.get("factors") or [])]
+                _effect_ps += [i.get("p_value") for i in (res.get("interactions") or [])]
+                _run_posthoc = any(p is not None and p < alpha for p in _effect_ps)
+
+            if _run_posthoc:
                 advanced_posthoc_result = AdvancedPostHocEngine().execute(
                     {
                         "mode": "advanced_parametric",
@@ -286,6 +301,13 @@ def perform_advanced_test_pipeline(
                     res["pairwise_comparisons"] = advanced_posthoc_updates.get("pairwise_comparisons", [])
                     new_posthoc = advanced_posthoc_updates.get("posthoc_test") or advanced_posthoc_result.test_name
                     res["posthoc_test"] = new_posthoc
+                    # Carry the effect-driven post-hoc's own diagnostics across the
+                    # layer boundary. The engine already returns them; dropping them
+                    # here left "which contrast family did we report, and did the
+                    # omnibus gate actually run" unanswerable downstream.
+                    for _diag in ("posthoc_mode", "gating_applied", "gating_fallback_reason"):
+                        if _diag in advanced_posthoc_updates:
+                            res[_diag] = advanced_posthoc_updates[_diag]
                 elif advanced_posthoc_updates.get("error"):
                     warnings_list = res.setdefault("warnings", [])
                     if advanced_posthoc_updates["error"] not in warnings_list:

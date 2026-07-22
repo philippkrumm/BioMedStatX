@@ -151,10 +151,18 @@ class AdvancedPostHocEngine:
                 posthoc = None
 
             if posthoc and "pairwise_comparisons" in posthoc:
-                return {
+                _out = {
                     "posthoc_test": posthoc.get("posthoc_test"),
                     "pairwise_comparisons": posthoc.get("pairwise_comparisons", []),
                 }
+                # The Mixed analyzer reports which contrast family it chose and
+                # whether the omnibus gate could run at all. Narrowing the dict to
+                # two keys here dropped both before anything downstream could see
+                # them.
+                for _diag in ("posthoc_mode", "gating_applied", "gating_fallback_reason"):
+                    if _diag in posthoc:
+                        _out[_diag] = posthoc[_diag]
+                return _out
 
             return {
                 "posthoc_test": "No post-hoc tests performed",

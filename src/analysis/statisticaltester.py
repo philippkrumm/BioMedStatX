@@ -1567,160 +1567,6 @@ class StatisticalTester:
                     df, dv, between_factor, rm_factor, subject, aov, alpha
                 )
                 results.update(interaction_assumptions)
-                #  POST-HOC: pairwise t-tests (Bonferroni) if interaction is significant
-                try:
-                    # 1. Check if interaction is significant
-                    int_row = aov.loc[aov["Source"] == interaction_name]
-                    if not int_row.empty and float(int_row[p_col].iloc[0]) < alpha:
-                        # Interaction is significant: t-tests for all combinations
-                        ph = pg.pairwise_tests(
-                            data=df,
-                            dv=dv,
-                            between=between_factor,
-                            within=rm_factor,
-                            subject=subject,
-                            padjust="holm"  # Changed from "bon" to "holm"
-                        )
-                        results["posthoc_test"] = "Pairwise t-tests for interaction (Holm-Bonferroni)"  # Changed from "Bonferroni" to "Holm-Bonferroni"
-                        for _, r in ph.iterrows():
-                            results.setdefault("pairwise_comparisons", []).append({
-                                "group1": f"{between_factor}={r['A']}, {rm_factor}={r['Time']}",
-                                "group2": f"{between_factor}={r['B']}, {rm_factor}={r['Time']}",
-                                "test": "Paired t-test" if r['Type'] == 'within' else "Independent t-test",
-                                "statistic": float(r["T"]),
-                                "p_value": float(r["p-corr"]),
-                                "significant": bool(r["significant"]),
-                                "corrected": True,
-                                "effect_size": float(r["hedges"]) if "hedges" in r else None,
-                                "effect_size_type": "hedges_g"
-                            })
-                    else:
-                        # 2. Interaction not significant, check main effects
-                        # Between-factor post-hoc with Tukey (if significant)
-                        between_row = aov.loc[aov["Source"] == between_factor]
-                        if not between_row.empty and float(between_row[p_col].iloc[0]) < alpha:
-                            # Tukey HSD for between-factor
-                            from statsmodels.stats.multicomp import pairwise_tukeyhsd
-                            between_groups = df[between_factor].unique()
-                            if len(between_groups) > 1:
-                                tukey = pairwise_tukeyhsd(
-                                    endog=df[dv],
-                                    groups=df[between_factor],
-                                    alpha=alpha
-                                )
-                                results["between_posthoc_test"] = "Tukey HSD"
-                
-                                # More robust way to handle various versions of statsmodels
-                                try:
-                                    # First try with the pairindices attribute
-                                    for i in range(len(tukey.pvalues)):
-                                        group1 = tukey.groupsunique[tukey.pairindices[i, 0]]
-                                        group2 = tukey.groupsunique[tukey.pairindices[i, 1]]
-                                        p_val = tukey.pvalues[i]
-                                        is_significant = tukey.reject[i]
-                                        
-                                        results.setdefault("between_pairwise_comparisons", []).append({
-                                            "group1": f"{between_factor}={group1}",
-                                            "group2": f"{between_factor}={group2}",
-                                            "test": "Tukey HSD",
-                                            "p_value": float(p_val),
-                                            "significant": bool(is_significant),
-                                            "corrected": True
-                                        })
-                                except (AttributeError, IndexError):
-                                    # Fall back to using summary() method, which works in newer versions
-                                    summary = tukey.summary()
-                                    for i in range(len(summary.data) - 1):  # Skip header row
-                                        row = summary.data[i+1]
-                                        group1, group2 = row[0], row[1]
-                                        p_val = row[3]
-                                        is_significant = row[6]  # reject column
-                                        
-                                        results.setdefault("between_pairwise_comparisons", []).append({
-                                            "group1": f"{between_factor}={group1}",
-                                            "group2": f"{between_factor}={group2}",
-                                            "test": "Tukey HSD",
-                                            "p_value": float(p_val),
-                                            "significant": bool(is_significant),
-                                            "corrected": True
-                                        })
-
-                        # Within-factor post-hoc with paired t-tests (if significant)
-                        within_row = aov.loc[aov["Source"] == rm_factor]
-                        if not within_row.empty and float(within_row[p_col].iloc[0]) < alpha:
-                            # Paired t-tests for within-factor with Bonferroni
-                            from itertools import combinations
-                            within_groups = df[rm_factor].unique()
-                            results["within_posthoc_test"] = "Paired t-tests (Holm-Bonferroni)"  # Changed from "Bonferroni" to "Holm-Bonferroni"
-                            
-                            # Perform paired t-tests and store p-values for Holm-Bonferroni correction
-                            p_values = []
-                            t_stats = []
-                            data_pairs = []
-                            for group1, group2 in combinations(within_groups, 2):
-                                # Prepare data for paired t-tests
-                                data1 = df[df[rm_factor] == group1][dv].values
-                                data2 = df[df[rm_factor] == group2][dv].values
-                                
-                                # Store data pairs for later calculations
-                                data_pairs.append((group1, group2, data1, data2))
-                                
-                                # Calculate t-statistic and p-value
-                                t_stat, p_val = stats.ttest_rel(data1, data2)
-                                p_values.append(p_val)
-                                t_stats.append(t_stat)
-
-                            # Apply Holm-Bonferroni correction to all p-values at once
-                            corrected_p_values = PostHocAnalyzer._holm_correction(p_values)
-
-                            # Create comparison results using corrected p-values
-                            for i, (group1, group2, data1, data2) in enumerate(data_pairs):
-                                t_stat = t_stats[i]
-                                p_val = p_values[i]  # Original p-value
-                                corrected_p = corrected_p_values[i]  # Holm-Bonferroni corrected p-value
-                                
-                                # Calculate effect size (Cohen's d)
-                                from analysis.posthoc_core import PostHocStatistics
-                                d = PostHocStatistics.calculate_cohens_d(data1, data2, paired=True)
-                                
-                                results.setdefault("within_pairwise_comparisons", []).append({
-                                    "group1": f"{rm_factor}={group1}",
-                                    "group2": f"{rm_factor}={group2}",
-                                    "test": "Paired t-test (Holm-Bonferroni)",  # Changed from "Bonferroni" to "Holm-Bonferroni"
-                                    "statistic": float(t_stat),
-                                    "p_value": float(corrected_p),
-                                    "original_p": float(p_val),
-                                    "significant": corrected_p < alpha,
-                                    "corrected": True,
-                                    "effect_size": float(d),
-                                    "effect_size_type": "cohen_d_rm"
-                                })
-                except Exception as ph_err:
-                    # This inline interaction post-hoc cannot complete on pingouin >= 0.6:
-                    # pairwise_tests no longer emits 'Type', 'p-corr' or 'significant'
-                    # (verified columns: Contrast/<within>/A/B/Paired/Parametric/T/dof/
-                    # alternative/p_unc/p_corr/p_adjust/BF10/hedges). When the omnibus is
-                    # significant the AdvancedPostHocEngine supersedes this result anyway,
-                    # so pushing the raw KeyError into the user's report was a pure false
-                    # alarm ("Post-hoc failed: 'Type'" printed next to a correct result).
-                    # Keep it diagnosable in the log instead of alarming the user.
-                    logger.warning(
-                        "Inline mixed-ANOVA interaction post-hoc unavailable (%r); the advanced "
-                        "post-hoc engine supersedes it when the omnibus test is significant.",
-                        ph_err)
-
-                # The main-effects branch labels its two families separately
-                # (within_posthoc_test / between_posthoc_test) but never set the
-                # top-level posthoc_test. Whenever the advanced engine did NOT supersede
-                # this result (omnibus p >= alpha) the report therefore showed pairwise
-                # contrasts with no method name at all.
-                if not results.get("posthoc_test"):
-                    _inline_labels = [results.get(k) for k
-                                      in ("within_posthoc_test", "between_posthoc_test")
-                                      if results.get(k)]
-                    if _inline_labels:
-                        results["posthoc_test"] = " / ".join(_inline_labels)
-
                 # Enhanced Within-Factor Sphericity Testing for Mixed ANOVA
                 rm_factor = within[0]
                 within_sphericity_results = StatisticalTester._test_mixed_anova_within_sphericity(
@@ -1904,14 +1750,12 @@ class StatisticalTester:
         if "pairwise_comparisons" not in results:
             results["pairwise_comparisons"] = []
 
-        # Consolidate all post-hoc results into the main pairwise_comparisons array
-        if "between_pairwise_comparisons" in results and results["between_pairwise_comparisons"]:
-            results["pairwise_comparisons"].extend(results["between_pairwise_comparisons"])
-            
-        if "within_pairwise_comparisons" in results and results["within_pairwise_comparisons"]:
-            results["pairwise_comparisons"].extend(results["within_pairwise_comparisons"])
-            
-        return StatisticalTester._standardize_results(results)          
+        # The between_/within_pairwise_comparisons merge that used to live here fed
+        # on the inline mixed post-hoc, which was removed: its within branch paired
+        # observations by dataframe position rather than by subject. Mixed contrasts
+        # now come from AdvancedPostHocEngine, which writes pairwise_comparisons
+        # directly.
+        return StatisticalTester._standardize_results(results)
     
     @staticmethod
     def _run_repeated_measures_anova(df, dv, subject, within, alpha=0.05):
