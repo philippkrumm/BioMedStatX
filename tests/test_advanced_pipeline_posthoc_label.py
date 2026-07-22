@@ -26,9 +26,13 @@ def _canned_posthoc_result(new_label):
 @pytest.mark.parametrize(
     "test_name,stale_inline_label,real_method_name",
     [
+        # real_method_name is what the (mocked) engine reports back; the values
+        # are the labels the current post-hoc layer actually produces, so this
+        # parametrisation cannot advertise methods the app no longer has.
         ("two_way_anova", "Tukey HSD Test (Pingouin)", "Pairwise t-tests (independent, Holm-Sidak)"),
-        ("mixed_anova", "Pairwise t-tests for interaction (Holm-Bonferroni)", "Tukey HSD (Mixed)"),
-        ("repeated_measures_anova", "Paired t-tests (Holm-Bonferroni)", "Tukey HSD (RM)"),
+        ("mixed_anova", "Pairwise t-tests for interaction (Holm-Bonferroni)",
+         "Simple main effects (Holm-Sidak per family)"),
+        ("repeated_measures_anova", "Paired t-tests (Holm-Bonferroni)", "RM Post-hoc (paired_custom)"),
     ],
 )
 def test_posthoc_label_synced_to_real_method(

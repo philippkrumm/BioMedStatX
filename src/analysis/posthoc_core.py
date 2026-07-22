@@ -584,8 +584,11 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
                     logger.warning(f"WARNING: The following selected pairs were not found: {missing}")
             
             # Set posthoc_test for visualization
+            # No "tukey" entry: SC2 removed the hand-rolled RM/Mixed Tukey, the
+            # dialog no longer offers it for these designs and AdvancedPostHocEngine
+            # pins default_method to "paired_custom". A leftover key would have
+            # labelled a Holm-Šidák computation "Tukey HSD (Mixed)".
             method_name_map = {
-                "tukey": "Tukey HSD (Mixed)",
                 "dunnett": "Dunnett Test (Mixed)",
                 "bonferroni": "Bonferroni (Mixed)",
                 "holm": "Holm-Šidák (Mixed)"
@@ -1057,8 +1060,8 @@ class RMAnovaPostHocAnalyzer(PostHocAnalyzer):
                     logger.warning(f"WARNING: The following selected pairs were not found: {missing}")
             
             # Set posthoc_test for visualization
+            # No "tukey" entry -- see the Mixed analyzer above (audit SC2).
             method_name_map = {
-                "tukey": "Tukey HSD (RM)",
                 "dunnett": "Dunnett Test (RM)",
                 "bonferroni": "Bonferroni (RM)",
                 "holm": "Holm-Šidák (RM)"
