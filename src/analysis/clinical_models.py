@@ -89,6 +89,36 @@ def _restore_names_in_dict(d, rev_map):
         return d
 
 
+def _residual_normality(residuals, alpha=0.05, label="Model residuals"):
+    """Shapiro-Wilk on the residuals of the model that was actually fitted.
+
+    Returns ``(residual_list, normality_tests)``. The second element uses the
+    same shape the report already reads for ``normality_tests``, so the clinical
+    models feed the existing assumption-summary rows instead of a parallel path.
+
+    Input screening goes through ``validate_residuals_for_shapiro`` — the same
+    contract (finite, n>=3, non-constant) the rest of the app applies before
+    calling Shapiro-Wilk.
+    """
+    from scipy import stats as _scipy_stats
+    from statistical_testing.validators import validate_residuals_for_shapiro
+
+    try:
+        array = validate_residuals_for_shapiro(np.asarray(residuals, dtype=float))
+    except Exception as exc:
+        logger.info(f"Residual normality check not applicable: {exc}")
+        return None, {}
+
+    outcome = _scipy_stats.shapiro(array)
+    return [float(v) for v in array], {
+        label: {
+            "statistic": float(outcome.statistic),
+            "p_value": float(outcome.pvalue),
+            "is_normal": bool(outcome.pvalue > alpha),
+        }
+    }
+
+
 class ANCOVAModel(BaseStatisticalModel):
     """ANCOVA via statsmodels OLS with Type III SS (Sum contrasts).
 
@@ -580,10 +610,16 @@ class ANCOVAModel(BaseStatisticalModel):
                 if denom > 0:
                     eta_sq = float(ss_factor / denom)
 
+        model_residuals, normality_tests = _residual_normality(
+            self.result.resid, alpha=self._alpha
+        )
+
         res = {
             "design_type": self.design_type.value,
             "test": "ANCOVA" if len(self._between_factors) == 1 else "Two-Way ANCOVA",
             "model_type": "ANCOVA",
+            "model_residuals": model_residuals,
+            "normality_tests": normality_tests,
             "p_value": main_p,
             "statistic": main_f,
             "effect_size": eta_sq,
@@ -930,10 +966,16 @@ class LinearMixedModel(BaseStatisticalModel):
             logger.error(f"Error computing LMM EMM contrasts: {exc}")
             emm_comparisons = []
 
+        model_residuals, normality_tests = _residual_normality(
+            self.result.resid, alpha=self._alpha
+        )
+
         res = {
             "design_type": self.design_type.value,
             "test": "Linear Mixed Model",
             "model_type": "LMM",
+            "model_residuals": model_residuals,
+            "normality_tests": normality_tests,
             "p_value": main_p,
             "statistic": main_stat,
             "statistic_type": "chi2",

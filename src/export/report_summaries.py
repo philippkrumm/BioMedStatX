@@ -260,14 +260,28 @@ class _SummariesMixin:
 
         # --- LMM: convergence + ICC + residual normality ---
         elif model_type == "LMM":
-            rows.append({
-                "name": "Residual Normality",
-                "statistic": "—",
-                "p_value": "—",
-                "p_value_style": "",
-                "status_label": "Assessed visually via Q-Q plot",
-                "status_class": "is-neutral",
-            })
+            normality_tests = results.get("normality_tests") or {}
+            if normality_tests:
+                for label, payload in normality_tests.items():
+                    if not isinstance(payload, dict):
+                        continue
+                    rows.append({
+                        "name": f"Normality: {_FormattingMixin._prettify_label(label)} (Shapiro-Wilk)",
+                        "statistic": _FormattingMixin._format_metric(payload.get("statistic")),
+                        "p_value": _FormattingMixin._format_p_value(payload.get("p_value")),
+                        "p_value_style": _FormattingMixin._p_heat_style(payload.get("p_value")),
+                        "status_label": _FormattingMixin._bool_label(payload.get("is_normal")),
+                        "status_class": _FormattingMixin._bool_class(payload.get("is_normal")),
+                    })
+            else:
+                rows.append({
+                    "name": "Residual Normality",
+                    "statistic": "—",
+                    "p_value": "—",
+                    "p_value_style": "",
+                    "status_label": "Assessed visually via Q-Q plot",
+                    "status_class": "is-neutral",
+                })
             converged = results.get("converged")
             conv_holds = bool(converged) if converged is not None else None
             rows.append({
