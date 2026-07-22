@@ -164,11 +164,44 @@ Fuzzer (fuzzing/) = exploratory, NOT in CI; findings distilled into CATALOG + re
 
 ---
 
-## 🟡 V21-1 — legacy mixed-interaction post-hoc is dead code (⚠️ pingouin-version-coupled)
+## ✅ V21-1 — legacy mixed-interaction post-hoc is dead code (⚠️ pingouin-version-coupled)
 
 **Location:** `statisticaltester.py:1587-1592`, inside `_run_mixed_anova` (def :1470).
 Live call chain: `_run_mixed_anova` ← `_run_mixed_anova_logged` (:1294) ← `advanced_pipeline.py:196`.
-**Status:** OPEN (deferred to v2.1). No user-visible defect remains in v2.0 — see "fixed" below.
+**Status: RESOLVED** in `1d72e98` — the whole inline block (154 lines) was removed and the
+mixed post-hoc now always comes from `AdvancedPostHocEngine`. The recommendation below
+("remove, do not repair") was followed.
+
+> ### ⚠️ Correction to this finding's own verdict
+> The line "No user-visible defect remains in v2.0" was **wrong**, and the way it was wrong is
+> the lesson worth keeping. This analysis examined the `if interaction significant:` branch,
+> proved it could not complete on pingouin ≥ 0.6, and concluded the *block* was dead. It never
+> looked at the `else:` branch of the same `try`.
+>
+> That else branch was live, and harmful. It ran whenever the interaction was **not**
+> significant — the ordinary case when a real main effect exists — and paired observations by
+> dataframe position rather than by subject:
+>
+> ```python
+> data1 = df[df[rm_factor] == group1][dv].values
+> data2 = df[df[rm_factor] == group2][dv].values
+> t_stat, p_val = stats.ttest_rel(data1, data2)
+> ```
+>
+> Reordering the rows of the same file moved a contrast from p = 0.012 to p = 0.298 and
+> flipped comparison directions. The results were merged into `pairwise_comparisons`
+> (`:1908-1912`) and labelled "Paired t-tests (Holm-Bonferroni)", so the report looked normal.
+>
+> It was also *doubly* masked: `advanced_pipeline` gates the post-hoc on `res["p_value"]`,
+> which for a mixed design is the **interaction's** p — so in exactly the case where the
+> broken branch ran, the checked Feature-B path was switched off and could not supersede it.
+>
+> **Takeaway:** "this branch is dead" is a statement about one branch, not about the block
+> that contains it. Read the whole `try`.
+
+**Fix 1 / Fix 2 below are now moot** — both mitigated symptoms of a block that no longer
+exists. The pingouin-version coupling described below no longer applies to this code path;
+it is kept as the reasoning record.
 
 ### What is wrong
 The inline interaction post-hoc reads four keys off `pg.pairwise_tests(...)` that do not
@@ -236,3 +269,42 @@ swallowed, so the Feature-B effect gate silently degraded to simple main effects
 design. Now reads both spellings, logs at WARNING, and exposes `gating_applied` /
 `gating_fallback_reason` in the result. Regression guard:
 `tests/test_feature_b_golden.py::test_gating_through_the_real_analyzer_entry_point`.
+
+---
+
+## 🔁 Recurring pattern — layer boundaries narrow the dict they forward
+
+**Not a bug. A shape to expect when adding a field.**
+
+Six times during the pre-2.0 audit, information that one layer computed correctly was lost
+because the next layer rebuilt the dict from a hand-written list of keys instead of forwarding
+it. Each instance was found only by reading the *consuming* function end to end; none was
+visible from the producing side, because the producer was right.
+
+Confirmed instances:
+
+| Producer writes | Consumer reads / forwards | Effect |
+|---|---|---|
+| `MixedAnovaPostHocAnalyzer`: `posthoc_mode`, `gating_applied`, `gating_fallback_reason` | `engines/advanced_posthoc.py` returned a 2-key dict | diagnostics dropped |
+| same | `advanced_pipeline.py` copied only `posthoc_test` + `pairwise_comparisons` | dropped a second time |
+| Mixed: `within_sphericity_test`, `within_correction_used` | `report_summaries._build_assumption_summary` read only the RM spellings | Mixed reports showed **no** sphericity row at Mauchly p = 1.6e-22 |
+| `pg.mixed_anova` / `rm_anova` (0.6 column names) | `mixed_assumptions` read the pre-rename hyphenated names | branch never taken |
+| `pg.pairwise_tests` (0.6 columns) | `statisticaltester` read `Type` / `p-corr` / `significant` | branch raised, error swallowed |
+| `pg.sphericity` namedtuple `(spher, W, chi2, dof, pval)` | unpacked as `W, pval, spher` | violated sphericity reported as **met** |
+
+Two properties make this class hard to see:
+
+1. **The producer is correct**, so reviewing it finds nothing. Only the consumer is wrong.
+2. **The failure is silence, not an exception** — a missing row, an absent key, a `None`. Tests
+   that assert on what *is* present pass; nothing asserts on what should have been there.
+
+### When adding a field to a result dict
+Trace it to its consumer and confirm it arrives. `grep` for the key name across `src/` — if the
+only hits are the write sites, the field has no reader. Prefer forwarding the dict over
+re-listing keys; where a narrow dict is deliberate, say so in a comment naming what is dropped.
+
+### When a result differs between designs
+RM writes `sphericity_test` / `correction_used`; Mixed writes the same information under a
+`within_` prefix, because a mixed design has two effect families. Consumers must handle both.
+Key on **presence** (`if "sphericity_test" in results`), not truthiness — `a or b` silently
+falls through when `a` is an empty-but-present dict and borrows the other design's value.
