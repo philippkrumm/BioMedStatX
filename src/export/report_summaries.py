@@ -466,6 +466,7 @@ class _SummariesMixin:
         natural_order(results.get("groups") or [], notes=[])
         return {
             "rows": rows,
+            "data_health_warnings": _SummariesMixin._build_data_health_warnings(results),
             "transformation": _trafo_label or "None",
             "interpretation": _SummariesMixin._build_assumption_interpretation(results, rows),
             "sphericity_correction_note": sphericity_correction_note,
@@ -477,6 +478,21 @@ class _SummariesMixin:
             "residual_plot_html": _SummariesMixin._build_residuals_vs_fitted_chart(results),
             "transformation_label": _trafo_label,
         }
+
+    @staticmethod
+    def _build_data_health_warnings(results: dict) -> list[str]:
+        """Pre-analysis data-quality findings from DataHealthScanner.
+
+        The scanner runs on every clinical model (covariate outliers, Little's
+        MCAR, VIF, quasi-separation, group sizes) and writes into
+        ``results["data_health"]``. Returns an empty list when the data is
+        clean, so the template renders nothing rather than an empty block.
+        """
+        health = results.get("data_health") or {}
+        if not isinstance(health, dict):
+            return []
+        warnings_list = health.get("warnings") or []
+        return [str(w) for w in warnings_list if str(w).strip()]
 
     @staticmethod
     def _build_descriptive_summary(results: dict) -> dict:
