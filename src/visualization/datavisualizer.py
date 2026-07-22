@@ -2024,27 +2024,6 @@ class DataVisualizer:
                 arrowprops=annotation.get('arrowprops', None)
             )
 
-    @staticmethod
-    def _add_legend(ax, samples, groups, legend_position, legend_bbox,
-                    legend_fontsize, legend_title, legend_title_size):
-        """
-        Adds a legend to the plot.
-        """
-        handles, labels = ax.get_legend_handles_labels()
-        if not handles:
-            # Create dummy handles if none exist
-            handles = [mpatches.Patch(label=str(g)) for g in groups]
-            labels = [str(g) for g in groups]
-        legend = ax.legend(
-            handles, labels,
-            loc=legend_position,
-            bbox_to_anchor=legend_bbox,
-            fontsize=legend_fontsize,
-            title=legend_title,
-            title_fontsize=legend_title_size,
-            frameon=False
-        )
-        return legend
     
     @staticmethod
     def _add_watermark(fig, watermark_text):
