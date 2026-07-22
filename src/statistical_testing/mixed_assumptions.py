@@ -2,7 +2,6 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from analysis.stats_functions import get_pingouin_module
 
 
 class MixedAnovaAssumptionEngine:
@@ -679,80 +678,84 @@ class MixedAnovaAssumptionEngine:
         from the main within-factor sphericity.
         """
         try:
-            interaction_name = f"{within_factor} * {between_factor}"
-            
-            # Check if interaction exists in ANOVA table
-            interaction_mask = aov["Source"] == interaction_name
+            # pingouin labels the interaction row literally "Interaction", not
+            # "<within> * <between>". Looking it up under the composed name made
+            # the function report "Interaction effect not found in ANOVA table" --
+            # a false diagnosis of a row that is present.
+            interaction_mask = aov["Source"] == "Interaction"
             if not interaction_mask.any():
                 return {
                     "test_name": "Interaction Sphericity Test",
-                    "interaction": interaction_name,
-                    "error": "Interaction effect not found in ANOVA table",
-                    "sphericity_assumed": False
+                    "interaction": "Interaction",
+                    "error": "No Interaction row in the pingouin ANOVA table",
+                    "sphericity_assumed": False,
                 }
-            
+
             interaction_row = aov.loc[interaction_mask].iloc[0]
-            
-            # Extract sphericity information for interaction
+
             sphericity_result = {
                 "test_name": "Mauchly's Test for Interaction Sphericity",
-                "interaction": interaction_name,
-                "factor_levels": len(df[within_factor].unique())
+                "interaction": "Interaction",
+                "factor_levels": len(df[within_factor].unique()),
             }
-            
-            # Try to get sphericity information from ANOVA table
-            if 'W-spher' in interaction_row and pd.notnull(interaction_row['W-spher']):
+
+            # pingouin renamed these between releases ("W-spher"/"p-spher" up to
+            # 0.5.x, "W_spher"/"p_spher" from 0.6), so accept both -- same shape
+            # as StatisticalTester._pingouin_p_column.
+            _w_col = next((c for c in ("W_spher", "W-spher") if c in interaction_row), None)
+            _p_col = next((c for c in ("p_spher", "p-spher") if c in interaction_row), None)
+
+            if _w_col is not None and pd.notnull(interaction_row[_w_col]):
                 sphericity_result.update({
-                    "W": float(interaction_row['W-spher']),
-                    "p_value": float(interaction_row['p-spher']) if 'p-spher' in interaction_row else None,
-                    "sphericity_assumed": bool(interaction_row['sphericity']) if 'sphericity' in interaction_row else None,
-                    "interpretation": "Interaction sphericity extracted from ANOVA table"
+                    "W": float(interaction_row[_w_col]),
+                    "p_value": float(interaction_row[_p_col]) if _p_col else None,
+                    "sphericity_assumed": (bool(interaction_row["sphericity"])
+                                           if "sphericity" in interaction_row else None),
+                    "interpretation": "Interaction sphericity extracted from ANOVA table",
                 })
             else:
-                # Attempt direct sphericity test for interaction
-                try:
-                    pg = get_pingouin_module()
-                    # Create interaction factor for sphericity testing
-                    df_interaction = df.copy()
-                    df_interaction['interaction_factor'] = df_interaction[within_factor].astype(str) + "_" + df_interaction[between_factor].astype(str)
-                    
-                    # Test sphericity on interaction factor
-                    sphericity_test = pg.sphericity(df_interaction, dv=dv, subject=subject, within='interaction_factor')
-                    if isinstance(sphericity_test, tuple) and len(sphericity_test) >= 3:
-                        W, pval, spher = sphericity_test[:3]
-                        sphericity_result.update({
-                            "W": float(W) if W is not None else None,
-                            "p_value": float(pval) if pval is not None else None,
-                            "sphericity_assumed": bool(spher) if spher is not None else False,
-                            "interpretation": "Direct interaction sphericity test performed"
-                        })
-                    else:
-                        raise ValueError("Unexpected sphericity test output")
-                        
-                except Exception as inner_e:
-                    sphericity_result.update({
-                        "W": None,
-                        "p_value": None,
-                        "sphericity_assumed": False,
-                        "note": f"Direct sphericity test failed: {str(inner_e)}",
-                        "interpretation": "Indeterminate (Defaulting to GG correction)"
-                    })
-            
-            # Add corrections if available
-            if 'GG-eps' in interaction_row and 'HF-eps' in interaction_row:
-                corrections = MixedAnovaAssumptionEngine._apply_corrections_to_effect_row(
-                    interaction_row, f"interaction ({interaction_name})"
-                )
-                sphericity_result["corrections"] = corrections
-            
+                # Expected path. pingouin computes no separate epsilon for the
+                # Interaction row -- see this module's _test_mixed_anova_within_sphericity
+                # docstring, confirmed against 0.6.1 -- so W_spher/p_spher are NaN there.
+                #
+                # There used to be a fallback here that crossed the two factors into a
+                # single "<within>_<between>" level and ran Mauchly on it. That cannot
+                # work in a mixed design: every subject belongs to exactly one
+                # between-group, so those cells are structurally empty and the
+                # covariance matrix is singular (LinAlgError by construction, not by
+                # data). It also mis-ordered pingouin's namedtuple -- whose fields are
+                # (spher, W, chi2, dof, pval) -- and so reported sphericity as MET
+                # whenever chi2 was non-zero, i.e. essentially always. Removed rather
+                # than repaired: the quantity it tried to produce is not defined here.
+                #
+                # The verdict stays conservative, and it is NOT the number that drives
+                # any correction: StatisticalTester._run_mixed_anova applies the
+                # within-factor epsilon to the interaction's degrees of freedom
+                # (stats.f.sf(F, df1*eps, df2*eps)). This path is reporting only -- its
+                # sole consumer is _generate_interaction_recommendations, which builds
+                # display strings.
+                sphericity_result.update({
+                    "W": None,
+                    "p_value": None,
+                    "sphericity_assumed": False,
+                    "note": (
+                        "pingouin computes no separate sphericity/epsilon for the "
+                        "Interaction row. Treated conservatively as violated; the "
+                        "correction actually applied to the interaction uses the "
+                        "within-factor epsilon in "
+                        "StatisticalTester._run_mixed_anova."
+                    ),
+                    "interpretation": "Not separately estimable (within-factor correction applies)",
+                })
+
             return sphericity_result
-            
+
         except Exception as e:
             return {
                 "test_name": "Interaction Sphericity Test",
-                "interaction": f"{within_factor} * {between_factor}",
+                "interaction": "Interaction",
                 "error": f"Interaction sphericity test failed: {str(e)}",
-                "sphericity_assumed": False
+                "sphericity_assumed": False,
             }
     
     @staticmethod
