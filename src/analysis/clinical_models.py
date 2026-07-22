@@ -210,36 +210,63 @@ class ANCOVAModel(BaseStatisticalModel):
         import statsmodels.formula.api as smf
         from statsmodels.stats.anova import anova_lm
 
+        from itertools import combinations as _combinations
+
         results = {}
-        # Use sanitized column names (already renamed in-place during fit)
-        col_map = {c: c for c in [self._dv] + self._between_factors + self._covariates}
-        # Columns were already sanitized in fit(), just use current df column names
+        factor_terms = [f"C({f}, Sum)" for f in self._between_factors]
+
         for cov in self._covariates:
-            for factor in self._between_factors:
-                # C1: Use Sum contrasts for Type III SS
-                factor_term = f"C({factor}, Sum)"
-                formula = f"{self._dv} ~ {factor_term} * {cov}"
-                
-                try:
-                    model_interaction = smf.ols(formula, data=self._df).fit()
-                    table = anova_lm(model_interaction, typ=3)
-                    
-                    interaction_term = f"{factor_term}:{cov}"
-                    key = f"{factor}:{cov}"
-                    if interaction_term in table.index:
-                        row = table.loc[interaction_term]
-                        p_val = float(row["PR(>F)"])
-                        results[key] = {
-                            "F": float(row["F"]),
-                            "p_value": p_val,
-                            "df": row["df"],
-                            "assumption_holds": p_val > self._alpha,
-                        }
-                except Exception:
-                    results[f"{factor}:{cov}"] = {
+            # One model per covariate, containing EVERY between factor and their
+            # interactions with the covariate. Fitting a marginal one-factor
+            # model per pair leaves the other factors out, so an omitted
+            # factor x covariate interaction leaks into the tested term whenever
+            # the omitted factor is unbalanced across the tested one.
+            other_covs = [c for c in self._covariates if c != cov]
+            factor_block = " * ".join(factor_terms)
+            formula = f"{self._dv} ~ ({factor_block}) * {cov}"
+            if other_covs:
+                formula += " + " + " + ".join(other_covs)
+
+            # every factor combination that can carry a slope difference
+            wanted = []
+            for size in range(1, len(self._between_factors) + 1):
+                for combo in _combinations(range(len(self._between_factors)), size):
+                    key = ":".join(self._between_factors[i] for i in combo) + f":{cov}"
+                    term = ":".join(factor_terms[i] for i in combo) + f":{cov}"
+                    wanted.append((key, term))
+
+            try:
+                model_interaction = smf.ols(formula, data=self._df).fit()
+                table = anova_lm(model_interaction, typ=3)
+            except Exception:
+                for key, _ in wanted:
+                    results[key] = {
                         "F": None, "p_value": None, "df": None,
-                        "assumption_holds": None, "error": "Could not fit interaction model"
+                        "assumption_holds": None,
+                        "error": "Could not fit interaction model",
                     }
+                continue
+
+            for key, term in wanted:
+                row = None
+                if term in table.index:
+                    row = table.loc[term]
+                else:
+                    # patsy may order the interaction components differently
+                    parts = set(term.split(":"))
+                    for idx in table.index:
+                        if set(str(idx).split(":")) == parts:
+                            row = table.loc[idx]
+                            break
+                if row is None:
+                    continue
+                p_val = float(row["PR(>F)"])
+                results[key] = {
+                    "F": float(row["F"]),
+                    "p_value": p_val,
+                    "df": row["df"],
+                    "assumption_holds": p_val > self._alpha,
+                }
         return results
 
     def adjusted_means(self):
