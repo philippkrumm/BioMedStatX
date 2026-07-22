@@ -750,6 +750,57 @@ class LinearMixedModel(BaseStatisticalModel):
 
         return self
 
+    def _primary_term_slice(self):
+        """(term_name, column indices) of the primary fixed factor in the
+        fixed-effects design matrix, or (None, None)."""
+        try:
+            slices = self.result.model.data.design_info.term_name_slices
+        except Exception:
+            return None, None
+        k_fe = int(self.result.k_fe)
+        for fe in self._fixed_effects or []:
+            term = f"C({fe})"
+            sl = slices.get(term)
+            if sl is None:
+                continue
+            cols = [c for c in range(*sl.indices(k_fe))]
+            if cols:
+                return term, cols
+        return None, None
+
+    def _omnibus_fixed_effect(self):
+        """Wald test over the primary fixed factor's whole parameter block.
+
+        Returns (statistic, df, p_value). Under REML the log-likelihood is not
+        comparable across different fixed-effect structures, so a
+        likelihood-ratio test is not available here — Wald is the correct
+        omnibus for the fixed effects of a REML fit.
+        """
+        if self.result is None:
+            return None, None, None
+        term, cols = self._primary_term_slice()
+        if not cols:
+            return None, None, None
+
+        from scipy.stats import chi2 as _chi2
+
+        k_fe = int(self.result.k_fe)
+        beta = np.asarray(self.result.fe_params.values, dtype=float)
+        cov = np.asarray(self.result.cov_params())[:k_fe, :k_fe]
+
+        R = np.zeros((len(cols), k_fe))
+        for row, col in enumerate(cols):
+            R[row, col] = 1.0
+        diff = R @ beta
+        mid = R @ cov @ R.T
+        try:
+            mid_inv = np.linalg.inv(mid)
+        except np.linalg.LinAlgError:
+            mid_inv = np.linalg.pinv(mid)
+        stat = float(diff @ mid_inv @ diff)
+        df_num = len(cols)
+        return stat, df_num, float(_chi2.sf(stat, df_num))
+
     def icc(self):
         """Compute Intraclass Correlation Coefficient."""
         if self.result is None:
@@ -847,18 +898,11 @@ class LinearMixedModel(BaseStatisticalModel):
         except Exception:
             pass
 
-        # Extract p-values for main fixed effects
-        main_p = None
-        main_z = None
-        for fe in self._fixed_effects:
-            for entry in fixed_effects_table:
-                param_name = entry["parameter"]
-                if f"C({fe})" in param_name and ":" not in param_name and param_name != "Intercept":
-                    main_p = entry["p_value"]
-                    main_z = entry["z_value"]
-                    break
-            if main_p is not None:
-                break
+        # Headline effect for the primary fixed factor: an omnibus Wald test over
+        # the factor's whole parameter block. Reporting the first dummy contrast
+        # instead answers a different question entirely once the factor has more
+        # than two levels.
+        main_stat, main_df, main_p = self._omnibus_fixed_effect()
 
         icc_val = self.icc()
 
@@ -891,8 +935,9 @@ class LinearMixedModel(BaseStatisticalModel):
             "test": "Linear Mixed Model",
             "model_type": "LMM",
             "p_value": main_p,
-            "statistic": main_z,
-            "statistic_type": "z",
+            "statistic": main_stat,
+            "statistic_type": "chi2",
+            "omnibus_df": main_df,
             "effect_size": icc_val,
             "effect_size_type": "ICC",
             "fixed_effects_table": fixed_effects_table,
@@ -1406,6 +1451,68 @@ class LogisticRegressionModel(BaseStatisticalModel):
                 })
         return rows
 
+    def _primary_term_columns(self):
+        """(term_name, column indices) of the primary predictor in the design
+        matrix. Falls back to the first covariate when the model was fitted from
+        covariates only."""
+        try:
+            slices = self.result.model.data.design_info.term_name_slices
+        except Exception:
+            return None, None
+        n_cols = self.result.model.exog.shape[1]
+        candidates = [f"C({p})" for p in (self._predictors or [])]
+        candidates += list(self._covariates or [])
+        for term in candidates:
+            sl = slices.get(term)
+            if sl is None:
+                continue
+            cols = [c for c in range(*sl.indices(n_cols))]
+            if cols:
+                return term, cols
+        return None, None
+
+    def _omnibus_predictor(self):
+        """Likelihood-ratio test for the primary predictor's whole parameter
+        block. Returns (statistic, df, p_value).
+
+        LR rather than Wald: with a near-separated level the Wald statistic
+        collapses (Hauck-Donner), which is exactly the situation this model is
+        built to survive. The Firth variant uses the penalized likelihood, the
+        same inference its per-coefficient p-values already use.
+        """
+        if self.result is None:
+            return None, None, None
+        term, cols = self._primary_term_columns()
+        if not cols:
+            return None, None, None
+
+        from scipy.stats import chi2 as _chi2
+
+        exog = self.result.model.exog
+        endog = self.result.model.endog
+        df_num = len(cols)
+
+        try:
+            if self._model_variant == "Firth Penalized Likelihood" and self._firth_coefs is not None:
+                pll_full = self._penalized_loglik(exog, endog, self._firth_coefs)
+                beta_c, _, _ = self._fit_firth_logistic(exog, endog, fixed_zero=set(cols))
+                pll_reduced = self._penalized_loglik(exog, endog, beta_c)
+                stat = max(2.0 * (pll_full - pll_reduced), 0.0)
+            else:
+                import statsmodels.api as sm
+
+                reduced_exog = np.delete(np.asarray(exog, dtype=float), cols, axis=1)
+                if reduced_exog.shape[1] == 0:
+                    reduced_exog = np.ones((len(endog), 1))
+                reduced = sm.GLM(endog, reduced_exog,
+                                 family=sm.families.Binomial()).fit()
+                stat = max(2.0 * (float(self.result.llf) - float(reduced.llf)), 0.0)
+        except Exception as exc:
+            logger.warning(f"Logistic omnibus test failed for term {term!r}: {exc}")
+            return None, None, None
+
+        return float(stat), df_num, float(_chi2.sf(stat, df_num))
+
     def hosmer_lemeshow(self, n_groups=10):
         """Hosmer-Lemeshow goodness-of-fit test (deprecated but kept for backward compatibility)."""
         from scipy import stats as scipy_stats
@@ -1548,11 +1655,11 @@ class LogisticRegressionModel(BaseStatisticalModel):
         roc = self.roc_data()
         cal = self.calibration_analysis()
 
-        main_p = None
-        main_or = None
-        if or_table:
-            main_p = or_table[0]["p_value"]
-            main_or = or_table[0]["odds_ratio"]
+        # Headline effect for the primary predictor: an omnibus likelihood-ratio
+        # test over its whole parameter block. `or_table[0]` is a single dummy
+        # coefficient and says nothing about the predictor once it has more than
+        # two levels.
+        main_stat, main_df, main_p = self._omnibus_predictor()
 
         pseudo_r2 = None
         if self._model_variant != "Firth Penalized Likelihood":
@@ -1598,8 +1705,9 @@ class LogisticRegressionModel(BaseStatisticalModel):
             "warnings": warnings_list,
             "model_variant": self._model_variant,
             "p_value": main_p,
-            "statistic": main_or,
-            "statistic_type": "odds_ratio",
+            "statistic": main_stat,
+            "statistic_type": "chi2",
+            "omnibus_df": main_df,
             "effect_size": roc["auc"],
             "effect_size_type": "AUC",
             "odds_ratios": or_table,

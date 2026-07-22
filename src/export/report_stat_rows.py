@@ -152,6 +152,20 @@ class _StatRowsMixin:
     def _build_lmm_statistical_rows(results: dict) -> list[dict]:
         rows = []
 
+        # Table 0: the headline omnibus. Named explicitly so the top-line
+        # p-value cannot be mistaken for one of the single contrasts below.
+        omnibus_df = results.get("omnibus_df")
+        if omnibus_df is not None:
+            rows.append({"label": "── Omnibus Test (primary factor) ──", "value": ""})
+            rows.append({
+                "label": "Wald test over the factor's parameters",
+                "value": (
+                    f"χ²({omnibus_df}) = "
+                    f"{_FormattingMixin._format_metric(results.get('statistic'))} | "
+                    f"{_FormattingMixin._format_p_value(results.get('p_value'))}"
+                ),
+            })
+
         # Table 1: Fixed Effects
         fe_table = results.get("fixed_effects_table") or []
         rows.append({"label": "── Fixed Effects ──", "value": ""})
@@ -283,13 +297,23 @@ class _StatRowsMixin:
             ("Test", "test"),
             ("Model type", "model_type"),
             ("Model variant", "model_variant"),
-            ("p-value (primary predictor)", "p_value"),
+            ("p-value (primary predictor, omnibus)", "p_value"),
             ("Adjusted p-value", "p_value_fdr"),
         ]:
             value = results.get(key)
             if key in results and _FormattingMixin._has_display_value(value):
                 display = _FormattingMixin._format_p_value(value) if key.startswith("p_value") else _FormattingMixin._format_metric(value)
                 rows.append({"label": label, "value": display})
+
+        omnibus_df = results.get("omnibus_df")
+        if omnibus_df is not None:
+            rows.append({
+                "label": "Omnibus likelihood-ratio test",
+                "value": (
+                    f"χ²({omnibus_df}) = "
+                    f"{_FormattingMixin._format_metric(results.get('statistic'))}"
+                ),
+            })
 
         auc = results.get("effect_size")
         if auc is not None:
