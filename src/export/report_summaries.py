@@ -371,7 +371,20 @@ class _SummariesMixin:
         else:
             sphericity_correction_note = None
 
-        sphericity = results.get("sphericity_test", {}) or {}
+        # RM writes "sphericity_test"; Mixed writes the same information under a
+        # "within_" prefix, because a mixed design has two effect families and the
+        # within verdict has to be qualified. Reading only the RM key rendered an
+        # EMPTY assumption summary for Mixed even at Mauchly p = 1.6e-22.
+        #
+        # Keyed on PRESENCE, not truthiness: an RM payload whose sphericity_test is
+        # an empty-but-present dict must stay on the RM branch instead of silently
+        # borrowing the mixed field. `x or y` would fall through in that case.
+        if "sphericity_test" in results:
+            sphericity = results.get("sphericity_test") or {}
+            _corr_key, _corr_block_key = "correction_used", "sphericity_corrections"
+        else:
+            sphericity = results.get("within_sphericity_test") or {}
+            _corr_key, _corr_block_key = "within_correction_used", "within_sphericity_corrections"
         if isinstance(sphericity, dict) and sphericity:
             status_value = sphericity.get("sphericity_met")
             if status_value is None and sphericity.get("p_value") is not None:
@@ -389,10 +402,19 @@ class _SummariesMixin:
                 # to the top-level "correction_used" key and the epsilon values
                 # nested under "sphericity_corrections", NOT into the
                 # "sphericity_test" sub-dict this function reads for W/p_value.
-                top_correction = str(results.get("correction_used") or "")
-                sph_corrections = results.get("sphericity_corrections") or {}
+                # _corr_key/_corr_block_key point at the RM or the Mixed spelling,
+                # chosen above by the same presence check.
+                top_correction = str(results.get(_corr_key) or "")
+                sph_corrections = results.get(_corr_block_key) or {}
                 gg_block = sph_corrections.get("greenhouse_geisser") or {}
                 hf_block = sph_corrections.get("huynh_feldt") or {}
+                if not (gg_block or hf_block):
+                    # Mixed nests its epsilon one level deeper, under the effect it
+                    # belongs to.
+                    _main = sph_corrections.get("main_effect") or {}
+                    if isinstance(_main, dict):
+                        gg_block = _main.get("greenhouse_geisser") or {}
+                        hf_block = _main.get("huynh_feldt") or {}
                 gg_eps = gg_block.get("epsilon") if isinstance(gg_block, dict) else None
                 hf_eps = hf_block.get("epsilon") if isinstance(hf_block, dict) else None
                 corr = top_correction.lower()
