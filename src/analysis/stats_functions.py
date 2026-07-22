@@ -454,7 +454,18 @@ except ImportError:
 # GLMMTwoWayANOVA, GEERMANOVA, GLMMMixedANOVA, auto_anova_decision removed (dead code).
 
 
-            
+# Nonparametric post-hoc options, module-level so the correction each label
+# advertises can be pinned against the correction the code actually applies.
+# The two descriptions used to be swapped: "dunn" promised Holm-Bonferroni while
+# DunnTest runs statsmodels' 'holm-sidak', and "mw_custom" promised Sidak while
+# the Mann-Whitney branch runs 'holm' (Holm-Bonferroni) -- deliberately, see the
+# C3b note at its call site.
+NONPARAMETRIC_POSTHOC_OPTIONS = (
+    ("Dunn Test (all pairs, Holm-Šidák correction)", "dunn"),
+    ("Mann-Whitney-U Tests (custom pairs, Holm-Bonferroni correction)", "mw_custom"),
+)
+
+
 class UIDialogManager:
     @staticmethod
     def _ensure_qt_application():
@@ -605,10 +616,7 @@ class UIDialogManager:
         info = QLabel("Please select the desired nonparametric post-hoc test:")
         layout.addWidget(info)
 
-        options = [
-            ("Dunn Test (all pairs, Holm-Bonferroni correction)", "dunn"),
-            ("Mann-Whitney-U Tests (custom pairs, Sidak correction)", "mw_custom"),
-        ]
+        options = list(NONPARAMETRIC_POSTHOC_OPTIONS)
         radio_buttons = []
         for label, value in options:
             rb = QRadioButton(label)
