@@ -22,6 +22,13 @@ from enum import Enum
 
 from statistical_testing.validators import ModelDesignError
 
+# scipy integrates the multivariate-t CDF by Monte Carlo. Without a fixed
+# random_state the same data yields a different adjusted p-value on every run,
+# and near alpha the significance verdict itself flips. Pinned so a reported
+# p-value can be reproduced from the same input.
+MVT_RANDOM_STATE = 0
+
+
 class DesignType(str, Enum):
     INDEPENDENT = "INDEPENDENT"
     REPEATED = "REPEATED"
@@ -309,7 +316,8 @@ class ANCOVAModel(BaseStatisticalModel):
         out = []
         for tv in t_values:
             c = abs(float(tv))
-            p_all = float(rv.cdf(np.full(k, c), lower_limit=np.full(k, -c)))
+            p_all = float(rv.cdf(np.full(k, c), lower_limit=np.full(k, -c),
+                                 random_state=MVT_RANDOM_STATE))
             out.append(float(min(1.0, max(0.0, 1.0 - p_all))))
         return out
 
@@ -603,7 +611,15 @@ class ANCOVAModel(BaseStatisticalModel):
         eta_sq = None
         if self.anova_table is not None and factor_key in self.anova_table.index:
             ss_factor = self.anova_table.loc[factor_key, "sum_sq"]
-            residual_key = next((k for k in self.anova_table.index if "residual" in k.lower()), None)
+            # Exact row name, not a substring search: the index is
+            # [Intercept, factors..., covariates..., Residual], so a covariate
+            # called e.g. "Residual_Volume" would match first and be used as the
+            # error term.
+            residual_key = next(
+                (k for k in self.anova_table.index
+                 if str(k).strip().lower() == "residual"),
+                None,
+            )
             if residual_key is not None:
                 ss_residual = self.anova_table.loc[residual_key, "sum_sq"]
                 denom = ss_factor + ss_residual
@@ -1157,7 +1173,8 @@ class LinearMixedModel(BaseStatisticalModel):
         out = []
         for tv in t_values:
             c = abs(float(tv))
-            p_all = float(rv.cdf(np.full(k, c), lower_limit=np.full(k, -c)))
+            p_all = float(rv.cdf(np.full(k, c), lower_limit=np.full(k, -c),
+                                 random_state=MVT_RANDOM_STATE))
             out.append(float(min(1.0, max(0.0, 1.0 - p_all))))
         return out
 
