@@ -96,6 +96,26 @@ def _restore_names_in_dict(d, rev_map):
         return d
 
 
+def _parameter_source_columns(param_name, term=None):
+    """Source data column(s) behind a patsy design-matrix parameter.
+
+    ``C(Dose)[T.d1]`` -> ``['Dose']``; ``C(A):C(B)`` -> ``['A', 'B']``; a plain
+    numeric column keeps its own name. Used to look up a parameter's role from
+    an existing column classification by exact membership, instead of testing
+    whether a column name happens to be a substring of the parameter name.
+    """
+    text = term if term else str(param_name)
+    columns = []
+    for part in str(text).split(":"):
+        part = part.strip()
+        match = re.match(r"^C\(\s*([^,)]+?)\s*(?:,[^)]*)?\)", part)
+        if match:
+            columns.append(match.group(1).strip())
+        else:
+            columns.append(re.sub(r"\[.*\]$", "", part).strip())
+    return [c for c in columns if c]
+
+
 def _residual_normality(residuals, alpha=0.05, label="Model residuals"):
     """Shapiro-Wilk on the residuals of the model that was actually fitted.
 
@@ -893,6 +913,20 @@ class LinearMixedModel(BaseStatisticalModel):
                 
         n_between_predictors = len(between_cols)
         n_within_predictors = len(within_cols)
+
+        # Map each fixed-effect parameter back to the source column(s) it came
+        # from, so the Between-Within df can be looked up from the classification
+        # computed above instead of being re-derived per parameter. Matching
+        # `col in param_name` as a substring made a between-subject covariate
+        # named "Dose_base" collide with a within factor named "Dose".
+        term_by_param = {}
+        try:
+            _param_names = list(self.result.fe_params.index)
+            for _term, _sl in self.result.model.data.design_info.term_name_slices.items():
+                for _idx in range(*_sl.indices(len(_param_names))):
+                    term_by_param[_param_names[_idx]] = _term
+        except Exception:
+            term_by_param = {}
         
         apply_correction = (n_groups < 100)
         df_method = "Between-Within (Kenward-Roger / Satterthwaite approximation)" if apply_correction else "Asymptotic (z-test)"
@@ -908,11 +942,10 @@ class LinearMixedModel(BaseStatisticalModel):
                 if param_name == "Intercept":
                     df_param = n_groups - 1
                 else:
-                    is_within = False
-                    for col in within_cols:
-                        if col in param_name:
-                            is_within = True
-                            break
+                    source_cols = _parameter_source_columns(
+                        param_name, term_by_param.get(param_name)
+                    )
+                    is_within = any(col in within_cols for col in source_cols)
                     if is_within:
                         df_param = n_obs - n_groups - n_within_predictors
                     else:
