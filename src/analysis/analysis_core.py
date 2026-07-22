@@ -94,49 +94,6 @@ PostHocAnalyzer = _PostHocAnalyzerProxy
 PostHocStatistics = _PostHocStatisticsProxy
 
 
-class DatasetSelector:
-    """Helper class to manage dataset selection in the UI"""
-    
-    @staticmethod
-    def get_available_datasets(file_path, sheet_name=None):
-        """
-        Get all available datasets (sheets) from an Excel file
-        
-        Returns:
-        --------
-        dict: {sheet_name: preview_info}
-        """
-        try:
-            if file_path.endswith('.xlsx') or file_path.endswith('.xls'):
-                # Get all sheet names
-                xl_file = pd.ExcelFile(file_path)
-                datasets = {}
-                
-                for sheet in xl_file.sheet_names:
-                    try:
-                        # Get a preview of each sheet
-                        df_preview = pd.read_excel(file_path, sheet_name=sheet, nrows=5)
-                        datasets[sheet] = {
-                            'columns': df_preview.columns.tolist(),
-                            'shape': f"{len(pd.read_excel(file_path, sheet_name=sheet))} rows",
-                            'preview': df_preview.head(3).to_dict('records')
-                        }
-                    except Exception as e:
-                        datasets[sheet] = {'error': str(e)}
-                
-                return datasets
-            else:
-                # For CSV files, return single dataset
-                df_preview = pd.read_csv(file_path, nrows=5)
-                return {
-                    'CSV Data': {
-                        'columns': df_preview.columns.tolist(),
-                        'shape': f"{len(pd.read_csv(file_path))} rows",
-                        'preview': df_preview.head(3).to_dict('records')
-                    }
-                }
-        except Exception as e:
-            return {'Error': {'error': str(e)}}
 
 # Modified AnalysisManager.analyze function
 class AnalysisManager:

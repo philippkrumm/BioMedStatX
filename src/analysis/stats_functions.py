@@ -822,7 +822,7 @@ class UIDialogManager:
         return None
        
 
-from analysis.analysis_core import DatasetSelector, AnalysisManager, get_output_path
+from analysis.analysis_core import AnalysisManager, get_output_path
 from analysis.outlier_core import OUTLIER_IMPORTS_AVAILABLE, OutlierDetector
 
 
