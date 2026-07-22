@@ -650,6 +650,27 @@ class LinearMixedModel(BaseStatisticalModel):
                 between_cols.add(col)
         return DesignType.MIXED if between_cols else DesignType.REPEATED
 
+    @staticmethod
+    def _re_param_count(fit):
+        """Number of free random-effects covariance parameters in a MixedLM fit.
+
+        The LRT degrees of freedom is the difference of this count between the
+        two candidate structures. It cannot be assumed: statsmodels' default
+        covariance is unstructured, so a k-dimensional random effect carries
+        k(k+1)/2 free parameters, and a *categorical* random slope contributes
+        one column per non-reference level. A 3-level within factor therefore
+        goes from 1 (intercept only) to 6, i.e. df = 5, not 1.
+
+        ``k_re2`` is statsmodels' own count for the cov_re block and ``k_vc``
+        covers additional variance components; the cov_re triangle is the
+        fallback if either attribute is unavailable.
+        """
+        k_re2 = getattr(fit, "k_re2", None)
+        if k_re2 is None:
+            k = fit.cov_re.shape[0]
+            k_re2 = k * (k + 1) // 2
+        return int(k_re2) + int(getattr(fit, "k_vc", 0) or 0)
+
     def fit(self, df, dv, fixed_effects, random_intercept, covariates=None, random_slope=None, alpha=0.05, control_group=None):
         import statsmodels.formula.api as smf
         from scipy import stats as scipy_stats
@@ -707,8 +728,9 @@ class LinearMixedModel(BaseStatisticalModel):
                     ll_ri = fit_ri.llf
                     ll_ri_rs = fit_ri_rs.llf
                     D = 2 * (ll_ri_rs - ll_ri)
-                    # Diagonal RE structure adds 1 parameter (variance of slope) — df=1
-                    df_diff = 1
+                    df_diff = self._re_param_count(fit_ri_rs) - self._re_param_count(fit_ri)
+                    if df_diff < 1:
+                        df_diff = 1
                     p_val = float(scipy_stats.chi2.sf(D, df_diff))
                     
                     self._lrt_performed = True
