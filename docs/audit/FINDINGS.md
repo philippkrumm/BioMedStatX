@@ -308,3 +308,37 @@ RM writes `sphericity_test` / `correction_used`; Mixed writes the same informati
 `within_` prefix, because a mixed design has two effect families. Consumers must handle both.
 Key on **presence** (`if "sphericity_test" in results`), not truthiness — `a or b` silently
 falls through when `a` is an empty-but-present dict and borrows the other design's value.
+
+---
+
+## 🟡 VZ10 — DataVisualizer utility methods with zero callers (REVIEWED 2026-07-22, deliberately kept)
+
+**Home of the finding:** `docs/superpowers/audit-notes/release-2.0-audit/05-visualization.md`
+(census of 22 static methods on `DataVisualizer`, each verified at 0 external callers).
+**Status: OPEN — reviewed and consciously deferred, not forgotten.**
+
+### What this session did
+Re-ran the census against the current tree, widened to `docs/` and `tools/` (the original
+sweep covered `src/` and `tests/` only). Result: of the 22, exactly **one** — `_add_legend` —
+has no reference anywhere at all. The other 21 have zero *code* callers but are named
+individually in the VZ10 write-up, several with a per-method assessment attached.
+
+Removed in `8bbbbf5` / `<this commit>`:
+- `_add_legend` — no reference in src, tests, docs or tools;
+- `plot_roc_curve`, `plot_forest` — the only two that are **redundant** rather than merely
+  unused: `export/report_charts.py:768` (`_build_roc_chart`, Plotly, called at :610) is the
+  live renderer wired into the HTML export. Same situation as the mixed-interaction block in
+  V21-1 — two implementations of one job, one of them superseded.
+
+### Why the remaining 19 were NOT removed
+Zero callers is not evidence of zero value. These are documented, individually assessed
+building blocks, not forgotten corpses, and whether they are meant as a toolkit for future
+plot features is a product decision that this audit does not own. Deleting them would also
+discard the assessments attached to them — most concretely `apply_custom_colormap`, whose
+known divide-by-zero for n<=1 is classified LOW **because** nothing calls it. That
+classification is coupled to the zero-caller state: it stops being true the moment someone
+reactivates the method. Removing the code would remove the record of the bug along with it.
+
+### If they are ever revived
+`apply_custom_colormap` must be fixed first: `n = len(groups)` with `n == 1` divides by zero at
+`i/(n-1)`, and `n == 0` divides by zero earlier at `accent_idx % n`.
