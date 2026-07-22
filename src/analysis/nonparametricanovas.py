@@ -296,7 +296,7 @@ def perform_friedman_test(data, dv, within_factor, subject_col, alpha=0.05):
                         "group1": f"{within_factor}={c1}",
                         "group2": f"{within_factor}={c2}",
                         "test": "Conover-Iman",
-                        "p_value": p_val,
+                        "p_value": p_val,   # overwritten by _apply_holm below
                         "statistic": None,
                         "significant": p_val < alpha,
                         "corrected": False,
@@ -305,8 +305,18 @@ def perform_friedman_test(data, dv, within_factor, subject_col, alpha=0.05):
                         "confidence_interval": (None, None),
                         "power": None,
                     })
+                # posthoc_conover_friedman defaults to p_adjust=None, i.e. RAW
+                # pairwise p-values. Reporting those (and flagging significance
+                # on them) inflates the family-wise error rate on the default
+                # Friedman follow-up. Corrected here with the same Holm step-down
+                # the Wilcoxon fallback below already uses, per the app's C3b
+                # precedent: Holm-Bonferroni controls the FWER under arbitrary
+                # dependence, whereas Sidak-based step-down assumes an
+                # independence these contrasts do not have -- they share ranks,
+                # blocks and the error term.
+                posthoc_comps = _apply_holm(posthoc_comps, alpha)
                 if posthoc_comps:
-                    posthoc_name = f"Conover-Iman (n={n_subjects} subjects)"
+                    posthoc_name = f"Conover-Iman (n={n_subjects} subjects, Holm-corrected)"
             except Exception as _ph_err:
                 import logging
                 logging.getLogger(__name__).warning(f"Conover-Iman post-hoc failed ({_ph_err}); falling back to pairwise Wilcoxon.")
