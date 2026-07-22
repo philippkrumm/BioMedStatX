@@ -615,11 +615,30 @@ class PosthocFallbackEngine:
                 if not pairs:
                     result["error"] = "No pairs selected."
                     return result
-                # Paired t-tests for the selected pairs
+                # Pair type follows the DESIGN, not the option name. This branch
+                # is reached from the one-way dialog, where the groups are
+                # independent: ttest_rel would pair observation i of one group
+                # with observation i of the other, so the result would depend on
+                # the row order of the input file and would raise on unequal n
+                # (pre-2.0 audit blocker).
+                paired = bool(is_dependent)
+                # Same Student-vs-Welch routing as the omnibus: "welch" means the
+                # variance-homogeneity check already failed for this analysis.
+                equal_var = test_recommendation != "welch"
+                if paired:
+                    pair_test_name = "Paired t-test"
+                elif equal_var:
+                    pair_test_name = "Independent t-test"
+                else:
+                    pair_test_name = "Welch's t-test"
+
                 pvals, stats_list = [], []
                 for g1, g2 in pairs:
                     x, y = np.array(samples[g1]), np.array(samples[g2])
-                    tstat, p = stats.ttest_rel(x, y)
+                    if paired:
+                        tstat, p = stats.ttest_rel(x, y)
+                    else:
+                        tstat, p = stats.ttest_ind(x, y, equal_var=equal_var)
                     stats_list.append(tstat)
                     pvals.append(p)
                 # Multiple testing correction
@@ -629,23 +648,26 @@ class PosthocFallbackEngine:
                 reject, p_adj, _, _ = multipletests(pvals, alpha=alpha, method=method_kwarg)
                 # Ergebnisse sammeln
                 for i, (g1, g2) in enumerate(pairs):
-                    ci = PostHocStatistics.calculate_ci_mean_diff(samples[g1], samples[g2], alpha=alpha, paired=True)
-                    d = PostHocStatistics.calculate_cohens_d(samples[g1], samples[g2], paired=True)
+                    ci = PostHocStatistics.calculate_ci_mean_diff(samples[g1], samples[g2], alpha=alpha, paired=paired)
+                    d = PostHocStatistics.calculate_cohens_d(samples[g1], samples[g2], paired=paired)
                     PostHocAnalyzer.add_comparison(
                         result,
                         group1=g1,
                         group2=g2,
-                        test="Paired t-test",
+                        test=pair_test_name,
                         p_value=p_adj[i],
                         statistic=stats_list[i],
                         corrected=True,
                         correction_method=correction_method_name,
                         effect_size=d,
-                        effect_size_type="Cohen's d (RM)",
+                        effect_size_type="Cohen's d (RM)" if paired else "Cohen's d",
                         confidence_interval=ci,
                         alpha=alpha
                     )
-                result["posthoc_test"] = f"Custom paired t-tests ({correction_method_name})"
+                result["posthoc_test"] = (
+                    f"Custom paired t-tests ({correction_method_name})" if paired
+                    else f"Pairwise t-tests (independent, {correction_method_name})"
+                )
                 return result
                 
             elif posthoc_choice == "mw_custom":
