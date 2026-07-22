@@ -542,22 +542,27 @@ class PosthocFallbackEngine:
                 posthoc_choice = "dependent"
             elif test_recommendation in ("parametric", "welch"):
                 # Show dialog for parametric post-hoc test selection.
-                # When Welch ANOVA was used (unequal variances), pre-select Games-Howell.
-                default_method = "games_howell" if test_recommendation == "welch" else "tukey"
+                #
+                # Always Games-Howell: for >2 independent groups
+                # select_comparison_test() returns welch_anova unconditionally
+                # (or kruskal_wallis when the residuals are not normal), so a
+                # classic equal-variance one-way ANOVA never runs and Tukey has
+                # no place here. "tukey" also matched no radio button in the
+                # one-way option list, so the pre-selection silently fell
+                # through to the first entry, and a cancelled dialog ran a test
+                # the user was never offered.
+                #
+                # The variance decision is made once, upstream, by
+                # select_comparison_test(). This call used to recompute it from
+                # test_info and hand it to the dialog as `equal_variance`, which
+                # the dialog never read -- a second, independently-derived copy
+                # of a decision that already exists. Dropped rather than wired
+                # up, so there is one source of truth.
+                default_method = "games_howell"
                 try:
-                    variance_info = test_info.get("variance_test", {}) if isinstance(test_info, dict) else {}
-                    equal_variance = None
-                    if default_method == "games_howell":
-                        equal_variance = False
-                    elif isinstance(variance_info, dict):
-                        transformed_variance = variance_info.get("transformed")
-                        if isinstance(transformed_variance, dict) and transformed_variance.get("equal_variance") is not None:
-                            equal_variance = transformed_variance.get("equal_variance")
-                        elif variance_info.get("equal_variance") is not None:
-                            equal_variance = variance_info.get("equal_variance")
                     posthoc_choice = ui_dialog_manager.select_posthoc_test_dialog(
                         parent=None, progress_text=None, column_name=None,
-                        default_method=default_method, equal_variance=equal_variance
+                        default_method=default_method,
                     )
                     logger.debug(f"DEBUG: Parametric post-hoc dialog returned: {posthoc_choice}")
                     if posthoc_choice is None:
@@ -590,11 +595,15 @@ class PosthocFallbackEngine:
                 control_group = ui_dialog_manager.select_control_group_dialog(valid_groups)
                 logger.debug(f"DEBUG: Control group selected for Dunnett test: {control_group}")
                 if control_group is None:
-                    logger.debug("DEBUG: No control group selected, defaulting to Tukey HSD")
-                    posthoc_choice = "tukey"
+                    # Games-Howell, not Tukey: the omnibus on this path is
+                    # Welch's ANOVA, and Tukey HSD assumes the variance
+                    # homogeneity that Welch exists precisely because it cannot
+                    # be assumed. Games-Howell is the robust all-pairs analogue.
+                    logger.debug("DEBUG: No control group selected, defaulting to Games-Howell")
+                    posthoc_choice = "games_howell"
             except Exception as e:
                 logger.debug(f"DEBUG: Error selecting control group: {e}")
-                posthoc_choice = "tukey"  # Fallback to Tukey if control selection fails
+                posthoc_choice = "games_howell"  # robust fallback, see above
 
         try:
             # Welch is a parametric family for post-hoc purposes: Tukey,

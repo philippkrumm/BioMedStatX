@@ -503,7 +503,7 @@ class UIDialogManager:
         return "The ANOVA has revealed significant differences. Please select a post-hoc test:"
 
     @staticmethod
-    def select_posthoc_test_dialog(parent=None, progress_text=None, column_name=None, default_method=None, equal_variance=None):
+    def select_posthoc_test_dialog(parent=None, progress_text=None, column_name=None, default_method=None):
         UIDialogManager._ensure_qt_application()
         dialog = QDialog(parent)
         UIDialogManager._configure_dialog(dialog, object_name="posthocSelectionDialog")
