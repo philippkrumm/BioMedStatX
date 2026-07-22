@@ -76,7 +76,10 @@ def _fisher_z_ci(r, n, alpha=0.05, method="pearson"):
         lo = float(np.tanh(z - z_crit * se))
         hi = float(np.tanh(z + z_crit * se))
         return (lo, hi)
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "Fisher-z CI not computable (r=%r, n=%r, method=%r): %s", r, n, method, exc
+        )
         return (None, None)
 
 
@@ -586,7 +589,17 @@ class SimpleLinearRegressionModel:
         self._cov_type = "nonrobust"
         if n >= 20 and bp_p is not None and bp_p < alpha:
             try:
-                self.result = self.result.get_robustcov_results(cov_type='HC3')
+                # get_robustcov_results() returns a bare OLSResults, not the
+                # RegressionResultsWrapper that .fit() hands back: params/bse/
+                # resid come out as ndarrays and conf_int() as a plain array, so
+                # every downstream .index / .values / .loc access would break.
+                # Re-wrapping restores the pandas contract without touching the
+                # numbers — unlike .fit(cov_type='HC3'), which would silently
+                # flip use_t from True to False and change every p-value.
+                from statsmodels.regression.linear_model import RegressionResultsWrapper
+                self.result = RegressionResultsWrapper(
+                    self.result.get_robustcov_results(cov_type='HC3')
+                )
                 self._cov_type = "HC3"
             except Exception as exc:
                 logger.warning(f"WARNING: Failed to apply HC3 covariance: {exc}")
@@ -720,7 +733,8 @@ class SimpleLinearRegressionModel:
                     "confidence_level": float(1.0 - self._alpha),
                 },
             }
-        except Exception:
+        except Exception as exc:
+            logger.warning("Regression plot payload could not be built: %s", exc, exc_info=True)
             return None
 
     def diagnostics(self):
@@ -814,8 +828,8 @@ class SimpleLinearRegressionModel:
                     {"x": float(xv), "y": float(yv)}
                     for xv, yv in zip(x_obs[valid], y_obs[valid])
                 ]
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Raw association points unavailable: %s", exc, exc_info=True)
 
         # Residuals and fitted values at top level for QQ plot and residuals-vs-fitted chart
         residuals_list = None
@@ -823,8 +837,11 @@ class SimpleLinearRegressionModel:
         try:
             residuals_list = [float(v) for v in self.result.resid.values]
             fitted_list = [float(v) for v in self.result.fittedvalues.values]
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "Residuals/fitted values unavailable — QQ and residual plots will be "
+                "missing: %s", exc, exc_info=True,
+            )
 
         coef_interp = self._build_coef_interpretation(main_beta) if main_beta is not None else None
 
@@ -990,8 +1007,11 @@ class ExploratoryCorrelationMatrix:
                     p_mat[i, j] = p_mat[j, i] = float(p)
                     all_p.append(float(p))
                     ij_indices.append((i, j))
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning(
+                        "Correlation for pair (%r, %r) failed, cell left empty: %s",
+                        cols[i], cols[j], exc,
+                    )
 
         # Multiple testing correction
         pc_mat = p_mat.copy()
@@ -1001,8 +1021,14 @@ class ExploratoryCorrelationMatrix:
                 _, p_adj, _, _ = multipletests(all_p, method=self._correction)
                 for idx, (i, j) in enumerate(ij_indices):
                     pc_mat[i, j] = pc_mat[j, i] = float(p_adj[idx])
-            except Exception:
-                pass  # Fall back to uncorrected p-values
+            except Exception as exc:
+                # Silently reporting uncorrected p-values as if they were corrected
+                # is the dangerous failure mode here — say so loudly.
+                logger.warning(
+                    "Multiple-testing correction %r failed over %d p-values; the "
+                    "'corrected' matrix still holds UNCORRECTED values: %s",
+                    self._correction, len(all_p), exc, exc_info=True,
+                )
 
         return r_mat, p_mat, pc_mat, n_mat
 
