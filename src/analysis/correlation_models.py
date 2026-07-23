@@ -57,6 +57,42 @@ def _is_continuous(df, col, threshold=10):
     return df[col].nunique() > threshold
 
 
+def _select_correlation_method(n, skew_x, skew_y, kurt_x, kurt_y):
+    """Single source of truth for auto Pearson-vs-Spearman selection.
+
+    Selection is by sample-size tier and shape (skewness / excess kurtosis),
+    NOT by a Shapiro-Wilk pre-test. A significance test as a gate has too
+    little power at the small n typical of biomedical correlation (3-30) and
+    too much at large n, where it rejects clinically irrelevant departures
+    from normality — the same two-stage objection that put this project on
+    Welch-only for the t-test. Shapiro-Wilk is still computed and shown for
+    information by the callers, but it does not drive this choice.
+
+    Both CorrelationModel (single pair) and ExploratoryCorrelationMatrix
+    (per pair) route through here so the two engines can never disagree on
+    the same data.
+
+    Tiers:
+        n < MIN_N_SMALL:   always Spearman (too few points to trust shape).
+        MIN_N_SMALL <= n < 100: Pearson iff |skew| <= 1.0 AND |kurt| <= 2.0
+                                for BOTH variables, else Spearman.
+        n >= 100:          Pearson unless |skew| > 2.0 OR |kurt| > 4.0 for
+                           either variable (extreme asymmetry -> Spearman).
+    """
+    from statistical_testing.validators import MIN_N_SMALL
+    if n < MIN_N_SMALL:
+        return 'spearman'
+    if MIN_N_SMALL <= n < 100:
+        if (abs(skew_x) <= 1.0 and abs(skew_y) <= 1.0 and
+                abs(kurt_x) <= 2.0 and abs(kurt_y) <= 2.0):
+            return 'pearson'
+        return 'spearman'
+    # n >= 100
+    if abs(skew_x) > 2.0 or abs(skew_y) > 2.0 or abs(kurt_x) > 4.0 or abs(kurt_y) > 4.0:
+        return 'spearman'
+    return 'pearson'
+
+
 def _fisher_z_ci(r, n, alpha=0.05, method="pearson"):
     """CI for a Pearson or Spearman r via Fisher z-transform.
 
@@ -286,23 +322,10 @@ class CorrelationModel:
             sw_stat_y, py = scipy_stats.shapiro(y_vals[:5000])
             both_normal_sw = bool(px > alpha and py > alpha)
             
-            # Determine method based on N-tier:
-            from statistical_testing.validators import MIN_N_SMALL
-            if self.n < MIN_N_SMALL:
-                self._method_used = 'spearman'
-            elif MIN_N_SMALL <= self.n < 100:
-                # Pearson if |skewness| <= 1.0 and |excess kurtosis| <= 2.0 for both
-                if (abs(skew_x) <= 1.0 and abs(skew_y) <= 1.0 and 
-                        abs(kurt_x) <= 2.0 and abs(kurt_y) <= 2.0):
-                    self._method_used = 'pearson'
-                else:
-                    self._method_used = 'spearman'
-            else: # N >= 100
-                # Pearson unless extreme asymmetry
-                if abs(skew_x) > 2.0 or abs(skew_y) > 2.0 or abs(kurt_x) > 4.0 or abs(kurt_y) > 4.0:
-                    self._method_used = 'spearman'
-                else:
-                    self._method_used = 'pearson'
+            # Determine method by sample-size tier and shape (shared with the
+            # matrix engine); Shapiro-Wilk above is informational, not decisive.
+            self._method_used = _select_correlation_method(
+                self.n, skew_x, skew_y, kurt_x, kurt_y)
                     
             has_transform = (self._x_transform != 'none' or self._y_transform != 'none')
             if has_transform:
@@ -931,6 +954,7 @@ class ExploratoryCorrelationMatrix:
         self.p_matrix = None
         self.p_corrected_matrix = None
         self.n_matrix = None
+        self.method_matrix = None
         self.strata_results = None
 
     def fit(self, df, columns, method='spearman', correction='fdr_bh',
@@ -962,22 +986,24 @@ class ExploratoryCorrelationMatrix:
             base = base.dropna(subset=self._columns)
 
         # Unstratified matrix (always computed)
-        r_m, p_m, pc_m, n_m = self._compute_matrix(base[self._columns])
+        r_m, p_m, pc_m, n_m, meth_m = self._compute_matrix(base[self._columns])
         self.r_matrix = r_m
         self.p_matrix = p_m
         self.p_corrected_matrix = pc_m
         self.n_matrix = n_m
+        self.method_matrix = meth_m
 
         # Stratified matrices (optional)
         if stratify_by and stratify_by in base.columns:
             self.strata_results = {}
             for grp_val, grp_df in base.groupby(stratify_by):
-                r_s, p_s, pc_s, n_s = self._compute_matrix(grp_df[self._columns])
+                r_s, p_s, pc_s, n_s, meth_s = self._compute_matrix(grp_df[self._columns])
                 self.strata_results[str(grp_val)] = {
                     "r_matrix": r_s,
                     "p_matrix": p_s,
                     "p_corrected_matrix": pc_s,
                     "n_matrix": n_s,
+                    "method_matrix": meth_s,
                 }
 
         return self
@@ -989,6 +1015,10 @@ class ExploratoryCorrelationMatrix:
         r_mat = np.full((k, k), np.nan)
         p_mat = np.full((k, k), np.nan)
         n_mat = np.zeros((k, k))
+        # method_mat records which correlation actually ran for each pair, so a
+        # mixed 'auto' matrix stays auditable (which cell was Pearson, which
+        # Spearman). Object array of 'pearson'/'spearman'/None (B5).
+        method_mat = np.full((k, k), None, dtype=object)
         np.fill_diagonal(r_mat, 1.0)
         np.fill_diagonal(n_mat, data[cols].notna().sum().values.astype(float))
 
@@ -1008,9 +1038,14 @@ class ExploratoryCorrelationMatrix:
 
                 m = self._method
                 if m == 'auto':
-                    _, px = scipy_stats.shapiro(x[:5000])
-                    _, py = scipy_stats.shapiro(y[:5000])
-                    m = 'pearson' if (px > self._alpha and py > self._alpha) else 'spearman'
+                    # Same skew/kurtosis tiers as the single-pair engine, so the
+                    # two never disagree on identical data. Shapiro-Wilk is NOT
+                    # the gate here (it used to be) — see _select_correlation_method.
+                    sx = float(scipy_stats.skew(x))
+                    sy = float(scipy_stats.skew(y))
+                    kx = float(scipy_stats.kurtosis(x))
+                    ky = float(scipy_stats.kurtosis(y))
+                    m = _select_correlation_method(n, sx, sy, kx, ky)
 
                 try:
                     if m == 'pearson':
@@ -1019,6 +1054,7 @@ class ExploratoryCorrelationMatrix:
                         r, p = scipy_stats.spearmanr(x, y)
                     r_mat[i, j] = r_mat[j, i] = float(r)
                     p_mat[i, j] = p_mat[j, i] = float(p)
+                    method_mat[i, j] = method_mat[j, i] = m
                     all_p.append(float(p))
                     ij_indices.append((i, j))
                 except Exception as exc:
@@ -1044,7 +1080,7 @@ class ExploratoryCorrelationMatrix:
                     self._correction, len(all_p), exc, exc_info=True,
                 )
 
-        return r_mat, p_mat, pc_mat, n_mat
+        return r_mat, p_mat, pc_mat, n_mat, method_mat
 
     @staticmethod
     def _ndarray_to_nested_dict(mat, cols):
@@ -1068,6 +1104,20 @@ class ExploratoryCorrelationMatrix:
                 out[ci][cj] = None if np.isnan(val) else int(val)
         return out
 
+    @staticmethod
+    def _method_mat_to_dict(mat, cols):
+        """Convert the k×k object array of method names to a nested dict.
+
+        Diagonal and never-computed pairs stay None; off-diagonal cells carry
+        'pearson' or 'spearman' — the method that actually ran for that pair.
+        """
+        out = {}
+        for i, ci in enumerate(cols):
+            out[ci] = {}
+            for j, cj in enumerate(cols):
+                out[ci][cj] = mat[i, j] if isinstance(mat[i, j], str) else None
+        return out
+
     def as_results_dict(self):
         if self.r_matrix is None:
             return {"error": "Matrix not computed"}
@@ -1075,6 +1125,7 @@ class ExploratoryCorrelationMatrix:
         cols = self._columns
         _d = self._ndarray_to_nested_dict
         _n = self._n_mat_to_dict
+        _m = self._method_mat_to_dict
 
         result = {
             "test": "Explorative Korrelationsmatrix",
@@ -1087,6 +1138,9 @@ class ExploratoryCorrelationMatrix:
             "p_matrix": _d(self.p_matrix, cols),
             "p_corrected_matrix": _d(self.p_corrected_matrix, cols),
             "n_matrix": _n(self.n_matrix, cols),
+            # Which method actually ran per pair — the record that makes a mixed
+            # 'auto' matrix auditable (B5).
+            "method_matrix": _m(self.method_matrix, cols),
         }
 
         if self.strata_results:
@@ -1096,6 +1150,7 @@ class ExploratoryCorrelationMatrix:
                     "r_matrix": _d(mats["r_matrix"], cols),
                     "p_corrected_matrix": _d(mats["p_corrected_matrix"], cols),
                     "n_matrix": _n(mats["n_matrix"], cols),
+                    "method_matrix": _m(mats["method_matrix"], cols),
                 }
             result["strata"] = strat_out
 

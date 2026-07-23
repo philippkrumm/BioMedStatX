@@ -54,7 +54,7 @@ class _SummariesMixin:
             method_map = {
                 "pearson": "Pearson",
                 "spearman": "Spearman",
-                "auto": "Auto (Pearson or Spearman selected per pair based on Shapiro-Wilk normality test)",
+                "auto": "Auto (Pearson or Spearman selected per pair by skewness/kurtosis tiers)",
             }
             method_label = method_map.get(method, method or "—")
             if method == "pearson":
@@ -64,7 +64,8 @@ class _SummariesMixin:
                 status_label = "Spearman is distribution-free — no normality required"
                 status_class = "is-significant"
             else:
-                status_label = "Method auto-selected per pair — verify individual pair choices"
+                status_label = ("Method chosen per pair by skewness/kurtosis; see the "
+                                "per-pair method matrix (Shapiro-Wilk is informational, not decisive)")
                 status_class = "is-neutral"
             rows.append({
                 "name": f"Correlation method: {method_label}",
@@ -95,7 +96,24 @@ class _SummariesMixin:
                     "status_class": "is-neutral",
                 })
 
-        # --- Correlation: normality_check (Shapiro-Wilk per variable for method selection) ---
+        # --- Correlation: method-selection basis (honest about what decides) ---
+        if model_type == "Correlation":
+            corr_method = str(results.get("method") or "").lower()
+            if corr_method in ("pearson", "spearman"):
+                rows.append({
+                    "name": f"Correlation method: {corr_method.capitalize()}",
+                    "statistic": "—",
+                    "p_value": "—",
+                    "p_value_style": "",
+                    "status_label": ("Selected by skewness/kurtosis tiers "
+                                     "(Shapiro-Wilk below is informational, not decisive)"),
+                    "status_class": "is-neutral",
+                })
+
+        # --- Correlation: normality_check (Shapiro-Wilk per variable, informational) ---
+        # The method is chosen by skewness/kurtosis tiers (see
+        # _select_correlation_method); the per-variable Shapiro-Wilk shown here
+        # documents distributional shape but does not drive Pearson vs Spearman.
         normality_check = results.get("normality_check") or {}
         if model_type == "Correlation" and normality_check:
             x_var = results.get("x_variable", "")

@@ -234,7 +234,7 @@ class _StatRowsMixin:
         method_map = {
             "pearson": "Pearson",
             "spearman": "Spearman",
-            "auto": "Auto (Pearson or Spearman per pair based on normality)",
+            "auto": "Auto (Pearson or Spearman per pair by skewness/kurtosis tiers)",
         }
         method = str(results.get("method") or "").lower()
         rows.append({"label": "Method", "value": method_map.get(method, method or "—")})
@@ -273,6 +273,30 @@ class _StatRowsMixin:
                     n_sig_corr += 1
         rows.append({"label": "N significant (uncorrected)", "value": str(n_sig_raw)})
         rows.append({"label": "N significant (FDR-corrected)", "value": str(n_sig_corr)})
+
+        # Per-pair method record (B5): for an 'auto' matrix, show which method
+        # actually ran per pair so a mixed matrix stays auditable. Counts always;
+        # the cell-by-cell breakdown when the matrix is small enough to list.
+        method_matrix = results.get("method_matrix") or {}
+        if method == "auto" and method_matrix:
+            pair_methods = []
+            for idx_i, var_i in enumerate(variables):
+                for idx_j, var_j in enumerate(variables):
+                    if idx_j <= idx_i:
+                        continue
+                    m_ij = (method_matrix.get(var_i) or {}).get(var_j)
+                    if m_ij:
+                        pair_methods.append((var_i, var_j, m_ij))
+            n_pearson = sum(1 for _, _, m in pair_methods if m == "pearson")
+            n_spearman = sum(1 for _, _, m in pair_methods if m == "spearman")
+            rows.append({"label": "Pairs run as Pearson", "value": str(n_pearson)})
+            rows.append({"label": "Pairs run as Spearman", "value": str(n_spearman)})
+            if pair_methods and len(pair_methods) <= 15:
+                for var_i, var_j, m_ij in pair_methods:
+                    rows.append({
+                        "label": f"  {var_i} × {var_j}",
+                        "value": m_ij.capitalize(),
+                    })
 
         if results.get("pairwise_deletion"):
             rows.append({"label": "Missing data handling", "value": "Pairwise deletion — n varies per pair"})
