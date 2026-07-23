@@ -212,19 +212,23 @@ class ComparisonEngine:
         n = sum(len(samples[g]) for g in groups)
         h = float(teststat)
         k = len(groups)
-        epsilon_sq = (h - k + 1) / (n - k) if n > k else None
-        if epsilon_sq is not None:
-            epsilon_sq = max(0.0, min(1.0, float(epsilon_sq)))
+        # (H-k+1)/(n-k) is eta-squared[H] (rstatix::kruskal_effsize default), NOT
+        # epsilon-squared -- true epsilon-squared is H/(n-1)
+        # (effectsize::rank_epsilon_squared). The value was already this formula;
+        # only the reported metric name was wrong. Name it for what it computes.
+        eta_sq_h = (h - k + 1) / (n - k) if n > k else None
+        if eta_sq_h is not None:
+            eta_sq_h = max(0.0, min(1.0, float(eta_sq_h)))
 
-        results["effect_size"] = epsilon_sq
-        results["effect_size_type"] = "epsilon_squared"
+        results["effect_size"] = eta_sq_h
+        results["effect_size_type"] = "eta_squared"
         results["anova_table"] = None
         results["confidence_interval"] = (None, None)
 
         try:
             from statsmodels.stats.power import FTestAnovaPower
 
-            f2_approx = (epsilon_sq / (1 - epsilon_sq)) * 0.955 if (epsilon_sq is not None and epsilon_sq < 1) else 0
+            f2_approx = (eta_sq_h / (1 - eta_sq_h)) * 0.955 if (eta_sq_h is not None and eta_sq_h < 1) else 0
             power_analysis = FTestAnovaPower()
             results["power"] = float(power_analysis.power(effect_size=f2_approx, k_groups=k, nobs=n, alpha=alpha))
         except Exception:

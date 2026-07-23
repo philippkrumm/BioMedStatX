@@ -1057,8 +1057,13 @@ from scipy.stats import mannwhitneyu
 
 class DunnTest(PostHocAnalyzer):
     @staticmethod
-    def perform_test(valid_groups, samples, alpha=0.05, n_boot=1000):
+    def perform_test(valid_groups, samples, alpha=0.05, n_boot=1000, seed=12345):
         result = PostHocAnalyzer.create_result_template("Dunn-Test")
+
+        # Seed a local Generator so the bootstrap CI below is reproducible. The
+        # unseeded global np.random drew fresh samples every run, so the reported
+        # median-difference CI drifted between identical analyses.
+        rng = np.random.default_rng(seed)
 
         try:
             sp = get_scikit_posthocs()
@@ -1096,8 +1101,8 @@ class DunnTest(PostHocAnalyzer):
             # Python loop, vectorized (was ~13.5s per pair at n=500/group).
             boots = []
             for _ in range(n_boot):
-                b1 = np.random.choice(x, n1, replace=True)
-                b2 = np.random.choice(y, n2, replace=True)
+                b1 = rng.choice(x, n1, replace=True)
+                b2 = rng.choice(y, n2, replace=True)
                 boots.append(np.median(np.subtract.outer(b1, b2)))
             ci_low, ci_high = np.percentile(boots, [100*alpha/2, 100*(1-alpha/2)])
 
