@@ -514,13 +514,32 @@ class StatisticalTester:
             group_b_label=str(g2),
             min_n=MIN_N_BLOCK,
         )
+        # scipy's exact null distribution assumes no zero differences and no ties
+        # in the absolute differences; with either present, method='exact' returns
+        # the p-value of no defined test (and scipy raises no warning). Downgrade
+        # to the asymptotic ('approx') method in that case, exactly as scipy's own
+        # method='auto' does — keeping the size threshold for clean data unchanged.
+        _diffs = data1_arr - data2_arr
+        _abs_nonzero = np.abs(_diffs[_diffs != 0])
+        _has_zeros = bool(np.any(_diffs == 0))
+        _has_ties = int(_abs_nonzero.size) != int(np.unique(_abs_nonzero).size)
+        _exact_valid = (len(data1_arr) <= 25) and not _has_zeros and not _has_ties
+        _wilcoxon_method = 'exact' if _exact_valid else 'approx'
+        if not _exact_valid and len(data1_arr) <= 25:
+            _reason = " and ".join(
+                r for r, present in (("zero differences", _has_zeros), ("ties", _has_ties)) if present
+            )
+            _msg = (f"Wilcoxon Warning: exact p-value not valid with {_reason}; "
+                    f"used the asymptotic (normal-approximation) method instead.")
+            if _msg not in results.setdefault("warnings", []):
+                results["warnings"].append(_msg)
         import warnings
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             statistic, p_value = stats.wilcoxon(
-                data1_arr, data2_arr, 
-                zero_method='pratt', 
-                method='exact' if len(data1_arr) <= 25 else 'approx'
+                data1_arr, data2_arr,
+                zero_method='pratt',
+                method=_wilcoxon_method,
             )
             if w:
                 for warn in w:
@@ -635,7 +654,17 @@ class StatisticalTester:
         data2_arr = validate_minimum_n(data2, min_n=MIN_N_BLOCK, label=str(g2), allow_missing=False)
         n1, n2 = len(data1_arr), len(data2_arr)
         from statistical_testing.validators import MIN_N_SMALL
-        _mwu_method = 'exact' if (n1 + n2) < MIN_N_SMALL else 'asymptotic'
+        # scipy's exact U distribution is not corrected for ties (and scipy raises
+        # no warning). When the pooled data contain ties, fall back to the
+        # tie-corrected asymptotic method, matching scipy's own method='auto'.
+        _pooled = np.concatenate([data1_arr, data2_arr])
+        _has_ties = int(_pooled.size) != int(np.unique(_pooled).size)
+        _mwu_method = 'exact' if ((n1 + n2) < MIN_N_SMALL and not _has_ties) else 'asymptotic'
+        if _has_ties and (n1 + n2) < MIN_N_SMALL:
+            _msg = ("Mann-Whitney Warning: exact p-value is not tie-corrected; "
+                    "used the asymptotic (tie-corrected) method instead.")
+            if _msg not in results.setdefault("warnings", []):
+                results["warnings"].append(_msg)
         statistic, p_value = stats.mannwhitneyu(data1_arr, data2_arr, alternative='two-sided', method=_mwu_method)
         test_name = f"Mann-Whitney-U ({'exact' if _mwu_method == 'exact' else 'asymptotic'})"
         u = statistic

@@ -366,6 +366,94 @@
         }
       },
       "reference_source": "scipy.stats.kruskal"
+    },
+    {
+      "id": "wilcoxon_signed_rank_with_zeros",
+      "invocation": {
+        "dependent": true,
+        "test_recommendation": "non_parametric"
+      },
+      "expected_test_contains": "wilcoxon",
+      "samples": {
+        "Before": [
+          4.0,
+          3.0,
+          5.0,
+          4.0,
+          2.0,
+          5.0,
+          3.0,
+          4.0,
+          5.0,
+          3.0,
+          4.0,
+          2.0,
+          5.0,
+          4.0
+        ],
+        "After": [
+          2.0,
+          3.0,
+          3.0,
+          2.0,
+          2.0,
+          4.0,
+          1.0,
+          4.0,
+          3.0,
+          3.0,
+          2.0,
+          2.0,
+          4.0,
+          1.0
+        ]
+      },
+      "expected": {
+        "statistic": 0.0,
+        "p_value": 0.003363982258864285,
+        "tol": {
+          "statistic": 1e-06,
+          "p_value": 1e-06
+        }
+      },
+      "reference_source": "scipy.stats.wilcoxon(zero_method=pratt, method=asymptotic) - exact is invalid with zero differences/ties (5 subjects unchanged); exact would give 0.0166015625"
+    },
+    {
+      "id": "mann_whitney_u_with_ties",
+      "invocation": {
+        "dependent": false,
+        "test_recommendation": "non_parametric"
+      },
+      "expected_test_contains": "mann-whitney",
+      "samples": {
+        "A": [
+          1.0,
+          2.0,
+          3.0,
+          4.0,
+          5.0,
+          5.0,
+          6.0
+        ],
+        "B": [
+          2.0,
+          3.0,
+          4.0,
+          5.0,
+          6.0,
+          7.0,
+          8.0
+        ]
+      },
+      "expected": {
+        "statistic": 16.0,
+        "p_value": 0.3023958618267656,
+        "tol": {
+          "statistic": 1e-06,
+          "p_value": 1e-06
+        }
+      },
+      "reference_source": "scipy.stats.mannwhitneyu(method=asymptotic) - exact is not tie-corrected (pooled data have ties), n1+n2=14<20 so exact would otherwise be chosen; exact would give 0.31759906759906764"
     }
   ]
 }
