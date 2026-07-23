@@ -128,7 +128,13 @@ def _apply_transform(vals: np.ndarray, name: str):
 
     Explicitly handles non-positive values by setting them to np.nan, 
     ensuring they are dropped via listwise deletion later in the pipeline.
-    There is no automatic data shifting (c=0.0 always).
+    There is no automatic data shifting (c=0.0 always). This intentionally
+    diverges from the ANOVA / advanced-design transform path (assumption_checks /
+    TransformationEngine), which shifts non-positive values up by (-min + 1) to
+    keep every observation: for a group comparison that preserves n and balance.
+    For a correlation/regression, adding a data-driven constant would distort the
+    x-y relationship, so invalid (<=0) points are dropped as (x, y) pairs instead.
+    Deliberate, not a bug (Wave-4 SHOULD-VERIFY, confirmed intentional).
 
     Args:
         vals: 1-D numpy array of finite floats.
@@ -199,10 +205,13 @@ def _optimize_boxcox_for_regression(y: np.ndarray, x_matrix: np.ndarray):
     from scipy.stats import gmean
     from scipy.special import boxcox as scipy_boxcox
     
+    # Unified with the shared bounded_boxcox_lambda contract (S7): failure and
+    # out-of-range optima fall back to lambda=0 (natural log), NOT lambda=1
+    # (identity, no transform), and NEVER a boundary clamp.
     valid_mask = (y > 0) & ~np.isnan(y)
     if not np.any(valid_mask):
-        return 1.0 # Fallback if no valid data
-        
+        return 0.0  # no valid data -> log
+
     y_valid = y[valid_mask]
     x_valid = x_matrix[valid_mask]
     
@@ -225,10 +234,17 @@ def _optimize_boxcox_for_regression(y: np.ndarray, x_matrix: np.ndarray):
         except np.linalg.LinAlgError:
             return np.inf
             
-    res = minimize_scalar(rss_for_lambda, bounds=(-2.0, 2.0), method='bounded')
-    if res.success:
-        return res.x
-    return 1.0 # Fallback to no transformation (lambda=1)
+    # Search a window wider than the [-3, 3] validity interval so a genuine
+    # optimum inside it is found freely; reject (-> log) anything that lands
+    # outside, rather than clamping to the edge (shared helper's docstring:
+    # "Clamping to the boundary is methodologically invalid and is never done").
+    BOXCOX_VALID = 3.0
+    res = minimize_scalar(
+        rss_for_lambda, bounds=(-(BOXCOX_VALID + 2.0), BOXCOX_VALID + 2.0), method='bounded'
+    )
+    if not res.success or not np.isfinite(res.x) or abs(res.x) > BOXCOX_VALID:
+        return 0.0  # diverged / out of [-3, 3] -> log
+    return float(res.x)
 
 
 # ---------------------------------------------------------------------------
