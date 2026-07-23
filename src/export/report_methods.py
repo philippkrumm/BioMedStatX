@@ -155,22 +155,10 @@ def build_methods_text(
         ):
             lines.append(_CORR_R_INTERPRETATION)
 
-        x_shift = results.get("x_transform_shift") or 0.0
-        y_shift = results.get("y_transform_shift") or 0.0
-        x_tr = results.get("x_transform") or "none"
-        y_tr = results.get("y_transform") or "none"
-        for axis, tr_name, shift in (("X", x_tr, x_shift), ("Y", y_tr, y_shift)):
-            if tr_name != "none" and shift != 0.0:
-                # Reconstruct the raw minimum that triggered the shift, so a
-                # peer reviewer can reproduce y = f(x + c) exactly:
-                #   log10 / boxcox: shift = -min + 1.0 → min = 1.0 - shift
-                #   sqrt:           shift = -min       → min = -shift
-                min_raw = (1.0 - shift) if tr_name in ("log10", "boxcox") else (-shift)
-                lines.append(
-                    f"Note ({axis}-axis): a constant c={shift:.4f} was automatically added "
-                    f"to all {axis.lower()}-values prior to {tr_name} transformation to satisfy "
-                    f"the positivity requirement (minimum raw value was {min_raw:.4f}). "
-                    f"This constant was determined from the data, not set by the researcher."
-                )
+        # No transform-shift note here: correlation/regression apply their
+        # transforms with c=0.0 always (_apply_transform never shifts; non-positive
+        # values are dropped, not shifted), so the positivity-shift reconstruction
+        # the ANOVA path needs can never fire for a Correlation result.
+        # (Wave-4 CHECK 5: removed dead `if shift != 0.0` branch.)
 
     return "\n".join(lines) + ats_note
