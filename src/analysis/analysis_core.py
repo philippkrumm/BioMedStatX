@@ -1109,36 +1109,53 @@ class AnalysisManager:
                                     # Import required modules
                                     stats = get_scipy_stats()
                                     multipletests = get_statsmodels_multitest()
-                                    
-                                    # Paired t-tests for the selected pairs
+
+                                    # Pair type follows the DESIGN, not the option name.
+                                    # This inline handler is reached from the one-way
+                                    # dialog, where the groups are independent: a paired
+                                    # t-test would pair row i of one group with row i of
+                                    # the other (order-dependent, and it raises on
+                                    # unequal n). posthoc_fallback fixed its own copy the
+                                    # same way; this duplicate had been left unguarded.
+                                    _paired = bool(dependent)
+                                    _equal_var = test_recommendation != "welch"
+                                    if _paired:
+                                        _pair_label = "Paired t-test (Holm-Bonferroni)"
+                                    elif _equal_var:
+                                        _pair_label = "Independent t-test (Holm-Bonferroni)"
+                                    else:
+                                        _pair_label = "Welch's t-test (Holm-Bonferroni)"
+
                                     pvals, stats_list = [], []
                                     for g1, g2 in pairs:
                                         x, y = np.array(transformed_samples[g1]), np.array(transformed_samples[g2])
-                                        tstat, p = stats.ttest_rel(x, y)
+                                        if _paired:
+                                            tstat, p = stats.ttest_rel(x, y)
+                                        else:
+                                            tstat, p = stats.ttest_ind(x, y, equal_var=_equal_var)
                                         stats_list.append(tstat)
                                         pvals.append(p)
-                                        # Holm–Šidák correction
-                                    # C3b: Holm-Bonferroni controls FWER correctly for
-                                    # dependent pairwise comparisons (Holm-Šidák assumed
-                                    # independence, which is violated here).
+                                    # C3b: Holm-Bonferroni controls FWER correctly under
+                                    # arbitrary dependence (Holm-Šidák assumes an
+                                    # independence these pairwise contrasts do not have).
                                     reject, p_adj, _, _ = multipletests(pvals, alpha=0.05, method='holm')
 
                                     # Create results in the same format as other post-hoc tests
                                     posthoc_results = {
-                                        "posthoc_test": "Custom paired t-tests (Holm-Bonferroni)",
+                                        "posthoc_test": f"Custom {'paired' if _paired else 'independent'} t-tests (Holm-Bonferroni)",
                                         "pairwise_comparisons": [],
                                         "error": None
                                     }
 
                                     # Collect results
                                     for i, (g1, g2) in enumerate(pairs):
-                                        ci = PostHocStatistics.calculate_ci_mean_diff(transformed_samples[g1], transformed_samples[g2], alpha=0.05, paired=True)
-                                        d = PostHocStatistics.calculate_cohens_d(transformed_samples[g1], transformed_samples[g2], paired=True)
+                                        ci = PostHocStatistics.calculate_ci_mean_diff(transformed_samples[g1], transformed_samples[g2], alpha=0.05, paired=_paired)
+                                        d = PostHocStatistics.calculate_cohens_d(transformed_samples[g1], transformed_samples[g2], paired=_paired)
                                         PostHocAnalyzer.add_comparison(
                                             posthoc_results,
                                             group1=g1,
                                             group2=g2,
-                                            test="Paired t-test (Holm-Bonferroni)",
+                                            test=_pair_label,
                                             p_value=p_adj[i],
                                             statistic=stats_list[i],
                                             corrected=True,
