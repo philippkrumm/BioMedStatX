@@ -208,12 +208,29 @@ class AnalysisManager:
                 groups_to_use = natural_order(working_df[display_group_col].dropna().unique())
 
         groups_to_use = [str(g) for g in groups_to_use]
-        working_df[display_group_col] = working_df[display_group_col].astype(str)
+
+        # The group split below matches stringified labels, so the column has to
+        # be compared as text. Casting it in place is what the categorical branch
+        # relies on — it is how a numeric factor (Dose = 1/2/3) becomes
+        # categorical for every downstream formula.
+        #
+        # For correlation and linear regression `display_group_col` is not a
+        # grouping column at all: it is the continuous predictor. Stringifying it
+        # there killed RegressionHealthScanner (np.median over object dtype) and
+        # exported the predictor as text in the Raw Data Vault. So keep the cast
+        # for the split itself, but only write it back for the grouped designs.
+        _requested_test = (analysis_context.get("inferred_test")
+                           or kwargs.get("test") or "")
+        _predictor_is_continuous = _requested_test in ("correlation", "linear_regression")
+
+        group_key = working_df[display_group_col].astype(str)
+        if not _predictor_is_continuous:
+            working_df[display_group_col] = group_key
 
         primary_dv = context_value_cols[0]
         samples = {}
         for group_name in groups_to_use:
-            subset = working_df[working_df[display_group_col] == group_name]
+            subset = working_df[group_key == group_name]
             # Coerce to numeric so whitespace-only / non-numeric cells become NaN
             # and are dropped, instead of leaking strings into the test as a fake
             # categorical value (would crash scipy/pingouin downstream).
@@ -534,18 +551,28 @@ class AnalysisManager:
                     'ancova': 'ANCOVA', 'two_way_ancova': 'ANCOVA',
                     'lmm': 'LMM', 'logistic_regression': 'LogisticRegression',
                 }
-                try:
-                    _scanner = DataHealthScanner(
-                        df=df,
-                        model_type=_model_type_map[clinical_test],
-                        dv=value_cols[0],
-                        covariates=covariates,
-                        factors=analysis_context.get('factor_columns', []),
-                        subject_col=subject_column,
-                    )
-                    _health_report = _scanner.run()
-                except Exception:
-                    _health_report = {"warnings": [], "checks": {}}
+                # correlation / linear_regression are not in the map — they get
+                # their own RegressionHealthScanner further down. Running this
+                # block for them only raised a KeyError into the except below.
+                _health_report = {"warnings": [], "checks": {}}
+                if clinical_test in _model_type_map:
+                    try:
+                        _scanner = DataHealthScanner(
+                            df=df,
+                            model_type=_model_type_map[clinical_test],
+                            dv=value_cols[0],
+                            covariates=covariates,
+                            factors=analysis_context.get('factor_columns', []),
+                            subject_col=subject_column,
+                        )
+                        _health_report = _scanner.run()
+                    except Exception as _health_exc:
+                        logger.warning(
+                            "DataHealthScanner failed for %r — the report will show no "
+                            "data-quality findings: %s", clinical_test, _health_exc,
+                            exc_info=True,
+                        )
+                        _health_report = {"warnings": [], "checks": {}}
 
                 if clinical_test in ('ancova', 'two_way_ancova'):
                     model = ANCOVAModel()
@@ -626,7 +653,12 @@ class AnalysisManager:
                             covariates=covariates or None,
                         )
                         _health_report = _scanner.run()
-                    except Exception:
+                    except Exception as _health_exc:
+                        logger.warning(
+                            "RegressionHealthScanner failed for %r (x=%r, y=%r) — the "
+                            "report will show no data-quality findings: %s",
+                            clinical_test, x_col, y_col, _health_exc, exc_info=True,
+                        )
                         _health_report = {"warnings": [], "checks": {}}
 
                     if clinical_test == 'correlation':
