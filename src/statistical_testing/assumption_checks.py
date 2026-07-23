@@ -582,11 +582,19 @@ class AssumptionCheckEngine:
             decision_strategy = select_comparison_test(
                 is_normal=post_norm,
                 is_homoscedastic=post_var,
-                is_paired=False,
+                # is_paired is already in scope (model_type == "paired"). Hardcoding
+                # False here logged welch_ttest / mann_whitney_u for a paired design,
+                # contradicting both the executed test and the "Paired t-test" leaf
+                # the report draws from the same metadata.
+                is_paired=is_paired,
                 group_count=len(valid_groups),
             )
             test_recommendation = strategy_to_recommendation(decision_strategy)
-            if decision_strategy == "welch_ttest":
+            if decision_strategy == "paired_ttest":
+                test_info["note"] = "Within-pair differences are normal - a paired t-test will be used."
+            elif decision_strategy == "wilcoxon":
+                test_info["note"] = "Within-pair differences are non-normal - a Wilcoxon signed-rank test will be used."
+            elif decision_strategy == "welch_ttest":
                 if post_var:
                     test_info["note"] = "Residuals are normal and variances are equal - Welch's t-test will be used (robust default)."
                 else:

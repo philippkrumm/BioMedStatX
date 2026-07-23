@@ -226,6 +226,19 @@ class DecisionTreeVisualizer:
             if pre_has_equal_variance is None:
                 pre_has_equal_variance = has_equal_variance if not was_transformed else False
 
+            # Variance homogeneity is reported for information only. The engine
+            # uses an unconditional Welch default (Feature B): select_comparison_test
+            # never reads the variance verdict, so the tree must not present it as a
+            # gate. Render the paired/RM case (no variance test runs) as a clean
+            # "N/A" rather than a bare True/False.
+            _pre_var = pre_trans.get("variance", {}) if isinstance(pre_trans, dict) else {}
+            _var_test_name = str(_pre_var.get("test_name", "") or "")
+            _variance_ran = not _var_test_name.upper().startswith("N/A") and dependence_type != "dependent"
+            if not _variance_ran:
+                variance_display = "N/A (paired design — variance homogeneity not applicable)"
+            else:
+                variance_display = "equal" if pre_has_equal_variance else "unequal"
+
             auto_switched = (
                 "Switching to nonparametric" in str(results.get("analysis_log", "")) or
                 test_name.lower().startswith("nonparametric_")
@@ -284,8 +297,8 @@ class DecisionTreeVisualizer:
             # nodes
             nodes_info = {
                 'A':  {"label": "Start", "pos": (0, 14)},
-                'B':  {"label": f"Are the data normally distributed and variances equal?\nShapiro-Wilk: {pre_is_normal}  |  Brown-Forsythe: {pre_has_equal_variance}", "pos": (0, 12.5)},
-                'C':  {"label": f"Assumptions {'met' if pre_is_normal and pre_has_equal_variance else 'violated'}", "pos": (0, 11)},
+                'B':  {"label": f"Are the residuals normally distributed?\nShapiro-Wilk: {pre_is_normal}\nVariance (Brown-Forsythe): {variance_display} — informational, not used for test choice", "pos": (0, 12.5)},
+                'C':  {"label": f"Normality assumption {'met' if pre_is_normal else 'violated'}\n(drives parametric vs. non-parametric)", "pos": (0, 11)},
                 'D1': {"label": "Data is ready\n(no transformation needed)", "pos": (-2, 9.5)},
                 'D2': {"label": f"Transform the data\n({transformation})", "pos": (2, 9.5)},
                 'E':  {"label": f"Check again after transformation\nShapiro-Wilk: {is_normal}  |  Brown-Forsythe: {has_equal_variance}" if was_transformed else "Check again after transformation", "pos": (2, 8)},
