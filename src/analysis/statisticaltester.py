@@ -1952,15 +1952,21 @@ class StatisticalTester:
                     # Automatic post-hoc tests for significant main effect
                     if results["p_value"] is not None and results["p_value"] < alpha:
                         try:
-                            # Extract data for post-hoc tests
-                            factor_levels = df[factor].unique()
-                            factor_data = {}
-                            for level in factor_levels:
-                                factor_data[level] = df[df[factor] == level][dv].tolist()
-                            
+                            # Build subject-aligned paired samples. A plain
+                            # df[df[factor]==level][dv].tolist() per level pairs
+                            # row i of one level with row i of the next, so the
+                            # paired t-test depended on the sheet's row order --
+                            # reorder within a level and the pairing silently
+                            # changes subject. _build_rm_aligned_samples pivots and
+                            # sorts by subject (and drops incomplete subjects), the
+                            # same aligner the non-parametric RM fallback uses.
+                            factor_levels, factor_data = PosthocFallbackEngine._build_rm_aligned_samples(
+                                df, dv, subject, factor
+                            )
+
                             # Perform paired t-tests with Holm-Bonferroni correction
                             posthoc_results = StatisticalTester.perform_dependent_posthoc_tests(
-                                factor_data, list(factor_levels), alpha=alpha, parametric=True
+                                factor_data, factor_levels, alpha=alpha, parametric=True
                             )
                             logger.debug(f"DEBUG: Post-hoc for RM-ANOVA created with {len(posthoc_results.get('pairwise_comparisons', []))} comparisons")
                             results["posthoc_test"] = posthoc_results.get("posthoc_test", "Paired t-tests (Holm-Bonferroni)")
