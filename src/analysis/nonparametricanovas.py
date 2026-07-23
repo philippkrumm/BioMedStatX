@@ -130,7 +130,11 @@ def _wilcoxon_posthoc_comp(arr1, arr2, label1, label2, alpha, warnings_list=None
                     msg = f"Wilcoxon Warning ({label1} vs {label2}): {str(warn.message)}"
                     if msg not in warnings_list:
                         warnings_list.append(msg)
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "Wilcoxon post-hoc comparison failed (%s vs %s): %s -- comparison dropped from table",
+            label1, label2, exc,
+        )
         return None
     n_eff = int(np.sum(diffs != 0))
     total = n_eff * (n_eff + 1) / 2.0
@@ -156,7 +160,11 @@ def _mwu_posthoc_comp(arr1, arr2, label1, label2, alpha):
         return None
     try:
         stat, p_raw = sp_stats.mannwhitneyu(a1, a2, alternative='two-sided', use_continuity=True)
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "Mann-Whitney post-hoc comparison failed (%s vs %s): %s -- comparison dropped from table",
+            label1, label2, exc,
+        )
         return None
     rbc = abs((2.0 * float(stat) - n1 * n2) / (n1 * n2))   # rank-biserial correlation
     return {
