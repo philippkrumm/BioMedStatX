@@ -380,11 +380,23 @@ class AssumptionCheckEngine:
                     add_note("Box-Cox: insufficient valid data globally; falling back to log10.")
                     transformation_type = "log10"
 
+            # arcsin_sqrt rescales against the GLOBAL data range, not per group.
+            # A per-group min-max maps every group onto [0,1] independently and
+            # erases the between-group location differences the test is about
+            # (Wave-4 BLOCKER 1: on within-group-uniform data a raw one-way
+            # p~1e-120 was reported as a non-significant Welch result). The
+            # advanced TransformationEngine already rescales globally; match it.
+            _arcsin_global_min = _arcsin_global_max = None
+            if transformation_type == "arcsin_sqrt":
+                _arcsin_all = [v for g in valid_groups for v in samples[g]]
+                if _arcsin_all:
+                    _arcsin_global_min = min(_arcsin_all)
+                    _arcsin_global_max = max(_arcsin_all)
+
             # Apply transformation
             for group in valid_groups:
                 values = samples[group]
-                min_val = min(values)
-                
+
                 if transformation_type == "log10":
                     transformed_samples[group] = [np.log10(v + global_shift) for v in values]
                     if global_shift > 0:
@@ -405,22 +417,25 @@ class AssumptionCheckEngine:
                             transformed.append(float(boxcox(fv + global_shift, _boxcox_lambda)))
                     transformed_samples[group] = transformed
                 elif transformation_type == "arcsin_sqrt":
-                    max_val = max(values)
-                    # Scale to 0-1 if needed
-                    if min_val < 0 or max_val > 1:
+                    g_min, g_max = _arcsin_global_min, _arcsin_global_max
+                    # Scale to 0-1 against the GLOBAL range if any data is outside
+                    # [0,1]; a per-group range would collapse each group onto [0,1].
+                    if g_min is not None and (g_min < 0 or g_max > 1):
                         if trace and group == valid_groups[0]:
-                            trace.add(2, "Transformation Validation", 
-                                      "Data contained values outside [0, 1]. Data was min-max scaled to [0, 1] before arcsin-sqrt transformation.")
-                        # CRITICAL-4: guard against zero variance (min == max)
-                        if max_val == min_val:
-                            variance_warning = GroupValidationError(
-                                f"Group '{group}': arcsin-sqrt transformation received zero variance data; using 0.5 fallback."
-                            )
-                            add_note(str(variance_warning))
-                            logger.warning(str(variance_warning))
+                            trace.add(2, "Transformation Validation",
+                                      "Data contained values outside [0, 1]. Data was min-max scaled to [0, 1] "
+                                      "using the global range across all groups before arcsin-sqrt transformation.")
+                        # CRITICAL-4: guard against zero variance across ALL data
+                        if g_max == g_min:
+                            if group == valid_groups[0]:
+                                variance_warning = GroupValidationError(
+                                    "arcsin-sqrt transformation received zero variance data (global range); using 0.5 fallback."
+                                )
+                                add_note(str(variance_warning))
+                                logger.warning(str(variance_warning))
                             scaled = [0.5] * len(values)
                         else:
-                            scaled = [(v - min_val) / (max_val - min_val) for v in values]
+                            scaled = [(v - g_min) / (g_max - g_min) for v in values]
                     else:
                         # Values already in [0,1] — still guard against zero variance
                         if len(set(values)) == 1:
