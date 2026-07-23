@@ -327,7 +327,10 @@ class CorrelationModel:
                         y_col: {"statistic": float(sw_stat_y), "p_value": float(py), "normal": bool(py > alpha), "skewness": skew_y, "kurtosis": kurt_y},
                         "both_normal": both_normal_sw,
                     },
-                    "both_normal": both_normal_sw,
+                    # Top-level both_normal describes the branch taken (pearson =
+                    # both-normal), kept consistent with the non-transform branch;
+                    # the raw Shapiro verdicts stay inside the sub-dicts above.
+                    "both_normal": self._method_used == 'pearson',
                 }
             else:
                 self._normality_check = {
@@ -338,11 +341,16 @@ class CorrelationModel:
                     "kurtosis_y": kurt_y,
                     "shapiro_x_p": float(px),
                     "shapiro_y_p": float(py),
+                    # The raw Shapiro verdict lives here; keep it distinct from
+                    # both_normal, which describes the branch actually taken.
                     "shapiro_both_normal": both_normal_sw,
+                    # both_normal = did we take the pearson (both-normal) branch.
+                    # A second "both_normal": both_normal_sw used to follow and
+                    # clobber this with the Shapiro verdict, so the flowchart lit
+                    # the Pearson leaf even when Spearman ran (F2/F3).
                     "both_normal": self._method_used == 'pearson',
                     x_col: {"statistic": float(sw_stat_x), "p_value": float(px), "normal": bool(px > alpha)},
                     y_col: {"statistic": float(sw_stat_y), "p_value": float(py), "normal": bool(py > alpha)},
-                    "both_normal": both_normal_sw,
                 }
         else:
             self._method_used = method

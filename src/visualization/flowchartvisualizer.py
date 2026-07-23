@@ -329,9 +329,7 @@ class FlowchartVisualizer:
         n_samples   = int(results.get("n", 0) or 0)
         sig         = (p_value is not None and p_value < alpha)
 
-        normality_check  = results.get("normality_check") or {}
         slope_hom        = results.get("slope_homogeneity") or {}
-        both_normal      = normality_check.get("both_normal", None)
         slopes_ok: bool | None
         if slope_hom:
             slopes_ok = all(
@@ -375,7 +373,12 @@ class FlowchartVisualizer:
             p_label = _fmt_p(p_value)
             sig_lbl = "Significant" if sig else "Not significant"
 
-            used_pearson = (method == "pearson") or (both_normal is True)
+            # The highlighted leaf must follow the method that actually ran.
+            # An earlier "or both_normal is True" here lit the Pearson leaf even
+            # when Spearman ran, whenever the (separate) normality flag disagreed
+            # with the method choice (F3). The method is the decision; normality
+            # is only its rationale.
+            used_pearson = (method == "pearson")
 
             nodes_info = {
                 "START":           {"label": "Start\nCorrelation Analysis",                        "pos": ( 0.0, 10.0), "isSquare": True},
