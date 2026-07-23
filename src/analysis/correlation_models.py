@@ -10,6 +10,7 @@ All model classes follow the pattern established in clinical_models.py:
     results = model.as_results_dict()
 """
 
+import math
 import re
 import numpy as np
 import pandas as pd
@@ -375,6 +376,11 @@ class CorrelationModel:
 
     @staticmethod
     def _interpret(r):
+        # A nan r (zero-variance input) must never fall through the cascade below
+        # into "very strong" — nan fails every "<" comparison, so it would hit the
+        # final else. Say plainly that it is not computable.
+        if r is None or (isinstance(r, float) and math.isnan(r)):
+            return "Not computable (correlation undefined — zero-variance input)"
         abs_r = abs(r)
         direction = "positive" if r >= 0 else "negative"
         if abs_r < 0.2:

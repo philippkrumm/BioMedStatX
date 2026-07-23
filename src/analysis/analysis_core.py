@@ -531,6 +531,15 @@ class AnalysisManager:
                 _cm_issue = None
                 if clinical_test != 'logistic_regression':
                     _cm_issue = validate_outcome(df[value_cols[0]], label=value_cols[0])
+                # Correlation / linear regression also depend on a non-degenerate
+                # predictor: a constant X makes r undefined (scipy returns nan) or
+                # the OLS design singular. The DV gate above never covered it, so a
+                # constant column was shipped as a fabricated "very strong (|r|=nan)"
+                # result. Gate it here for one honest block instead.
+                if _cm_issue is None and clinical_test in ('correlation', 'linear_regression'):
+                    _x_pred = analysis_context.get('x_variable')
+                    if _x_pred and _x_pred in df.columns:
+                        _cm_issue = validate_outcome(df[_x_pred], label=_x_pred)
                 if _cm_issue is None:
                     for _cov in covariates:
                         if _cov in df.columns:
