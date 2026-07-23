@@ -408,6 +408,11 @@ class FlowchartVisualizer:
                 highlighted.add(("START", "TIER_MICRO"))
                 alternatives.update([("START", "TIER_CLINICAL"), ("START", "TIER_ASYMPTOTIC")])
                 highlighted.add(("TIER_MICRO", "SPEARMAN"))
+                # Without this edge RESULT is unreachable, so the unconditional
+                # RESULT->CI/EFFECT below dangle as a second component. The other
+                # two tiers stay connected because they highlight
+                # PEARSON/SPEARMAN->RESULT; the micro branch has to as well.
+                highlighted.add(("SPEARMAN", "RESULT"))
             else:
                 tier_node  = "TIER_CLINICAL" if n_samples < 100 else "TIER_ASYMPTOTIC"
                 other_tier = "TIER_ASYMPTOTIC" if n_samples < 100 else "TIER_CLINICAL"
