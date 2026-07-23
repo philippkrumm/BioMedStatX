@@ -236,6 +236,35 @@ class AnalysisManager:
             # categorical value (would crash scipy/pingouin downstream).
             samples[group_name] = pd.to_numeric(subset[primary_dv], errors="coerce").dropna().tolist()
 
+        # Subject-aligned pairing for the standalone two-group dependent test.
+        # The lists above are in row order; validate_paired_data / ttest_rel /
+        # wilcoxon then zip the two groups positionally, so the pairing was only
+        # correct when both groups happened to list their subjects in the same
+        # order. A user re-sorting the sheet silently re-paired the wrong rows.
+        # Rebuild the two groups from an inner join on the subject id so
+        # position i refers to the same subject in both groups; unpaired
+        # subjects are dropped (they cannot contribute to a paired test).
+        _dependent = analysis_context.get("dependent", dependent)
+        _subject_col = analysis_context.get("subject_column")
+        if (_dependent and _subject_col and _subject_col in working_df.columns
+                and len(groups_to_use) == 2):
+            g1, g2 = groups_to_use
+            _dv_numeric = pd.to_numeric(working_df[primary_dv], errors="coerce")
+            _paired = pd.DataFrame({
+                "_subject": working_df[_subject_col].values,
+                "_group": group_key.values,
+                "_value": _dv_numeric.values,
+            }).dropna(subset=["_value"])
+            # Collapse any technical replicates (a subject measured more than once
+            # at the same condition) to their mean, so the join stays one-to-one.
+            _per_cell = (_paired[_paired["_group"].isin([g1, g2])]
+                         .groupby(["_subject", "_group"])["_value"].mean().unstack("_group"))
+            if g1 in _per_cell.columns and g2 in _per_cell.columns:
+                _aligned = _per_cell[[g1, g2]].dropna().sort_index()
+                if not _aligned.empty:
+                    samples[g1] = _aligned[g1].tolist()
+                    samples[g2] = _aligned[g2].tolist()
+
         local_kwargs = dict(kwargs)
         inferred_test = analysis_context.get("inferred_test")
         if inferred_test in {"two_way_anova", "mixed_anova", "repeated_measures_anova",
