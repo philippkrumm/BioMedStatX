@@ -201,6 +201,42 @@ def bounded_boxcox_lambda(data, bounds: tuple = (-3.0, 3.0)) -> tuple:
     return lam, False
 
 
+def validate_arcsin_domain(values, declared_type: str, *, tol: float = 1e-9) -> None:
+    """Hard-check that data matches its declared arcsin-sqrt domain.
+
+    arcsin(sqrt(p)) stabilises variance ONLY for true proportions
+    (Var(p_hat) = p(1-p)/n). The user declares whether the data are proportions
+    ([0, 1]) or percents ([0, 100]); values outside the declared range are
+    REJECTED — this raises, no transform is applied, there is no silent fallback.
+    A value-range guess is deliberately avoided: it would wave through data that
+    merely lands in range without being a proportion.
+
+    Returns None when every value is in range; otherwise raises
+    GroupValidationError naming the offending values.
+    """
+    if declared_type == "proportion":
+        lo, hi, label = 0.0, 1.0, "proportion (0-1)"
+    elif declared_type == "percent":
+        lo, hi, label = 0.0, 100.0, "percent (0-100)"
+    else:
+        raise ValueError(
+            f"Unknown arcsin domain type {declared_type!r}; expected 'proportion' or 'percent'."
+        )
+
+    arr = np.asarray(list(values), dtype=float)
+    arr = arr[np.isfinite(arr)]
+    bad = arr[(arr < lo - tol) | (arr > hi + tol)]
+    if bad.size:
+        sample = ", ".join(f"{v:g}" for v in bad[:5])
+        more = "" if bad.size <= 5 else f", … (+{bad.size - 5} more)"
+        raise GroupValidationError(
+            f"arcsin-sqrt was declared as {label}, but {bad.size} value(s) fall outside "
+            f"[{lo:g}, {hi:g}] ({sample}{more}). arcsin-sqrt is variance-stabilizing only "
+            f"for true proportions — use a log or Box-Cox transformation for this data."
+        )
+    return None
+
+
 def validate_group_count(groups: Iterable[str], *, min_groups: int = 2, label: str = "groups") -> List[str]:
     normalized_groups = [str(group) for group in groups]
     if len(normalized_groups) < min_groups:

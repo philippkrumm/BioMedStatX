@@ -820,7 +820,43 @@ class UIDialogManager:
         
         # If canceled, return None
         return None
-       
+
+    @staticmethod
+    def select_arcsin_domain_type(parent=None, progress_text=None, column_name=None):
+        """Ask the user to declare the arcsin-sqrt data domain.
+
+        Returns "proportion" (0-1) or "percent" (0-100), or None if cancelled /
+        not chosen. No preselection is inferred from the data — arcsin-sqrt is
+        valid only for true proportions, so the user declares the scale actively
+        and out-of-range values are hard-rejected downstream.
+        """
+        UIDialogManager._ensure_qt_application()
+        dialog = QDialog(parent)
+        UIDialogManager._configure_dialog(dialog, object_name="arcsinDomainDialog")
+        layout = QVBoxLayout(dialog)
+        title = "Arcsin-sqrt data domain"
+        if column_name:
+            title += f" for '{column_name}'"
+        dialog.setWindowTitle(title)
+        layout.addWidget(QLabel(
+            "Arcsin-square-root is variance-stabilizing only for proportion data.\n"
+            "Declare how these values are scaled:"
+        ))
+        rb_prop = QRadioButton("Proportion (0 – 1)")
+        rb_pct = QRadioButton("Percent (0 – 100)")
+        layout.addWidget(rb_prop)
+        layout.addWidget(rb_pct)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        layout.addWidget(buttons)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        if dialog.exec_() == QDialog.Accepted:
+            if rb_prop.isChecked():
+                return "proportion"
+            if rb_pct.isChecked():
+                return "percent"
+        return None
+
 
 from analysis.analysis_core import AnalysisManager, get_output_path
 from analysis.outlier_core import OUTLIER_IMPORTS_AVAILABLE, OutlierDetector

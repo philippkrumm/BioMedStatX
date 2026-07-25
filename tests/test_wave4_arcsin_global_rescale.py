@@ -34,6 +34,13 @@ class _StubDialogMgr:
     def select_transformation_dialog(parent=None, progress_text=None, column_name=None, **kw):
         return "arcsin_sqrt"
 
+    @staticmethod
+    def select_arcsin_domain_type(parent=None, **kw):
+        # The uniform fixture below is percent-scaled (0-100); declaring the
+        # domain is now required for arcsin to run at all (undeclared -> the
+        # transform is dropped).
+        return "percent"
+
 
 @pytest.fixture(autouse=True)
 def _stub_transform_dialog(monkeypatch):
@@ -41,10 +48,12 @@ def _stub_transform_dialog(monkeypatch):
 
 
 def _uniform_case(seed):
-    """The Wave-4 escalation fixture: within-group uniform, three far-apart
-    locations, all values > 1 (triggers the out-of-[0,1] rescale)."""
+    """The Wave-4 escalation fixture, now percent-scaled (0-100): within-group
+    uniform, three far-apart locations, all values > 1 so the global out-of-[0,1]
+    rescale is exercised, and all <= 100 so the declared 'percent' domain is
+    valid (post domain-declaration, out-of-range data is rejected instead)."""
     rng = np.random.default_rng(seed)
-    return {g: list(c + rng.uniform(0, 6, 30)) for g, c in [("A", 10.0), ("B", 60.0), ("C", 110.0)]}
+    return {g: list(c + rng.uniform(0, 8, 30)) for g, c in [("A", 10.0), ("B", 45.0), ("C", 80.0)]}
 
 
 @pytest.mark.parametrize("seed", range(5))
@@ -80,9 +89,19 @@ def test_arcsin_does_not_escalate_to_false_negative_on_uniform_groups(seed):
     )
 
 
-def test_arcsin_on_true_proportions_is_unaffected():
-    """Guard: genuine proportion data already in [0,1] must be transformed
-    directly (no rescale path), so the fix does not change that behaviour."""
+def test_arcsin_on_true_proportions_is_unaffected(monkeypatch):
+    """Guard: genuine proportion data already in [0,1], declared 'proportion',
+    must be transformed directly (no rescale path), so the fix does not change
+    that behaviour."""
+    class _PropStub:
+        @staticmethod
+        def select_transformation_dialog(*a, **k):
+            return "arcsin_sqrt"
+        @staticmethod
+        def select_arcsin_domain_type(*a, **k):
+            return "proportion"
+    monkeypatch.setattr(ac, "_get_ui_dialog_manager", lambda: _PropStub())
+
     rng = np.random.default_rng(0)
     samples = {
         "A": list(np.clip(rng.beta(2, 5, 30), 1e-6, 1 - 1e-6)),

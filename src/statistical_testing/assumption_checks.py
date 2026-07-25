@@ -15,6 +15,7 @@ from statistical_testing.validators import (
     GroupValidationError,
     ValidationError,
     bounded_boxcox_lambda,
+    validate_arcsin_domain,
     validate_levene_inputs,
     validate_residuals_for_shapiro,
 )
@@ -333,6 +334,32 @@ class AssumptionCheckEngine:
                 transformation_type = "log10"
             test_info["transformation"] = transformation_type
 
+            # For arcsin_sqrt, ask the user to declare the data domain
+            # (proportion 0-1 vs percent 0-100) so out-of-range data is
+            # hard-rejected below. None when not declared/cancelled — then the
+            # legacy behaviour is kept (no domain validation).
+            if transformation_type == "arcsin_sqrt":
+                _declared = None
+                try:
+                    _declared = ui_dialog_manager.select_arcsin_domain_type(parent=None)
+                except Exception:
+                    _declared = None
+                if _declared:
+                    test_info["arcsin_declared_type"] = _declared
+                else:
+                    # Cancelled / no domain declared: do NOT apply arcsin to
+                    # undeclared data — no silent fallback to an unvalidated
+                    # transform. Drop the transform entirely; the data stays
+                    # untransformed and, if still non-normal, routes to the
+                    # nonparametric test. Reset the label so no stale "arcsin_sqrt"
+                    # is reported for a transform that never ran.
+                    transformation_type = None
+                    test_info["transformation"] = None
+                    add_note(
+                        "arcsin-sqrt cancelled: no data domain (proportion / percent) "
+                        "was declared, so no transformation was applied."
+                    )
+
             # Calculate a uniform global shift across the entire raw dependent variable column vector in df_raw
             global_min = df_raw["Value"].min() if (not df_raw.empty and "Value" in df_raw.columns) else 0
             global_shift = -global_min + 1 if global_min <= 0 else 0
@@ -389,6 +416,12 @@ class AssumptionCheckEngine:
             _arcsin_global_min = _arcsin_global_max = None
             if transformation_type == "arcsin_sqrt":
                 _arcsin_all = [v for g in valid_groups for v in samples[g]]
+                _arcsin_declared = test_info.get("arcsin_declared_type")
+                if _arcsin_declared:
+                    # Hard-reject data outside the declared domain: raises, no
+                    # transform, no silent fallback. Same central validator the
+                    # advanced TransformationEngine uses.
+                    validate_arcsin_domain(_arcsin_all, _arcsin_declared)
                 if _arcsin_all:
                     _arcsin_global_min = min(_arcsin_all)
                     _arcsin_global_max = max(_arcsin_all)
