@@ -207,7 +207,11 @@ class AnalysisManager:
             if not groups_to_use:
                 groups_to_use = natural_order(working_df[display_group_col].dropna().unique())
 
-        groups_to_use = [str(g) for g in groups_to_use]
+        # Strip whitespace so "A" and "A " (a stray space from a dirty sheet) are
+        # the same group, not two. Must match the identical strip on group_key
+        # below, or the split stops matching. Case is deliberately NOT folded --
+        # that is a separate design decision.
+        groups_to_use = [str(g).strip() for g in groups_to_use]
 
         # The group split below matches stringified labels, so the column has to
         # be compared as text. Casting it in place is what the categorical branch
@@ -223,7 +227,7 @@ class AnalysisManager:
                            or kwargs.get("test") or "")
         _predictor_is_continuous = _requested_test in ("correlation", "linear_regression")
 
-        group_key = working_df[display_group_col].astype(str)
+        group_key = working_df[display_group_col].astype(str).str.strip()
         if not _predictor_is_continuous:
             working_df[display_group_col] = group_key
 
