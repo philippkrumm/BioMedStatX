@@ -33,6 +33,7 @@ from PyQt5.QtWidgets import (
 
 from visualization.datavisualizer import DataVisualizer
 from export.export_dispatcher import ExportDispatcher
+from core.csv_import import read_csv_localized, CSV_FORMAT_PRESETS, DEFAULT_CSV_FORMAT
 from ui.dialogs.plot_aesthetics_dialog import PlotAestheticsDialog
 from ui.dialogs.statistical_analyzer_dialogs import ExploratoryMatrixDialog, GroupSelectionDialog
 from autopilot.statistical_analyzer_autopilot_ui import (
@@ -964,7 +965,17 @@ def _ap_load_file(self):
             self.auto_sheet_combo.addItem("HTML")
             self.auto_sheet_combo.setEnabled(False)
         elif path_lower.endswith(".csv"):
-            self.df = pd.read_csv(self.file_path)
+            # Ask the user to declare the number format explicitly — no autodetect.
+            # A naive guess (decimal="," without thousands=".") silently NaN-destroys
+            # values like 1.234,56 (Wave-4b, class A), so the format is confirmed by
+            # the user, never assumed. Excel needs no such prompt (numbers are floats).
+            fmt = self._prompt_csv_format()
+            if fmt is None:
+                return  # user cancelled the format dialog; nothing loaded
+            self.df = read_csv_localized(
+                self.file_path,
+                sep=fmt["sep"], decimal=fmt["decimal"], thousands=fmt["thousands"],
+            )
             self.sheet_names = ["CSV"]
             self.auto_sheet_combo.clear()
             self.auto_sheet_combo.addItem("CSV")
@@ -2196,6 +2207,110 @@ def _ap_export_example_template(self):
         QMessageBox.critical(self, "Export Error", f"Could not write file:\n{exc}")
 
 
+class _CsvFormatDialog(QDialog):
+    """Explicit CSV number-format chooser: named presets + a manual option, with
+    a live preview of the first rows. No autodetect — a default is shown but the
+    user must actively confirm it (Wave-4b: guessing the format can silently
+    NaN-destroy values like 1.234,56)."""
+
+    _SEP_CHOICES = [(", (comma)", ","), ("; (semicolon)", ";"), ("tab", "\t"), ("| (pipe)", "|")]
+    _DEC_CHOICES = [(". (dot)", "."), (", (comma)", ",")]
+    _THOU_CHOICES = [("(none)", None), (". (dot)", "."), (", (comma)", ","), ("space", " ")]
+
+    def __init__(self, path, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("CSV Number Format")
+        self._path = path
+        self._chosen = None
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel(
+            "How are numbers formatted in this CSV file?\n"
+            "Choose a format and confirm — the file is never guessed automatically."
+        ))
+
+        self._rb_intl = QRadioButton(CSV_FORMAT_PRESETS["international"]["label"])
+        self._rb_de = QRadioButton(CSV_FORMAT_PRESETS["german"]["label"])
+        self._rb_manual = QRadioButton("Manual…")
+        self._rb_intl.setChecked(DEFAULT_CSV_FORMAT != "german")
+        self._rb_de.setChecked(DEFAULT_CSV_FORMAT == "german")
+        for rb in (self._rb_intl, self._rb_de, self._rb_manual):
+            layout.addWidget(rb)
+            rb.toggled.connect(self._refresh)
+
+        manual = QHBoxLayout()
+        self._sep = QComboBox(); self._sep.addItems([c[0] for c in self._SEP_CHOICES])
+        self._dec = QComboBox(); self._dec.addItems([c[0] for c in self._DEC_CHOICES])
+        self._thou = QComboBox(); self._thou.addItems([c[0] for c in self._THOU_CHOICES])
+        for label, combo in (("Separator", self._sep), ("Decimal", self._dec), ("Thousands", self._thou)):
+            manual.addWidget(QLabel(label)); manual.addWidget(combo)
+            combo.currentIndexChanged.connect(self._refresh)
+        self._manual_row = QWidget(); self._manual_row.setLayout(manual)
+        layout.addWidget(self._manual_row)
+
+        layout.addWidget(QLabel("Preview (first rows parsed with the selected format):"))
+        self._preview = QTableWidget()
+        self._preview.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._preview.setMaximumHeight(160)
+        layout.addWidget(self._preview)
+
+        buttons = QHBoxLayout()
+        cancel = QPushButton("Cancel"); ok = QPushButton("Import")
+        ok.setDefault(True)
+        cancel.clicked.connect(self.reject)
+        ok.clicked.connect(self._confirm)
+        buttons.addStretch(1); buttons.addWidget(cancel); buttons.addWidget(ok)
+        layout.addLayout(buttons)
+
+        self._refresh()
+
+    def current_format(self):
+        if self._rb_de.isChecked():
+            s = CSV_FORMAT_PRESETS["german"]
+            return {"sep": s["sep"], "decimal": s["decimal"], "thousands": s["thousands"]}
+        if self._rb_manual.isChecked():
+            return {
+                "sep": self._SEP_CHOICES[self._sep.currentIndex()][1],
+                "decimal": self._DEC_CHOICES[self._dec.currentIndex()][1],
+                "thousands": self._THOU_CHOICES[self._thou.currentIndex()][1],
+            }
+        s = CSV_FORMAT_PRESETS["international"]
+        return {"sep": s["sep"], "decimal": s["decimal"], "thousands": s["thousands"]}
+
+    def _refresh(self):
+        self._manual_row.setEnabled(self._rb_manual.isChecked())
+        fmt = self.current_format()
+        try:
+            df = read_csv_localized(self._path, nrows=5, **fmt)
+        except Exception as exc:
+            self._preview.clear()
+            self._preview.setRowCount(1)
+            self._preview.setColumnCount(1)
+            self._preview.setHorizontalHeaderLabels(["preview error"])
+            self._preview.setItem(0, 0, QTableWidgetItem(str(exc)))
+            return
+        self._preview.clear()
+        self._preview.setColumnCount(max(len(df.columns), 1))
+        self._preview.setRowCount(len(df))
+        self._preview.setHorizontalHeaderLabels([str(c) for c in df.columns])
+        for r in range(len(df)):
+            for c in range(len(df.columns)):
+                self._preview.setItem(r, c, QTableWidgetItem(str(df.iat[r, c])))
+
+    def _confirm(self):
+        self._chosen = self.current_format()
+        self.accept()
+
+
+def _ap_prompt_csv_format(self):
+    """Show the CSV number-format dialog. Returns {sep, decimal, thousands}, or
+    None if the user cancelled (in which case nothing is loaded)."""
+    dialog = _CsvFormatDialog(self.file_path, parent=self)
+    if dialog.exec_() != QDialog.Accepted:
+        return None
+    return dialog._chosen
+
+
 class AutopilotMixin:
     """Bundles the autopilot pipeline methods for ``StatisticalAnalyzerApp``.
 
@@ -2243,6 +2358,7 @@ class AutopilotMixin:
     open_current_output_folder = _ap_open_current_output_folder
     reset_application_state = _ap_reset_application_state
     _maybe_pivot = _ap_maybe_pivot
+    _prompt_csv_format = _ap_prompt_csv_format
     open_exploratory_matrix_dialog = _ap_open_exploratory_matrix_dialog
     _ap_open_range_selector = _ap_open_range_selector
     _ap_reset_result_area = _ap_reset_result_area
