@@ -2115,7 +2115,65 @@ class DataVisualizer:
         Currently does nothing, but can be extended to handle tick label density, rotation, etc.
         """
         pass
-    
+
+    @staticmethod
+    def _cld_from_not_diff(groups, not_diff, sort_by=None):
+        """Correct compact-letter display via maximal cliques of the
+        non-significance graph.
+
+        Two groups share a letter IFF they are not significantly different --
+        equivalently, they sit in a common maximal clique of mutually
+        non-significant groups. This is the property both old implementations
+        violated: they let a *star* ({group} + all its non-different partners)
+        stand in for a clique, so an intransitive pattern (A~B, B~C, but A#C)
+        collapsed A, B, C onto one letter and hid the real A-C difference.
+
+        ``not_diff[i][j]`` is True when groups i and j are NOT significantly
+        different (diagonal True). ``sort_by`` maps group -> value (e.g. the
+        mean) so letter 'a' tends to land on the leading group; it only affects
+        labelling, never which groups share. Deterministic; a code never repeats
+        a letter (each clique contributes one letter to each of its members).
+        """
+        n = len(groups)
+        if n == 0:
+            return {}
+        if n == 1:
+            return {groups[0]: 'a'}
+
+        adj = [set(j for j in range(n) if j != i and bool(not_diff[i][j]))
+               for i in range(n)]
+
+        # Bron-Kerbosch: enumerate every maximal clique of the non-sig graph.
+        cliques = []
+
+        def _expand(R, P, X):
+            if not P and not X:
+                cliques.append(set(R))
+                return
+            for v in list(P):
+                _expand(R | {v}, P & adj[v], X & adj[v])
+                P = P - {v}
+                X = X | {v}
+
+        _expand(set(), set(range(n)), set())
+
+        # Deterministic clique order. Rank groups (higher sort_by value first,
+        # else input order) and order cliques by their ranked members, so 'a'
+        # lands on the leading group.
+        if sort_by is not None:
+            rank = {i: (-sort_by.get(groups[i], 0.0), i) for i in range(n)}
+        else:
+            rank = {i: (i,) for i in range(n)}
+        ordered = sorted(cliques, key=lambda c: sorted(rank[i] for i in c))
+
+        letters = {g: '' for g in groups}
+        for k, clique in enumerate(ordered):
+            let = (string.ascii_lowercase[k] if k < 26
+                   else string.ascii_lowercase[k // 26 - 1] + string.ascii_lowercase[k % 26])
+            for i in sorted(clique, key=lambda i: rank[i]):
+                letters[groups[i]] += let
+        return letters
+
     @staticmethod
     def get_significance_letters_from_posthoc(groups, pairwise_results, alpha=0.05, sweep=True, sort_by=None):
         """
@@ -2203,44 +2261,12 @@ class DataVisualizer:
                 i, j = idx[g1], idx[g2]
                 not_diff[i, j] = not_diff[j, i] = True
 
-        # Optional: sort groups (as in multcompView) to prioritize letter assignment
-        order = list(range(n))
-        if sort_by:
-            order = sorted(order, key=lambda i: sort_by.get(groups[i], 0), reverse=True)
-        
-        # Build initial columns per Piepho (insert-and-absorb)
-        cols = []
-        for i in order:
-            col = np.zeros(n, dtype=bool)
-            col[i] = True
-            for j in order:
-                if not_diff[i, j]:
-                    col[j] = True
-            # Absorption: merge if superset
-            merged = False
-            for existing in cols:
-                if np.all(existing <= col):
-                    existing[:] = col
-                    merged = True
-                    break
-            if not merged:
-                cols.append(col)
-
-        # Optional sweeping: remove redundant columns
-        if sweep:
-            cols = [col for col in cols if not any(not np.array_equal(col, other) and np.all(col <= other) for other in cols)]
-
-        # Assign letters
-        letters = {g: '' for g in groups}
-        alphabet = string.ascii_lowercase
-        for idx_col, col in enumerate(cols):
-            letter = alphabet[idx_col] if idx_col < len(alphabet) else (
-                alphabet[idx_col//26 - 1] + alphabet[idx_col % 26])
-            for i, included in enumerate(col):
-                if included:
-                    letters[groups[i]] += letter
-
-        return letters
+        # Correct CLD via maximal cliques of the non-significance graph. The
+        # former star+absorb heuristic (build {i} + non-different partners, then
+        # absorb subsets into supersets) merged a valid pair into an invalid
+        # triple on intransitive patterns and hid a real difference; the `sweep`
+        # argument is retained for call-site compatibility but no longer needed.
+        return DataVisualizer._cld_from_not_diff(groups, not_diff, sort_by=sort_by)
 
     @staticmethod
     def get_significance_letters(samples, groups, test_recommendation="parametric", alpha=0.05):
@@ -2285,33 +2311,20 @@ class DataVisualizer:
                         _, p_val = mannwhitneyu(samples[group1], samples[group2], alternative='two-sided')
                     p_values[(group1, group2)] = p_val
 
-        # Assign letters based on significant differences
-        available_letters = list(string.ascii_lowercase)
-        current_letter_idx = 0
-
-        # Start assigning from the first group
-        for i, group1 in enumerate(groups):
-            # If this is the first group or it's significantly different from all previous,
-            # we might need a new letter
-            needs_new_letter = True
-
-            # Check all previous groups
-            for j, group2 in enumerate(groups[:i]):
-                # If current group is NOT significantly different from a previous group
-                pair = (group2, group1) if (group2, group1) in p_values else (group1, group2)
-                if p_values[pair] >= alpha:  # Not significant
-                    # Use the same letter as that group
-                    if letters[group2] not in letters[group1]:
-                        letters[group1] += letters[group2]
-                    needs_new_letter = False
-
-            # If we need a new letter and haven't exhausted the alphabet
-            if needs_new_letter and current_letter_idx < len(available_letters):
-                current_letter_idx += 1
-                if current_letter_idx < len(available_letters):
-                    letters[group1] = available_letters[current_letter_idx]
-
-        return letters
+        # Assign letters through the same correct clique-based core the post-hoc
+        # path uses. The former sequential-append heuristic was non-clique (and
+        # could emit malformed codes like 'aab'): it hid a real difference on
+        # intransitive patterns just like the post-hoc star+absorb did.
+        n = len(groups)
+        gi = {g: i for i, g in enumerate(groups)}
+        not_diff = [[True] * n for _ in range(n)]
+        for (group1, group2), p_val in p_values.items():
+            nd = bool(p_val >= alpha)
+            not_diff[gi[group1]][gi[group2]] = nd
+            not_diff[gi[group2]][gi[group1]] = nd
+        return DataVisualizer._cld_from_not_diff(
+            groups, not_diff, sort_by={g: float(np.mean(samples[g])) for g in groups}
+        )
     
     @staticmethod
     def _add_significance_letters(ax, df, groups, samples, test_recommendation, 
