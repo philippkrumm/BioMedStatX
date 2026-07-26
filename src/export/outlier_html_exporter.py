@@ -124,6 +124,11 @@ def _dataset_section(detector, dataset_name: str) -> str:
     parts.append(f"<p class='meta'>Total values: {summary['total_rows']} · "
                  f"Outliers — {method_html}</p>")
 
+    warns = getattr(detector, "warnings", None) or []
+    if warns:
+        items = "".join(f"<li>{_esc(w)}</li>" for w in warns)
+        parts.append(f"<ul class='warn'>{items}</ul>")
+
     pcol = _primary_outlier_col(df)
     if pcol is not None:
         img = _plot_base64(df, group_col, value_col, pcol)
@@ -146,6 +151,7 @@ table.t th{background:#eef8f6;color:#0f766e;} table.t td:first-child,table.t th:
 tr.out{background:#fff1f2;} tr.out td{font-weight:600;color:#be123c;}
 img.plot{max-width:760px;width:100%;height:auto;border:1px solid #e2e8f0;border-radius:6px;margin:8px 0;}
 .failed{color:#be123c;}
+ul.warn{margin:6px 0 14px;padding:8px 12px 8px 28px;background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;color:#9a3412;font-size:13px;}
 """
 
 
