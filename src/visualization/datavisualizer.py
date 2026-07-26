@@ -2363,7 +2363,44 @@ class DataVisualizer:
         )
     
     @staticmethod
-    def _add_significance_letters(ax, df, groups, samples, test_recommendation, 
+    @staticmethod
+    def _max_drawn_y_near(ax, x, tol=0.45):
+        """Highest y actually DRAWN near column x -- across violin/box polygons,
+        scattered points, and error-bar/whisker lines. Used so a significance
+        letter clears the real top element of a group (a violin body reaches
+        above the data max via its KDE tail; points scatter above the error bar),
+        not just mean+error. Returns None if nothing is found."""
+        ymax = -np.inf
+        for coll in ax.collections:
+            try:
+                offs = coll.get_offsets()
+                if offs is not None and len(offs):
+                    offs = np.asarray(offs, dtype=float)
+                    m = (offs[:, 0] >= x - tol) & (offs[:, 0] <= x + tol)
+                    if m.any():
+                        ymax = max(ymax, float(np.nanmax(offs[m, 1])))
+            except Exception:
+                pass
+            try:
+                for path in coll.get_paths():
+                    v = path.vertices
+                    if len(v):
+                        m = (v[:, 0] >= x - tol) & (v[:, 0] <= x + tol)
+                        if m.any():
+                            ymax = max(ymax, float(np.nanmax(v[m, 1])))
+            except Exception:
+                pass
+        for ln in ax.lines:
+            xd = np.asarray(ln.get_xdata(), dtype=float)
+            yd = np.asarray(ln.get_ydata(), dtype=float)
+            if xd.size and yd.size:
+                m = (xd >= x - tol) & (xd <= x + tol) & np.isfinite(yd)
+                if m.any():
+                    ymax = max(ymax, float(np.nanmax(yd[m])))
+        return ymax if np.isfinite(ymax) else None
+
+    @staticmethod
+    def _add_significance_letters(ax, df, groups, samples, test_recommendation,
                                 height_offset, font_size, error_type, pairwise_results=None):
         """Add significance letters with enhanced formatting"""
         try:
@@ -2402,35 +2439,52 @@ class DataVisualizer:
 
             logger.debug(f"DEBUG: Generated letters = {letters}")
             
-            y_max = df['Value'].max()
-            y_offset = height_offset * y_max
-            
-            # Calculate bar heights with error bars
-            bar_heights = []
-            for group in groups:
-                values = samples[group]
-                mean_val = np.mean(values)
-                if error_type == 'sd':
-                    error = np.std(values, ddof=1)
-                elif error_type == 'se':
-                    error = np.std(values, ddof=1) / np.sqrt(len(values))
-                else:  # ci
-                    error = DataVisualizer._ci_half_width(values)
-                bar_heights.append(mean_val + error)
-            
-            # Place letters with enhanced styling
+            # A letter must clear the group's real TOP element, not just
+            # mean+error. Individual data points scatter ABOVE the error bar, and
+            # a box whisker / violin body reaches to the data max -- placing the
+            # letter at mean+error dropped it inside the point cloud. Take the
+            # per-group maximum of (highest data point, mean+error) and add a
+            # FIXED clearance (a constant fraction of the axis range), so every
+            # letter sits the same defined distance above its group.
+            y_lo, y_hi = ax.get_ylim()
+            y_range = (y_hi - y_lo) or 1.0
+            clearance = max(height_offset, 0.06) * y_range
+
+            letter_ys = []
             for i, group in enumerate(groups):
-                letter = letters[group]
-                logger.debug(f"DEBUG: Adding letter '{letter}' to group '{group}' at position {i}")
-                ax.text(i, bar_heights[i] + y_offset, letter,
-                       horizontalalignment='center', 
-                       verticalalignment='bottom',
-                       color='black', fontweight='bold',
-                       fontsize=font_size,
-                       bbox=dict(boxstyle="round,pad=0.3", 
-                                facecolor="white", 
-                                edgecolor="gray",
-                                alpha=0.8))
+                values = np.asarray(samples[group], dtype=float)
+                values = values[np.isfinite(values)]
+                if values.size == 0:
+                    letter_ys.append(y_hi)
+                    continue
+                mean_val = float(np.mean(values))
+                if error_type == 'sd':
+                    error = float(np.std(values, ddof=1)) if values.size > 1 else 0.0
+                elif error_type == 'se':
+                    error = float(np.std(values, ddof=1) / np.sqrt(values.size)) if values.size > 1 else 0.0
+                else:  # ci -> t-based half width
+                    error = float(DataVisualizer._ci_half_width(values))
+                # Data-based fallback, then lift to whatever is actually drawn at
+                # this column (violin body, box whisker, scattered points).
+                group_top = max(float(values.max()), mean_val + error)
+                drawn_top = DataVisualizer._max_drawn_y_near(ax, i)
+                if drawn_top is not None:
+                    group_top = max(group_top, drawn_top)
+                letter_ys.append(group_top + clearance)
+
+            for i, group in enumerate(groups):
+                ax.text(i, letter_ys[i], letters[group],
+                        horizontalalignment='center',
+                        verticalalignment='bottom',
+                        color='black', fontweight='bold',
+                        fontsize=font_size,
+                        bbox=dict(boxstyle="round,pad=0.2",
+                                  facecolor="white", edgecolor="none", alpha=0.7))
+
+            # Expand the y-axis so the raised letters are never clipped at the top.
+            needed_top = max(letter_ys) + clearance
+            if needed_top > y_hi:
+                ax.set_ylim(top=needed_top)
         except Exception as e:
             logger.error(f"Error adding significance letters: {str(e)}")
             import traceback
