@@ -128,6 +128,21 @@ upgrading.
   ~5% across all sizes. The Modified Z-Score remains available as an explicit
   choice, but now warns in the report for any group with n < 8. Detection
   continues to only flag rows — it never deletes data or feeds the analysis.
+- Significance letters (compact-letter display) no longer hide a real
+  difference. On an intransitive pattern — A not different from B, B not from C,
+  but A different from C — the old assignment collapsed A, B and C onto one
+  letter, displaying "no significant difference" where one existed. Letters now
+  come from the maximal cliques of the non-significance graph: two groups share
+  a letter only if they are mutually non-significant. Letters are the default
+  annotation for omnibus post-hocs (Tukey/ANOVA/Dunn), so this affects the
+  common one-way-ANOVA bar plot, and the violin and raincloud plots that offer
+  no bracket alternative.
+- "CI" error bars are now a t-based 95% interval (t(n-1)·s/√n) from one shared
+  helper. Previously bar and grouped-bar drew a bootstrap CI while the box plot
+  and the significance-letter height used the z-approximation 1.96·SD/√n; both
+  understate uncertainty at the small n typical here (n=3 coverage ~75–82%
+  instead of 95%) and disagreed by ~15% on identical data. SD and SEM error bars
+  are unchanged.
 
 ### Data import and preprocessing
 
