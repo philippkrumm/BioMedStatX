@@ -111,6 +111,39 @@ upgrading.
   level instead of a hardcoded 95% (1.96) cutoff.
 - Decimal parsing: US-formatted decimals are no longer misparsed as German
   thousands separators, which could silently corrupt imported values.
+- The arcsin-square-root transformation now requires an explicit data-domain
+  declaration — a proportion in [0, 1] or a percent in [0, 100] — and rejects
+  data that violates the declared range instead of silently transforming it on
+  the wrong scale (arcsin(√p) is variance-stabilizing only for true
+  proportions). The classic one-way path also rescales out-of-range data against
+  the global data range rather than per group, matching the advanced pipeline;
+  the previous per-group min-max rescale collapsed the between-group differences
+  the test is about. Cancelling the domain prompt drops the transform (the raw
+  data routes to the nonparametric test) rather than applying an unchecked
+  arcsin.
+
+### Data import and preprocessing
+
+- CSV import now asks for the number format explicitly (International:
+  `,`-separator with `.`-decimal, or German: `;`-separator with `,`-decimal and
+  `.`-thousands) instead of trusting the pandas defaults, with a live preview of
+  the parse before committing. A German-formatted export (`1,5`, or `1.234,56`
+  with a thousands separator) previously read as garbage or silently became
+  `NaN` with no error — the number was already wrong at read time and no
+  downstream step could recover it. Cancelling loads nothing rather than
+  importing corrupted data. Excel files are unaffected (numbers are stored as
+  floats, not locale-formatted text).
+- Group labels are whitespace-normalized. `"A"`, `"A "` and `" A"` — the same
+  group with a stray space from a dirty sheet — counted as three distinct
+  groups, which split a real group across phantom duplicates and could starve it
+  below the minimum-n gate, blocking an otherwise valid analysis. Labels are now
+  stripped consistently. Case is deliberately not folded (`"A"` and `"a"` stay
+  separate, pending a separate decision).
+- Silent row loss during preprocessing is now surfaced in the report. Rows
+  dropped because their group label was missing or blank, and non-numeric value
+  cells that could not be read as a number, previously vanished without a trace;
+  they now appear as data-health warnings in the report, with counts, so a
+  silently shrunk data set is visible rather than invisible.
 
 ### Model input validation (reject invalid designs instead of misleading output)
 
