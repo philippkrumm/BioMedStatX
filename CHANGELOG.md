@@ -121,6 +121,13 @@ upgrading.
   the test is about. Cancelling the domain prompt drops the transform (the raw
   data routes to the nonparametric test) rather than applying an unchecked
   arcsin.
+- Outlier detection now defaults to Grubbs' test rather than the Modified
+  Z-Score. On clean data the Modified Z-Score flags a phantom outlier in about
+  29% of n=3 samples (the common triplicate size), falling to ~12% at n=10,
+  because its median/MAD scale is unstable at small n; Grubbs holds its nominal
+  ~5% across all sizes. The Modified Z-Score remains available as an explicit
+  choice, but now warns in the report for any group with n < 8. Detection
+  continues to only flag rows — it never deletes data or feeds the analysis.
 
 ### Data import and preprocessing
 
