@@ -541,6 +541,42 @@ class DataVisualizer:
         return brackets
 
     @staticmethod
+    def _ci_half_width(values, confidence=0.95):
+        """Half-width of a t-based confidence interval for the mean:
+        t_{n-1, (1+c)/2} * s / sqrt(n).
+
+        The single source for every "ci" error bar (bar, grouped bar, box, and
+        the annotation letter-height offset). The z-based 1.96*SD/sqrt(n) used
+        before undercovers badly at the small n this app runs on (n=3 coverage
+        ~82% vs the nominal 95%), and seaborn's bootstrap "ci" was a third,
+        inconsistent variant (~75% at n=3, and ~15% wider/narrower than the box
+        on identical data). sd/se are correct already and are left untouched.
+        Returns 0.0 when n < 2 (a CI is undefined for a single point).
+        """
+        v = np.asarray(values, dtype=float)
+        v = v[np.isfinite(v)]
+        n = v.size
+        if n < 2:
+            return 0.0
+        return float(stats.t.ppf((1 + confidence) / 2, n - 1)
+                     * np.std(v, ddof=1) / np.sqrt(n))
+
+    @staticmethod
+    def _seaborn_errorbar_arg(error_type):
+        """Map the UI error_type to seaborn's ``errorbar`` argument. sd/se pass
+        through to seaborn's own (correct) estimators; "ci" is replaced by a
+        callable returning the t-based interval, so bar/grouped-bar match the
+        box and annotation paths instead of using seaborn's bootstrap ci."""
+        if error_type == "ci":
+            def _t_ci(vec):
+                v = np.asarray(vec, dtype=float)
+                m = float(np.nanmean(v))
+                hw = DataVisualizer._ci_half_width(v)
+                return (m - hw, m + hw)
+            return _t_ci
+        return error_type
+
+    @staticmethod
     def plot_grouped_bar(long_df, within, between, value,
                          within_order, between_order,
                          pairwise_results=None, label_map=None,
@@ -573,7 +609,7 @@ class DataVisualizer:
         sns.barplot(
             data=long_df, x=within, y=value, hue=between,
             order=within_order, hue_order=between_order,
-            errorbar=(error_type if show_error_bars else None),
+            errorbar=(DataVisualizer._seaborn_errorbar_arg(error_type) if show_error_bars else None),
             palette=colors, ax=ax,
         )
 
@@ -966,7 +1002,7 @@ class DataVisualizer:
         if show_error_bars:
             bars = sns.barplot(
                 x='Group', y='Value', data=df, ax=ax,
-                errorbar=error_type, palette=colors, 
+                errorbar=DataVisualizer._seaborn_errorbar_arg(error_type), palette=colors, 
                 capsize=capsize_val, alpha=alpha,
                 order=groups, width=bar_width,
                 edgecolor=bar_edge_color, linewidth=bar_edge_width
@@ -1387,7 +1423,7 @@ class DataVisualizer:
             if error_type == "sd":
                 errs = [np.std(samples[g], ddof=1) for g in groups]
             elif error_type == "ci":
-                errs = [1.96 * np.std(samples[g], ddof=1) / np.sqrt(len(samples[g])) for g in groups]
+                errs = [DataVisualizer._ci_half_width(samples[g]) for g in groups]
             else:  # "se"
                 errs = [np.std(samples[g], ddof=1)/np.sqrt(len(samples[g])) for g in groups]
             xs = range(len(groups))
@@ -2379,7 +2415,7 @@ class DataVisualizer:
                 elif error_type == 'se':
                     error = np.std(values, ddof=1) / np.sqrt(len(values))
                 else:  # ci
-                    error = 1.96 * np.std(values, ddof=1) / np.sqrt(len(values))
+                    error = DataVisualizer._ci_half_width(values)
                 bar_heights.append(mean_val + error)
             
             # Place letters with enhanced styling
