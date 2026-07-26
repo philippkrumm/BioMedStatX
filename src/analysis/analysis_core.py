@@ -187,6 +187,25 @@ class AnalysisManager:
 
         selected_group_column = analysis_context.get("selected_group_column")
         selected_groups = analysis_context.get("selected_groups") or []
+
+        # Count rows whose grouping label is missing BEFORE the selected-groups
+        # filter removes them: a NaN/blank label is not in `selected_groups`, so
+        # the .isin() below drops it silently -- the same invisible loss as a
+        # label that later matches no group. Measured on the real factor column
+        # (display_group_col is still factor_columns[0] here; the two-way
+        # __AUTO_GROUP__ reassignment happens further down). Skipped for
+        # correlation/regression, where that column is a continuous predictor,
+        # not a group label.
+        _req_test = (analysis_context.get("inferred_test") or kwargs.get("test") or "")
+        _n_missing_label = 0
+        if (_req_test not in ("correlation", "linear_regression")
+                and display_group_col in working_df.columns):
+            _lbl = working_df[display_group_col]
+            _lbl_missing = _lbl.isna() | (
+                _lbl.astype(str).str.strip().str.lower().isin(["", "nan", "none"])
+            )
+            _n_missing_label = int(_lbl_missing.sum())
+
         if selected_group_column and selected_groups and selected_group_column in working_df.columns:
             working_df = working_df[working_df[selected_group_column].isin(selected_groups)]
 
@@ -233,12 +252,32 @@ class AnalysisManager:
 
         primary_dv = context_value_cols[0]
         samples = {}
+        preprocessing_notes = []
         for group_name in groups_to_use:
             subset = working_df[group_key == group_name]
             # Coerce to numeric so whitespace-only / non-numeric cells become NaN
             # and are dropped, instead of leaking strings into the test as a fake
             # categorical value (would crash scipy/pingouin downstream).
-            samples[group_name] = pd.to_numeric(subset[primary_dv], errors="coerce").dropna().tolist()
+            _raw_vals = subset[primary_dv]
+            _num_vals = pd.to_numeric(_raw_vals, errors="coerce")
+            # A cell that held some text but is not parseable as a number ("N/A",
+            # a stray unit, a German "1,5") is silently dropped here. Surface that:
+            # count only NON-empty unparseable cells -- a blank/NaN cell is
+            # expected missing data, not a corruption, and must not be flagged.
+            _nonempty = _raw_vals.notna() & (_raw_vals.astype(str).str.strip() != "")
+            _n_coerced = int((_num_vals.isna() & _nonempty).sum())
+            if _n_coerced:
+                preprocessing_notes.append(
+                    f"Group '{group_name}': {_n_coerced} non-numeric value(s) "
+                    f"could not be read as a number and were dropped."
+                )
+            samples[group_name] = _num_vals.dropna().tolist()
+
+        if _n_missing_label:
+            preprocessing_notes.append(
+                f"{_n_missing_label} row(s) were dropped because the group label "
+                f"was missing or blank."
+            )
 
         # Subject-aligned pairing for the standalone two-group dependent test.
         # The lists above are in row order; validate_paired_data / ttest_rel /
@@ -304,9 +343,29 @@ class AnalysisManager:
             "value_cols": context_value_cols,
             "dependent": analysis_context.get("dependent", dependent),
             "additional_factors": resolved_additional_factors,
+            "preprocessing_notes": preprocessing_notes,
             "kwargs": local_kwargs,
         }
             
+    @staticmethod
+    def _merge_preprocessing_notes(results, notes):
+        """Route preprocessing data-loss notes (dropped non-numeric cells,
+        missing group labels) into ``results["data_health"]["warnings"]`` -- the
+        one channel the report renders (report_summaries._build_data_health_warnings
+        -> _build_assumption_summary). Extends any existing DataHealthScanner
+        warnings rather than clobbering them; de-duplicates; no-ops when clean."""
+        if not notes:
+            return
+        _dh = results.get("data_health")
+        if not isinstance(_dh, dict):
+            _dh = {"warnings": [], "checks": {}}
+        _warns = list(_dh.get("warnings") or [])
+        for _note in notes:
+            if _note not in _warns:
+                _warns.append(_note)
+        _dh["warnings"] = _warns
+        results["data_health"] = _dh
+
     @staticmethod
     def _analyze_multiple_datasets(file_path, group_col, groups, selected_datasets, value_cols,
                                   combine_columns, width, height, dependent, compare, colors, hatches,
@@ -515,6 +574,7 @@ class AnalysisManager:
             value_cols = prepared_inputs["value_cols"]
             dependent = prepared_inputs["dependent"]
             additional_factors = prepared_inputs["additional_factors"]
+            preprocessing_notes = prepared_inputs.get("preprocessing_notes") or []
             kwargs = prepared_inputs.get("kwargs", kwargs)
 
             # Validations and logging
@@ -730,6 +790,10 @@ class AnalysisManager:
                 test_recommendation = None
                 transformed_samples = filtered_samples
                 results.update(test_results)
+                # Import-time data loss (dropped non-numeric cells, missing group
+                # labels) applies to clinical models too -- they share the same
+                # sample chokepoint. Merge alongside the DataHealthScanner warnings.
+                AnalysisManager._merge_preprocessing_notes(results, preprocessing_notes)
 
                 # Skip the rest of the standard flow (normality check, post-hoc, etc.)
                 # Jump straight to export
@@ -1292,6 +1356,10 @@ class AnalysisManager:
 
             # Merge important transformation and test info into results
             results.update(test_results)
+            # Surface preprocessing data loss (dropped non-numeric cells, missing
+            # group labels) in the persistent report via the data_health channel
+            # so it is no longer a silent, report-invisible loss.
+            AnalysisManager._merge_preprocessing_notes(results, preprocessing_notes)
 
             # Universal safety net: advanced engines (LMM, RM/Mixed/Two-Way ANOVA,
             # ANCOVA) bypass the per-sample chokepoint and can emit a non-finite
