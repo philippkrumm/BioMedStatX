@@ -57,8 +57,9 @@ def test_flat_plot_bar_draws_brackets_for_emm_result():
         groups, samples, ax=ax, save_plot=False,
         show_error_bars=False, pairwise_results=_emm_pairwise(),
     )
-    # Each bracket = 3 ax.plot segments; two significant comparisons -> >=6 lines.
-    assert len(ax.lines) - n_lines_before >= 6
+    # Each bracket is now one connected polyline (was three segments); two
+    # significant comparisons -> >=2 bracket lines.
+    assert len(ax.lines) - n_lines_before >= 2
     # And star annotations were added.
     star_texts = [t.get_text() for t in ax.texts if "*" in t.get_text()]
     assert len(star_texts) >= 2

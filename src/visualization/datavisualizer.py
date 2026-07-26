@@ -822,16 +822,14 @@ class DataVisualizer:
         y_range = ax.get_ylim()[1] - ax.get_ylim()[0]
         vert = y_range * 0.02 * vertical_fraction  # Angepasste Berechnung
         
-        # Linien zeichnen
-        # Linke vertikale Linie
-        ax.plot([x1, x1], [height, height + vert], 
-                color=bracket_color, linewidth=line_width)
-        # Rechte vertikale Linie  
-        ax.plot([x2, x2], [height, height + vert], 
-                color=bracket_color, linewidth=line_width)
-        # Horizontale Linie
-        ax.plot([x1, x2], [height + vert, height + vert], 
-                color=bracket_color, linewidth=line_width)
+        # One connected polyline (left leg up, across the top, right leg down)
+        # instead of three separate thick segments -- three butt-capped lines met
+        # at the corners with a blocky overlap. A single line with round joins
+        # renders clean corners.
+        ax.plot([x1, x1, x2, x2],
+                [height, height + vert, height + vert, height],
+                color=bracket_color, linewidth=line_width,
+                solid_joinstyle='round', solid_capstyle='round')
         
         # Text (Sternchen oder p-Wert)
         if p_value is not None:
@@ -1882,8 +1880,12 @@ class DataVisualizer:
                     if isinstance(marker_shapes, dict) and group in marker_shapes:
                         marker = marker_shapes[group]
                     else:
-                        marker_idx = j % len(markers)
-                        marker = markers[marker_idx]
+                        # One consistent shape (filled circle) per point, like
+                        # Prism/Nature. The old markers[j % 12] cycle encoded only
+                        # the point's index within the group -- meaningless noise
+                        # (a diamond was just the 3rd replicate). A per-group shape
+                        # stays available via the marker_shapes dict above.
+                        marker = 'o'
                     
                     # Nur für filled markers edgecolors setzen
                     scatter_kwargs = {

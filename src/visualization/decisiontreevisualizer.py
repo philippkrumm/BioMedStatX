@@ -367,7 +367,7 @@ class DecisionTreeVisualizer:
                 'NP_MANN_WHITNEY':    {"label": "Pairwise\nMann-Whitney U", "pos": (12.5, -1)},
                 'NP_TWO_WAY_ROBUST':  {"label": "Freedman-Lane\nPermutation", "pos": (14.0, 1)},
                 'NP_TWO_WAY_POSTHOC': {"label": "Which groups / conditions differ?", "pos": (14.0, 0)},
-                'NP_TWO_WAY_PAIRWISE':{"label": "Marginal Effects\nPairwise", "pos": (15.5, -1)},
+                'NP_TWO_WAY_PAIRWISE':{"label": "Marginal Effects\nPairwise", "pos": (14.0, -1)},
                 'NP_RM_ROBUST':   {"label": "Friedman Test", "pos": (16, 1)},
                 'NP_RM_POSTHOC':  {"label": "Which time points differ?", "pos": (16, 0)},
                 'NP_RM_PAIRWISE': {"label": "RM Pairwise\nComparisons", "pos": (16, -1)},
