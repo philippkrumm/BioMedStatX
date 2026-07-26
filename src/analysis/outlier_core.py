@@ -18,11 +18,17 @@ except ImportError:
 
 class OutlierDetector:
     """
-    Detect outliers in grouped data using Grubbs' Test or Dixon's Q-Test.
-    Loads an Excel table with columns ['Group', 'Value'], 
-    converts all values (German decimal numbers with comma) to float,
-    performs Grubbs or Dixon tests iteratively or once for each group separately
-    and marks found outliers.
+    Detect outliers in grouped data using Grubbs' Test or the Modified
+    Z-Score (median/MAD, Iglewicz-Hoaglin). Operates on an already-loaded
+    DataFrame with a group column and a value column, converts the value
+    column to float (tolerating German comma decimals), runs the selected
+    test(s) per group -- iteratively or once -- and marks the found outliers
+    in a boolean column per method.
+
+    Detection only FLAGS rows (Grubbs_Outlier / ModZ_Outlier columns on an
+    internal copy); it never deletes them and never writes back into the
+    analysis DataFrame. Excluding a flagged point is left to the user. Dixon's
+    Q-Test is intentionally not implemented (was never wired to the UI).
     """
 
     def __init__(self, df, group_col, value_col):
