@@ -975,7 +975,7 @@ class DataVisualizer:
             else:
                 colors = DataVisualizer.DEFAULT_COLORS
         
-        colors = DataVisualizer._extend_list(colors, len(groups))
+        colors = DataVisualizer._extend_colors_distinct(colors, len(groups))
         hatches = DataVisualizer._extend_list(hatches or [''] * len(groups), len(groups))
         
         # Create figure nur wenn kein ax übergeben wurde
@@ -1186,7 +1186,7 @@ class DataVisualizer:
 
         if colors is None:
             colors = sns.color_palette(color_palette, len(groups))
-        colors = DataVisualizer._extend_list(colors, len(groups))
+        colors = DataVisualizer._extend_colors_distinct(colors, len(groups))
 
         if group_order is not None:
             groups = [g for g in group_order if g in samples and len(samples[g]) > 0]
@@ -1379,7 +1379,7 @@ class DataVisualizer:
         
         if colors is None:
             colors = sns.color_palette(color_palette, len(groups))
-        colors = DataVisualizer._extend_list(colors, len(groups))
+        colors = DataVisualizer._extend_colors_distinct(colors, len(groups))
 
         if group_order is not None:
             groups = [g for g in group_order if g in samples and len(samples[g]) > 0]
@@ -1605,7 +1605,7 @@ class DataVisualizer:
         
         if colors is None:
             colors = sns.color_palette(color_palette, len(groups))
-        colors = DataVisualizer._extend_list(colors, len(groups))
+        colors = DataVisualizer._extend_colors_distinct(colors, len(groups))
 
         # Filter groups
         if group_order is not None:
@@ -1845,7 +1845,38 @@ class DataVisualizer:
                 return [''] * target_length
         
         return (lst * (target_length // len(lst) + 1))[:target_length]
-    
+
+    @staticmethod
+    def _extend_colors_distinct(colors, n):
+        """Return exactly n colors, all DISTINCT. `_extend_list` recycled the
+        base list (colors * k)[:n], so with more groups than base colors two
+        groups got the SAME colour -- a reader can read two different conditions
+        as one group (a misassignment, not just a cosmetic clash). The first
+        len(base) colours are preserved (unchanged look for the common case);
+        any groups beyond that are filled with distinct hues not already used."""
+        import matplotlib.colors as _mcolors
+        base = list(colors) if colors else list(DataVisualizer.DEFAULT_COLORS)
+        if len(base) >= n:
+            return base[:n]
+        try:
+            used = {_mcolors.to_hex(c).lower() for c in base}
+        except Exception:
+            used = set()
+        for c in sns.color_palette("husl", max(n * 2, 12)):
+            if len(base) >= n:
+                break
+            hx = _mcolors.to_hex(c)
+            if hx.lower() not in used:
+                base.append(hx)
+                used.add(hx.lower())
+        if len(base) < n:  # extreme fallback: fully distinct hue wheel
+            base = [_mcolors.to_hex(c) for c in sns.color_palette("husl", n)]
+        logger.warning(
+            "Plot has %d groups but the palette gave %d distinct colors; "
+            "topped up with distinct hues so no two groups share a color.",
+            n, len(colors) if colors else len(DataVisualizer.DEFAULT_COLORS))
+        return base[:n]
+
     @staticmethod
     def _prepare_plot_data(groups, samples, colors):
         """Prepare data for plotting"""
