@@ -1662,7 +1662,8 @@ class DataVisualizer:
         positions = np.arange(1, n_groups+1) * group_spacing
         
         # Create horizontal raincloud plot with explicit positions
-        bp = ax.boxplot(data_x, patch_artist=True, vert=False, positions=positions)
+        bp = ax.boxplot(data_x, patch_artist=True, vert=False, positions=positions,
+                        widths=group_spacing * 0.12)
         for patch, color in zip(bp['boxes'], box_colors):
             patch.set_facecolor(color)
             patch.set_alpha(0.6 if global_group_color_mode else alpha)
@@ -1671,19 +1672,25 @@ class DataVisualizer:
         vp = ax.violinplot(data_x, points=500, showmeans=False, showextrema=False, showmedians=False, vert=False, positions=positions, bw_method=violin_bandwidth)
         for idx, b in enumerate(vp['bodies']):
             m = np.mean(b.get_paths()[0].vertices[:, 0])
-            # Only show upper half (half-violin) - adjust clipping to new positions
+            # Only show the upper half-violin, clipped to a band that SCALES with
+            # group_spacing. The old fixed `pos+1` made every violin 1.0 tall
+            # while the default spacing is 0.5, so each violin overran the next
+            # group's row (points of one group collided with the neighbour).
             pos = positions[idx]
-            b.get_paths()[0].vertices[:, 1] = np.clip(b.get_paths()[0].vertices[:, 1], pos, pos+1)
+            b.get_paths()[0].vertices[:, 1] = np.clip(
+                b.get_paths()[0].vertices[:, 1], pos, pos + group_spacing * 0.42)
             b.set_color(violin_colors[idx % len(violin_colors)])
             b.set_alpha(0.3 if global_group_color_mode else alpha)
             
         # Scatter points with correct positioning based on positions - improved spacing
         for idx, features in enumerate(data_x):
-            y = np.full(len(features), positions[idx] - point_offset)  # Use configurable offset
+            # Points sit BELOW the row centre, in a band that scales with
+            # group_spacing so they never reach into the neighbouring group.
+            y = np.full(len(features), positions[idx] - group_spacing * 0.22)
             idxs = np.arange(len(y))
             out = y.astype(float)
-            # Use configurable jitter strength
-            out.flat[idxs] += np.random.uniform(low=-point_jitter, high=point_jitter, size=len(idxs))
+            _jit = group_spacing * 0.08
+            out.flat[idxs] += np.random.uniform(low=-_jit, high=_jit, size=len(idxs))
             y = out
             marker = 'o'
             if isinstance(marker_shapes, dict) and idx < len(groups):
@@ -1706,8 +1713,10 @@ class DataVisualizer:
         # Set proper limits like in Live Preview
         if data_x and any(len(d) > 0 for d in data_x):
             ax.set_xlim(left=min([min(d) for d in data_x if len(d)>0])-1, right=max([max(d) for d in data_x if len(d)>0])+1)
-        # Set y-limits based on calculated positions and group_spacing
-        ax.set_ylim(positions[0] - group_spacing*0.4, positions[-1] + group_spacing*0.4)
+        # Y-limits must clear the point band below the first row and the
+        # half-violin (pos + 0.42*spacing) above the last row -- the old +0.4
+        # top clipped the top group's violin (e.g. "Drug" cut off).
+        ax.set_ylim(positions[0] - group_spacing*0.5, positions[-1] + group_spacing*0.55)
         ax.grid(False)
         
         # Make sure spines are consistent with configurable thickness
