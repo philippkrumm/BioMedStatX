@@ -93,3 +93,42 @@ def test_smalln_warning_reaches_report():
     html_text = open(p, encoding="utf-8").read()
     assert "unstable" in html_text.lower() and "n=5" in html_text, \
         "the small-n warning must be visible in the exported report, not just logged"
+
+
+# ---- (c) Modified-Z-Score small-n warning is also visible up front in the UI ----
+# The report warning (above) only appears after detection has run. SCHRITT 3 also
+# asks for a warning at selection time, so a user is cautioned before they commit
+# to Modified Z-Score on small groups -- not only afterwards in the export.
+
+def _outlier_dialog(group_sizes):
+    from ui.dialogs.statistical_analyzer_dialogs import OutlierDetectionDialog
+    rows = []
+    for gi, n in enumerate(group_sizes):
+        for k in range(n):
+            rows.append({"Group": f"g{gi}", "Value": float(gi + k * 0.1)})
+    df = pd.DataFrame(rows)
+    dlg = OutlierDetectionDialog(df, None)
+    dlg.group_col_combo.setCurrentText("Group")
+    dlg.value_col_combo.setCurrentText("Value")
+    return dlg
+
+
+def test_ui_smalln_warning_visible_for_modz_small_n():
+    dlg = _outlier_dialog([5, 6])  # min n = 5 < 8
+    dlg.modz_check.setChecked(True)
+    assert dlg.modz_smalln_warning.isHidden() is False, \
+        "selecting Modified Z-Score on small groups must show a visible UI warning"
+
+
+def test_ui_smalln_warning_hidden_for_grubbs_default():
+    dlg = _outlier_dialog([5, 6])  # small n, but Grubbs is the default
+    assert dlg.modz_check.isChecked() is False
+    assert dlg.modz_smalln_warning.isHidden() is True, \
+        "Grubbs (the default) must not raise the Modified Z-Score small-n warning"
+
+
+def test_ui_smalln_warning_hidden_for_modz_large_n():
+    dlg = _outlier_dialog([10, 12])  # min n = 10 >= 8
+    dlg.modz_check.setChecked(True)
+    assert dlg.modz_smalln_warning.isHidden() is True, \
+        "Modified Z-Score on n>=8 groups is adequately calibrated -- no warning"

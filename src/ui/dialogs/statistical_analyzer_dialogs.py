@@ -532,7 +532,28 @@ class OutlierDetectionDialog(QDialog):
 
         test_layout.addWidget(self.modz_check)
         test_layout.addWidget(self.grubbs_check)
-        
+
+        # Small-n caution for Modified Z-Score. The report already warns after
+        # detection runs (outlier_core surfaces it via self.warnings); this makes
+        # the same caution visible up front, the moment a user selects ModZ on
+        # groups too small for its median/MAD scale, so they are not led into
+        # deleting valid data before ever seeing the export.
+        self.modz_smalln_warning = QLabel(
+            "⚠ Modified Z-Score is unreliable at small n: its median/MAD "
+            "scale flags a normal point as an outlier in ~29% of clean n=3 "
+            "samples. Grubbs' test is better calibrated here — keep "
+            "Modified Z-Score only if you have a specific reason.")
+        self.modz_smalln_warning.setWordWrap(True)
+        self.modz_smalln_warning.setObjectName("lblModzSmallN")
+        self.modz_smalln_warning.setStyleSheet("color: #9a6700; font-size: 11px;")
+        self.modz_smalln_warning.setVisible(False)
+        test_layout.addWidget(self.modz_smalln_warning)
+
+        # Re-evaluate the caution whenever the method or the group column changes.
+        self.modz_check.toggled.connect(self._update_modz_smalln_warning)
+        self.group_col_combo.currentTextChanged.connect(self._update_modz_smalln_warning)
+        self._update_modz_smalln_warning()
+
         params_layout.addLayout(test_layout)
         
         layout.addWidget(params_group)
@@ -564,6 +585,28 @@ class OutlierDetectionDialog(QDialog):
         # Initial UI update
         self.update_dataset_selection()
         
+    def _min_group_size(self):
+        """Smallest per-group row count for the selected group column -- a cheap
+        upper bound on n. The authoritative n<8 check runs at detection time in
+        OutlierDetector; this only decides whether to raise the UI caution."""
+        try:
+            gcol = self.group_col_combo.currentText()
+            if not gcol or gcol not in self.df.columns:
+                return None
+            sizes = self.df.groupby(gcol).size()
+            return int(sizes.min()) if len(sizes) else None
+        except Exception:
+            return None
+
+    def _update_modz_smalln_warning(self):
+        """Show the small-n caution iff Modified Z-Score is selected on groups
+        below the size where its median/MAD scale is reliable."""
+        from analysis.outlier_core import OutlierDetector
+        min_n = self._min_group_size()
+        show = bool(self.modz_check.isChecked() and min_n is not None
+                    and min_n < OutlierDetector.MODZ_MIN_RELIABLE_N)
+        self.modz_smalln_warning.setVisible(show)
+
     def update_dataset_selection(self):
         """Update UI based on selected analysis mode"""
         is_single = self.single_dataset_radio.isChecked()
