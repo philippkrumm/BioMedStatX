@@ -166,17 +166,17 @@ class StylingManager:
             if context and context != 'none':
                 sns.set_context(context)
             
-            # Palette setzen (aber nicht forcieren - manuelle Farben haben Vorrang)
+            # Palette setzen (aber nicht forcieren - manuelle Farben haben Vorrang).
+            # Single source: resolve curated names through DataVisualizer.CURATED_PALETTES
+            # so this global-palette hook cannot drift from the dialog / plot colours.
+            # (Three separate 'Nature' tables once diverged -- this one even carried a
+            # different, un-WCAG-fixed hex set.) A curated name here also no longer
+            # feeds sns.set_palette an unknown name (which raised into the except).
             palette = config.get('seaborn_palette', 'deep')
             if palette and palette != 'none':
-                journal_palettes = {
-                    'Nature': ['#4E79A7', '#F28E2B', '#E15759', '#76B7B2', '#59A14F', '#EDC948', '#B07AA1', '#FF9DA7'],
-                    'Science': ['#0072B2', '#D55E00', '#009E73', '#CC79A7', '#56B4E9', '#E69F00', '#999999'],
-                    'NEJM': ['#BC3C29', '#0072B5', '#E18727', '#20854E', '#7876B1', '#6F99AD', '#FFDC91'],
-                    'Lancet': ['#00468B', '#ED0000', '#42B540', '#0099B4', '#925E9F', '#FDAF91', '#AD002A']
-                }
-                if palette in journal_palettes:
-                    sns.set_palette(journal_palettes[palette])
+                curated = DataVisualizer.CURATED_PALETTES.get(palette)
+                if curated is not None:
+                    sns.set_palette(list(curated))
                 else:
                     sns.set_palette(palette)
                 

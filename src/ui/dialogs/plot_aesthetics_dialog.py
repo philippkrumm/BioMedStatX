@@ -42,6 +42,37 @@ except ImportError:
     logger.info("Warning: Could not import PlotPreviewWidget")
     PlotPreviewWidget = None
 
+
+def resolve_palette_colors(palette_name, n):
+    """Single source of truth for palette name -> n DISTINCT hex colours.
+
+    The dialog must never keep its own palette table separate from the plot
+    layer -- that divergence is exactly what let five curated dropdown entries
+    hard-crash the dialog (a ValueError from ``sns.color_palette('Okabe-Ito')``)
+    and let group counts above the palette length recycle colours by modulo
+    (two conditions painted the same). Delegate to
+    ``DataVisualizer.CURATED_PALETTES`` + ``_extend_colors_distinct`` so a name
+    resolves identically everywhere: curated names first, then any
+    seaborn/matplotlib colormap, else the curated default (Nature). The result
+    is always ``n`` distinct colours (husl top-up beyond the base length)."""
+    from visualization.datavisualizer import DataVisualizer
+    import matplotlib.colors as _mc
+    if n <= 0:
+        return []
+    base = None
+    cur = DataVisualizer.CURATED_PALETTES.get(palette_name) if palette_name else None
+    if cur is not None:
+        base = list(cur)
+    elif palette_name:
+        try:
+            import seaborn as sns
+            base = [_mc.to_hex(c) for c in sns.color_palette(palette_name, max(n, 1))]
+        except Exception:
+            base = None
+    if not base:
+        base = list(DataVisualizer.CURATED_PALETTES[DataVisualizer.DEFAULT_PALETTE])
+    return DataVisualizer._extend_colors_distinct(base, n)
+
 class ColorButton(QPushButton):
     """Custom button for color selection"""
     colorChanged = pyqtSignal(str)
@@ -385,12 +416,10 @@ class ColorsTab(QWidget):
         self.color_buttons = {}
         self.hatch_combos = {}
         self.dialog_ref = None  # Reference to main dialog will be set later
-        self.journal_palettes = {
-            'Nature': ['#4E79A7', '#B75C03', '#E15759', '#3F817C', '#59A14F', '#907207', '#B07AA1', '#EB0018'],
-            'Science': ['#0072B2', '#D55E00', '#009E73', '#CC79A7', '#0F7CBA', '#9C6C00', '#767676'],
-            'NEJM': ['#BC3C29', '#0072B5', '#B16310', '#20854E', '#7876B1', '#6F99AD', '#9C6A00'],
-            'Lancet': ['#00468B', '#ED0000', '#2C882A', '#0099B4', '#925E9F', '#D73C00', '#AD002A']
-        }
+        # Palette tables live in ONE place (DataVisualizer.CURATED_PALETTES),
+        # resolved through resolve_palette_colors(). No second copy here -- a
+        # divergent local table is what previously crashed the dialog on the
+        # curated names it did not know about.
         self.init_ui()
         
     def init_ui(self):
@@ -508,72 +537,48 @@ class ColorsTab(QWidget):
             self.colors_layout.itemAt(i).widget().setParent(None)
         self.color_buttons.clear()
         
+        # Default colours come from the currently selected palette (single
+        # source of truth). analysis_only keeps its grayscale intent via the
+        # Grayscale HC curated palette. resolve_palette_colors tops up with
+        # distinct hues past the palette length, so >palette-length group
+        # counts never recycle a colour onto a second group.
+        default_palette = ("Grayscale HC" if self.context == "analysis_only"
+                           else (self.palette_combo.currentText()
+                                 if hasattr(self, 'palette_combo') else None))
+        palette_colors = resolve_palette_colors(default_palette, len(self.groups))
+
         # Add buttons for each group
         for i, group in enumerate(self.groups):
             label = QLabel(f"{group}:")
             self.colors_layout.addWidget(label, i, 0)
-            
-            # Get color from config or use context-appropriate defaults
+
+            # Use existing per-group colour from config if the user set one;
+            # otherwise seed from the selected palette.
             if self.config.get('colors') and group in self.config['colors']:
-                # Use existing colors from configuration (user's plot colors)
                 color = self.config['colors'][group]
             else:
-                # Choose defaults based on context
-                if self.context == "analysis_only":
-                    # Use grayscale for analysis-only visualization
-                    default_colors = [
-                        '#2C2C2C', '#4A4A4A', '#686868', '#868686', '#A4A4A4', '#C2C2C2',
-                        '#3C3C3C', '#5A5A5A', '#787878', '#969696'
-                    ]
-                    color = default_colors[i % len(default_colors)]
-                else:
-                    # Use colorful defaults for user plots (same as DEFAULT_COLORS in statistical_analyzer.py)
-                    # Use system default colors for user plots
-                    default_colors = ['#0f766e', '#1f7a5a', '#b7791f', '#9f3a38', '#1d4ed8', '#7c3aed']  # Teal, DarkGreen, Amber, DuskyRed, Indigo, Violet
-                    color = default_colors[i % len(default_colors)]
-            
+                color = palette_colors[i]
+
             color_btn = ColorButton(color)
             color_btn.colorChanged.connect(self.settingsChanged)
             self.color_buttons[group] = color_btn
             self.colors_layout.addWidget(color_btn, i, 1)
     
     def on_seaborn_settings_changed(self):
-        """Handle changes to Seaborn style context or palette"""
-        palette_name = self.palette_combo.currentText()
+        """Handle changes to Seaborn style context or palette.
 
-        if palette_name in self.journal_palettes:
-            palette_colors = self.journal_palettes[palette_name]
-            for i, group in enumerate(self.groups):
-                self.color_buttons[group].set_color(palette_colors[i % len(palette_colors)])
-            self.settingsChanged.emit()
-            return
-        
-        if self.use_seaborn_checkbox.isChecked():
-            # Apply seaborn palette colors to color buttons
-            try:
-                import seaborn as sns
-                
-                # Get colors from the selected palette
-                if palette_name in ['viridis', 'plasma', 'inferno', 'magma', 'mako', 'Greys']:
-                    # For continuous palettes, sample discrete colors
-                    palette_colors = sns.color_palette(palette_name, n_colors=len(self.groups))
-                else:
-                    # For discrete palettes
-                    palette_colors = sns.color_palette(palette_name, n_colors=len(self.groups))
-                
-                # Convert to hex colors and update buttons
-                for i, group in enumerate(self.groups):
-                    if i < len(palette_colors):
-                        # Convert RGB tuple to hex, clamped to 0-255
-                        rgb = palette_colors[i]
-                        clamp = lambda v: min(255, max(0, int(v * 255)))
-                        hex_color = "#{:02x}{:02x}{:02x}".format(
-                            clamp(rgb[0]), clamp(rgb[1]), clamp(rgb[2])
-                        )
-                        self.color_buttons[group].set_color(hex_color)
-            except ImportError:
-                pass  # Seaborn not available
-        
+        Resolves the chosen palette through the single source
+        (resolve_palette_colors): curated names, seaborn/matplotlib colormaps
+        and the Nature fallback all go through one path, so no dropdown entry
+        can raise (the old code fed unknown curated names straight into
+        sns.color_palette, whose ValueError escaped the ImportError-only guard
+        and aborted the dialog) and >palette-length group counts stay
+        distinct instead of recycling by modulo."""
+        palette_name = self.palette_combo.currentText()
+        palette_colors = resolve_palette_colors(palette_name, len(self.groups))
+        for i, group in enumerate(self.groups):
+            if group in self.color_buttons:
+                self.color_buttons[group].set_color(palette_colors[i])
         self.settingsChanged.emit()
     
     def get_settings(self):
@@ -1847,23 +1852,17 @@ class PlotAestheticsDialog(QDialog):
                 else:
                     config['width'] += (num_groups - 6) * 0.5   # Extra Breite ab 6 Gruppen
         
-        # Sicherstellen, dass Farben immer gesetzt sind
-        # Only set default colors if no colors are configured at all
+        # Sicherstellen, dass Farben immer gesetzt sind.
+        # Defensive fallback (the ColorsTab buttons normally already carry
+        # colours): resolve from the selected palette through the single
+        # source, so this path can never diverge from the buttons or recycle
+        # colours by modulo. analysis_only keeps its grayscale intent.
         if 'colors' not in config or not config['colors']:
-            # Use context to determine appropriate default colors
-            if self.context == "analysis_only":
-                # Use grayscale for analysis-only visualization
-                default_colors = [
-                    '#2C2C2C', '#4A4A4A', '#686868', '#868686', '#A4A4A4', '#C2C2C2',
-                    '#3C3C3C', '#5A5A5A', '#787878', '#969696'
-                ]
-            else:
-                # Use colorful defaults for user plots
-                default_colors = ['#0f766e', '#1f7a5a', '#b7791f', '#9f3a38', '#1d4ed8', '#7c3aed']
-                
-            config['colors'] = {}
-            for i, group in enumerate(self.groups):
-                config['colors'][group] = default_colors[i % len(default_colors)]
+            palette_name = ("Grayscale HC" if self.context == "analysis_only"
+                            else config.get('seaborn_palette'))
+            palette_colors = resolve_palette_colors(palette_name, len(self.groups))
+            config['colors'] = {group: palette_colors[i]
+                                for i, group in enumerate(self.groups)}
 
         config['groups'] = self._get_ordered_groups()
         config['group_order'] = config['groups'][:]

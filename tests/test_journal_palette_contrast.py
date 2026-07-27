@@ -1,6 +1,14 @@
-"""ColorsTab.journal_palettes must clear WCAG's 3:1 non-text contrast floor against a white
-plot background - 11 of 29 bundled hex values (Nature/Science/NEJM/Lancet) currently fail it,
-some badly (#FFDC91 at 1.32:1), despite being presented as publication-ready presets.
+"""The journal presets (Nature/Science/NEJM/Lancet) must clear WCAG's 3:1
+non-text contrast floor against a white plot background - 11 of 29 bundled hex
+values once failed it, some badly (#FFDC91 at 1.32:1), despite being presented
+as publication-ready presets.
+
+Palette tables now live in a single source (DataVisualizer.CURATED_PALETTES),
+so this reads the four journal palettes from there instead of a second copy on
+ColorsTab. The floor is asserted only for those four saturated journal sets;
+the other curated palettes (Okabe-Ito, Grayscale HC, Muted Pastel, Deep, Turbo)
+deliberately include light / colorblind-safe hues that do not aim at 3:1 on
+white, so holding them to this floor would be wrong.
 """
 import sys
 import os
@@ -10,7 +18,9 @@ from PyQt5.QtWidgets import QApplication
 
 app = QApplication.instance() or QApplication([])
 
-from ui.dialogs.plot_aesthetics_dialog import ColorsTab
+from visualization.datavisualizer import DataVisualizer
+
+JOURNAL_PALETTES = ["Nature", "Science", "NEJM", "Lancet"]
 
 
 def _relative_luminance(hex_color):
@@ -31,14 +41,10 @@ def _contrast_ratio(hex1, hex2):
 
 
 def test_journal_palettes_all_clear_wcag_non_text_floor_against_white():
-    tab = ColorsTab()
-    try:
-        failing = [
-            (journal, c, round(_contrast_ratio(c, "#FFFFFF"), 2))
-            for journal, colors in tab.journal_palettes.items()
-            for c in colors
-            if _contrast_ratio(c, "#FFFFFF") < 3.0
-        ]
-        assert not failing, f"colors failing WCAG's 3:1 non-text floor against white: {failing}"
-    finally:
-        tab.deleteLater()
+    failing = [
+        (journal, c, round(_contrast_ratio(c, "#FFFFFF"), 2))
+        for journal in JOURNAL_PALETTES
+        for c in DataVisualizer.CURATED_PALETTES[journal]
+        if _contrast_ratio(c, "#FFFFFF") < 3.0
+    ]
+    assert not failing, f"colors failing WCAG's 3:1 non-text floor against white: {failing}"
