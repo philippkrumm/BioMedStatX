@@ -1427,6 +1427,19 @@ class SignificanceTab(QWidget):
         self.pvalue_style_combo.currentTextChanged.connect(self.settingsChanged)
         brackets_layout.addWidget(self.pvalue_style_combo, 4, 1)
 
+        # Show non-significant brackets (off by default). An "n.s." bracket for
+        # every tested pair stacks brackets many data-ranges high and crushes
+        # the bars; full disclosure of what was tested lives in the exported
+        # statistics table, not the figure. A user who wants all-pairs brackets
+        # on the plot can opt back in here.
+        self.show_ns_brackets_check = QCheckBox("Show non-significant brackets")
+        self.show_ns_brackets_check.setChecked(self.config.get('show_ns_brackets', False))
+        self.show_ns_brackets_check.setToolTip(
+            "Off by default: only significant pairs get a bracket. All tested "
+            "comparisons remain in the exported statistics table.")
+        self.show_ns_brackets_check.toggled.connect(self.settingsChanged)
+        brackets_layout.addWidget(self.show_ns_brackets_check, 5, 0, 1, 2)
+
         content_layout.addWidget(brackets_group)
 
         # Pairwise comparisons section — populated from real analysis_result
@@ -1506,6 +1519,7 @@ class SignificanceTab(QWidget):
             'bracket_spacing': self.bracket_spacing_spin.value(),
             'p_value_style': self.pvalue_style_combo.currentText(),
             'bracket_color': '#000000',  # Always black
+            'show_ns_brackets': self.show_ns_brackets_check.isChecked(),
             # Selected pairs (original group keys, never display labels)
             'selected_pairs': selected_pairs,
         }

@@ -10,10 +10,16 @@ bar vs box differed ~15% in width on identical data. sd/se were already correct
 
 Fix: a single t-based helper (t_{n-1} * s/sqrt(n)) called by all three sites.
 
-These tests encode: (1) the helper's coverage is ~95% across n=3-6; (2) each
-real plot type's rendered "ci" half-width equals the helper; (3) the types
-agree with each other on identical data. All RED before the fix (helper absent;
-box/annotation use 1.96; bar bootstrap differs).
+These tests encode: (1) the helper's coverage is ~95% across n=3-6; (2) the bar
+plot's rendered "ci" half-width equals the helper. All RED before the B1 fix
+(helper absent; box/annotation used 1.96; bar bootstrap differed).
+
+NOTE: T4 later removed the mean±error overlay from the box plot entirely (a
+mean bar on a median/IQR box overlays two statistics -- see
+test_box_no_mean_overlay). The box is therefore no longer a probe for the "ci"
+value; the surviving mean±error path is the bar, which the helper single-sources
+for every plot type that still draws one. sd/se correctness is checked on the
+bar for the same reason.
 """
 import os
 
@@ -74,17 +80,6 @@ def _expected_ci(samples):
     return sorted(round(float(DV._ci_half_width(np.asarray(samples[g], float))), 3) for g in _GROUPS)
 
 
-def _box_halfwidths(ax):
-    hw = []
-    for c in ax.containers:
-        if isinstance(c, ErrorbarContainer):
-            _, _, bars = c
-            for seg in bars:
-                for (x0, y0), (x1, y1) in seg.get_segments():
-                    hw.append(abs(y1 - y0) / 2)
-    return sorted(round(v, 3) for v in hw)
-
-
 def _bar_halfwidths(ax):
     hw = []
     for ln in ax.lines:
@@ -92,16 +87,6 @@ def _bar_halfwidths(ax):
         if np.isfinite(yd).sum() >= 2:
             hw.append(round((np.nanmax(yd) - np.nanmin(yd)) / 2, 3))
     return sorted(hw)
-
-
-def test_box_ci_equals_helper():
-    s = _samples()
-    fig, ax = plt.subplots()
-    DV.plot_box(_GROUPS, s, ax=ax, save_plot=False, show_points=False,
-                show_significance_letters=False, show_error_bars=True, error_type="ci")
-    got = _box_halfwidths(ax)
-    plt.close(fig)
-    assert got == _expected_ci(s), f"box ci {got} != helper {_expected_ci(s)}"
 
 
 def test_bar_ci_equals_helper():
@@ -114,24 +99,18 @@ def test_bar_ci_equals_helper():
     assert got == _expected_ci(s), f"bar ci {got} != helper {_expected_ci(s)}"
 
 
-# ---------- (3) cross-type consistency on identical data ----------
-
-def test_ci_cross_type_consistency_bar_box():
+def test_box_draws_no_mean_error_bar():
+    # T4: the box shows only median/IQR now -- no mean±error overlay at all.
     s = _samples()
-    fig, ax = plt.subplots()
-    DV.plot_bar(_GROUPS, s, ax=ax, save_plot=False, show_points=False,
-                show_significance_letters=False, error_type="ci")
-    bar = _bar_halfwidths(ax)
-    plt.close(fig)
     fig, ax = plt.subplots()
     DV.plot_box(_GROUPS, s, ax=ax, save_plot=False, show_points=False,
                 show_significance_letters=False, show_error_bars=True, error_type="ci")
-    box = _box_halfwidths(ax)
+    ebs = [c for c in ax.containers if isinstance(c, ErrorbarContainer)]
     plt.close(fig)
-    assert bar == box, f"same data, same 'ci' -> bar {bar} must equal box {box}"
+    assert ebs == [], "box must not draw a mean±error overlay (T4)"
 
 
-# ---------- sd/se must remain untouched (regression guard) ----------
+# ---------- sd/se must remain untouched on the bar (regression guard) ----------
 
 @pytest.mark.parametrize("et", ["sd", "se"])
 def test_sd_se_unchanged(et):
@@ -141,8 +120,8 @@ def test_sd_se_unchanged(et):
         return np.std(v, ddof=1) if et == "sd" else np.std(v, ddof=1) / np.sqrt(len(v))
     want = sorted(round(hand(g), 3) for g in _GROUPS)
     fig, ax = plt.subplots()
-    DV.plot_box(_GROUPS, s, ax=ax, save_plot=False, show_points=False,
-                show_significance_letters=False, show_error_bars=True, error_type=et)
-    got = _box_halfwidths(ax)
+    DV.plot_bar(_GROUPS, s, ax=ax, save_plot=False, show_points=False,
+                show_significance_letters=False, error_type=et)
+    got = _bar_halfwidths(ax)
     plt.close(fig)
     assert got == want, f"{et} must be unchanged: {got} != {want}"

@@ -37,3 +37,18 @@ def test_logy_checkbox_enabled_when_data_all_positive():
         assert dialog.style_tab.logy_check.isEnabled() is True
     finally:
         dialog.close()
+
+
+def test_show_ns_brackets_defaults_off_and_toggles():
+    # T1: non-significant brackets are hidden by default; the SignificanceTab
+    # checkbox lets a user opt back in, and get_config carries the flag through
+    # to the real render path.
+    groups = ["A", "B", "C"]
+    samples = {"A": [1.0, 2.0, 3.0], "B": [3.0, 4.0, 5.0], "C": [2.0, 3.0, 4.0]}
+    dialog = PlotAestheticsDialog(groups=groups, samples=samples, show_export_controls=False)
+    try:
+        assert dialog.get_config().get("show_ns_brackets") is False
+        dialog.significance_tab.show_ns_brackets_check.setChecked(True)
+        assert dialog.get_config().get("show_ns_brackets") is True
+    finally:
+        dialog.close()

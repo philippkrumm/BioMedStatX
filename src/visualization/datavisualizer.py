@@ -365,6 +365,16 @@ class DataVisualizer:
         return False
 
     @staticmethod
+    def _comp_is_significant(comp, alpha=0.05):
+        """A pairwise comparison counts as significant if it carries an explicit
+        truthy 'significant' flag, or (absent that) if its p_value < alpha."""
+        flag = comp.get('significant')
+        if flag is not None:
+            return bool(flag)
+        p = comp.get('p_value')
+        return p is not None and p < alpha
+
+    @staticmethod
     def _add_pairwise_comparisons(ax, groups, compare, pairwise_results, config=None, df=None):
         """
     Verbesserte significance brackets mit konfigurierbaren Parametern.
@@ -385,6 +395,17 @@ class DataVisualizer:
         bracket_color = '#000000'  # Always black, ignore config
         line_height = config.get('bracket_spacing', 0.1)
         p_value_style = config.get('p_value_style', 'Fixed stars')
+
+        # By default, only significant pairs get a bracket. Showing an "n.s."
+        # bracket for every tested pair stacks brackets several data-ranges high
+        # and crushes the bars; full disclosure of what was tested rides on the
+        # methods/legend and the exported statistics table, not the figure. A
+        # user can opt back into all-pairs brackets via show_ns_brackets.
+        if not config.get('show_ns_brackets', False):
+            pairwise_results = [c for c in pairwise_results
+                                if DataVisualizer._comp_is_significant(c)]
+        if not pairwise_results:
+            return
 
         group_pos = {g: i for i, g in enumerate(compare)}
         
@@ -961,6 +982,8 @@ class DataVisualizer:
                  legend_colors=None,
                  # Bracket styling (Fix F)
                  bracket_line_width=1.5, bracket_vertical_fraction=0.05, bracket_color='#000000',
+                 # Hide non-significant significance brackets by default (T1).
+                 show_ns_brackets=False,
                  # font_family (unused here, applied by plot_from_config)
                  font_family='Arial',
                  # Optional ax parameter for direct plotting
@@ -1107,7 +1130,8 @@ class DataVisualizer:
                 'bracket_vertical_fraction': bracket_vertical_fraction,
                 'bracket_spacing': comparison_line_height,
                 'p_value_style': p_value_style,
-                'bracket_color': bracket_color
+                'bracket_color': bracket_color,
+                'show_ns_brackets': show_ns_brackets,
             }
             DataVisualizer._add_pairwise_comparisons(
                 ax, groups, compare if compare else groups, pairwise_results,
@@ -1189,6 +1213,8 @@ class DataVisualizer:
         legend_colors=None,
         # Bracket styling (Fix F)
         bracket_line_width=1.5, bracket_vertical_fraction=0.05, bracket_color='#000000',
+        # Hide non-significant significance brackets by default (T1).
+        show_ns_brackets=False,
         # font_family (unused here, applied by plot_from_config)
         font_family='Arial',
         # Optional ax parameter for direct plotting
@@ -1301,7 +1327,8 @@ class DataVisualizer:
                 'bracket_vertical_fraction': bracket_vertical_fraction,
                 'bracket_spacing': 0.1,
                 'p_value_style': p_value_style,
-                'bracket_color': bracket_color
+                'bracket_color': bracket_color,
+                'show_ns_brackets': show_ns_brackets,
             }
             DataVisualizer._add_pairwise_comparisons(
                 ax, groups, groups, pairwise_results, bracket_config, df
@@ -1438,21 +1465,14 @@ class DataVisualizer:
                     if i < len(hatches) and hatches[i]:
                         patch.set_hatch(hatches[i])
         
-        if show_error_bars:
-            means = [np.mean(samples[g]) for g in groups]
-            if error_type == "sd":
-                errs = [np.std(samples[g], ddof=1) for g in groups]
-            elif error_type == "ci":
-                errs = [DataVisualizer._ci_half_width(samples[g]) for g in groups]
-            else:  # "se"
-                errs = [np.std(samples[g], ddof=1)/np.sqrt(len(samples[g])) for g in groups]
-            xs = range(len(groups))
-            eb_caps = capsize if error_style == "caps" else 0
-            ax.errorbar(xs, means, yerr=errs,
-                        fmt='none',
-                        color='black',
-                        elinewidth=edge_width,
-                        capsize=eb_caps)
+        # T4: a box plot summarises the distribution by median and quartiles
+        # (drawn by the boxplot itself: box = IQR, line = median, whiskers =
+        # range). A mean±SD/SE/CI bar is a different statistic about a different
+        # centre; overlaying it on the median box reads as one summary and on
+        # skewed data the two can visibly contradict. So the box draws no
+        # error-bar overlay -- mean±error belongs to the bar and violin plots.
+        # show_error_bars / error_type stay in the signature (passed uniformly
+        # by plot_from_config) but no longer add an overlay here.
 
         if show_points:
             DataVisualizer._add_data_points(
@@ -3114,6 +3134,7 @@ class DataVisualizer:
                 'comparison_font_size': config.get('bracket_font_size', 16),
                 'comparison_line_height': config.get('bracket_spacing', 0.1),
                 'axis_thickness': config.get('axis_thickness', 0.5),
+                'show_ns_brackets': config.get('show_ns_brackets', False),
             })
             # Route the Mixed-ANOVA EMM/multivariate-t (treatment-vs-control)
             # result to a true grouped bar plot (x=within, hue=between) with
@@ -3177,6 +3198,7 @@ class DataVisualizer:
                 'violin_width': config.get('violin_width', 0.8),
                 'violin_bandwidth': config.get('violin_bandwidth', 1.0),
                 'axis_thickness': config.get('axis_thickness', 0.5),
+                'show_ns_brackets': config.get('show_ns_brackets', False),
             })
             DataVisualizer.plot_violin(groups, samples, **violin_kwargs)
 
