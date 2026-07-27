@@ -581,7 +581,7 @@ class DataVisualizer:
                          within_order, between_order,
                          pairwise_results=None, label_map=None,
                          width=8, height=6, dpi=300,
-                         color_palette="Greys", error_type="sd",
+                         color_palette="Nature", error_type="sd",
                          show_error_bars=True, p_value_style="Fixed stars",
                          bracket_line_width=1.5, bracket_vertical_fraction=0.05,
                          bracket_color="#000000", comparison_line_height=0.1,
@@ -605,12 +605,12 @@ class DataVisualizer:
         else:
             fig = ax.figure
 
-        colors = sns.color_palette(color_palette, len(between_order))
+        colors = DataVisualizer._resolve_palette(None, color_palette, len(between_order))
         sns.barplot(
             data=long_df, x=within, y=value, hue=between,
             order=within_order, hue_order=between_order,
             errorbar=(DataVisualizer._seaborn_errorbar_arg(error_type) if show_error_bars else None),
-            palette=colors, ax=ax,
+            palette=colors, ax=ax, saturation=1.0,
         )
 
         if pairwise_results and label_map:
@@ -845,9 +845,28 @@ class DataVisualizer:
 
     """Advanced data visualization class with extensive customization options"""
     
-    # Default colors for plots
+    # Default colors for plots (legacy fallback / defaulted-sentinel)
     DEFAULT_COLORS = ['#3357FF', '#FF5733', '#2E7D32', '#F033FF', '#FF3366', '#00897B']
-    
+
+    # Curated, publication-oriented palettes the user selects by name. Nature is
+    # the default. Grayscale HC is the B/W option; Okabe-Ito is colorblind-safe;
+    # Muted Pastel / Deep are qualitative; Turbo is the bright rainbow. Longer
+    # group counts are topped up with distinct hues by _extend_colors_distinct.
+    CURATED_PALETTES = {
+        "Nature":       ['#4E79A7', '#B75C03', '#E15759', '#3F817C', '#59A14F', '#907207', '#B07AA1', '#EB0018'],
+        "Okabe-Ito":    ['#E69F00', '#56B4E9', '#009E73', '#F0E442', '#0072B2', '#D55E00', '#CC79A7', '#000000'],
+        "Grayscale HC": ['#111111', '#444444', '#6f6f6f', '#969696', '#bdbdbd', '#e2e2e2'],
+        "Muted Pastel": ['#66C2A5', '#FC8D62', '#8DA0CB', '#E78AC3', '#A6D854', '#FFD92F', '#E5C494', '#B3B3B3'],
+        "Deep":         ['#4C72B0', '#DD8452', '#55A868', '#C44E52', '#8172B3', '#937860', '#DA8BC3', '#8C8C8C'],
+        "Turbo":        ['#4662d8', '#36abf9', '#1ae4b6', '#71fd5f', '#c9ef34', '#feb927', '#f56b19', '#c42503'],
+        # kept so the pre-existing dialog journal options still resolve to their
+        # own hex instead of silently falling back to the default.
+        "Science":      ['#0072B2', '#D55E00', '#009E73', '#CC79A7', '#0F7CBA', '#9C6C00', '#767676'],
+        "NEJM":         ['#BC3C29', '#0072B5', '#B16310', '#20854E', '#7876B1', '#6F99AD', '#9C6A00'],
+        "Lancet":       ['#00468B', '#ED0000', '#2C882A', '#0099B4', '#925E9F', '#D73C00', '#AD002A'],
+    }
+    DEFAULT_PALETTE = "Nature"
+
     @staticmethod
     def _auto_adjust_figure_size(width, height, groups, plot_type='Bar'):
         """Automatic size adjustment based on number of groups"""
@@ -895,7 +914,7 @@ class DataVisualizer:
                  width=8, height=6, dpi=300,
                  # Styling and theme
                  theme='default', colors=None, hatches=None,
-                 color_palette='Greys', alpha=0.8,
+                 color_palette='Nature', alpha=0.8,
                  # Bar customization
                  bar_width=0.8, bar_edge_color='black', bar_edge_width=0.5,
                  capsize=0.05, error_type="sd", show_error_bars=True,
@@ -974,7 +993,7 @@ class DataVisualizer:
             else:
                 colors = DataVisualizer.DEFAULT_COLORS
         
-        colors = DataVisualizer._extend_colors_distinct(colors, len(groups))
+        colors = DataVisualizer._resolve_palette(colors, color_palette, len(groups))
         hatches = DataVisualizer._extend_list(hatches or [''] * len(groups), len(groups))
         
         # Create figure nur wenn kein ax übergeben wurde
@@ -1003,15 +1022,15 @@ class DataVisualizer:
         if show_error_bars:
             bars = sns.barplot(
                 x='Group', y='Value', data=df, ax=ax,
-                errorbar=DataVisualizer._seaborn_errorbar_arg(error_type), palette=colors, 
-                capsize=capsize_val, alpha=alpha,
+                errorbar=DataVisualizer._seaborn_errorbar_arg(error_type), palette=colors,
+                capsize=capsize_val, alpha=alpha, saturation=1.0,
                 order=groups, width=bar_width,
                 edgecolor=bar_edge_color, linewidth=bar_edge_width
             )
         else:
             bars = sns.barplot(
                 x='Group', y='Value', data=df, ax=ax,
-                errorbar=None, palette=colors,
+                errorbar=None, palette=colors, saturation=1.0,
                 order=groups, width=bar_width,
                 edgecolor=bar_edge_color, linewidth=bar_edge_width,
                 alpha=alpha
@@ -1137,7 +1156,7 @@ class DataVisualizer:
     def plot_violin(
         groups, samples,
         width=8, height=6, dpi=300,
-        theme='default', colors=None, hatches=None, color_palette='Greys', alpha=0.8,
+        theme='default', colors=None, hatches=None, color_palette='Nature', alpha=0.8,
         violin_width=0.8, edge_color='black', edge_width=0.5,
         violin_bandwidth=1.0,
         show_points=True, point_style='jitter', max_points_per_group=None,
@@ -1185,7 +1204,7 @@ class DataVisualizer:
 
         if colors is None:
             colors = sns.color_palette(color_palette, len(groups))
-        colors = DataVisualizer._extend_colors_distinct(colors, len(groups))
+        colors = DataVisualizer._resolve_palette(colors, color_palette, len(groups))
 
         if group_order is not None:
             groups = [g for g in group_order if g in samples and len(samples[g]) > 0]
@@ -1332,7 +1351,7 @@ class DataVisualizer:
     def plot_box(
         groups, samples,
         width=8, height=6, dpi=300,
-        theme='default', colors=None, hatches=None, color_palette='Greys', alpha=0.8,
+        theme='default', colors=None, hatches=None, color_palette='Nature', alpha=0.8,
         box_width=0.8, edge_color='black', edge_width=0.5,
         show_points=True, point_style='jitter', max_points_per_group=None,
         point_size=80, point_alpha=0.8, point_edge_width=0.5,
@@ -1378,7 +1397,7 @@ class DataVisualizer:
         
         if colors is None:
             colors = sns.color_palette(color_palette, len(groups))
-        colors = DataVisualizer._extend_colors_distinct(colors, len(groups))
+        colors = DataVisualizer._resolve_palette(colors, color_palette, len(groups))
 
         if group_order is not None:
             groups = [g for g in group_order if g in samples and len(samples[g]) > 0]
@@ -1540,7 +1559,7 @@ class DataVisualizer:
     def plot_raincloud(
         groups, samples,
         width=8, height=6, dpi=300,
-        theme='default', colors=None, hatches=None, color_palette='Greys', alpha=0.8,
+        theme='default', colors=None, hatches=None, color_palette='Nature', alpha=0.8,
         violin_bandwidth=1.0,
         violin_width=0.8, box_width=0.2, edge_color='black', edge_width=0.5,
         show_points=True, point_style='jitter', max_points_per_group=None,
@@ -1604,7 +1623,7 @@ class DataVisualizer:
         
         if colors is None:
             colors = sns.color_palette(color_palette, len(groups))
-        colors = DataVisualizer._extend_colors_distinct(colors, len(groups))
+        colors = DataVisualizer._resolve_palette(colors, color_palette, len(groups))
 
         # Filter groups
         if group_order is not None:
@@ -1884,6 +1903,35 @@ class DataVisualizer:
             "topped up with distinct hues so no two groups share a color.",
             n, len(colors) if colors else len(DataVisualizer.DEFAULT_COLORS))
         return base[:n]
+
+    @staticmethod
+    def _resolve_palette(colors, color_palette, n):
+        """Resolve the final list of n DISTINCT colors, honoring the palette.
+
+        `colors` being the DEFAULT_COLORS object (identity) means it was
+        defaulted upstream, not chosen -- so `color_palette` decides. Any other
+        `colors` value is a real user choice and is used as-is. `color_palette`
+        may be a curated name (CURATED_PALETTES), a seaborn/matplotlib name, or
+        empty; the fallback is the curated default (Nature). This is what makes
+        the palette dropdown actually take effect -- previously the premature
+        `colors = DEFAULT_COLORS` swallowed color_palette entirely."""
+        import matplotlib.colors as _mc
+        user_colors = colors is not None and colors is not DataVisualizer.DEFAULT_COLORS
+        base = None
+        if user_colors:
+            base = list(colors.values()) if isinstance(colors, dict) else list(colors)
+        else:
+            cur = DataVisualizer.CURATED_PALETTES.get(color_palette) if color_palette else None
+            if cur is not None:
+                base = list(cur)
+            elif color_palette:
+                try:
+                    base = [_mc.to_hex(c) for c in sns.color_palette(color_palette, max(n, 1))]
+                except Exception:
+                    base = None
+        if not base:
+            base = list(DataVisualizer.CURATED_PALETTES[DataVisualizer.DEFAULT_PALETTE])
+        return DataVisualizer._extend_colors_distinct(base, n)
 
     @staticmethod
     def _prepare_plot_data(groups, samples, colors):

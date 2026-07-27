@@ -420,15 +420,17 @@ class ColorsTab(QWidget):
         seaborn_layout.addWidget(QLabel("Color Palette:"), 1, 0)
         self.palette_combo = QComboBox()
         self.palette_combo.setMinimumHeight(_WIDGET_MIN_H)
-        # Professional palettes - excluding rainbow/childish ones
+        # Curated publication palettes first (Nature is the default), then the
+        # journal sets and the seaborn/matplotlib colormaps.
         professional_palettes = [
-            'Nature', 'Science', 'NEJM', 'Lancet',
-            'deep', 'muted', 'dark', 'colorblind',
+            'Nature', 'Okabe-Ito', 'Grayscale HC', 'Muted Pastel', 'Deep', 'Turbo',
+            'Science', 'NEJM', 'Lancet',
+            'muted', 'dark', 'colorblind',
             'viridis', 'plasma', 'inferno', 'magma', 'mako',
             'Greys', 'Paired', 'tab10'
         ]
         self.palette_combo.addItems(professional_palettes)
-        self.palette_combo.setCurrentText(self.config.get('seaborn_palette', 'Greys'))
+        self.palette_combo.setCurrentText(self.config.get('seaborn_palette', 'Nature'))
         self.palette_combo.currentTextChanged.connect(self.on_seaborn_settings_changed)
         seaborn_layout.addWidget(self.palette_combo, 1, 1)
 
