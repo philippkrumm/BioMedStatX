@@ -222,7 +222,19 @@ class PlotPreviewWidget(FigureCanvasQTAgg):
             # Use the central dispatcher method (Font-Management ist jetzt integriert)
             DataVisualizer.plot_from_config(self.ax, self.groups, self.samples, config,
                                             pairwise_results=pairwise_results)
-            
+
+            # The plot functions only run their tight_layout pass when they
+            # created the figure themselves (created_fig). Here we pass our own
+            # ax, so that pass is skipped -- and unlike the file export there is
+            # no savefig(bbox_inches="tight") to rescue overhanging artists. Do
+            # the layout pass here so long / rotated x-tick labels (e.g. two-way
+            # "Factor=Level:Factor=Level" cells) and the legend stay inside the
+            # fixed preview canvas instead of being clipped at its edges.
+            try:
+                self.fig.tight_layout()
+            except Exception as exc:  # tight_layout can fail on odd artist configs
+                logger.debug(f"preview tight_layout skipped: {exc}")
+
             # Force immediate redraw
             self.draw_idle()
             self.flush_events()
