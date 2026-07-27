@@ -818,9 +818,13 @@ class DataVisualizer:
         height = bracket['height']
         p_value = bracket['p_value']
         
-        # Vertikale Länge berechnen
+        # Downward leg length. The old `0.02 * vertical_fraction` made the legs
+        # ~0.1-0.5% of the axis with the usual small vertical_fraction -- i.e.
+        # invisible, so the bracket read as a bare floating horizontal line whose
+        # ends went "nowhere". Use a visible fixed fraction (2.5% of the range),
+        # still scalable upward via vertical_fraction.
         y_range = ax.get_ylim()[1] - ax.get_ylim()[0]
-        vert = y_range * 0.02 * vertical_fraction  # Angepasste Berechnung
+        vert = y_range * 0.025 * max(1.0, vertical_fraction)
         
         # One connected polyline (left leg up, across the top, right leg down)
         # instead of three separate thick segments -- three butt-capped lines met
