@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Testing / validation
+
+- Added frozen R golden references for five statistical methods that previously
+  had only targeted regression tests: correlation (Pearson/Spearman, 7 cases),
+  Friedman (5 cases), Tukey HSD (3 cases / 12 pairs), Games-Howell (3 cases / 12
+  pairs), and Dunn (3 cases / 12 pairs). Oracles match each method's actual
+  implementation: `cor.test(exact=FALSE)` for the app's t-approximation Spearman
+  p-value, `friedman.test`, Base R `TukeyHSD(aov)` for `statsmodels.pairwise_tukeyhsd`,
+  and `PMCMRplus::gamesHowellTest` / `kwAllPairsDunnTest`. Dunn is validated in
+  decoupled halves — the rank-based tie-corrected raw p-value against R, the
+  Holm-Šidák multiplicity step as a statsmodels unit — with a wiring test (plus a
+  positive control) proving the raw→adjusted seam attaches each adjusted p-value
+  to the correct pair. The stale, never-collected `validation/validate_friedman.py`
+  script (which read a since-renamed column and would crash) was removed; its one
+  complementary structural check is absorbed into the new Friedman golden test.
+
 ## [2.0.0] - 2026-07-21
 
 This release is the result of a multi-round statistical and release-readiness
