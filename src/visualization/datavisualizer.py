@@ -2569,36 +2569,32 @@ class DataVisualizer:
             
             logger.debug(f"DEBUG: Generated raincloud letters = {letters}")
             
-            # For horizontal raincloud, find the rightmost x position
-            x_positions = []
-            for group in groups:
-                values = samples[group]
-                if hasattr(values, '__len__') and len(values) > 0:
-                    x_positions.append(max(values))
-            
-            if x_positions:
-                x_max = max(x_positions)
-                # Reduce the offset to move letters closer to the plots (about 1.5-2 cm)
-                x_range = max(x_positions) - min([min(samples[group]) for group in groups if hasattr(samples[group], '__len__') and len(samples[group]) > 0])
-                x_offset = x_max + (x_range * 0.12)  # Much closer to the plots
-                
-                # Use provided positions or fall back to default spacing
+            # Place each letter just past ITS OWN group's data, not at the global
+            # far-right edge -- the old x_offset used the overall max, so every
+            # letter bunched against the widest group, detached from its row.
+            all_vals = [float(v) for group in groups
+                        for v in (samples[group] if hasattr(samples[group], '__len__') else [])]
+            if all_vals:
+                x_range = (max(all_vals) - min(all_vals)) or 1.0
+                pad = x_range * 0.04
                 if positions is None:
-                    positions = np.arange(1, len(groups)+1)
-                
-                # Place letters to the right of the plot elements using actual positions
+                    positions = np.arange(1, len(groups) + 1)
+
                 for i, group in enumerate(groups):
-                    letter = letters[group]
-                    y_pos = positions[i]  # Use calculated positions instead of i+1
-                    ax.text(x_offset, y_pos, letter,
-                           horizontalalignment='left', 
-                           verticalalignment='center',
-                           color='black', fontweight='bold',
-                           fontsize=font_size,
-                           bbox=dict(boxstyle="round,pad=0.3", 
-                                    facecolor="white", 
-                                    edgecolor="gray",
-                                    alpha=0.8))
+                    values = samples[group]
+                    if not (hasattr(values, '__len__') and len(values) > 0):
+                        continue
+                    ax.text(max(values) + pad, positions[i], letters[group],
+                            horizontalalignment='left', verticalalignment='center',
+                            color='black', fontweight='bold', fontsize=font_size,
+                            bbox=dict(boxstyle="round,pad=0.2", facecolor="white",
+                                      edgecolor="none", alpha=0.7))
+
+                # Widen the x-axis so the right-most letter is not clipped.
+                _, xr = ax.get_xlim()
+                need = max(all_vals) + x_range * 0.10
+                if need > xr:
+                    ax.set_xlim(right=need)
         except Exception as e:
             logger.error(f"Error adding raincloud significance letters: {str(e)}")
             DataVisualizer._draw_warning_annotation(
