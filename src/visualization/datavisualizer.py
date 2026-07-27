@@ -717,15 +717,14 @@ class DataVisualizer:
                 if pos1 > pos2:
                     pos1, pos2 = pos2, pos1  # Stelle sicher, dass pos1 < pos2
                 
-                # Position-Offset abhängig vom Plot-Typ
-                if plot_type == 'violin':
-                    # Violin plots verwenden 0-basierte Positionen (0, 1, 2...)
-                    matplotlib_pos1 = pos1  # 0-based für Violin
-                    matplotlib_pos2 = pos2  # 0-based für Violin
-                else:
-                    # Box/Bar plots verwenden 1-basierte Positionen (1, 2, 3...)
-                    matplotlib_pos1 = pos1 + 1  # 1-based für Box/Bar
-                    matplotlib_pos2 = pos2 + 1  # 1-based für Box/Bar
+                # seaborn places category i at x=i (0-based) for bar, box AND
+                # violin. The significance LETTERS already use x=i and sit
+                # correctly over each bar, so brackets must use the same 0-based
+                # positions. The old +1 for bar/box shifted every bracket one bar
+                # to the right, so its right leg landed past the last bar, "into
+                # nowhere". All types are 0-based here.
+                matplotlib_pos1 = pos1
+                matplotlib_pos2 = pos2
                 
                 # Neue Spezifikation: Bracket liegt zwischen den Gruppen –
                 # vertikale Linien NICHT auf den Zentren, sondern leicht innen:
