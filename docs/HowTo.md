@@ -42,7 +42,7 @@ Click **Load Data File**. Supported formats: Excel (`.xlsx`, `.xls`) and CSV (`.
 
 Select the **Worksheet** from the dropdown (Excel files may contain multiple sheets). The **Table Preview** displays the first twelve rows so you can verify the import before proceeding.
 
-For **CSV files** the application asks you to declare the number format instead of guessing it: the column **separator** (comma, semicolon, tab, or pipe), the **decimal mark** (dot or comma), and the **thousands separator** (none, dot, comma, or space). This is deliberate — a wrong guess on a European file (for example reading `1.234,56` with a dot decimal) silently turns numbers into missing values. Set the three fields to match your file; the preview updates so you can confirm the columns parsed correctly.
+For **CSV files** the application asks you to declare the number format instead of guessing it: the column **separator** (comma, semicolon, tab, or pipe), the **decimal mark** (dot or comma), and the **thousands separator** (none, dot, comma, or space). This is deliberate, since a wrong guess on a European file (for example reading `1.234,56` with a dot decimal) silently turns numbers into missing values. Set the three fields to match your file; the preview updates so you can confirm the columns parsed correctly.
 
 ### Minimum data requirements
 
@@ -146,7 +146,7 @@ Shapiro–Wilk tests normality of model residuals (normality is assumed if $N \g
 
 Skipping the transformation is always valid. The application takes the nonparametric route (Mann–Whitney U, Kruskal–Wallis, Friedman) without further prompting.
 
-**Arcsin-square-root and the data domain.** Because arcsin($\sqrt{x}$) stabilises variance only for genuine proportion data, selecting it opens a prompt to declare the scale: **Proportion (0 – 1)** or **Percent (0 – 100)**. Values outside the declared range are rejected — the transformation is not applied and there is no silent fallback, so a percentage column mistakenly declared as a proportion stops with an error instead of corrupting the data. Cancelling the prompt (declaring no domain) skips arcsin and routes the analysis to the nonparametric test. The transform rescales against the global data range, not per group.
+**Arcsin-square-root and the data domain.** Because arcsin($\sqrt{x}$) stabilises variance only for genuine proportion data, selecting it opens a prompt to declare the scale: **Proportion (0 – 1)** or **Percent (0 – 100)**. Values outside the declared range are rejected: the transformation is not applied and there is no silent fallback, so a percentage column mistakenly declared as a proportion stops with an error instead of corrupting the data. Cancelling the prompt (declaring no domain) skips arcsin and routes the analysis to the nonparametric test. The transform rescales against the global data range, not per group.
 
 On very skewed data the Box–Cox $\lambda$ search can run away to a value so large it inflates the variance instead of taming it. The app guards against this: it checks the optimised $\lambda$ against the range $[-3, 3]$, and if $\lambda$ falls outside, it discards the estimate and uses a plain log transformation ($\lambda = 0$) instead. The report adds a note when this fallback happens.
 
@@ -184,7 +184,7 @@ The Plot Designer has five tabs:
 
 - **Plot**: chart type (Bar, Box, Violin, or Raincloud), data point overlay (Jitter or Beeswarm), error bars (SD, SEM, 95% CI, IQR, or Range), central measure (mean or median), and paired subject lines for repeated-measures designs. Box plots show the median and interquartile range only; a mean ± error overlay is not drawn on a box (use the bar or violin plot for mean-based error bars).
 - **Axes**: X/Y axis labels, Y-axis range and format, grid style, tick direction, legend position and orientation, and optional reference lines (y = 0 baseline, y = 1 fold-change, threshold lines from payload).
-- **Style**: plot title, axis labels, font family and size, per-group colours (six curated palettes — Nature, Okabe-Ito, Grayscale HC, Muted Pastel, Deep, Turbo — with Nature as the default), bar fill patterns, and data point symbols.
+- **Style**: plot title, axis labels, font family and size, per-group colours (six curated palettes: Nature, Okabe-Ito, Grayscale HC, Muted Pastel, Deep, and Turbo, with Nature the default), bar fill patterns, and data point symbols.
 - **Stats**: significance bracket visibility, bracket line width and spacing, star size. Non-significant (n.s.) brackets are hidden by default; tick **Show non-significant brackets** to draw every tested pair. Significance letters and significant-only brackets are unaffected.
 - **Export**: figure dimensions in inches, PNG scale (1x to 4x, up to ~400 DPI), SVG download, and PNG download.
 
@@ -256,8 +256,8 @@ The report contains:
 
 **Analysis → Detect Outliers** offers:
 
-- **Grubbs' test** (single or iterative) — the default; holds its nominal false-positive rate down to small samples.
-- **Modified Z-Score** (threshold at $|M_i| > 3.5$, where $M_i = \frac{0.6745(x_i - \tilde{x})}{MAD}$) — not the default. Its median/MAD scale is unstable on small groups and flags a normal point as an outlier in about 29% of clean $n = 3$ samples, so the dialog shows a caution when it is selected on groups below $n = 8$.
+- **Grubbs' test** (single or iterative). The default; holds its nominal false-positive rate down to small samples.
+- **Modified Z-Score** (threshold at $|M_i| > 3.5$, where $M_i = \frac{0.6745(x_i - \tilde{x})}{MAD}$). Not the default: its median/MAD scale is unstable on small groups and flags a normal point as an outlier in about 29% of clean $n = 3$ samples, so the dialog shows a caution when it is selected on groups below $n = 8$.
 
 Review flagged observations before proceeding. Removing outliers changes the analysis. Document this decision in your methods.
 

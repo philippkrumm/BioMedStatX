@@ -1,6 +1,6 @@
 # BioMedStatX
 
-A comprehensive, GUI-based tool for statistical analysis of experimental data.  
+A GUI-based tool for statistical analysis of experimental data.  
 Users can import Excel or CSV files, define groups, and let BioMedStatX handle the rest: outlier detection, assumption checks, guided data transformations, automatic test selection, post-hoc analyses, and fully documented HTML reports.
 
 > **Repository:** [philippkrumm/BioMedStatX](https://github.com/philippkrumm/BioMedStatX)  
