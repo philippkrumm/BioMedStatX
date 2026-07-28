@@ -56,12 +56,17 @@ recommendation == 'non_parametric'
 
 **Post-hoc tests (built-in, triggered automatically if p < alpha):**
 
-Pairwise Wilcoxon signed-rank tests for all k·(k−1)/2 level pairs, with
-Holm step-down correction applied across all comparisons simultaneously.
+Conover-Iman all-pairs test (`scikit_posthocs.posthoc_conover_friedman`) for all
+k·(k−1)/2 level pairs, with Holm step-down correction applied across all
+comparisons simultaneously. Pairwise Wilcoxon signed-rank (Holm) runs only as a
+fallback when the Conover-Iman routine is unavailable.
 
-- **Effect size:** rank-biserial correlation r = |2W − n(n+1)/2| / (n(n+1)/2)
+- **Effect size:** the Conover-Iman comparisons carry no effect size
+  (`effect_size` is `None`); the Wilcoxon fallback reports the rank-biserial
+  correlation r = |2W − n(n+1)/2| / (n(n+1)/2).
 - **Output:** `pairwise_comparisons` list in result dict; `posthoc_test` set to
-  `"Pairwise Wilcoxon Signed-Rank (Holm, n=... subjects)"`
+  `"Conover-Iman (n=... subjects, Holm-corrected)"` (or the Wilcoxon-fallback
+  label when the fallback runs).
 - If p ≥ alpha, `pairwise_comparisons` is empty and `posthoc_test` is `None`.
 
 **Warnings emitted:**

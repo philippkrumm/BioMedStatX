@@ -210,8 +210,8 @@ Cohen's benchmarks: $\eta^2_p = 0.01$ small, $0.06$ medium, $0.14$ large.
 
 | Comparison type | Parametric test | Nonparametric test |
 |---|---|---|
-| Between-subjects (groups) | Tukey HSD or Dunnett (Control-only) | Dunn's test (Holm correction) |
-| Within-subjects (timepoints) | Holm-corrected paired $t$-tests or Dunnett-RM (Control-only) | Wilcoxon signed-rank (Holm) |
+| Between-subjects (groups) | Tukey HSD or Dunnett (Control-only) | Dunn's test (Holm-Šidák correction) |
+| Within-subjects (timepoints) | Holm-Šidák paired $t$-tests or Dunnett-RM (Control-only) | Conover-Iman (Holm), Wilcoxon signed-rank as fallback |
 
 Post-hoc tests are only run when the corresponding main effect or interaction is significant.
 

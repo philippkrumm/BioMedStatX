@@ -15,7 +15,7 @@ One concept determines everything in BioMedStatX: the division of labour between
 | Which statistical test fits the design | Which columns map to which bucket |
 | Which assumption checks to run | Whether to accept an offered transformation |
 | Parametric vs. nonparametric route | Which post-hoc procedure to use when prompted |
-| Which plots and tables to generate | Whether to restrict rows via the Filter bucket |
+| Which plots and tables to generate | Which number format your CSV uses (for import) |
 | Whether the result meets $\alpha = 0.05$ | Which group subset to include in the analysis |
 
 A complete analysis run follows this order:
@@ -42,6 +42,8 @@ Click **Load Data File**. Supported formats: Excel (`.xlsx`, `.xls`) and CSV (`.
 
 Select the **Worksheet** from the dropdown (Excel files may contain multiple sheets). The **Table Preview** displays the first twelve rows so you can verify the import before proceeding.
 
+For **CSV files** the application asks you to declare the number format instead of guessing it: the column **separator** (comma, semicolon, tab, or pipe), the **decimal mark** (dot or comma), and the **thousands separator** (none, dot, comma, or space). This is deliberate — a wrong guess on a European file (for example reading `1.234,56` with a dot decimal) silently turns numbers into missing values. Set the three fields to match your file; the preview updates so you can confirm the columns parsed correctly.
+
 ### Minimum data requirements
 
 | Requirement | Rationale |
@@ -66,7 +68,7 @@ For raw Excel sheets not structured as a table, click **Select Data Ranges…** 
 
 ## 3. Smart Mapping
 
-The center panel provides six mapping buckets. Drag column cards from the **Columns** list into the appropriate bucket. The application auto-detects an initial mapping, which you can override.
+The center panel provides five mapping buckets. Drag column cards from the **Columns** list into the appropriate bucket. The application auto-detects an initial mapping, which you can override.
 
 Each bucket carries an **ⓘ info button** describing what belongs there.
 
@@ -75,7 +77,6 @@ Each bucket carries an **ⓘ info button** describing what belongs there.
 - **Factor 2** *(optional)*: A second grouping variable. Without Subject ID → Two-Way ANOVA. With Subject ID → Mixed ANOVA.
 - **Subject ID** *(optional)*: The individual-level identifier for paired or repeated-measures designs. Assign this only when the same participant or experimental unit contributes more than one row.
 - **Covariates** *(optional)*: Continuous confounders to control for (e.g. Age, BMI, Baseline). Categorical Factor 1 + Covariates → ANCOVA. Continuous Factor 1 + Covariates → Multiple Regression.
-- **Filter** *(optional)*: Restricts the analysis to a row subset. See Section 15.
 
 ### Factor 1 vs. Subject ID: where most mistakes happen
 
@@ -141,9 +142,11 @@ Shapiro–Wilk tests normality of model residuals (normality is assumed if $N \g
 |---|---|
 | **Log₁₀** | Right-skewed data; requires strictly positive values |
 | **Box–Cox** | Automatic power transformation; $\lambda$ optimised by maximum likelihood |
-| **Arcsin $\sqrt{x}$** | Proportions and percentages bounded in $[0, 1]$ |
+| **Arcsin $\sqrt{x}$** | Proportion or percentage data; the scale is declared explicitly (see below) |
 
 Skipping the transformation is always valid. The application takes the nonparametric route (Mann–Whitney U, Kruskal–Wallis, Friedman) without further prompting.
+
+**Arcsin-square-root and the data domain.** Because arcsin($\sqrt{x}$) stabilises variance only for genuine proportion data, selecting it opens a prompt to declare the scale: **Proportion (0 – 1)** or **Percent (0 – 100)**. Values outside the declared range are rejected — the transformation is not applied and there is no silent fallback, so a percentage column mistakenly declared as a proportion stops with an error instead of corrupting the data. Cancelling the prompt (declaring no domain) skips arcsin and routes the analysis to the nonparametric test. The transform rescales against the global data range, not per group.
 
 On very skewed data the Box–Cox $\lambda$ search can run away to a value so large it inflates the variance instead of taming it. The app guards against this: it checks the optimised $\lambda$ against the range $[-3, 3]$, and if $\lambda$ falls outside, it discards the estimate and uses a plain log transformation ($\lambda = 0$) instead. The report adds a note when this fallback happens.
 
@@ -157,15 +160,15 @@ A significant main test with $\geq 3$ groups triggers a post-hoc selection promp
 
 | Test | When to use |
 |---|---|
-| **Tukey HSD** | All pairwise comparisons. Available for Advanced ANOVAs (Two-Way, Repeated Measures, Mixed). |
+| **Tukey HSD** | All pairwise comparisons. Available for one-way designs and Two-Way ANOVA. Repeated-Measures and Mixed ANOVA do not offer Tukey; they use the Holm-Šidák pairwise option below, which stays coherent with the sphericity-corrected omnibus. |
 | **Games-Howell** | All pairwise comparisons; does not assume equal variances. Default for One-Way Welch-ANOVA. |
 | **Dunnett** | Each treatment group vs. one control; more power than Tukey when a reference group exists |
 | **Holm-\u0160id\u00e1k corrected pairwise t-tests** | User-selected pairs; sequential \u0160id\u00e1k correction |
 | **FDR-corrected pairwise t-tests** | User-selected pairs; Benjamini-Hochberg FDR (Available for Advanced ANOVAs) |
 
 **Nonparametric path:**
-- After **Kruskal–Wallis**, a prompt offers Dunn's test (all pairs, Holm correction; the default) or pairwise Mann–Whitney U on pairs you pick.
-- After **Friedman** and the advanced nonparametric fallbacks, the app applies pairwise Wilcoxon signed-rank with Holm correction directly, without a prompt.
+- After **Kruskal–Wallis**, a prompt offers Dunn's test (all pairs, Holm-Šidák correction; the default) or pairwise Mann–Whitney U on pairs you pick.
+- After **Friedman**, the app applies the **Conover-Iman** post-hoc (all pairs, Holm-corrected) directly, without a prompt; pairwise Wilcoxon signed-rank is used only as a fallback if the Conover-Iman routine is unavailable. The advanced nonparametric fallbacks (e.g. after Brunner–Langer) apply pairwise Wilcoxon/Mann–Whitney with Holm correction.
 
 Cancelling a post-hoc prompt is a valid choice: the analysis keeps the main-test result and reports no pairwise comparisons. Pick it when only the overall effect matters.
 
@@ -179,10 +182,10 @@ The HTML report includes an interactive **Plot Designer** section that rebuilds 
 
 The Plot Designer has five tabs:
 
-- **Plot**: chart type (Bar, Box, Violin, Raincloud, Forest, or Estimation), data point overlay (Jitter or Beeswarm), error bars (SD, SEM, 95% CI, IQR, or Range), central measure (mean or median), and paired subject lines for repeated-measures designs.
+- **Plot**: chart type (Bar, Box, Violin, or Raincloud), data point overlay (Jitter or Beeswarm), error bars (SD, SEM, 95% CI, IQR, or Range), central measure (mean or median), and paired subject lines for repeated-measures designs. Box plots show the median and interquartile range only; a mean ± error overlay is not drawn on a box (use the bar or violin plot for mean-based error bars).
 - **Axes**: X/Y axis labels, Y-axis range and format, grid style, tick direction, legend position and orientation, and optional reference lines (y = 0 baseline, y = 1 fold-change, threshold lines from payload).
-- **Style**: plot title, axis labels, font family and size, per-group colours, bar fill patterns, and data point symbols.
-- **Stats**: significance bracket visibility, bracket line width and spacing, star size.
+- **Style**: plot title, axis labels, font family and size, per-group colours (six curated palettes — Nature, Okabe-Ito, Grayscale HC, Muted Pastel, Deep, Turbo — with Nature as the default), bar fill patterns, and data point symbols.
+- **Stats**: significance bracket visibility, bracket line width and spacing, star size. Non-significant (n.s.) brackets are hidden by default; tick **Show non-significant brackets** to draw every tested pair. Significance letters and significant-only brackets are unaffected.
 - **Export**: figure dimensions in inches, PNG scale (1x to 4x, up to ~400 DPI), SVG download, and PNG download.
 
 ---
@@ -239,6 +242,7 @@ The report contains:
 - **Header**: test name, $p$-value, significance label, effect size with magnitude badge (Small / Medium / Large by Cohen's conventions)
 - **Statistical results**: statistic, degrees of freedom, $p$-value, effect size, 95% CI, power ($1 - \hat{\beta}$)
 - **Assumption results**: normality, variance, and applied corrections
+- **Data quality checks (pre-analysis)**: a warning table flagging any rows or values dropped during import (non-numeric cells, missing group labels), shown when the import found problems
 - **Descriptive statistics**: $\bar{x}$, SD, SEM, median, $n$ per group
 - **Pairwise comparison table**: post-hoc results with corrected $p$-values
 - **Interactive decision tree**: full path with zoom and replay
@@ -252,8 +256,8 @@ The report contains:
 
 **Analysis → Detect Outliers** offers:
 
-- Modified Z-Score (threshold at $|M_i| > 3.5$, where $M_i = \frac{0.6745(x_i - \tilde{x})}{MAD}$)
-- Grubbs' test (single or iterative)
+- **Grubbs' test** (single or iterative) — the default; holds its nominal false-positive rate down to small samples.
+- **Modified Z-Score** (threshold at $|M_i| > 3.5$, where $M_i = \frac{0.6745(x_i - \tilde{x})}{MAD}$) — not the default. Its median/MAD scale is unstable on small groups and flags a normal point as an outlier in about 29% of clean $n = 3$ samples, so the dialog shows a caution when it is selected on groups below $n = 8$.
 
 Review flagged observations before proceeding. Removing outliers changes the analysis. Document this decision in your methods.
 
@@ -282,24 +286,7 @@ Review flagged observations before proceeding. Removing outliers changes the ana
 
 ---
 
-## 15. Filter Bucket: Subgroup Analysis
-
-The Filter bucket restricts the dataset **before** assumption checks and model fitting. This is the correct approach for subgroup analyses, not post-hoc filtering after seeing results.
-
-**How to use:**
-
-1. Drag a categorical column (e.g. `OP_Group`, `Sex`) into the Filter bucket.
-2. Select a value from the dropdown (e.g. `On-Pump`).
-3. The bucket label updates: *"Analysis restricted to n = 93 rows."*
-4. Click **Start Auto Analysis**; the entire pipeline runs on this subset.
-
-> If the filtered subset contains fewer than 5 rows, the analysis aborts with a warning.
-
-The ⓘ button on the bucket title explains its purpose at any time.
-
----
-
-## 16. Correlation Analysis
+## 15. Correlation Analysis
 
 **Trigger conditions:** Factor 1 continuous (> 10 unique numeric values), no Covariates, no Subject ID.
 
@@ -315,12 +302,11 @@ The ⓘ button on the bucket title explains its purpose at any time.
 
 ### Pearson vs. Spearman: the decision rule
 
-Shapiro–Wilk runs on both variables using valid pairs after pairwise deletion:
+The choice is driven by sample size and distribution shape (skewness and excess kurtosis), not by a Shapiro–Wilk significance gate. A normality pre-test has too little power at the small $n$ typical of biomedical correlation and rejects trivial departures at large $n$; the app selects on shape tiers instead (the same reasoning behind the Welch-only $t$-test default). Shapiro–Wilk is still computed and shown in the report, but it does not decide the method.
 
-- Both pass ($p > 0.05$) → **Pearson $r$** (assumes bivariate normality).
-- At least one fails → **Spearman $\rho$** (rank-based, no distributional assumption).
-
-With $n < 30$ the Shapiro–Wilk test has limited power. In small samples, Spearman is the conservative choice regardless of the test outcome.
+- $n < 20$ → **Spearman $\rho$** (too few points to judge shape reliably).
+- $20 \leq n < 100$ → **Pearson $r$** if **both** variables have $|\text{skew}| \leq 1.0$ and $|\text{excess kurtosis}| \leq 2.0$; otherwise **Spearman $\rho$**.
+- $n \geq 100$ → **Pearson $r$** unless either variable has $|\text{skew}| > 2.0$ or $|\text{excess kurtosis}| > 4.0$ (extreme asymmetry → Spearman).
 
 ### Correlation→Regression toggle
 
@@ -345,7 +331,7 @@ Strength thresholds follow Cohen (1988): $|r| < 0.10$ negligible, $0.10$–$0.29
 
 ---
 
-## 17. Linear Regression (OLS)
+## 16. Linear Regression (OLS)
 
 **Trigger conditions:** Factor 1 continuous + at least one Covariate assigned. Or: Regression toggle active (no Covariate needed for simple regression).
 
@@ -399,7 +385,7 @@ If **both X and Y are log-transformed** (Log-Log model), $\beta$ represents an e
 
 ---
 
-## 18. Exploratory Correlation Matrix
+## 17. Exploratory Correlation Matrix
 
 **Analysis → Exploratory Correlation Matrix** computes all pairwise correlations across selected numeric variables and corrects for multiple testing.
 
@@ -420,7 +406,7 @@ For $m$ variables, the matrix contains $\binom{m}{2}$ tests. With $m = 20$, that
 
 ---
 
-## 19. ANCOVA / Two-Way ANCOVA
+## 18. ANCOVA / Two-Way ANCOVA
 
 ANCOVA tests group mean differences while partitioning out the linear effect of one or more continuous covariates. The adjusted group mean for group $j$ estimates:
 
@@ -453,7 +439,7 @@ ANCOVA assumes parallel regression slopes. When this assumption fails, the adjus
 
 ---
 
-## 20. Linear Mixed Model (LMM)
+## 19. Linear Mixed Model (LMM)
 
 LMM is the appropriate tool for longitudinal data where the same subjects are measured at multiple levels of a continuous factor (e.g. repeated timepoints, varying pump durations). Unlike simple regression, LMM accounts for the within-subject correlation between repeated measurements.
 
@@ -504,7 +490,7 @@ Fixed effects table ($\hat{\beta}$, SE, $df$, $t/z$, $p$, 95% CI), random effect
 
 ---
 
-## 21. Logistic Regression
+## 20. Logistic Regression
 
 **Trigger conditions:** Dependent Variable contains exactly 2 distinct values, either $\{0, 1\}$ or two unique string labels. The application encodes non-numeric outcomes as 0/1 internally.
 

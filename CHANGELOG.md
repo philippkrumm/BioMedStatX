@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Plots and visualisation
+
+- Non-significant ("n.s.") significance brackets are hidden by default. Only
+  significant pairs are bracketed; a new **Show non-significant brackets**
+  checkbox on the Significance tab draws every tested pair for those who want it.
+  Significance letters and significant-only brackets are unaffected.
+- Box plots show the median and interquartile range only. The mean ± SD/SEM/CI
+  overlay that used to sit on top of the box was removed — it layered a second
+  statistic about a different centre on the same mark. Mean-based error bars stay
+  on the bar and violin plots, where the height already represents the mean.
+- Curated colour palettes are selectable — Nature (the default), Okabe-Ito,
+  Grayscale HC, Muted Pastel, Deep, and Turbo — resolved through a single palette
+  source so the dialog, live preview, and exported figure agree. Beyond a
+  palette's length every group still gets a distinct colour instead of recycling.
+- The raincloud layout was rebuilt to scale with group spacing (violin, box, and
+  points no longer overlap or clip at the edges), significance letters are placed
+  above each group's real top element, and significance brackets are aligned to
+  the 0-based bar positions with clean corners and visible legs.
+- Data points render as a single filled circle instead of cycling through
+  per-index marker shapes.
+- The live plot preview no longer clips long or rotated x-axis labels and the
+  legend; the on-screen figure now fits its labels the way the exported file does.
+
 ### Testing / validation
 
 - Added frozen R golden references for five statistical methods that previously

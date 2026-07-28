@@ -26,16 +26,17 @@ This guide covers Correlation, Linear Regression (OLS), ANCOVA, Linear Mixed Mod
 
 ### Pearson vs. Spearman: the decision
 
-BioMedStatX runs Shapiro–Wilk on both variables using valid pairs after pairwise deletion:
+Using the valid pairs after pairwise deletion, BioMedStatX selects the method by sample size and distribution shape (skewness and excess kurtosis), not by a Shapiro–Wilk significance gate. A normality pre-test has too little power at small $n$ and rejects trivial departures at large $n$, so the app selects on shape tiers instead. Shapiro–Wilk is still computed and shown, but it does not decide the method.
 
-- Both pass ($p > 0.05$): **Pearson $r$** (parametric, assumes bivariate normality).
-- At least one fails: **Spearman $\rho$** (rank-based, no distributional assumption).
+- $n < 20$: **Spearman $\rho$** (too few points to judge shape reliably).
+- $20 \leq n < 100$: **Pearson $r$** if both variables have $|\text{skew}| \leq 1.0$ and $|\text{excess kurtosis}| \leq 2.0$; otherwise **Spearman $\rho$**.
+- $n \geq 100$: **Pearson $r$** unless either variable has $|\text{skew}| > 2.0$ or $|\text{excess kurtosis}| > 4.0$ (extreme asymmetry → Spearman).
 
 Pearson $r$ is defined as:
 
 $$r = \frac{\sum_{i=1}^{n}(x_i - \bar{x})(y_i - \bar{y})}{\sqrt{\sum_{i=1}^{n}(x_i - \bar{x})^2 \sum_{i=1}^{n}(y_i - \bar{y})^2}}$$
 
-With $n < 30$, Shapiro–Wilk has low power. Small samples rarely flag non-normality even when it is present. The conservative choice in that situation is Spearman $\rho$, and we recommend defaulting to it for small clinical datasets.
+The tiers are deliberately conservative at small $n$: below 20 observations the shape statistics are themselves unreliable, so the app defaults to Spearman $\rho$ rather than risk an unwarranted Pearson fit on a small clinical dataset.
 
 You can override the auto-selection in the Exploratory Correlation Matrix dialog. The main analysis respects the auto-selection unless the Regression toggle is used (see below).
 
@@ -47,7 +48,6 @@ You can override the auto-selection in the Exploratory Correlation Matrix dialog
 | **Factor 1** | Continuous predictor (e.g. miRNA-21 expression) |
 | **Covariates** | Leave empty: any entry here triggers OLS Regression |
 | **Subject ID** | Leave empty: any entry here triggers LMM |
-| **Filter** | Optional subgroup restriction |
 
 ### Correlation → Regression toggle
 
@@ -69,7 +69,7 @@ P002      | 1.87     | 1820          | 1
 P003      | 3.12     | 1100          | 1
 ```
 
-Assign `miRNA_21` → Factor 1; `NK_cells_post` → Dependent Variable. To restrict to On-Pump patients: assign `OP_Group` → Filter and select `1`.
+Assign `miRNA_21` → Factor 1; `NK_cells_post` → Dependent Variable.
 
 ### HTML report output
 
@@ -138,7 +138,7 @@ P001      | 87        | 62  | 1600        | 1450          | 1
 P002      | 120       | 71  | 1400        | 1100          | 1
 ```
 
-Assign `Pump_time` → Factor 1; `NK_cells_post` → Dependent Variable; `Age`, `Baseline_NK` → Covariates; `OP_Group` → Filter (value = 1).
+Assign `Pump_time` → Factor 1; `NK_cells_post` → Dependent Variable; `Age`, `Baseline_NK` → Covariates.
 
 ### HTML report output
 
@@ -210,7 +210,7 @@ Tests $H_0$: the linear functional form is correctly specified. Adds $\hat{Y}^2$
 
 When Factor 1 is categorical and the Covariates bucket is populated, the analysis switches to ANCOVA. The covariate is included as a linear term; its effect is partialled out before testing group differences.
 
-For full ANCOVA documentation (adjusted means, slope homogeneity, Simple Slopes, Johnson–Neyman), see **Section 19 of [HowTo.md](./HowTo.md)**.
+For full ANCOVA documentation (adjusted means, slope homogeneity, Simple Slopes, Johnson–Neyman), see **Section 18 of [HowTo.md](./HowTo.md)**.
 
 The key formula: the adjusted group mean for group $j$:
 
@@ -253,7 +253,7 @@ $$\text{ICC} = \frac{\sigma^2_u}{\sigma^2_u + \sigma^2_\varepsilon}$$
 | $0.30$–$0.60$ | Moderate clustering; LMM recommended |
 | $> 0.60$ | Strong clustering; LMM indicated |
 
-For full LMM documentation (Smart Mapping configuration, fixed effects table, convergence), see **Section 20 of [HowTo.md](./HowTo.md)**.
+For full LMM documentation (Smart Mapping configuration, fixed effects table, convergence), see **Section 19 of [HowTo.md](./HowTo.md)**.
 
 ---
 
@@ -273,28 +273,11 @@ Values $> 0.10$ suggest a useful model; $> 0.20$ suggests good fit. Unlike OLS $
 
 When complete separation is detected (SE $> 5$ for any coefficient, or non-convergence), the application switches to Firth Penalized Likelihood. This regularisation method was developed specifically for small samples and rare events and produces finite, reliable estimates where standard ML fails.
 
-For full Logistic Regression documentation (AUC, Brier score, calibration slope, OR table), see **Section 21 of [HowTo.md](./HowTo.md)**.
+For full Logistic Regression documentation (AUC, Brier score, calibration slope, OR table), see **Section 20 of [HowTo.md](./HowTo.md)**.
 
 ---
 
-## 7. Filter Bucket with Regression and Correlation
-
-The Filter restricts the dataset **before** any assumption check or model fitting. Shapiro–Wilk normality tests, reported $n$, and all model coefficients reflect only the filtered rows. The HTML report header identifies the active filter.
-
-**Typical subgroup workflow:**
-
-```
-Filter:              OP_Group = 1      → 93 On-Pump rows
-Factor 1:            Pump_time         → continuous → Regression
-Covariates:          Age, Baseline_NK  → multiple regression
-Dependent Variable:  NK_cells_post
-```
-
-With $n < 20$ and $k$ predictors, the model is underpowered and $R^2_{\text{adj}}$ will be unreliable. Check the filtered $n$ in the bucket label before running.
-
----
-
-## 8. Common Errors
+## 7. Common Errors
 
 | Error | Symptom | Fix |
 |---|---|---|
@@ -307,7 +290,7 @@ With $n < 20$ and $k$ predictors, the model is underpowered and $R^2_{\text{adj}
 
 ---
 
-## 9. Exploratory Correlation Matrix
+## 8. Exploratory Correlation Matrix
 
 **Analysis → Exploratory Correlation Matrix** computes all $\binom{m}{2}$ pairwise correlations for a user-selected set of $m$ numeric variables and corrects for multiple testing.
 
