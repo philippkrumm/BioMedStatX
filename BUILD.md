@@ -100,11 +100,30 @@ C:\bmx_venv\Scripts\pyinstaller.exe BioMedStatX.spec --noconfirm
 
 **macOS / Linux:**
 ```bash
-pyinstaller BioMedStatX.spec --noconfirm
+python -m PyInstaller BioMedStatX.spec --noconfirm
 ```
 
+Invoke PyInstaller as `python -m PyInstaller`, not the bare `pyinstaller` console
+script, and make sure that `python` is the interpreter that actually has the
+project's dependencies installed. The `pyinstaller` script pins its interpreter
+in a shebang, which can differ from the `python` on your PATH (for example when a
+venv's `bin` directory ends up with more than one Python). If PyInstaller runs
+under an interpreter that lacks NumPy or PyQt5, the build still reports success
+but the bundled app crashes at launch with `ModuleNotFoundError: No module named
+'numpy'`. Check the interpreter before building:
+
+```bash
+python -m PyInstaller --version   # prints a version, not "No module named PyInstaller"
+python -c "import numpy, PyQt5"    # must succeed
+```
+
+After the build, confirm the bundle actually runs (a clean exit code does not
+prove it): `open dist/BioMedStatX.app`, or run `dist/BioMedStatX.app/Contents/MacOS/BioMedStatX`
+from a terminal to see any startup traceback.
+
 * Output (Windows): `dist/BioMedStatX/` — onefolder build, ~400 MB.
-* Output (macOS):   `dist/BioMedStatX.app/` — application bundle, ~100 MB.
+* Output (macOS):   `dist/BioMedStatX.app/` — application bundle; size tracks the
+  bundled NumPy/SciPy/PyQt5 build (~100–550 MB).
 
 Build time: 5–10 minutes depending on the machine. Watch `build_log.txt` if
 you tee'd the output. Hidden imports for `pingouin`, `statsmodels`, `scipy`,
