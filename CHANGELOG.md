@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [2.0.0] - 2026-07-29
 
 ### Plots and visualisation
 
@@ -26,6 +26,9 @@ All notable changes to this project will be documented in this file.
   per-index marker shapes.
 - The live plot preview no longer clips long or rotated x-axis labels and the
   legend; the on-screen figure now fits its labels the way the exported file does.
+- The report's interactive decision tree now fits the active path into the frame
+  on load instead of opening zoomed into a corner, with a tighter layout, larger
+  legible node labels, correctly sized arrowheads, and a slower path animation.
 
 ### Testing / validation
 
@@ -42,8 +45,6 @@ All notable changes to this project will be documented in this file.
   to the correct pair. The stale, never-collected `validation/validate_friedman.py`
   script (which read a since-renamed column and would crash) was removed; its one
   complementary structural check is absorbed into the new Friedman golden test.
-
-## [2.0.0] - 2026-07-21
 
 This release is the result of a multi-round statistical and release-readiness
 audit. Many changes make the default behavior more conservative and correct
