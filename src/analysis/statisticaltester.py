@@ -1536,6 +1536,15 @@ class StatisticalTester:
             return {"error": str(e), "test": "Logistic Regression"}
 
     @staticmethod
+    def _sm_anova_df(anova_row):
+        """Integer degrees of freedom from one row (Series) of a statsmodels
+        ``anova_lm()`` table. The df column is named ``"df"`` (not ``"d"``);
+        centralized here so this key lives in exactly one place. Guards against
+        the recurring ``"d"``-vs-``"df"`` typo (commit fbdc675 patched one site,
+        stat_fix.patch another; this helper replaced the remaining eight)."""
+        return int(anova_row["df"])
+
+    @staticmethod
     def _run_mixed_anova(df, dv, subject, between, within, alpha=0.05):
         """
         Performs a Mixed ANOVA. Prefers pingouin, fallback to statsmodels.
@@ -1746,8 +1755,8 @@ class StatisticalTester:
                     "factors": [rm_factor, between_factor],
                     "F": float(row["F"]),
                     "p_value": float(row["PR(>F)"]),
-                    "df1": int(row["d"]),
-                    "df2": int(anova.loc["Residual", "d"]),
+                    "df1": StatisticalTester._sm_anova_df(row),
+                    "df2": StatisticalTester._sm_anova_df(anova.loc["Residual"]),
                     "effect_size": None,
                     "effect_size_type": None
                 }
@@ -2099,7 +2108,7 @@ class StatisticalTester:
                     "type": "within",
                     "F": float(row["F"]),
                     "p_value": float(row["PR(>F)"]),
-                    "df1": int(row["d"]),
+                    "df1": StatisticalTester._sm_anova_df(row),
                     "df2": int(anova.loc['Residual', 'df']),
                     "effect_size": None,
                     "effect_size_type": None
@@ -2107,7 +2116,7 @@ class StatisticalTester:
                 results.update({
                     "p_value": float(row["PR(>F)"]),
                     "statistic": float(row["F"]),
-                    "df1": int(row["d"]),
+                    "df1": StatisticalTester._sm_anova_df(row),
                     "df2": int(anova.loc['Residual', 'df']),
                     "test": f"Repeated Measures ANOVA ({factor}) [statsmodels]"
                 })
@@ -2389,7 +2398,7 @@ class StatisticalTester:
                 if "Residual" not in aov.index:
                     results["error"] = "Residuals not found in statsmodels ANOVA output."
                     return StatisticalTester._standardize_results(results)
-                residual_df = int(aov.loc["Residual", "d"])
+                residual_df = StatisticalTester._sm_anova_df(aov.loc["Residual"])
 
                 # Main effects
                 for factor in [factor_a, factor_b]:
@@ -2404,7 +2413,7 @@ class StatisticalTester:
                         "type": "between",
                         "F": float(row["F"]),
                         "p_value": float(row["PR(>F)"]),
-                        "df1": int(row["d"]),
+                        "df1": StatisticalTester._sm_anova_df(row),
                         "df2": residual_df,
                         "effect_size": None,
                         "effect_size_type": None
@@ -2420,7 +2429,7 @@ class StatisticalTester:
                         "factors": [factor_a, factor_b],
                         "F": float(row["F"]),
                         "p_value": float(row["PR(>F)"]),
-                        "df1": int(row["d"]),
+                        "df1": StatisticalTester._sm_anova_df(row),
                         "df2": residual_df,
                         "effect_size": None,
                         "effect_size_type": None
@@ -2428,7 +2437,7 @@ class StatisticalTester:
                     results["interactions"].append(interaction_result)
                     results["p_value"] = float(row["PR(>F)"])
                     results["statistic"] = float(row["F"])
-                    results["df1"] = int(row["d"])
+                    results["df1"] = StatisticalTester._sm_anova_df(row)
                     results["df2"] = residual_df
                     results["effect_size"] = None
                     results["test"] += " [statsmodels]"
