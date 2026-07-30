@@ -214,7 +214,6 @@
     axisSize: 12,
     alpha: 0.85,
     showPoints: true,
-    showPairedLines: false,
     showErrorBars: true,
     centralMeasure: "mean",
     errorType: "sd",
@@ -255,7 +254,6 @@
     autoPatternsEnabled: false,
     visiblePairIds: [],
     groupLabels: {},
-    spaghettiOpacity: 0.35,
     pointLayout: "jitter",
     grouping: {
       enabled: false,
@@ -276,9 +274,6 @@
   }
 
   function updatePairedLineControlState() {
-    var wrapper = document.getElementById("pd-paired-lines-wrap");
-    var checkbox = document.getElementById("pd-show-paired-lines");
-    var opacityRow = document.getElementById("pd-spaghetti-opacity-row");
     if (!wrapper || !checkbox) {
       return;
     }
@@ -289,7 +284,6 @@
     wrapper.classList.toggle("is-disabled", checkbox.disabled);
     if (!available || raincloudMode) {
       checkbox.checked = false;
-      state.showPairedLines = false;
     }
     if (opacityRow) {
       opacityRow.style.display = (available && !raincloudMode && checkbox.checked) ? "" : "none";
@@ -370,8 +364,6 @@
 
     // Paired lines: Bar, Box, Violin only
     if (barBoxViolin.indexOf(type) === -1) {
-      state.showPairedLines = false;
-      var pairEl = document.getElementById("pd-show-paired-lines");
       if (pairEl) pairEl.checked = false;
     }
 
@@ -483,7 +475,6 @@
   });
 
   if (hasUsableSubjectTrajectories()) {
-    state.showPairedLines = true;
   }
 
   function buildGroupingControls() {
@@ -577,7 +568,6 @@
       pointLayoutEl.value = state.pointLayout || "jitter";
     }
 
-    document.getElementById("pd-show-paired-lines").checked = state.showPairedLines;
     document.getElementById("pd-show-error-bars").checked = state.showErrorBars;
     document.getElementById("pd-central-measure").value = state.centralMeasure;
     syncErrorMetricOptions(state.errorType);
@@ -613,8 +603,6 @@
     document.getElementById("pd-export-width").value = state.exportWidth;
     document.getElementById("pd-export-height").value = state.exportHeight;
     document.getElementById("pd-png-scale").value = String(state.pngScale);
-    var spaghettiOpacityEl = document.getElementById("pd-spaghetti-opacity");
-    if (spaghettiOpacityEl) spaghettiOpacityEl.value = state.spaghettiOpacity;
     
     var groupEnabledEl = document.getElementById("pd-group-enabled");
     if (groupEnabledEl) {
@@ -657,9 +645,7 @@
       state.pointLayout = pointLayoutEl.value || "jitter";
     }
 
-    state.showPairedLines = document.getElementById("pd-show-paired-lines").checked;
     if (!hasUsableSubjectTrajectories()) {
-      state.showPairedLines = false;
     }
     state.showErrorBars = document.getElementById("pd-show-error-bars").checked;
     state.centralMeasure = document.getElementById("pd-central-measure").value || "mean";
@@ -730,10 +716,6 @@
     state.pngScale = parseFloat(document.getElementById("pd-png-scale").value) || 3;
     updateFontPreviewStatus();
 
-    var spaghettiOpacityEl = document.getElementById("pd-spaghetti-opacity");
-    if (spaghettiOpacityEl) {
-      var parsedSpaghettiOpacity = parseFloat(spaghettiOpacityEl.value);
-      state.spaghettiOpacity = Number.isFinite(parsedSpaghettiOpacity) ? Math.min(0.9, Math.max(0.05, parsedSpaghettiOpacity)) : 0.35;
     }
     Array.from(document.querySelectorAll(".pd-node-label-input")).forEach(function (node) {
       if (node.dataset.group) state.groupLabels[node.dataset.group] = node.value;
@@ -1024,7 +1006,6 @@
   }
 
   function buildPairedLineTraces(idxMap) {
-    if (!state.showPairedLines || !hasUsableSubjectTrajectories()) {
       return [];
     }
 
@@ -1051,7 +1032,6 @@
         return;
       }
 
-      var lineOpacity = state.spaghettiOpacity;
       var markerOpacity = Math.min(0.95, lineOpacity + 0.12);
       var lineColor = "rgba(22,49,58," + lineOpacity.toFixed(2) + ")";
       var markerColor = "rgba(22,49,58," + markerOpacity.toFixed(2) + ")";
@@ -1578,7 +1558,6 @@
       };
     }
 
-    if (state.showPairedLines && state.plotType !== "Raincloud" && state.plotType !== "Forest" && state.plotType !== "Estimation") {
       traces = traces.concat(buildPairedLineTraces(idxMap));
     }
 

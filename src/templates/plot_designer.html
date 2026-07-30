@@ -120,11 +120,7 @@
                 <option value="beeswarm">Beeswarm</option>
               </select>
             </div>
-            <label class="pd-check" id="pd-paired-lines-wrap" data-plot-types="Bar,Box,Violin"><input id="pd-show-paired-lines" type="checkbox"> Show individual subject lines (Spaghetti)</label>
-            <div class="pd-row" id="pd-spaghetti-opacity-row" data-plot-types="Bar,Box,Violin">
-              <label for="pd-spaghetti-opacity">Individual line opacity</label>
-              <input id="pd-spaghetti-opacity" type="range" min="0.05" max="0.9" step="0.05" value="0.35">
-            </div>
+
             <div id="pd-error-bar-section" data-plot-types="Bar">
               <label class="pd-check"><input id="pd-show-error-bars" type="checkbox" checked> Show error bars</label>
               <div class="pd-row">
@@ -448,7 +444,7 @@
 
     // Per-tab status dots — dirty if any owned control differs from default, invalid for y-min ≥ y-max
     var tabOwners = {
-      plot:   ["pd-plot-type","pd-show-points","pd-show-paired-lines","pd-spaghetti-opacity","pd-show-error-bars","pd-central-measure","pd-error-type","pd-error-direction"],
+      plot:   ["pd-plot-type","pd-show-points","pd-show-error-bars","pd-central-measure","pd-error-type","pd-error-direction"],
       axes:   ["pd-log-x","pd-log-y","pd-minor-ticks","pd-grid-style","pd-grid-alpha","pd-axis-thickness","pd-tick-direction","pd-x-tick-angle","pd-y-axis-format","pd-y-min","pd-y-max","pd-ref-zero","pd-ref-unit","pd-ref-thresholds","pd-ref-style","pd-ref-width","pd-show-legend","pd-legend-orientation","pd-legend-x","pd-legend-y","pd-legend-xanchor","pd-legend-yanchor"],
       style:  ["pd-title","pd-x-label","pd-y-label","pd-font-family","pd-title-size","pd-axis-size","pd-alpha","pd-auto-pattern"],
       stats:  ["pd-show-significance","pd-significance-line-width","pd-significance-spacing","pd-significance-size","pd-significance-star-offset"],

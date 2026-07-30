@@ -289,8 +289,13 @@ class AnalysisManager:
         # subjects are dropped (they cannot contribute to a paired test).
         _dependent = analysis_context.get("dependent", dependent)
         _subject_col = analysis_context.get("subject_column")
+        _req_test = (analysis_context.get("inferred_test") or kwargs.get("test") or "")
+        
+        # Bypass strict inner-join for models that natively handle unbalanced data (MLE/robust)
+        _mle_models = {"lmm", "logistic_regression"}
+        
         if (_dependent and _subject_col and _subject_col in working_df.columns
-                and len(groups_to_use) == 2):
+                and len(groups_to_use) == 2 and _req_test not in _mle_models):
             g1, g2 = groups_to_use
             _dv_numeric = pd.to_numeric(working_df[primary_dv], errors="coerce")
             _paired = pd.DataFrame({
@@ -1378,6 +1383,11 @@ class AnalysisManager:
             # so it is no longer a silent, report-invisible loss.
             AnalysisManager._merge_preprocessing_notes(results, preprocessing_notes)
 
+            # Ensure analysis_context is available in the common results path
+            # (clinical branch assigns it at line 640; non-clinical branch only
+            # at line 1516 — too late for the _upgraded_from_twoway check below).
+            analysis_context = kwargs.get('analysis_context', {})
+
             # Universal safety net: advanced engines (LMM, RM/Mixed/Two-Way ANOVA,
             # ANCOVA) bypass the per-sample chokepoint and can emit a non-finite
             # statistic / p-value on a degenerate design without raising. Block it
@@ -1623,26 +1633,7 @@ class AnalysisManager:
                 results["_file_paths"] = {
                     "report": os.path.abspath(report_file)
                 }
-            # Special visualization for dependent data
-            if dependent and not skip_plots:
-                try:
-                    line_fig, line_ax = DataVisualizer.plot_dependent_samples(
-                        groups, filtered_samples, width=width, height=height,
-                        colors=colors, title=f"{title} (dependent measurements)" if title else "Dependent measurements",
-                        x_label=x_label, y_label=y_label,
-                        save_plot=save_plot, file_name=file_base+"_lines",
-                        show_individual=show_individual_lines
-                    )
-                    get_matplotlib_pyplot().close(line_fig)
-                    line_plot_base = file_base+"_lines"
-                    results["_file_paths"]["pdf_lines"] = os.path.abspath(f"{line_plot_base}.pdf")
-                    results["_file_paths"]["png_lines"] = os.path.abspath(f"{line_plot_base}.png")
-                    analysis_log += "\nAdditional line plot for dependent data created:\n"
-                    analysis_log += f"  {line_plot_base}.pdf\n"
-                    analysis_log += f"  {line_plot_base}.png\n"
-                except Exception as e:
-                    analysis_log += f"\nError creating line plot for dependent data: {str(e)}\n"
-                    logger.error(f"Error creating line plot: {str(e)}")
+
             if results.get('transformation', 'None') != 'None':
                 results['transformed_data'] = transformed_samples
 

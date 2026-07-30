@@ -1,0 +1,130 @@
+diff --git a/src/analysis/statisticaltester.py b/src/analysis/statisticaltester.py
+index 4ecf58d..6855cf7 100644
+--- a/src/analysis/statisticaltester.py
++++ b/src/analysis/statisticaltester.py
+@@ -472,8 +472,12 @@ class StatisticalTester:
+         results["effect_size"] = cohen_d
+         n = len(diff)
+         stderr = std_diff / np.sqrt(n) if std_diff > 0 else 0
++        
++        mean_diff = np.mean(diff)
++        results["mean_difference"] = mean_diff
++        
+         t = stats.t
+-        ci = t.interval(1 - alpha, n-1, loc=np.mean(diff), scale=stderr)
++        ci = t.interval(1 - alpha, n-1, loc=mean_diff, scale=stderr)
+         results["confidence_interval"] = ci
+         try:
+             if cohen_d is not None:
+@@ -621,6 +625,7 @@ class StatisticalTester:
+ 
+         results["effect_size"] = cohen_d
+         mean_diff = np.mean(data1_arr) - np.mean(data2_arr)
++        results["mean_difference"] = mean_diff
+         t = stats.t
+         ci = t.interval(1 - alpha, df, loc=mean_diff, scale=stderr_diff)
+         results["confidence_interval"] = ci
+@@ -1320,9 +1325,17 @@ class StatisticalTester:
+         return StatisticalTester._standardize_results(results)
+     
+     @staticmethod
+-    def _run_mixed_anova_logged(df, dv, subject, between, within, alpha=0.05):
+-        # 'extract_raw' can be a function that extracts raw data
+-        return StatisticalTester._run_any_parametric_test(
++    def _run_mixed_anova_logged(df, dv, subject, between, within, alpha=0.05, test_info=None, **kwargs):
++        averaged_replicates = False
++        group_cols = [subject] + within
++        if df.duplicated(subset=group_cols).any():
++            import logging
++            logger = logging.getLogger(__name__)
++            logger.info("Technical replicates detected for Mixed ANOVA. Averaging values per subject.")
++            df = df.groupby(group_cols, as_index=False)[dv].mean()
++            averaged_replicates = True
++
++        results = StatisticalTester._run_any_parametric_test(
+             df=df,
+             dv=dv,
+             subject=subject,
+@@ -1330,8 +1343,19 @@ class StatisticalTester:
+             within=within,
+             alpha=alpha,
+             test_func=StatisticalTester._run_mixed_anova,
+-            extract_raw=StatisticalTester._extract_raw_data_mixed_anova
++            extract_raw=StatisticalTester._extract_raw_data_mixed_anova,
++            test_info=test_info,
++            **kwargs
+         )
++
++        if averaged_replicates:
++            if "health" not in results:
++                results["health"] = {}
++            if "warnings" not in results["health"]:
++                results["health"]["warnings"] = []
++            results["health"]["warnings"].append("Technische Replikate (mehrere Messungen pro Proband x Messzeitpunkt) erkannt. Die Daten wurden vor der Analyse auf Probandenebene gemittelt.")
++            
++        return results
+     
+     @staticmethod
+     def _extract_raw_data_mixed_anova(df, dv, between, within, subject):
+@@ -1353,6 +1377,15 @@ class StatisticalTester:
+         if 'test_info' in kwargs:
+             test_info = kwargs.pop('test_info')
+             
++        averaged_replicates = False
++        group_cols = [subject] + within
++        if df.duplicated(subset=group_cols).any():
++            import logging
++            logger = logging.getLogger(__name__)
++            logger.info("Technical replicates detected for RM ANOVA. Averaging values per subject.")
++            df = df.groupby(group_cols, as_index=False)[dv].mean()
++            averaged_replicates = True
++            
+         results = StatisticalTester._run_any_parametric_test(
+             df=df,
+             dv=dv,
+@@ -1367,6 +1400,13 @@ class StatisticalTester:
+             test_info=test_info  # Pass the test_info parameter
+         )
+         
++        if averaged_replicates:
++            if "health" not in results:
++                results["health"] = {}
++            if "warnings" not in results["health"]:
++                results["health"]["warnings"] = []
++            results["health"]["warnings"].append("Technische Replikate (mehrere Messungen pro Proband x Messzeitpunkt) erkannt. Die Daten wurden vor der Analyse auf Probandenebene gemittelt.")
++            
+         # Ensure test_info is added to results
+         if test_info is not None and "test_info" not in results:
+             results["test_info"] = test_info
+@@ -1694,8 +1734,8 @@ class StatisticalTester:
+                         "type": "within" if orig_factor == rm_factor else "between",
+                         "F": float(row["F"]),
+                         "p_value": float(row["PR(>F)"]),
+-                        "df1": int(row["d"]),
+-                        "df2": int(anova.loc["Residual", "d"]),
++                        "df1": int(row["df"]),
++                        "df2": int(anova.loc["Residual", "df"]),
+                         "effect_size": None,
+                         "effect_size_type": None
+                     })
+@@ -1936,11 +1976,16 @@ class StatisticalTester:
+                     _mauchly_p = sphericity_results.get("mauchly_p")
+                     _epsilon = sphericity_results.get("epsilon")
+                     _correction = sphericity_results.get("correction_applied", "none")
+-                    _mp_str = f"p = {_mauchly_p:.3f}" if isinstance(_mauchly_p, (float, int)) else "p = N/A"
++                    
++                    if isinstance(_mauchly_p, (float, int)):
++                        _mp_str = f"p = {_mauchly_p:.3f}"
++                        _mp_detail_assumed = f"Mauchly's test: sphericity assumed ({_mp_str}). No correction applied."
++                    else:
++                        _mp_str = "not applicable (only 2 levels)"
++                        _mp_detail_assumed = "Mauchly's test: sphericity assumed (only 2 levels, test not applicable). No correction applied."
++
+                     if _spher_met:
+-                        _trace.add(3, "Sphericity",
+-                                   f"Mauchly's test: sphericity assumed ({_mp_str}). No correction applied.",
+-                                   detail=_mp_str)
++                        _trace.add(3, "Sphericity", _mp_detail_assumed, detail=_mp_str)
+                     else:
+                         _corr_name = "Greenhouse-Geisser" if "GG" in str(_correction).upper() else "Huynh-Feldt"
+                         _eps_str = f"ε = {_epsilon:.3f}" if isinstance(_epsilon, (float, int)) else "ε = N/A"
