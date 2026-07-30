@@ -1330,9 +1330,19 @@ class StatisticalTester:
         group_cols = [subject] + within
         if df.duplicated(subset=group_cols).any():
             import logging
+            from analysis.emm_posthoc import UnsupportedDesignError
             logger = logging.getLogger(__name__)
+            # A between factor is constant per subject by definition, so it must
+            # be a grouping key when averaging technical replicates -- otherwise
+            # groupby([subject] + within).mean() drops the between column and the
+            # Mixed ANOVA raises KeyError downstream. Guard the constancy first
+            # (same contract and message as emm_posthoc): a mis-entered subject
+            # carrying two between values is rejected loudly instead of being
+            # silently split into two pseudo-subjects by the grouping.
+            if (df.groupby(subject)[between[0]].nunique() > 1).any():
+                raise UnsupportedDesignError("each subject must belong to one between group")
             logger.info("Technical replicates detected for Mixed ANOVA. Averaging values per subject.")
-            df = df.groupby(group_cols, as_index=False)[dv].mean()
+            df = df.groupby([subject] + between + within, as_index=False)[dv].mean()
             averaged_replicates = True
 
         results = StatisticalTester._run_any_parametric_test(

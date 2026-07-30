@@ -22,6 +22,7 @@ import pandas as pd
 import pytest
 
 from analysis.statisticaltester import StatisticalTester
+from analysis.emm_posthoc import UnsupportedDesignError
 from export.report_summaries import _SummariesMixin
 
 REPLICATE_MARK = "Technische Replikate"
@@ -62,19 +63,40 @@ def test_rm_replicate_averaging_warning_reaches_report():
     )
 
 
-@pytest.mark.xfail(
-    reason="Separate bug: _run_mixed_anova_logged averages technical replicates "
-    "with groupby([subject] + within), which drops the between factor and raises "
-    "KeyError before the (now-fixed) data_health warning is written. The RM sibling "
-    "is correct. Remove this marker when the mixed averaging keeps the between factor.",
-    strict=False,
-)
 def test_mixed_replicate_averaging_warning_reaches_report():
     df = _mixed_df_with_replicates()
     results = StatisticalTester._run_mixed_anova_logged(
         df=df, dv="dv", subject="subject", between=["group"], within=["time"], alpha=0.05
     )
+    # The between factor must survive the averaging (no KeyError), and the notice
+    # must reach the one rendered channel.
+    assert results.get("error") is None, f"unexpected error: {results.get('error')!r}"
     rendered = _SummariesMixin._build_data_health_warnings(results)
     assert any(REPLICATE_MARK in w for w in rendered), (
         f"replicate-averaging warning missing from the rendered data-health channel; got {rendered!r}"
     )
+
+
+def _mixed_df_inconsistent_between():
+    # Data-entry error: subject S0 carries two different between values across its
+    # rows. With replicates present, averaging must reject this loudly rather than
+    # silently split S0 into two pseudo-subjects.
+    rng = np.random.RandomState(9)
+    rows = []
+    for s in range(8):
+        grp = "A" if s < 4 else "B"
+        base = rng.randn()
+        for t in ("T1", "T2", "T3"):
+            for _rep in range(2):
+                rows.append({"subject": f"S{s}", "group": grp, "time": t, "dv": base + rng.randn()})
+    df = pd.DataFrame(rows)
+    df.loc[(df["subject"] == "S0") & (df["time"] == "T1"), "group"] = "B"  # S0 now spans A and B
+    return df
+
+
+def test_mixed_inconsistent_between_rejected_loudly():
+    df = _mixed_df_inconsistent_between()
+    with pytest.raises(UnsupportedDesignError):
+        StatisticalTester._run_mixed_anova_logged(
+            df=df, dv="dv", subject="subject", between=["group"], within=["time"], alpha=0.05
+        )
