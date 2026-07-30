@@ -506,16 +506,23 @@ class _StatRowsMixin:
                 ("Statistic", "statistic"),
                 ("p-value", "p_value"),
                 ("Effect size", "effect_size"),
-                ("Effect size type", "effect_size_type"),
                 ("Degrees of freedom 1", "df1"),
                 ("Degrees of freedom 2", "df2"),
             ]:
                 value = results.get(key)
                 if key in results and _FormattingMixin._has_display_value(value):
                     if key == "p_value":
-                        rows.append({"label": label, "value": _FormattingMixin._format_p_value(value)})
+                        display = _FormattingMixin._format_p_value(value)
+                    elif key == "effect_size":
+                        display = _FormattingMixin._format_metric(value)
+                        es_type = results.get("effect_size_type")
+                        if es_type:
+                            es_name = "partial η²" if "partial" in str(es_type).lower() and "eta" in str(es_type).lower() else \
+                                      "η²" if "eta" in str(es_type).lower() else str(es_type)
+                            display = f"{display} ({es_name})"
                     else:
-                        rows.append({"label": label, "value": _FormattingMixin._format_metric(value)})
+                        display = _FormattingMixin._format_metric(value)
+                    rows.append({"label": label, "value": display})
 
         # Primary effect summary line (e.g. "Main effect: Timepoint")
         primary_effect = results.get("primary_effect") or {}
@@ -577,15 +584,22 @@ class _StatRowsMixin:
         else:
             stat_label = "Statistic"
 
+        ci_label = "Confidence interval"
+        test_name = str(results.get("test", "")).lower()
+        if "t-test" in test_name:
+            ci_label = "95% CI (mean difference)"
+        elif "mann-whitney" in test_name or "wilcoxon" in test_name:
+            ci_label = "95% CI (location shift)"
+
         for label, key in [
             ("Test", "test"),
             ("Model type", "model_type"),
             (stat_label, "statistic"),
+            ("Mean difference", "mean_difference"),
+            (ci_label, "confidence_interval"),
             ("p-value", "p_value"),
             ("Adjusted p-value", "p_value_fdr"),
             ("Effect size", "effect_size"),
-            ("Effect size type", "effect_size_type"),
-            ("Confidence interval", "confidence_interval"),
             ("Degrees of freedom 1", "df1"),
             ("Degrees of freedom 2", "df2"),
             ("Transformation", "transformation"),
@@ -597,6 +611,13 @@ class _StatRowsMixin:
                     display = _FormattingMixin._format_p_value(value)
                 elif key == "confidence_interval":
                     display = _FormattingMixin._format_confidence_interval(value)
+                elif key == "effect_size":
+                    display = _FormattingMixin._format_metric(value)
+                    es_type = results.get("effect_size_type")
+                    if es_type:
+                        es_name = "partial η²" if "partial" in str(es_type).lower() and "eta" in str(es_type).lower() else \
+                                  "η²" if "eta" in str(es_type).lower() else str(es_type)
+                        display = f"{display} ({es_name})"
                 else:
                     display = _FormattingMixin._format_metric(value)
                 rows.append({"label": label, "value": display})

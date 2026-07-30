@@ -402,7 +402,8 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
                 "Sphericity (Mauchly\u2019s W) is only relevant for repeated-measures designs. "
                 "A violation triggers an adjustment of degrees of freedom: "
                 "Greenhouse\u2013Geisser (\u03b5\u202f<\u202f0.75) or Huynh\u2013Feldt "
-                "(\u03b5\u202f\u2265\u202f0.75) is selected automatically."
+                "(\u03b5\u202f\u2265\u202f0.75) is selected automatically.\n"
+                "For regression, homoscedasticity is assessed via Breusch-Pagan, and linearity via Ramsey RESET."
             ),
             "descriptive": (
                 "Summary statistics for each group:\n"

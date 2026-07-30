@@ -156,23 +156,42 @@ class _FormattingMixin:
         }
 
     @staticmethod
-    def _format_metric(value: Any, digits: int = 4) -> str:
+    def _format_metric(value: Any, digits: int = 4, force_sci: bool | None = None) -> str:
         if value is None:
             return "N/A"
         if isinstance(value, str):
             return value
         if isinstance(value, (list, tuple)):
-            return ", ".join(_FormattingMixin._format_metric(item, digits=digits) for item in value)
+            return ", ".join(_FormattingMixin._format_metric(item, digits=digits, force_sci=force_sci) for item in value)
         if isinstance(value, (int, float, np.generic)):
             numeric = float(value)
             if math.isnan(numeric):
                 return "N/A"
             if math.isinf(numeric):
                 return "Infinity" if numeric > 0 else "-Infinity"
-            if abs(numeric) >= 1000 or (abs(numeric) > 0 and abs(numeric) < 0.001):
+            use_sci = force_sci
+            if use_sci is None:
+                use_sci = abs(numeric) >= 1000 or (abs(numeric) > 0 and abs(numeric) < 0.001)
+            if use_sci:
                 return f"{numeric:.3e}"
             return f"{numeric:.{digits}f}"
         return str(value)
+
+    @staticmethod
+    def _format_metric_row(metrics: dict[str, Any], digits: int = 4) -> dict[str, str]:
+        """Format a dictionary of metrics consistently based on the maximum magnitude."""
+        use_sci = False
+        for val in metrics.values():
+            if isinstance(val, (int, float, np.generic)):
+                numeric = float(val)
+                if not math.isnan(numeric) and not math.isinf(numeric):
+                    if abs(numeric) >= 1000 or (abs(numeric) > 0 and abs(numeric) < 0.001):
+                        use_sci = True
+                        break
+        return {
+            k: _FormattingMixin._format_metric(v, digits=digits, force_sci=use_sci)
+            for k, v in metrics.items()
+        }
 
     @staticmethod
     def _sci_notation(value: float) -> str:
@@ -216,7 +235,7 @@ class _FormattingMixin:
 
     @staticmethod
     def _bool_label(value: Any) -> str:
-        if value is None:
+        if value is None or (isinstance(value, str) and value.strip().upper() in ("N/A", "NA", "", "NONE", "NAN")):
             return "Not available"
         try:
             return "Passed" if bool(value) else "Flagged"
@@ -225,7 +244,7 @@ class _FormattingMixin:
 
     @staticmethod
     def _bool_class(value: Any) -> str:
-        if value is None:
+        if value is None or (isinstance(value, str) and value.strip().upper() in ("N/A", "NA", "", "NONE", "NAN")):
             return "is-neutral"
         try:
             return "is-significant" if bool(value) else "is-danger"

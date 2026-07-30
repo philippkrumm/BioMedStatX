@@ -796,7 +796,10 @@ class SimpleLinearRegressionModel:
             return {}
 
         diag = {}
-        residuals = self.result.resid.values
+        try:
+            residuals = np.asarray(self.result.resid)
+        except Exception:
+            residuals = np.array([])
         n = len(residuals)
 
         # 1. Normality of residuals (Shapiro-Wilk)

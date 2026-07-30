@@ -167,41 +167,74 @@ class _SummariesMixin:
                 })
 
         # --- Linear Regression: diagnostics (Shapiro-Wilk residuals, Breusch-Pagan, Ramsey RESET) ---
-        elif model_type == "LinearRegression":
+        if model_type == "LinearRegression":
             diag = results.get("diagnostics") or {}
+            
             norm_d = diag.get("normality") or {}
-            if norm_d and "p_value" in norm_d:
-                rows.append({
-                    "name": "Normality of residuals (Shapiro-Wilk)",
-                    "statistic": _FormattingMixin._format_metric(norm_d.get("statistic")),
-                    "p_value": _FormattingMixin._format_p_value(norm_d.get("p_value")),
-                    "p_value_style": _FormattingMixin._p_heat_style(norm_d.get("p_value")),
-                    "status_label": _FormattingMixin._bool_label(norm_d.get("assumption_holds")),
-                    "status_class": _FormattingMixin._bool_class(norm_d.get("assumption_holds")),
-                })
+            if norm_d:
+                if "error" in norm_d:
+                    rows.append({
+                        "name": "Normality of residuals (Shapiro-Wilk)",
+                        "statistic": "N/A",
+                        "p_value": "—",
+                        "p_value_style": "",
+                        "status_label": f"Test failed: {norm_d.get('error')}",
+                        "status_class": "is-neutral",
+                    })
+                elif "p_value" in norm_d:
+                    rows.append({
+                        "name": "Normality of residuals (Shapiro-Wilk)",
+                        "statistic": _FormattingMixin._format_metric(norm_d.get("statistic")),
+                        "p_value": _FormattingMixin._format_p_value(norm_d.get("p_value")),
+                        "p_value_style": _FormattingMixin._p_heat_style(norm_d.get("p_value")),
+                        "status_label": _FormattingMixin._bool_label(norm_d.get("assumption_holds")),
+                        "status_class": _FormattingMixin._bool_class(norm_d.get("assumption_holds")),
+                    })
+                    
             homo_d = diag.get("homoscedasticity") or {}
-            if homo_d and "p_value" in homo_d:
-                rows.append({
-                    "name": "Homoscedasticity (Breusch-Pagan)",
-                    "statistic": _FormattingMixin._format_metric(homo_d.get("statistic")),
-                    "p_value": _FormattingMixin._format_p_value(homo_d.get("p_value")),
-                    "p_value_style": _FormattingMixin._p_heat_style(homo_d.get("p_value")),
-                    "status_label": _FormattingMixin._bool_label(homo_d.get("assumption_holds")),
-                    "status_class": _FormattingMixin._bool_class(homo_d.get("assumption_holds")),
-                })
+            if homo_d:
+                if "error" in homo_d:
+                    rows.append({
+                        "name": "Homoscedasticity (Breusch-Pagan)",
+                        "statistic": "N/A",
+                        "p_value": "—",
+                        "p_value_style": "",
+                        "status_label": f"Test failed: {homo_d.get('error')}",
+                        "status_class": "is-neutral",
+                    })
+                elif "p_value" in homo_d:
+                    rows.append({
+                        "name": "Homoscedasticity (Breusch-Pagan)",
+                        "statistic": _FormattingMixin._format_metric(homo_d.get("statistic")),
+                        "p_value": _FormattingMixin._format_p_value(homo_d.get("p_value")),
+                        "p_value_style": _FormattingMixin._p_heat_style(homo_d.get("p_value")),
+                        "status_label": _FormattingMixin._bool_label(homo_d.get("assumption_holds")),
+                        "status_class": _FormattingMixin._bool_class(homo_d.get("assumption_holds")),
+                    })
+                    
             lin_d = diag.get("linearity") or {}
-            if lin_d and "p_value" in lin_d:
-                rows.append({
-                    "name": "Linearity (Ramsey RESET)",
-                    "statistic": _FormattingMixin._format_metric(lin_d.get("statistic")),
-                    "p_value": _FormattingMixin._format_p_value(lin_d.get("p_value")),
-                    "p_value_style": _FormattingMixin._p_heat_style(lin_d.get("p_value")),
-                    "status_label": _FormattingMixin._bool_label(lin_d.get("assumption_holds")),
-                    "status_class": _FormattingMixin._bool_class(lin_d.get("assumption_holds")),
-                })
+            if lin_d:
+                if "error" in lin_d:
+                    rows.append({
+                        "name": "Linearity (Ramsey RESET)",
+                        "statistic": "N/A",
+                        "p_value": "—",
+                        "p_value_style": "",
+                        "status_label": f"Test failed: {lin_d.get('error')}",
+                        "status_class": "is-neutral",
+                    })
+                elif "p_value" in lin_d:
+                    rows.append({
+                        "name": "Linearity (Ramsey RESET)",
+                        "statistic": _FormattingMixin._format_metric(lin_d.get("statistic")),
+                        "p_value": _FormattingMixin._format_p_value(lin_d.get("p_value")),
+                        "p_value_style": _FormattingMixin._p_heat_style(lin_d.get("p_value")),
+                        "status_label": _FormattingMixin._bool_label(lin_d.get("assumption_holds")),
+                        "status_class": _FormattingMixin._bool_class(lin_d.get("assumption_holds")),
+                    })
 
         # --- Logistic Regression: Hosmer-Lemeshow goodness-of-fit + AUC interpretation ---
-        elif model_type == "LogisticRegression":
+        if model_type == "LogisticRegression":
             hl = results.get("hosmer_lemeshow") or {}
             if hl and "p_value" in hl:
                 hl_p = hl.get("p_value")
@@ -237,7 +270,7 @@ class _SummariesMixin:
                 })
 
         # --- ANCOVA: residual normality + slope homogeneity ---
-        elif model_type == "ANCOVA":
+        if model_type == "ANCOVA":
             normality_tests = results.get("normality_tests") or {}
             if normality_tests:
                 for label, payload in normality_tests.items():
@@ -277,7 +310,7 @@ class _SummariesMixin:
                 })
 
         # --- LMM: convergence + ICC + residual normality ---
-        elif model_type == "LMM":
+        if model_type == "LMM":
             normality_tests = results.get("normality_tests") or {}
             if normality_tests:
                 for label, payload in normality_tests.items():
@@ -323,9 +356,7 @@ class _SummariesMixin:
             })
 
         # --- Standard tests: normality_tests + fallback from test_info ---
-        elif model_type == "CorrelationMatrix":
-            pass  # handled above in dedicated CorrelationMatrix block
-        else:
+        if model_type not in ("CorrelationMatrix", "Correlation", "LinearRegression", "LogisticRegression", "ANCOVA", "LMM"):
             normality_tests = results.get("normality_tests", {}) or {}
             # Fallback: extract from nested test_info structure used by one-way ANOVA path
             test_info_raw = results.get("test_info", {}) or {}
@@ -558,15 +589,19 @@ class _SummariesMixin:
                     if not vals:
                         continue
                     arr = np.array(vals, dtype=float)
+                    stats_dict = {
+                        "mean": float(np.mean(arr)),
+                        "median": float(np.median(arr)),
+                        "sd": float(np.std(arr, ddof=1)) if len(arr) > 1 else None,
+                        "sem": float(stats.sem(arr)) if len(arr) > 1 else None,
+                        "min": float(np.min(arr)),
+                        "max": float(np.max(arr)),
+                    }
+                    formatted = _FormattingMixin._format_metric_row(stats_dict)
                     rows.append({
                         "group": str(label),
                         "n": len(arr),
-                        "mean": _FormattingMixin._format_metric(float(np.mean(arr))),
-                        "median": _FormattingMixin._format_metric(float(np.median(arr))),
-                        "sd": _FormattingMixin._format_metric(float(np.std(arr, ddof=1)) if len(arr) > 1 else None),
-                        "sem": _FormattingMixin._format_metric(float(stats.sem(arr)) if len(arr) > 1 else None),
-                        "min": _FormattingMixin._format_metric(float(np.min(arr))),
-                        "max": _FormattingMixin._format_metric(float(np.max(arr))),
+                        **formatted
                     })
             return {
                 "rows": rows,
@@ -653,35 +688,60 @@ class _SummariesMixin:
                 numeric = _FormattingMixin._coerce_numeric_sequence(values)
                 if not numeric:
                     continue
+                stats_dict = {
+                    "mean": np.mean(numeric),
+                    "median": np.median(numeric),
+                    "sd": np.std(numeric, ddof=1) if len(numeric) > 1 else None,
+                    "sem": stats.sem(numeric) if len(numeric) > 1 else None,
+                    "min": np.min(numeric),
+                    "max": np.max(numeric),
+                }
+                formatted = _FormattingMixin._format_metric_row(stats_dict)
                 rows.append({
                     "group": str(group_name),
                     "n": len(numeric),
-                    "mean": _FormattingMixin._format_metric(np.mean(numeric)),
-                    "median": _FormattingMixin._format_metric(np.median(numeric)),
-                    "sd": _FormattingMixin._format_metric(np.std(numeric, ddof=1) if len(numeric) > 1 else None),
-                    "sem": _FormattingMixin._format_metric(stats.sem(numeric) if len(numeric) > 1 else None),
-                    "min": _FormattingMixin._format_metric(np.min(numeric)),
-                    "max": _FormattingMixin._format_metric(np.max(numeric)),
+                    **formatted
                 })
         if not rows and results.get("descriptive"):
             for group_name, payload in (results.get("descriptive") or {}).items():
                 if not isinstance(payload, dict):
                     continue
+                stats_dict = {
+                    "mean": payload.get("mean"),
+                    "median": payload.get("median"),
+                    "sd": payload.get("sd") or payload.get("std"),
+                    "sem": payload.get("sem"),
+                    "min": payload.get("min"),
+                    "max": payload.get("max"),
+                }
+                formatted = _FormattingMixin._format_metric_row(stats_dict)
                 rows.append({
                     "group": str(group_name),
                     "n": _FormattingMixin._format_metric(payload.get("n")),
-                    "mean": _FormattingMixin._format_metric(payload.get("mean")),
-                    "median": _FormattingMixin._format_metric(payload.get("median")),
-                    "sd": _FormattingMixin._format_metric(payload.get("sd") or payload.get("std")),
-                    "sem": _FormattingMixin._format_metric(payload.get("sem")),
-                    "min": _FormattingMixin._format_metric(payload.get("min")),
-                    "max": _FormattingMixin._format_metric(payload.get("max")),
+                    **formatted
                 })
+        has_tr = bool(transformed and transformed != raw_data)
+        note_str = None
+        if has_tr:
+            tr_notes = []
+            for group_name, values in transformed.items():
+                numeric = _FormattingMixin._coerce_numeric_sequence(values)
+                if not numeric:
+                    continue
+                mean = np.mean(numeric)
+                sd = np.std(numeric, ddof=1) if len(numeric) > 1 else 0.0
+                mean_str = _FormattingMixin._format_metric(float(mean))
+                sd_str = _FormattingMixin._format_metric(float(sd))
+                tr_notes.append(f"{group_name}: {mean_str} ± {sd_str}")
+            if tr_notes:
+                note_str = "Transformed-scale means (Mean ± SD): " + "; ".join(tr_notes)
+
         return {
             "rows": rows,
-            "has_transformed": bool(transformed and transformed != raw_data),
+            "has_transformed": has_tr,
             "title": "Group-level summary",
             "group_col_label": "Group",
+            "note": note_str,
         }
 
     @staticmethod
