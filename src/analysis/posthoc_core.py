@@ -1088,13 +1088,15 @@ class DunnTest(PostHocAnalyzer):
         reject, p_adj, _, _ = multipletests(pvals, alpha=alpha, method='holm-sidak')
 
         # 3) Loop over pairs and compute effect & CI
-        for (g1, g2), pval_adj, sig in zip(pairs, p_adj, reject):
+        for (g1, g2), pval_adj, sig, raw_pval in zip(pairs, p_adj, reject, pvals):
             x, y = clean[g1], clean[g2]
-            # Mann–Whitney U for effect‐size r
-            U, _ = mannwhitneyu(x, y, alternative='two-sided')
             n1, n2 = len(x), len(y)
-            z = (U - n1 * n2 / 2) / np.sqrt(n1 * n2 * (n1 + n2 + 1) / 12)
-            effect_r = abs(z) / np.sqrt(n1 + n2)
+            # The Dunn test uses a global ranking, so we extract the exact absolute
+            # Z-statistic from the unadjusted p-value rather than running a local
+            # Mann-Whitney U test (which loses the ties/global rank context).
+            from scipy.stats import norm
+            z = norm.isf(raw_pval / 2)
+            effect_r = z / np.sqrt(n1 + n2)
 
             # Bootstrap CI - np.subtract.outer(b1, b2) computes the identical
             # n1×n2 pairwise-difference matrix as the equivalent nested
@@ -1114,7 +1116,7 @@ class DunnTest(PostHocAnalyzer):
                 group2=g2,
                 test="Dunn",
                 p_value=pval_adj,
-                statistic=None,
+                statistic=z,
                 corrected=True,
                 correction_method="Holm-Šidák",
                 effect_size=effect_r,
