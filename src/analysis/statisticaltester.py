@@ -1694,8 +1694,8 @@ class StatisticalTester:
                         "type": "within" if orig_factor == rm_factor else "between",
                         "F": float(row["F"]),
                         "p_value": float(row["PR(>F)"]),
-                        "df1": int(row["d"]),
-                        "df2": int(anova.loc["Residual", "d"]),
+                        "df1": int(row["df"]),
+                        "df2": int(anova.loc["Residual", "df"]),
                         "effect_size": None,
                         "effect_size_type": None
                     })
