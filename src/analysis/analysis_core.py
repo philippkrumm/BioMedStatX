@@ -316,17 +316,20 @@ class AnalysisManager:
         _subj = analysis_context.get("subject_column")
         _factors = analysis_context.get("factor_columns", [])
         if inferred_test == "two_way_anova" and _subj and len(_factors) == 2:
-            inferred_test = "mixed_anova"
-            # Ensure between and within factors are defined if they were lost
-            if not analysis_context.get("between_factors") or not analysis_context.get("within_factors"):
-                # As a last resort fallback, treat the first factor as between, second as within
-                # (which aligns with the template instructions: Timepoint->Factor 1, BetweenGrp->Factor 2
-                # Wait, Timepoint (within) is Factor 1, BetweenGrp (between) is Factor 2)
-                # We can just check the UI buckets or rely on the fact that if it failed, we must guess.
-                # Actually, role_by_factor in autopilot usually works, but if it failed, let's use the template mapping:
-                analysis_context["between_factors"] = [_factors[1]] if len(_factors) > 1 else [_factors[0]]
-                analysis_context["within_factors"] = [_factors[0]]
-
+            # Re-evaluate nunique to confirm it's actually a repeated measures design
+            role_by_factor = {}
+            for factor in _factors:
+                per_subject = working_df.groupby(_subj)[factor].nunique(dropna=True)
+                role_by_factor[factor] = "between" if not per_subject.empty and per_subject.max() <= 1 else "within"
+            
+            between_factors = [f for f, r in role_by_factor.items() if r == "between"]
+            within_factors = [f for f, r in role_by_factor.items() if r == "within"]
+            
+            if len(between_factors) == 1 and len(within_factors) == 1:
+                inferred_test = "mixed_anova"
+                analysis_context["between_factors"] = between_factors
+                analysis_context["within_factors"] = within_factors
+                analysis_context["_upgraded_from_twoway"] = True
         if inferred_test in {"two_way_anova", "mixed_anova", "repeated_measures_anova",
                              "ancova", "two_way_ancova", "lmm", "logistic_regression",
                              "correlation", "linear_regression"}:
@@ -1377,6 +1380,13 @@ class AnalysisManager:
             # group labels) in the persistent report via the data_health channel
             # so it is no longer a silent, report-invisible loss.
             AnalysisManager._merge_preprocessing_notes(results, preprocessing_notes)
+            
+            if analysis_context.get("_upgraded_from_twoway"):
+                if "data_health" not in results:
+                    results["data_health"] = {}
+                if "warnings" not in results["data_health"]:
+                    results["data_health"]["warnings"] = []
+                results["data_health"]["warnings"].append("Die explizit ausgewählte Two-Way ANOVA wurde automatisch zu einer Mixed ANOVA aufgewertet, da eine Subject-ID zugewiesen wurde und echte Messwiederholungen im Datensatz erkannt wurden (zur Vermeidung von Pseudoreplikation).")
 
             # Universal safety net: advanced engines (LMM, RM/Mixed/Two-Way ANOVA,
             # ANCOVA) bypass the per-sample chokepoint and can emit a non-finite
