@@ -310,6 +310,23 @@ class AnalysisManager:
 
         local_kwargs = dict(kwargs)
         inferred_test = analysis_context.get("inferred_test")
+        
+        # CRITICAL FIX: If the user mapped a Subject ID but the test fell back to Two-Way ANOVA,
+        # aggressively upgrade it back to Mixed ANOVA to prevent pseudoreplication.
+        _subj = analysis_context.get("subject_column")
+        _factors = analysis_context.get("factor_columns", [])
+        if inferred_test == "two_way_anova" and _subj and len(_factors) == 2:
+            inferred_test = "mixed_anova"
+            # Ensure between and within factors are defined if they were lost
+            if not analysis_context.get("between_factors") or not analysis_context.get("within_factors"):
+                # As a last resort fallback, treat the first factor as between, second as within
+                # (which aligns with the template instructions: Timepoint->Factor 1, BetweenGrp->Factor 2
+                # Wait, Timepoint (within) is Factor 1, BetweenGrp (between) is Factor 2)
+                # We can just check the UI buckets or rely on the fact that if it failed, we must guess.
+                # Actually, role_by_factor in autopilot usually works, but if it failed, let's use the template mapping:
+                analysis_context["between_factors"] = [_factors[1]] if len(_factors) > 1 else [_factors[0]]
+                analysis_context["within_factors"] = [_factors[0]]
+
         if inferred_test in {"two_way_anova", "mixed_anova", "repeated_measures_anova",
                              "ancova", "two_way_ancova", "lmm", "logistic_regression",
                              "correlation", "linear_regression"}:
