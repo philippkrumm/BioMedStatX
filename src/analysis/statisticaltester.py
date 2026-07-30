@@ -1349,11 +1349,11 @@ class StatisticalTester:
         )
 
         if averaged_replicates:
-            if "health" not in results:
-                results["health"] = {}
-            if "warnings" not in results["health"]:
-                results["health"]["warnings"] = []
-            results["health"]["warnings"].append("Technische Replikate (mehrere Messungen pro Proband x Messzeitpunkt) erkannt. Die Daten wurden vor der Analyse auf Probandenebene gemittelt.")
+            if "data_health" not in results:
+                results["data_health"] = {}
+            if "warnings" not in results["data_health"]:
+                results["data_health"]["warnings"] = []
+            results["data_health"]["warnings"].append("Technische Replikate (mehrere Messungen pro Proband x Messzeitpunkt) erkannt. Die Daten wurden vor der Analyse auf Probandenebene gemittelt.")
             
         return results
     
@@ -1401,11 +1401,11 @@ class StatisticalTester:
         )
         
         if averaged_replicates:
-            if "health" not in results:
-                results["health"] = {}
-            if "warnings" not in results["health"]:
-                results["health"]["warnings"] = []
-            results["health"]["warnings"].append("Technische Replikate (mehrere Messungen pro Proband x Messzeitpunkt) erkannt. Die Daten wurden vor der Analyse auf Probandenebene gemittelt.")
+            if "data_health" not in results:
+                results["data_health"] = {}
+            if "warnings" not in results["data_health"]:
+                results["data_health"]["warnings"] = []
+            results["data_health"]["warnings"].append("Technische Replikate (mehrere Messungen pro Proband x Messzeitpunkt) erkannt. Die Daten wurden vor der Analyse auf Probandenebene gemittelt.")
             
         # Ensure test_info is added to results
         if test_info is not None and "test_info" not in results:
