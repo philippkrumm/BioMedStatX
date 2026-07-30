@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [2.0.0] - 2026-07-29
+## [2.0] - 2026-07-30
 
 ### Plots and visualisation
 
@@ -45,6 +45,9 @@ All notable changes to this project will be documented in this file.
   to the correct pair. The stale, never-collected `validation/validate_friedman.py`
   script (which read a since-renamed column and would crash) was removed; its one
   complementary structural check is absorbed into the new Friedman golden test.
+- Added parsing-core coverage for the cell-range selector, and a regression test
+  that forces the statsmodels ANOVA fallback (`pingouin` made unavailable) so the
+  degrees-of-freedom key fix cannot silently regress behind the primary engine.
 
 This release is the result of a multi-round statistical and release-readiness
 audit. Many changes make the default behavior more conservative and correct
@@ -185,6 +188,22 @@ upgrading.
   understate uncertainty at the small n typical here (n=3 coverage ~75–82%
   instead of 95%) and disagreed by ~15% on identical data. SD and SEM error bars
   are unchanged.
+- Mixed ANOVA is now selected when a subject column is mapped to a two-way
+  design. The design previously ran as an independent Two-Way ANOVA even when the
+  same subjects were measured across a factor; the upgrade to a mixed model is
+  enforced, its trigger condition tightened, and a warning is shown when the
+  chosen model changes as a result.
+- Linear mixed models and logistic regression no longer drop unbalanced subjects.
+  These likelihood-based models were routed through the same two-group paired
+  inner-join as the t-tests, which silently discarded any subject without a
+  complete pair; they now keep every usable observation, since the model handles
+  the imbalance directly.
+- The statsmodels ANOVA fallback (used when `pingouin` is unavailable) read its
+  degrees of freedom from a mistyped column key — `"d"` instead of `"df"` — and
+  raised `KeyError` the moment it was reached, across the Repeated-Measures,
+  Mixed, and Two-Way paths. All sites now read the correct column through one
+  shared helper, so the key lives in a single place.
+- Dunn's test: corrected the effect-size and test-statistic computation.
 
 ### Data import and preprocessing
 
@@ -208,6 +227,9 @@ upgrading.
   cells that could not be read as a number, previously vanished without a trace;
   they now appear as data-health warnings in the report, with counts, so a
   silently shrunk data set is visible rather than invisible.
+- The bundled data template now teaches subject-ID pairing and includes the
+  previously missing designs, so repeated-measures and mixed layouts can be built
+  from the template directly.
 
 ### Model input validation (reject invalid designs instead of misleading output)
 
@@ -222,6 +244,11 @@ upgrading.
   with missing subject IDs is rejected at detection time and before
   analysis-context building; all-NaN columns are excluded from wide-format
   value columns.
+- A subject carrying two different between-group values (a data-entry error) is
+  rejected with a clear "each subject must belong to one between group" error when
+  a Mixed ANOVA averages technical replicates, instead of being silently split
+  into two pseudo-subjects. This is the same check the post-hoc path already
+  applied, now enforced at the earlier averaging step as well.
 
 ### Security / output hardening
 
@@ -260,6 +287,14 @@ upgrading.
   handlers so a failed export no longer affects later datasets.
 - Invalid p-values (negative numbers, NaN) are flagged as `invalid` rather than
   formatted as `< 0.001`.
+- Exported reports no longer leave templated fields blank: previously missing
+  report text is filled in, and NA values are rendered explicitly instead of as
+  empty cells.
+- The technical-replicate notice (measurements averaged to the subject level
+  before a Repeated-Measures or Mixed ANOVA) reaches the report again. The notice
+  had been written to a result key nothing rendered; the Mixed path additionally
+  dropped the between factor while averaging and raised before the notice was
+  written. Both are fixed.
 - A leftover German checkbox label was translated to English.
 
 ### Accessibility
