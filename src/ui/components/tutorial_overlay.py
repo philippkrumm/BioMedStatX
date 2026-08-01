@@ -16,7 +16,7 @@ from typing import Callable, Optional, Sequence
 from PyQt5.QtCore import Qt, QRect, QPoint, QTimer, QEvent, QVariantAnimation
 from PyQt5.QtGui import QPainter, QColor, QPainterPath, QPen
 from PyQt5.QtWidgets import (
-    QWidget, QLabel, QPushButton, QFrame, QVBoxLayout, QHBoxLayout,
+    QWidget, QLabel, QPushButton, QFrame, QVBoxLayout, QHBoxLayout, QScrollArea,
 )
 
 RectResolver = Callable[[], Optional[QRect]]
@@ -95,7 +95,12 @@ class TourStep:
 
 
 def from_widgets(host: QWidget, *widgets) -> RectResolver:
-    return lambda: resolve_union_rect(widgets, host)
+    def _resolver():
+        return resolve_union_rect(widgets, host)
+    # Exposed so the overlay can scroll these targets into view before it reads
+    # the spotlight rect (a scrolled-out widget is still isVisible()==True).
+    _resolver.widgets = widgets
+    return _resolver
 
 
 def from_menu_action(menubar, action) -> RectResolver:
@@ -253,10 +258,32 @@ class TutorialOverlay(QWidget):
 
     def _apply_step_geometry(self, step):
         self.setGeometry(self._host.rect())
+        self._scroll_step_target_into_view(step)
         self.current_spotlight = step.resolve_rect() if step.resolve_rect else None
         self._position_bubble(step)
         self._set_pulse(getattr(step, "pulse", False) and self.current_spotlight is not None)
         self.update()
+
+    def _scroll_step_target_into_view(self, step):
+        """Bring the step's target into the visible viewport before the spotlight
+        rect is read. A widget scrolled out of a ``QScrollArea`` is still
+        ``isVisible() == True`` (only clipped), so without this the spotlight
+        would be drawn off-screen for a below-the-fold target on a small window.
+        Walks every ``QScrollArea`` ancestor so nested inner+outer areas both
+        reveal it. Instant scroll — Qt has no smooth ``ensureWidgetVisible``."""
+        resolver = getattr(step, "resolve_rect", None)
+        widgets = getattr(resolver, "widgets", None)
+        if not widgets:
+            return
+        for w in widgets:
+            if w is None or not w.isVisible():
+                continue
+            p = w.parentWidget()
+            while p is not None:
+                if isinstance(p, QScrollArea):
+                    p.ensureWidgetVisible(w, 40, 40)
+                p = p.parentWidget()
+            break  # first resolvable target is enough
 
     def _set_pulse(self, active: bool):
         # Respect OS reduced-motion: keep a steady ring, skip the loop.

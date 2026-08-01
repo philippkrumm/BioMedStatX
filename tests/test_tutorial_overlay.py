@@ -88,6 +88,41 @@ def test_pulse_active_only_on_pulse_step(qapp):
     assert ov._pulse_anim.state() == ov._pulse_anim.Stopped
 
 
+def test_step_scrolls_below_fold_target_into_view(qapp):
+    """A tour target scrolled out of a QScrollArea must be scrolled into view
+    before the spotlight is drawn — otherwise the highlight lands off-screen on
+    small windows, because a scrolled-out widget is still isVisible()==True."""
+    from PyQt5.QtWidgets import QScrollArea, QVBoxLayout, QLabel
+    host = QWidget()
+    host.resize(400, 300)
+    outer = QVBoxLayout(host)
+    area = QScrollArea()
+    area.setWidgetResizable(True)
+    inner = QWidget()
+    ilay = QVBoxLayout(inner)
+    filler = QLabel("filler")
+    filler.setFixedHeight(1200)              # pushes the target far below the fold
+    ilay.addWidget(filler)
+    target = QLabel("target")
+    target.setFixedHeight(30)
+    ilay.addWidget(target)
+    area.setWidget(inner)
+    outer.addWidget(area)
+    host.show()
+    qapp.processEvents()
+
+    sb = area.verticalScrollBar()
+    assert sb.maximum() > 0 and sb.value() == 0     # target starts below the fold
+
+    step = TourStep(title="T", body="B", resolve_rect=from_widgets(host, target))
+    ov = TutorialOverlay(host, [step])
+    ov.start()
+    qapp.processEvents()                            # run the deferred geometry/scroll
+
+    assert sb.value() > 0, "tour did not scroll the below-fold target into view"
+    ov.close_tour()
+
+
 from autopilot.statistical_analyzer_autopilot_pipeline import should_offer_tour
 
 
