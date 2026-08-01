@@ -112,7 +112,9 @@ class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
             (_sh - height) // 2
         )
         self.setWindowTitle("BioMedStatX v2.0 - Comprehensive Statistical Analysis Tool")
-        self.setGeometry(100, 50, 1600, 1300)
+        # (window size comes from the screen-relative resize/move above; the app
+        # then showMaximized()s. A hardcoded setGeometry here used to override that
+        # with a fixed 1600x1300, which exceeded shorter screens.)
 
         # Set window icon
         try:

@@ -876,7 +876,10 @@ class DecisionTreePanel(QFrame):
 
         self.tree_view = InteractiveDecisionTreeWidget()
         self.tree_view.setObjectName("decisionTreeView")
-        self.tree_view.setMinimumHeight(320)
+        # Modest minimum so the whole panel fits short/scaled screens (1366x768,
+        # 1080p@150%); the box grows with available space (stretch=1) and has a
+        # Maximize button for a full-size view.
+        self.tree_view.setMinimumHeight(200)
         self.tree_view.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         layout.addWidget(self.tree_view, 1)
 

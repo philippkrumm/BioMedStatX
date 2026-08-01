@@ -23,6 +23,7 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QRadioButton,
     QScrollArea,
+    QSizePolicy,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -326,7 +327,23 @@ def _ap_init_ui(self):
                    self.subject_bucket, self.covariates_bucket):
         bucket.changed.connect(self.on_mapping_changed)
         _mapping_layout.addWidget(bucket)
-    center_layout.addWidget(self.mapping_panel)
+    # Wrap the (tall) mapping buckets in their own scroll area — same pattern the
+    # result cockpit already uses — so the centre column's minimum height drops to
+    # its viewport instead of the full 5-bucket stack. That keeps the whole-window
+    # scroll from triggering on short/scaled screens (e.g. 1366x768, 1080p@150%);
+    # the buckets scroll internally only when the column is too short for all five.
+    _mapping_scroll = QScrollArea()
+    _mapping_scroll.setObjectName("mappingScroll")
+    _mapping_scroll.setWidgetResizable(True)
+    _mapping_scroll.setFrameShape(QFrame.NoFrame)
+    _mapping_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    _mapping_scroll.setWidget(self.mapping_panel)
+    # Ignored vertical policy: the column takes the available height and scrolls
+    # internally, so the buckets' full height does not inflate the window's
+    # preferred size and force the whole-window scroll (setWidgetResizable shows
+    # the outer scrollbar whenever content sizeHint > viewport, not min).
+    _mapping_scroll.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Ignored)
+    center_layout.addWidget(_mapping_scroll, 1)
 
     self.analysis_group_button = QPushButton("Select Groups For Analysis")
     self.analysis_group_button.setObjectName("secondaryButton")
@@ -446,6 +463,9 @@ def _ap_init_ui(self):
     cockpit_scroll.setFrameShape(QFrame.NoFrame)
     cockpit_scroll.setObjectName("cockpitScroll")
     cockpit_scroll.setWidget(self.result_cockpit)
+    # Same as the mapping column: scroll internally instead of inflating the
+    # window's preferred height (keeps the whole-window scroll from triggering).
+    cockpit_scroll.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Ignored)
     right_layout.addWidget(cockpit_scroll, 1)
     _apply_elevation(self.decision_tree_panel)
     _apply_elevation(cockpit_scroll)
