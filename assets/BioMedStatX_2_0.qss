@@ -507,14 +507,22 @@ QWidget#headerCardsInner {
     border-radius: 10px;
 }
 
-/* Cockpit + mapping scroll containers — transparent so the white panel shows
-   through the buckets' rounded dashed corners instead of the grey QScrollArea
-   default (assets QScrollArea rule sets #f4f8fb). */
+/* Cockpit scroll container — transparent so the panel background shows through
+   (its solid cards fill the viewport, so no grey ever shows in gaps). */
 QScrollArea#cockpitScroll, QScrollArea#cockpitScroll > QWidget > QViewport,
-QScrollArea#cockpitScroll > QWidget,
-QScrollArea#mappingScroll, QScrollArea#mappingScroll > QWidget > QViewport,
-QScrollArea#mappingScroll > QWidget {
+QScrollArea#cockpitScroll > QWidget {
     background: transparent;
+    border: none;
+}
+
+/* Mapping scroll + panel — explicit white (matches the dashboard panel). The
+   buckets have gaps between them; a transparent viewport is NOT reliably
+   painted over on the macOS/cocoa platform, so the default window grey showed
+   through the gaps and the buckets' rounded corners. A solid colour paints
+   reliably on every platform. */
+QScrollArea#mappingScroll, QScrollArea#mappingScroll > QWidget,
+QWidget#mappingPanel {
+    background: #ffffff;
     border: none;
 }
 
