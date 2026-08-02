@@ -299,7 +299,15 @@ class TutorialOverlay(QWidget):
             p = w.parentWidget()
             while p is not None:
                 if isinstance(p, QScrollArea):
-                    p.ensureWidgetVisible(w, 40, 40)
+                    if p.widget() is w:
+                        # The target IS this scroll area's whole content (e.g. the
+                        # result cockpit or the mapping panel). ensureWidgetVisible
+                        # would scroll a too-tall target partly off and cut its
+                        # header, so show it from the top instead.
+                        p.verticalScrollBar().setValue(0)
+                        p.horizontalScrollBar().setValue(0)
+                    else:
+                        p.ensureWidgetVisible(w, 40, 40)
                 p = p.parentWidget()
             break  # first resolvable target is enough
 
