@@ -169,6 +169,13 @@ class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
     def create_menu(self):
         """Creates the menu bar with help options"""
         menubar = self.menuBar()
+        # Keep the menu bar inside the window on every platform. On macOS Qt
+        # defaults to the native global menu bar, which lives outside the window
+        # and cannot be reached by the in-window guided-tour overlay -- so the
+        # final tour step ("Help Is Always One Click Away") had nothing to
+        # spotlight there. In-window keeps it consistent with Windows and lets
+        # the tour highlight (and pulse) the Help menu.
+        menubar.setNativeMenuBar(False)
 
         # File menu
         file_menu = menubar.addMenu('&File')
