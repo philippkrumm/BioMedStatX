@@ -507,9 +507,13 @@ QWidget#headerCardsInner {
     border-radius: 10px;
 }
 
-/* Cockpit scroll container — transparent so the panel background shows through */
+/* Cockpit + mapping scroll containers — transparent so the white panel shows
+   through the buckets' rounded dashed corners instead of the grey QScrollArea
+   default (assets QScrollArea rule sets #f4f8fb). */
 QScrollArea#cockpitScroll, QScrollArea#cockpitScroll > QWidget > QViewport,
-QScrollArea#cockpitScroll > QWidget {
+QScrollArea#cockpitScroll > QWidget,
+QScrollArea#mappingScroll, QScrollArea#mappingScroll > QWidget > QViewport,
+QScrollArea#mappingScroll > QWidget {
     background: transparent;
     border: none;
 }
