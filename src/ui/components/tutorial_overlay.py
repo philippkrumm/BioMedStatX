@@ -79,7 +79,25 @@ def resolve_union_rect(widgets: Sequence, host: QWidget) -> Optional[QRect]:
             continue
         top_left = w.mapTo(host, QPoint(0, 0))
         r = QRect(top_left, size)
+        r = _clip_to_scroll_viewports(w, host, r)
+        if r.isEmpty():
+            continue
         rect = r if rect is None else rect.united(r)
+    return rect
+
+
+def _clip_to_scroll_viewports(widget: QWidget, host: QWidget, rect: QRect) -> QRect:
+    """Clip a target's rect to every enclosing QScrollArea viewport, so a widget
+    taller/wider than its scroll viewport (e.g. the result cockpit, which is much
+    taller than its scroll pane) is spotlighted only over its visible portion
+    instead of spilling its full content size across neighbouring panels."""
+    p = widget.parentWidget()
+    while p is not None:
+        if isinstance(p, QScrollArea):
+            vp = p.viewport()
+            vp_rect = QRect(vp.mapTo(host, QPoint(0, 0)), vp.size())
+            rect = rect.intersected(vp_rect)
+        p = p.parentWidget()
     return rect
 
 

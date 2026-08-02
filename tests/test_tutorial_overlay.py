@@ -123,6 +123,34 @@ def test_step_scrolls_below_fold_target_into_view(qapp):
     ov.close_tour()
 
 
+def test_spotlight_clips_to_scroll_viewport(qapp):
+    """A target taller than its scroll viewport is spotlighted only over its
+    visible portion, not its full content height (which otherwise spills the
+    spotlight across neighbouring panels — e.g. the cockpit over the tree box)."""
+    from PyQt5.QtWidgets import QScrollArea, QVBoxLayout, QLabel
+    host = QWidget()
+    host.resize(400, 300)
+    outer = QVBoxLayout(host)
+    area = QScrollArea()
+    area.setWidgetResizable(True)
+    inner = QWidget()
+    ilay = QVBoxLayout(inner)
+    tall = QLabel("tall target")
+    tall.setFixedHeight(1500)          # far taller than the ~300px viewport
+    ilay.addWidget(tall)
+    area.setWidget(inner)
+    outer.addWidget(area)
+    host.show()
+    qapp.processEvents()
+
+    rect = resolve_union_rect([tall], host)
+    assert rect is not None
+    assert rect.height() <= area.viewport().height() + 2, (
+        f"spotlight not clipped to viewport: rect {rect.height()}px vs viewport "
+        f"{area.viewport().height()}px"
+    )
+
+
 from autopilot.statistical_analyzer_autopilot_pipeline import should_offer_tour
 
 
