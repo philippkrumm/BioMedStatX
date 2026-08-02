@@ -41,7 +41,10 @@ icon = (
 
 # collect_all gathers binaries, datas, and hiddenimports automatically
 # for packages with many dynamic/lazy-loaded submodules
-_pkgs = ["pingouin", "statsmodels", "scipy", "sklearn", "networkx"]
+# numpy must be collected explicitly: PyInstaller's built-in numpy hook does not
+# bundle all of numpy 2.x's _core submodules (the frozen app crashed on startup
+# with "No module named 'numpy._core._exceptions'"), so collect_all it in full.
+_pkgs = ["numpy", "pingouin", "statsmodels", "scipy", "sklearn", "networkx"]
 all_datas, all_binaries, all_hiddenimports = [], [], []
 for pkg in _pkgs:
     d, b, h = collect_all(pkg)
