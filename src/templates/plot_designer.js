@@ -132,12 +132,23 @@
     return;
   }
 
-  var defaultPalette = [
-    "#0f766e", "#1f7a5a", "#b7791f", "#9f3a38", "#1d4ed8", "#7c3aed", "#0ea5e9", "#ef4444"
-  ];
+  // Named color palettes, selectable via Style > Colors > "Palette".
+  // Grayscale is the default (GraphPad-Prism-style black & white; groups are
+  // told apart by lightness plus bar outline / point shape). Colorblind uses the
+  // Okabe-Ito set (CVD-validated). Classic is the original coloured scheme.
+  var PALETTES = {
+    grayscale:  ["#000000", "#ffffff", "#808080", "#c9c9c9", "#4d4d4d", "#a6a6a6", "#2b2b2b", "#e0e0e0"],
+    colorblind: ["#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7"],
+    classic:    ["#0f766e", "#1f7a5a", "#b7791f", "#9f3a38", "#1d4ed8", "#7c3aed", "#0ea5e9", "#ef4444"]
+  };
+  var DEFAULT_PALETTE_NAME = "grayscale";
+  var defaultPalette = PALETTES[DEFAULT_PALETTE_NAME];
   // Prioritize combinations that remain separable in dense grayscale exports.
   var defaultPatternCycle = ["x", "\\", "/", "-", "|", "+", "."];
-  var defaultSymbolCycle = ["diamond", "square", "circle", "cross", "triangle-up"];
+  // Default point symbol is a circle for every group. Other shapes stay
+  // available per group via the Style > Colors symbol dropdowns; circle is
+  // listed first so the fallback is also a circle.
+  var defaultSymbolCycle = ["circle", "square", "diamond", "cross", "triangle-up"];
   var fontStacks = {
     "Arial": 'Arial, "Helvetica Neue", Helvetica, sans-serif',
     "Helvetica": '"Helvetica Neue", Helvetica, Arial, sans-serif',
@@ -274,20 +285,7 @@
   }
 
   function updatePairedLineControlState() {
-    if (!wrapper || !checkbox) {
-      return;
-    }
-    var available = hasUsableSubjectTrajectories();
-    var raincloudMode = state.plotType === "Raincloud";
-    wrapper.style.display = available ? "flex" : "none";
-    checkbox.disabled = !available || raincloudMode;
-    wrapper.classList.toggle("is-disabled", checkbox.disabled);
-    if (!available || raincloudMode) {
-      checkbox.checked = false;
-    }
-    if (opacityRow) {
-      opacityRow.style.display = (available && !raincloudMode && checkbox.checked) ? "" : "none";
-    }
+    // Paired-lines controls were removed from the UI; nothing to sync.
   }
 
   function setControlDisabled(controlId, disabled) {
@@ -360,11 +358,6 @@
         var el = document.getElementById(id);
         if (el) el.checked = false;
       });
-    }
-
-    // Paired lines: Bar, Box, Violin only
-    if (barBoxViolin.indexOf(type) === -1) {
-      if (pairEl) pairEl.checked = false;
     }
 
     // Grouping: Bar, Box, Violin, Raincloud only
@@ -470,7 +463,7 @@
   groupOrder.forEach(function (group, index) {
     state.colors[group] = defaultPalette[index % defaultPalette.length];
     state.patterns[group] = "";
-    state.symbols[group] = defaultSymbolCycle[index % defaultSymbolCycle.length];
+    state.symbols[group] = "circle";
     state.groupLabels[group] = group;
   });
 
@@ -716,7 +709,6 @@
     state.pngScale = parseFloat(document.getElementById("pd-png-scale").value) || 3;
     updateFontPreviewStatus();
 
-    }
     Array.from(document.querySelectorAll(".pd-node-label-input")).forEach(function (node) {
       if (node.dataset.group) state.groupLabels[node.dataset.group] = node.value;
     });
@@ -734,6 +726,16 @@
     state.visiblePairIds = Array.from(document.querySelectorAll(".pd-pair-toggle:checked")).map(function (node) {
       return parseInt(node.value, 10);
     });
+  }
+
+  function applyPalette(name) {
+    var pal = PALETTES[name] || PALETTES[DEFAULT_PALETTE_NAME];
+    state.paletteName = name;
+    groupOrder.forEach(function (group, index) {
+      state.colors[group] = pal[index % pal.length];
+    });
+    buildColorControls();
+    buildPlot();
   }
 
   function buildColorControls() {
@@ -895,8 +897,7 @@
         option.textContent = symbol;
         select.appendChild(option);
       });
-      var fallbackSymbol = defaultSymbolCycle[index % defaultSymbolCycle.length];
-      select.value = state.symbols[group] || fallbackSymbol;
+      select.value = state.symbols[group] || "circle";
       select.addEventListener("change", function () {
         state.symbols[group] = select.value;
         buildPlot();
@@ -927,7 +928,7 @@
   }
 
   function getSymbolForGroup(group, groupIndex) {
-    return state.symbols[group] || defaultSymbolCycle[groupIndex % defaultSymbolCycle.length];
+    return state.symbols[group] || "circle";
   }
 
   function buildPairControls() {
@@ -1006,57 +1007,8 @@
   }
 
   function buildPairedLineTraces(idxMap) {
-      return [];
-    }
-
-    var traces = [];
-    subjectTrajectories.forEach(function (trajectory) {
-      if (!trajectory || !Array.isArray(trajectory.points)) {
-        return;
-      }
-      var points = trajectory.points
-        .map(function (point) {
-          if (!point) return null;
-          var group = String(point.group || "");
-          var xValue = idxMap[group];
-          var yValue = Number(point.value);
-          if (!xValue || !Number.isFinite(yValue)) {
-            return null;
-          }
-          return { x: xValue, y: yValue };
-        })
-        .filter(Boolean)
-        .sort(function (a, b) { return a.x - b.x; });
-
-      if (points.length < 2) {
-        return;
-      }
-
-      var markerOpacity = Math.min(0.95, lineOpacity + 0.12);
-      var lineColor = "rgba(22,49,58," + lineOpacity.toFixed(2) + ")";
-      var markerColor = "rgba(22,49,58," + markerOpacity.toFixed(2) + ")";
-      traces.push({
-        type: "scatter",
-        mode: "lines+markers",
-        x: points.map(function (p) { return p.x; }),
-        y: points.map(function (p) { return p.y; }),
-        connectgaps: false,
-        line: {
-          color: lineColor,
-          width: 1.1
-        },
-        marker: {
-          color: markerColor,
-          size: 4,
-          symbol: "circle"
-        },
-        hovertemplate: "Subject: " + String(trajectory.subject_id || "") + "<br>x=%{x}<br>y=%{y:.4g}<extra></extra>",
-        showlegend: false,
-        name: "Subject trajectory"
-      });
-    });
-
-    return traces;
+    // Paired-line (spaghetti) overlay was removed from the plot designer.
+    return [];
   }
 
   function getErrorMetricLabel() {
@@ -1254,6 +1206,7 @@
           marker: {
             color: state.colors[group],
             opacity: state.alpha,
+            line: { color: "#16313a", width: 1 },
             pattern: {
               shape: getPatternForGroup(group, groupIndex),
               solidity: 0.4,
@@ -1556,9 +1509,6 @@
         yMaxEff: yMaxEff,
         isRatioEffect: isRatioEst
       };
-    }
-
-      traces = traces.concat(buildPairedLineTraces(idxMap));
     }
 
     return {
@@ -2365,6 +2315,14 @@
       }
       buildPatternControls();
       buildPlot();
+    });
+  }
+
+  var paletteSelect = document.getElementById("pd-palette");
+  if (paletteSelect) {
+    paletteSelect.value = state.paletteName || DEFAULT_PALETTE_NAME;
+    paletteSelect.addEventListener("change", function () {
+      applyPalette(paletteSelect.value);
     });
   }
 
