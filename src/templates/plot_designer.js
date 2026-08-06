@@ -132,17 +132,36 @@
     return;
   }
 
-  // Named color palettes, selectable via Style > Colors > "Palette".
-  // Grayscale is the default (GraphPad-Prism-style black & white; groups are
-  // told apart by lightness plus bar outline / point shape). Colorblind uses the
-  // Okabe-Ito set (CVD-validated). Classic is the original coloured scheme.
+  // Curated colour palettes, selectable via Style > Colors > "Palette".
+  // These mirror the desktop app's journal palettes (datavisualizer.py /
+  // plot_aesthetics_dialog.py) so the HTML report and the app agree. The
+  // default is a grayscale ramp (like the desktop "Greys" default), generated
+  // black -> white across however many groups the design has, so a t-test
+  // (2 groups) and an ANOVA (>2 groups) both look right.
   var PALETTES = {
-    grayscale:  ["#000000", "#ffffff", "#808080", "#c9c9c9", "#4d4d4d", "#a6a6a6", "#2b2b2b", "#e0e0e0"],
-    colorblind: ["#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7"],
-    classic:    ["#0f766e", "#1f7a5a", "#b7791f", "#9f3a38", "#1d4ed8", "#7c3aed", "#0ea5e9", "#ef4444"]
+    Nature:  ["#4E79A7", "#F28E2B", "#E15759", "#76B7B2", "#59A14F", "#EDC948", "#B07AA1", "#FF9DA7"],
+    Science: ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#56B4E9", "#E69F00", "#999999"],
+    NEJM:    ["#BC3C29", "#0072B5", "#E18727", "#20854E", "#7876B1", "#6F99AD", "#FFDC91"],
+    Lancet:  ["#00468B", "#ED0000", "#42B540", "#0099B4", "#925E9F", "#FDAF91", "#AD002A"],
+    Tab10:   ["#1F77B4", "#FF7F0E", "#2CA02C", "#D62728", "#9467BD", "#8C564B", "#E377C2", "#7F7F7F", "#BCBD22", "#17BECF"]
   };
   var DEFAULT_PALETTE_NAME = "grayscale";
-  var defaultPalette = PALETTES[DEFAULT_PALETTE_NAME];
+  // Evenly spaced greys from black (#000) to white (#fff) for n groups.
+  function grayscaleRamp(n) {
+    if (n <= 1) return ["#000000"];
+    var out = [];
+    for (var i = 0; i < n; i++) {
+      var v = Math.round(255 * i / (n - 1));
+      var h = ("0" + v.toString(16)).slice(-2);
+      out.push("#" + h + h + h);
+    }
+    return out;
+  }
+  // "grayscale" is generated per group count; every other name is a fixed list.
+  function resolvePalette(name, n) {
+    if (name === "grayscale") return grayscaleRamp(n);
+    return PALETTES[name] || grayscaleRamp(n);
+  }
   // Prioritize combinations that remain separable in dense grayscale exports.
   var defaultPatternCycle = ["x", "\\", "/", "-", "|", "+", "."];
   // Default point symbol is a circle for every group. Other shapes stay
@@ -460,8 +479,9 @@
     state.errorType = resolved;
   }
 
+  var defaultColors = resolvePalette(DEFAULT_PALETTE_NAME, groupOrder.length);
   groupOrder.forEach(function (group, index) {
-    state.colors[group] = defaultPalette[index % defaultPalette.length];
+    state.colors[group] = defaultColors[index % defaultColors.length];
     state.patterns[group] = "";
     state.symbols[group] = "circle";
     state.groupLabels[group] = group;
@@ -729,7 +749,7 @@
   }
 
   function applyPalette(name) {
-    var pal = PALETTES[name] || PALETTES[DEFAULT_PALETTE_NAME];
+    var pal = resolvePalette(name, groupOrder.length);
     state.paletteName = name;
     groupOrder.forEach(function (group, index) {
       state.colors[group] = pal[index % pal.length];
@@ -1206,7 +1226,7 @@
           marker: {
             color: state.colors[group],
             opacity: state.alpha,
-            line: { color: "#16313a", width: 1 },
+            line: { color: "#000000", width: 2 },
             pattern: {
               shape: getPatternForGroup(group, groupIndex),
               solidity: 0.4,
@@ -1230,7 +1250,7 @@
             symbol: getSymbolForGroup(group, groupIndex),
             size: 6,
             opacity: 0.7,
-            line: { width: 0.5, color: "#16313a" }
+            line: { width: 1, color: "#000000" }
           },
           legendgroup: group,
           name: group + " points",
@@ -1289,7 +1309,7 @@
             symbol: getSymbolForGroup(group, groupIndex),
             size: 6,
             opacity: 0.7,
-            line: { width: 0.5, color: "#16313a" }
+            line: { width: 1, color: "#000000" }
           },
           legendgroup: group,
           name: group + " points",
@@ -1455,7 +1475,7 @@
             symbol: getSymbolForGroup(group, groupIndex),
             size: 6,
             opacity: 0.7,
-            line: { width: 0.5, color: "#16313a" }
+            line: { width: 1, color: "#000000" }
           },
           legendgroup: group,
           name: group,
