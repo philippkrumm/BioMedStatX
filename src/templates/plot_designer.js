@@ -162,6 +162,12 @@
     if (name === "grayscale") return grayscaleRamp(n);
     return PALETTES[name] || grayscaleRamp(n);
   }
+  // Outline for filled shapes (bar/box/violin/raincloud): black, with a
+  // user-adjustable width, applied uniformly so a white/light fill always has a
+  // visible border on every plot type.
+  function shapeOutline() {
+    return { color: "#000000", width: state.outlineWidth };
+  }
   // Prioritize combinations that remain separable in dense grayscale exports.
   var defaultPatternCycle = ["x", "\\", "/", "-", "|", "+", "."];
   // Default point symbol is a circle for every group. Other shapes stay
@@ -243,6 +249,7 @@
     titleSize: 16,
     axisSize: 12,
     alpha: 0.85,
+    outlineWidth: 2,
     showPoints: true,
     showErrorBars: true,
     centralMeasure: "mean",
@@ -357,16 +364,9 @@
     var barBoxViolin = ["Bar", "Box", "Violin"];
     var barBoxViolinRaincloud = ["Bar", "Box", "Violin", "Raincloud"];
 
-    // Error bars + auto-pattern: Bar only
-    if (type !== "Bar") {
-      state.showErrorBars = false;
-      var showErrEl = document.getElementById("pd-show-error-bars");
-      if (showErrEl) showErrEl.checked = false;
-
-      state.autoPatternsEnabled = false;
-      var autoPatEl = document.getElementById("pd-auto-pattern");
-      if (autoPatEl) autoPatEl.checked = false;
-    }
+    // Error bars and auto-pattern render only for Bar (the trace builders guard
+    // on plotType), so we deliberately do NOT force them off here — doing that
+    // silently dropped the user's choice when switching type and back.
 
     // Reference lines: Bar, Box, Violin only
     if (barBoxViolin.indexOf(type) === -1) {
@@ -403,12 +403,9 @@
       if (yMaxEl) yMaxEl.value = "";
     }
 
-    // Show points: not available for Forest
+    // Forest ignores showPoints in its builder, so leave the user's choice
+    // intact across switches; only significance brackets are not drawn there.
     if (type === "Forest") {
-      state.showPoints = false;
-      var spEl = document.getElementById("pd-show-points");
-      if (spEl) spEl.checked = false;
-
       state.showSignificance = false;
       var sigEl = document.getElementById("pd-show-significance");
       if (sigEl) sigEl.checked = false;
@@ -574,6 +571,8 @@
     document.getElementById("pd-title-size").value = state.titleSize;
     document.getElementById("pd-axis-size").value = state.axisSize;
     document.getElementById("pd-alpha").value = state.alpha;
+    var owDefEl = document.getElementById("pd-outline-width");
+    if (owDefEl) owDefEl.value = state.outlineWidth;
     document.getElementById("pd-show-points").checked = state.showPoints;
     
     var pointLayoutEl = document.getElementById("pd-point-layout");
@@ -664,6 +663,11 @@
     state.centralMeasure = document.getElementById("pd-central-measure").value || "mean";
     if (["mean", "median"].indexOf(state.centralMeasure) === -1) {
       state.centralMeasure = "mean";
+    }
+    var owEl = document.getElementById("pd-outline-width");
+    if (owEl) {
+      var owVal = parseFloat(owEl.value);
+      state.outlineWidth = Number.isFinite(owVal) ? Math.min(6, Math.max(0, owVal)) : 2;
     }
     syncErrorMetricOptions(document.getElementById("pd-error-type").value);
     state.errorType = document.getElementById("pd-error-type").value || state.errorType || "sd";
@@ -1226,7 +1230,7 @@
           marker: {
             color: state.colors[group],
             opacity: state.alpha,
-            line: { color: "#000000", width: 2 },
+            line: shapeOutline(),
             pattern: {
               shape: getPatternForGroup(group, groupIndex),
               solidity: 0.4,
@@ -1275,7 +1279,7 @@
             upperfence: [summary.upperFence],
             boxpoints: false,
             marker: { color: state.colors[group], size: 6, opacity: 0.7 },
-            line: { color: state.colors[group] },
+            line: shapeOutline(),
             fillcolor: state.colors[group],
             opacity: state.alpha,
             showlegend: state.showLegend
@@ -1291,7 +1295,7 @@
             jitter: 0.3,
             pointpos: 0,
             marker: { color: state.colors[group], size: 6, opacity: 0.7 },
-            line: { color: state.colors[group] },
+            line: shapeOutline(),
             fillcolor: state.colors[group],
             opacity: state.alpha,
             showlegend: state.showLegend
@@ -1338,7 +1342,7 @@
             size: 5,
             opacity: 0.65
           },
-          line: { color: state.colors[group] },
+          line: shapeOutline(),
           fillcolor: state.colors[group],
           opacity: state.alpha,
           showlegend: state.showLegend
@@ -1365,7 +1369,7 @@
           width: 0.88,
           alignmentgroup: "raincloud-" + group,
           offsetgroup: "raincloud-" + group,
-          line: { color: state.colors[group] },
+          line: shapeOutline(),
           fillcolor: state.colors[group],
           opacity: Math.min(0.75, state.alpha),
           showlegend: false
@@ -1382,7 +1386,7 @@
           alignmentgroup: "raincloud-" + group,
           offsetgroup: "raincloud-" + group,
           marker: { color: state.colors[group] },
-          line: { color: "rgba(22,49,58,0.85)", width: 1.2 },
+          line: shapeOutline(),
           fillcolor: "rgba(255,255,255,0.28)",
           width: 0.24,
           opacity: 1,
