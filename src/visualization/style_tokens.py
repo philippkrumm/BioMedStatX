@@ -34,7 +34,7 @@ DEFAULT_PALETTE_NAME = "grayscale"
 # the always-black data points (below) stay legible against the darkest
 # bar/box/raincloud segment. GRAYSCALE_FLOOR is a starting value — tune by eye
 # against real black points during the visual check.
-GRAYSCALE_FLOOR = "#404040"
+GRAYSCALE_FLOOR = "#4a4a4a"
 GRAYSCALE_CEIL = "#ffffff"
 
 
