@@ -15,6 +15,7 @@ from scipy import stats
 
 from export.report_association import _AssociationMixin
 from export.report_formatting import _FormattingMixin
+from visualization import style_tokens
 
 try:
     from core.logger_config import get_logger
@@ -722,12 +723,17 @@ class _ChartsMixin:
                 return f"rgba({r},{g},{b},{alpha})"
 
             figure = go.Figure()
-            palette = ["#0f766e", "#1f7a5a", "#b7791f", "#9f3a38", "#1d4ed8", "#7c3aed"]
-            group_order = []
-            for idx, (group_name, values) in enumerate(raw_data.items()):
+            # Match the interactive designer's default: grayscale ramp sized to the
+            # group count, black outline on the boxes, always-black data points.
+            valid = []
+            for group_name, values in raw_data.items():
                 numeric = _FormattingMixin._coerce_numeric_sequence(values)
                 if not numeric:
                     continue
+                valid.append((group_name, numeric))
+            palette = style_tokens.resolve_palette(style_tokens.DEFAULT_PALETTE_NAME, len(valid))
+            group_order = []
+            for idx, (group_name, numeric) in enumerate(valid):
                 escaped_group_name = _FormattingMixin._esc(group_name)
                 group_order.append(str(group_name))
                 label = f"{escaped_group_name} (n={len(numeric)})"
@@ -739,21 +745,31 @@ class _ChartsMixin:
                         boxpoints="all",
                         jitter=0.45,
                         pointpos=0,
-                        fillcolor=_hex_to_rgba(color, 0.18),
-                        line=dict(color=color),
-                        marker=dict(size=7, color=color, opacity=0.78),
+                        fillcolor=_hex_to_rgba(color, 0.85),
+                        line=dict(color=style_tokens.SHAPE_OUTLINE_COLOR,
+                                  width=style_tokens.SHAPE_OUTLINE_WIDTH),
+                        marker=dict(
+                            size=style_tokens.POINT_SIZE,
+                            color=style_tokens.POINT_FILL_COLOR,
+                            opacity=0.78,
+                            line=dict(width=style_tokens.POINT_EDGE_WIDTH,
+                                      color=style_tokens.POINT_EDGE_COLOR),
+                        ),
                     )
                 )
             if not figure.data:
                 return None
+            _frame = dict(showline=True, linewidth=style_tokens.FRAME_LINEWIDTH,
+                          linecolor=style_tokens.FRAME_COLOR)
             figure.update_layout(
                 template="plotly_white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#fffdf8",
+                paper_bgcolor=style_tokens.PAPER_BGCOLOR,
+                plot_bgcolor=style_tokens.PLOT_BGCOLOR,
                 margin=dict(l=40, r=20, t=24, b=56),
-                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
-                xaxis=dict(automargin=True),
-                yaxis_title="Observed values",
+                font=dict(family=style_tokens.FONT_FAMILY_STACK,
+                          color=style_tokens.INK, size=style_tokens.AXIS_SIZE),
+                xaxis=dict(automargin=True, **_frame),
+                yaxis=dict(title="Observed values", **_frame),
                 showlegend=False,
             )
             html = _ChartsMixin._figure_to_html(figure, div_id="biomedstatx-group-chart")

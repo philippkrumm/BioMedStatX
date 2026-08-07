@@ -36,6 +36,37 @@
   var groupOrder = parseJsonNode("pd-data-order", []);
   var groupFactorMapPayload = parseJsonNode("pd-data-group-factor-map", {});
 
+  // Shared style tokens injected by html_exporter.py from visualization/style_tokens.py.
+  // Each field falls back to the historical literal so an older report still renders.
+  // These are DEFAULTS; the user can still change palette / colours interactively.
+  var styleTokens = parseJsonNode("pd-data-style", {});
+  function _numOr(v, d) { return (typeof v === "number" && isFinite(v)) ? v : d; }
+  var plotStyle = {
+    palettes: (styleTokens.palettes && typeof styleTokens.palettes === "object") ? styleTokens.palettes : {
+      Nature:  ["#4E79A7", "#F28E2B", "#E15759", "#76B7B2", "#59A14F", "#EDC948", "#B07AA1", "#FF9DA7"],
+      Science: ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#56B4E9", "#E69F00", "#999999"],
+      NEJM:    ["#BC3C29", "#0072B5", "#E18727", "#20854E", "#7876B1", "#6F99AD", "#FFDC91"],
+      Lancet:  ["#00468B", "#ED0000", "#42B540", "#0099B4", "#925E9F", "#FDAF91", "#AD002A"],
+      Tab10:   ["#1F77B4", "#FF7F0E", "#2CA02C", "#D62728", "#9467BD", "#8C564B", "#E377C2", "#7F7F7F", "#BCBD22", "#17BECF"]
+    },
+    defaultPalette: styleTokens.default_palette || "grayscale",
+    grayscaleFloor: styleTokens.grayscale_floor || "#404040",
+    pointFillColor: styleTokens.point_fill_color || "#000000",
+    pointEdgeColor: styleTokens.point_edge_color || "#000000",
+    pointEdgeWidth: _numOr(styleTokens.point_edge_width, 1),
+    pointSize: _numOr(styleTokens.point_size, 6),
+    shapeOutlineColor: styleTokens.shape_outline_color || "#000000",
+    shapeOutlineWidth: _numOr(styleTokens.shape_outline_width, 2)
+  };
+  function grayFloorChannel() {
+    var v = parseInt(String(plotStyle.grayscaleFloor).replace("#", "").slice(0, 2), 16);
+    return isFinite(v) ? v : 64;
+  }
+  // Data points: always solid black (fill + edge), independent of the palette.
+  function pointEdge() {
+    return { width: plotStyle.pointEdgeWidth, color: plotStyle.pointEdgeColor };
+  }
+
   function normalizeReferenceLines(rawLines) {
     if (!Array.isArray(rawLines)) {
       return [];
@@ -132,12 +163,47 @@
     return;
   }
 
-  var defaultPalette = [
-    "#0f766e", "#1f7a5a", "#b7791f", "#9f3a38", "#1d4ed8", "#7c3aed", "#0ea5e9", "#ef4444"
-  ];
+  // Curated colour palettes, selectable via Style > Colors > "Palette".
+  // These mirror the desktop app's journal palettes (datavisualizer.py /
+  // plot_aesthetics_dialog.py) so the HTML report and the app agree. The
+  // default is a grayscale ramp (like the desktop "Greys" default), generated
+  // black -> white across however many groups the design has, so a t-test
+  // (2 groups) and an ANOVA (>2 groups) both look right.
+  // Palettes come from the shared source (visualization/style_tokens.py) via the
+  // injected pd-data-style blob; plotStyle.palettes carries a fallback copy.
+  var PALETTES = plotStyle.palettes;
+  var DEFAULT_PALETTE_NAME = plotStyle.defaultPalette;
+  // Evenly spaced greys from the shared floor (not pure black, so black data
+  // points stay legible on the darkest segment) up to white, for n groups.
+  function grayscaleRamp(n) {
+    var floor = grayFloorChannel();
+    var ceil = 255;
+    if (n <= 1) { var hf = ("0" + floor.toString(16)).slice(-2); return ["#" + hf + hf + hf]; }
+    var out = [];
+    for (var i = 0; i < n; i++) {
+      var v = Math.round(floor + (ceil - floor) * i / (n - 1));
+      var h = ("0" + v.toString(16)).slice(-2);
+      out.push("#" + h + h + h);
+    }
+    return out;
+  }
+  // "grayscale" is generated per group count; every other name is a fixed list.
+  function resolvePalette(name, n) {
+    if (name === "grayscale") return grayscaleRamp(n);
+    return PALETTES[name] || grayscaleRamp(n);
+  }
+  // Outline for filled shapes (bar/box/violin/raincloud): black, with a
+  // user-adjustable width, applied uniformly so a white/light fill always has a
+  // visible border on every plot type.
+  function shapeOutline() {
+    return { color: plotStyle.shapeOutlineColor, width: state.outlineWidth };
+  }
   // Prioritize combinations that remain separable in dense grayscale exports.
   var defaultPatternCycle = ["x", "\\", "/", "-", "|", "+", "."];
-  var defaultSymbolCycle = ["diamond", "square", "circle", "cross", "triangle-up"];
+  // Default point symbol is a circle for every group. Other shapes stay
+  // available per group via the Style > Colors symbol dropdowns; circle is
+  // listed first so the fallback is also a circle.
+  var defaultSymbolCycle = ["circle", "square", "diamond", "cross", "triangle-up"];
   var fontStacks = {
     "Arial": 'Arial, "Helvetica Neue", Helvetica, sans-serif',
     "Helvetica": '"Helvetica Neue", Helvetica, Arial, sans-serif',
@@ -213,6 +279,7 @@
     titleSize: 16,
     axisSize: 12,
     alpha: 0.85,
+    outlineWidth: plotStyle.shapeOutlineWidth,
     showPoints: true,
     showErrorBars: true,
     centralMeasure: "mean",
@@ -274,20 +341,7 @@
   }
 
   function updatePairedLineControlState() {
-    if (!wrapper || !checkbox) {
-      return;
-    }
-    var available = hasUsableSubjectTrajectories();
-    var raincloudMode = state.plotType === "Raincloud";
-    wrapper.style.display = available ? "flex" : "none";
-    checkbox.disabled = !available || raincloudMode;
-    wrapper.classList.toggle("is-disabled", checkbox.disabled);
-    if (!available || raincloudMode) {
-      checkbox.checked = false;
-    }
-    if (opacityRow) {
-      opacityRow.style.display = (available && !raincloudMode && checkbox.checked) ? "" : "none";
-    }
+    // Paired-lines controls were removed from the UI; nothing to sync.
   }
 
   function setControlDisabled(controlId, disabled) {
@@ -340,16 +394,9 @@
     var barBoxViolin = ["Bar", "Box", "Violin"];
     var barBoxViolinRaincloud = ["Bar", "Box", "Violin", "Raincloud"];
 
-    // Error bars + auto-pattern: Bar only
-    if (type !== "Bar") {
-      state.showErrorBars = false;
-      var showErrEl = document.getElementById("pd-show-error-bars");
-      if (showErrEl) showErrEl.checked = false;
-
-      state.autoPatternsEnabled = false;
-      var autoPatEl = document.getElementById("pd-auto-pattern");
-      if (autoPatEl) autoPatEl.checked = false;
-    }
+    // Error bars and auto-pattern render only for Bar (the trace builders guard
+    // on plotType), so we deliberately do NOT force them off here — doing that
+    // silently dropped the user's choice when switching type and back.
 
     // Reference lines: Bar, Box, Violin only
     if (barBoxViolin.indexOf(type) === -1) {
@@ -360,11 +407,6 @@
         var el = document.getElementById(id);
         if (el) el.checked = false;
       });
-    }
-
-    // Paired lines: Bar, Box, Violin only
-    if (barBoxViolin.indexOf(type) === -1) {
-      if (pairEl) pairEl.checked = false;
     }
 
     // Grouping: Bar, Box, Violin, Raincloud only
@@ -391,12 +433,9 @@
       if (yMaxEl) yMaxEl.value = "";
     }
 
-    // Show points: not available for Forest
+    // Forest ignores showPoints in its builder, so leave the user's choice
+    // intact across switches; only significance brackets are not drawn there.
     if (type === "Forest") {
-      state.showPoints = false;
-      var spEl = document.getElementById("pd-show-points");
-      if (spEl) spEl.checked = false;
-
       state.showSignificance = false;
       var sigEl = document.getElementById("pd-show-significance");
       if (sigEl) sigEl.checked = false;
@@ -467,10 +506,11 @@
     state.errorType = resolved;
   }
 
+  var defaultColors = resolvePalette(DEFAULT_PALETTE_NAME, groupOrder.length);
   groupOrder.forEach(function (group, index) {
-    state.colors[group] = defaultPalette[index % defaultPalette.length];
+    state.colors[group] = defaultColors[index % defaultColors.length];
     state.patterns[group] = "";
-    state.symbols[group] = defaultSymbolCycle[index % defaultSymbolCycle.length];
+    state.symbols[group] = "circle";
     state.groupLabels[group] = group;
   });
 
@@ -561,6 +601,8 @@
     document.getElementById("pd-title-size").value = state.titleSize;
     document.getElementById("pd-axis-size").value = state.axisSize;
     document.getElementById("pd-alpha").value = state.alpha;
+    var owDefEl = document.getElementById("pd-outline-width");
+    if (owDefEl) owDefEl.value = state.outlineWidth;
     document.getElementById("pd-show-points").checked = state.showPoints;
     
     var pointLayoutEl = document.getElementById("pd-point-layout");
@@ -652,6 +694,11 @@
     if (["mean", "median"].indexOf(state.centralMeasure) === -1) {
       state.centralMeasure = "mean";
     }
+    var owEl = document.getElementById("pd-outline-width");
+    if (owEl) {
+      var owVal = parseFloat(owEl.value);
+      state.outlineWidth = Number.isFinite(owVal) ? Math.min(6, Math.max(0, owVal)) : 2;
+    }
     syncErrorMetricOptions(document.getElementById("pd-error-type").value);
     state.errorType = document.getElementById("pd-error-type").value || state.errorType || "sd";
     state.errorDirection = document.getElementById("pd-error-direction").value || "both";
@@ -716,7 +763,6 @@
     state.pngScale = parseFloat(document.getElementById("pd-png-scale").value) || 3;
     updateFontPreviewStatus();
 
-    }
     Array.from(document.querySelectorAll(".pd-node-label-input")).forEach(function (node) {
       if (node.dataset.group) state.groupLabels[node.dataset.group] = node.value;
     });
@@ -734,6 +780,16 @@
     state.visiblePairIds = Array.from(document.querySelectorAll(".pd-pair-toggle:checked")).map(function (node) {
       return parseInt(node.value, 10);
     });
+  }
+
+  function applyPalette(name) {
+    var pal = resolvePalette(name, groupOrder.length);
+    state.paletteName = name;
+    groupOrder.forEach(function (group, index) {
+      state.colors[group] = pal[index % pal.length];
+    });
+    buildColorControls();
+    buildPlot();
   }
 
   function buildColorControls() {
@@ -895,8 +951,7 @@
         option.textContent = symbol;
         select.appendChild(option);
       });
-      var fallbackSymbol = defaultSymbolCycle[index % defaultSymbolCycle.length];
-      select.value = state.symbols[group] || fallbackSymbol;
+      select.value = state.symbols[group] || "circle";
       select.addEventListener("change", function () {
         state.symbols[group] = select.value;
         buildPlot();
@@ -927,7 +982,7 @@
   }
 
   function getSymbolForGroup(group, groupIndex) {
-    return state.symbols[group] || defaultSymbolCycle[groupIndex % defaultSymbolCycle.length];
+    return state.symbols[group] || "circle";
   }
 
   function buildPairControls() {
@@ -1006,57 +1061,8 @@
   }
 
   function buildPairedLineTraces(idxMap) {
-      return [];
-    }
-
-    var traces = [];
-    subjectTrajectories.forEach(function (trajectory) {
-      if (!trajectory || !Array.isArray(trajectory.points)) {
-        return;
-      }
-      var points = trajectory.points
-        .map(function (point) {
-          if (!point) return null;
-          var group = String(point.group || "");
-          var xValue = idxMap[group];
-          var yValue = Number(point.value);
-          if (!xValue || !Number.isFinite(yValue)) {
-            return null;
-          }
-          return { x: xValue, y: yValue };
-        })
-        .filter(Boolean)
-        .sort(function (a, b) { return a.x - b.x; });
-
-      if (points.length < 2) {
-        return;
-      }
-
-      var markerOpacity = Math.min(0.95, lineOpacity + 0.12);
-      var lineColor = "rgba(22,49,58," + lineOpacity.toFixed(2) + ")";
-      var markerColor = "rgba(22,49,58," + markerOpacity.toFixed(2) + ")";
-      traces.push({
-        type: "scatter",
-        mode: "lines+markers",
-        x: points.map(function (p) { return p.x; }),
-        y: points.map(function (p) { return p.y; }),
-        connectgaps: false,
-        line: {
-          color: lineColor,
-          width: 1.1
-        },
-        marker: {
-          color: markerColor,
-          size: 4,
-          symbol: "circle"
-        },
-        hovertemplate: "Subject: " + String(trajectory.subject_id || "") + "<br>x=%{x}<br>y=%{y:.4g}<extra></extra>",
-        showlegend: false,
-        name: "Subject trajectory"
-      });
-    });
-
-    return traces;
+    // Paired-line (spaghetti) overlay was removed from the plot designer.
+    return [];
   }
 
   function getErrorMetricLabel() {
@@ -1254,6 +1260,7 @@
           marker: {
             color: state.colors[group],
             opacity: state.alpha,
+            line: shapeOutline(),
             pattern: {
               shape: getPatternForGroup(group, groupIndex),
               solidity: 0.4,
@@ -1273,11 +1280,11 @@
           x: getPointXOffsets(group, values, 0, 0.22, groupIndex),
           y: values,
           marker: {
-            color: state.colors[group],
+            color: plotStyle.pointFillColor,
             symbol: getSymbolForGroup(group, groupIndex),
-            size: 6,
+            size: plotStyle.pointSize,
             opacity: 0.7,
-            line: { width: 0.5, color: "#16313a" }
+            line: pointEdge()
           },
           legendgroup: group,
           name: group + " points",
@@ -1302,7 +1309,7 @@
             upperfence: [summary.upperFence],
             boxpoints: false,
             marker: { color: state.colors[group], size: 6, opacity: 0.7 },
-            line: { color: state.colors[group] },
+            line: shapeOutline(),
             fillcolor: state.colors[group],
             opacity: state.alpha,
             showlegend: state.showLegend
@@ -1318,7 +1325,7 @@
             jitter: 0.3,
             pointpos: 0,
             marker: { color: state.colors[group], size: 6, opacity: 0.7 },
-            line: { color: state.colors[group] },
+            line: shapeOutline(),
             fillcolor: state.colors[group],
             opacity: state.alpha,
             showlegend: state.showLegend
@@ -1332,11 +1339,11 @@
           x: getPointXOffsets(group, values, 0, 0.22, undefined),
           y: values,
           marker: {
-            color: state.colors[group],
+            color: plotStyle.pointFillColor,
             symbol: getSymbolForGroup(group, groupIndex),
-            size: 6,
+            size: plotStyle.pointSize,
             opacity: 0.7,
-            line: { width: 0.5, color: "#16313a" }
+            line: pointEdge()
           },
           legendgroup: group,
           name: group + " points",
@@ -1360,12 +1367,13 @@
           box: { visible: true },
           meanline: { visible: true },
           marker: {
-            color: state.colors[group],
+            color: plotStyle.pointFillColor,
             symbol: getSymbolForGroup(group, groupIndex),
-            size: 5,
-            opacity: 0.65
+            size: plotStyle.pointSize,
+            opacity: 0.65,
+            line: pointEdge()
           },
-          line: { color: state.colors[group] },
+          line: shapeOutline(),
           fillcolor: state.colors[group],
           opacity: state.alpha,
           showlegend: state.showLegend
@@ -1392,7 +1400,7 @@
           width: 0.88,
           alignmentgroup: "raincloud-" + group,
           offsetgroup: "raincloud-" + group,
-          line: { color: state.colors[group] },
+          line: shapeOutline(),
           fillcolor: state.colors[group],
           opacity: Math.min(0.75, state.alpha),
           showlegend: false
@@ -1409,7 +1417,7 @@
           alignmentgroup: "raincloud-" + group,
           offsetgroup: "raincloud-" + group,
           marker: { color: state.colors[group] },
-          line: { color: "rgba(22,49,58,0.85)", width: 1.2 },
+          line: shapeOutline(),
           fillcolor: "rgba(255,255,255,0.28)",
           width: 0.24,
           opacity: 1,
@@ -1423,11 +1431,11 @@
             x: values,
             y: getPointXOffsets(group, values, pointOffset, pointJitter, groupIndex),
             marker: {
-              color: state.colors[group],
+              color: plotStyle.pointFillColor,
               symbol: getSymbolForGroup(group, groupIndex),
-              size: 5,
+              size: plotStyle.pointSize,
               opacity: 0.6,
-              line: { width: 0.4, color: "#16313a" }
+              line: pointEdge()
             },
             legendgroup: group,
             name: group,
@@ -1498,11 +1506,11 @@
           x: getPointXOffsets(group, values, 0, 0.22, groupIndex),
           y: values,
           marker: {
-            color: state.colors[group],
+            color: plotStyle.pointFillColor,
             symbol: getSymbolForGroup(group, groupIndex),
-            size: 6,
+            size: plotStyle.pointSize,
             opacity: 0.7,
-            line: { width: 0.5, color: "#16313a" }
+            line: pointEdge()
           },
           legendgroup: group,
           name: group,
@@ -1556,9 +1564,6 @@
         yMaxEff: yMaxEff,
         isRatioEffect: isRatioEst
       };
-    }
-
-      traces = traces.concat(buildPairedLineTraces(idxMap));
     }
 
     return {
@@ -2365,6 +2370,14 @@
       }
       buildPatternControls();
       buildPlot();
+    });
+  }
+
+  var paletteSelect = document.getElementById("pd-palette");
+  if (paletteSelect) {
+    paletteSelect.value = state.paletteName || DEFAULT_PALETTE_NAME;
+    paletteSelect.addEventListener("change", function () {
+      applyPalette(paletteSelect.value);
     });
   }
 

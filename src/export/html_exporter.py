@@ -11,6 +11,7 @@ from export.report_stat_rows import _StatRowsMixin
 from export.report_association import _AssociationMixin
 from export.report_charts import _ChartsMixin
 from export.report_summaries import _SummariesMixin
+from visualization import style_tokens
 
 try:
     from core.logger_config import get_logger
@@ -167,6 +168,7 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
             "bracket_data_json": HTMLExporter._safe_json_dumps(bracket_data),
             "pairwise_data_json": HTMLExporter._safe_json_dumps(pairwise_payload, cls=_ResultsEncoder),
             "plot_data_json": HTMLExporter._safe_json_dumps(plot_data, cls=_ResultsEncoder),
+            "plot_style_json": HTMLExporter._safe_json_dumps(style_tokens.as_json_dict()),
             "plot_subject_trajectories_json": HTMLExporter._safe_json_dumps(plot_subject_trajectories, cls=_ResultsEncoder),
             "plot_reference_lines_json": HTMLExporter._safe_json_dumps(plot_reference_lines, cls=_ResultsEncoder),
             "stats_summary_json": HTMLExporter._safe_json_dumps(stats_summary, cls=_ResultsEncoder),
