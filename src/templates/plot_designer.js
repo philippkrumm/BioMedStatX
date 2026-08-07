@@ -2089,10 +2089,26 @@
         yAxis.autorange = true;
       }
     } else if (!isHorizontalRaincloud && !(state.yMin != null && state.yMax != null && state.yMax > state.yMin)) {
-      var autoMin = Math.min.apply(null, combinedCandidates);
-      var autoMax = Math.max.apply(null, combinedCandidates);
-      var autoSpan = Math.max(Math.abs(autoMax - autoMin), 1e-9);
-      yAxis.range = [autoMin - autoSpan * 0.08, autoMax + autoSpan * 0.06];
+      if (state.plotType === "Violin") {
+        // The violin body is a KDE that overshoots the data extremes by ~2
+        // bandwidths on BOTH ends (Plotly spanmode "soft"). combinedCandidates
+        // only carries the raw data min/max (built.yMin/yMax) plus any bracket /
+        // reference tops, so the fixed 6-8% pad below clips the violin tips:
+        // visibly at the top when no brackets stretch it, and the lower tail is
+        // never accounted for at all. The overshoot is data-dependent (it can
+        // exceed half the data span for tightly clustered groups), so no
+        // constant buffer is safe. Hand framing to Plotly autorange instead --
+        // it fits its own rendered violin exactly and still expands to cover the
+        // bracket / reference annotations (they carry yref:"y"). Manual y-limits
+        // and log-Y are resolved by the branches above.
+        yAxis.autorange = true;
+        yAxis.range = undefined;
+      } else {
+        var autoMin = Math.min.apply(null, combinedCandidates);
+        var autoMax = Math.max.apply(null, combinedCandidates);
+        var autoSpan = Math.max(Math.abs(autoMax - autoMin), 1e-9);
+        yAxis.range = [autoMin - autoSpan * 0.08, autoMax + autoSpan * 0.06];
+      }
     }
 
     if (state.logX && groupOrder.length < 2) {
@@ -2250,23 +2266,21 @@
         horizontalYAxis.range = state.logX ? [Math.max(0.8, 1 - 0.2), groupOrder.length + 0.6] : [0.4, groupOrder.length + 0.6];
       }
 
-      var xCandidatesHorizontal = [built.yMin, built.yMax];
-      if (Number.isFinite(bracketLayer.xAxisMax)) {
-        xCandidatesHorizontal.push(bracketLayer.xAxisMax);
-      }
-      xCandidatesHorizontal = xCandidatesHorizontal.filter(function (value) { return Number.isFinite(value); });
-
       if (state.yMin != null && state.yMax != null && state.yMax > state.yMin) {
         if (state.logX && state.yMin <= 0) {
           warningMessages.push("Y limits ignored: log scale requires y-min > 0.");
         } else {
           horizontalXAxis.range = state.logX ? [Math.log10(state.yMin), Math.log10(state.yMax)] : [state.yMin, state.yMax];
         }
-      } else if (xCandidatesHorizontal.length >= 2) {
-        var autoMinH = Math.min.apply(null, xCandidatesHorizontal);
-        var autoMaxH = Math.max.apply(null, xCandidatesHorizontal);
-        var autoSpanH = Math.max(Math.abs(autoMaxH - autoMinH), 1e-9);
-        horizontalXAxis.range = [autoMinH - autoSpanH * 0.05, autoMaxH + autoSpanH * 0.12];
+      } else {
+        // Raincloud draws a horizontal one-sided KDE whose density overshoots
+        // the data extremes on the value axis by ~2 bandwidths, exactly like the
+        // vertical Violin. A fixed 5-12% pad clips those tails, so hand the value
+        // axis to Plotly autorange -- it frames its own rendered density and
+        // still expands to cover the bracket annotations. Manual limits and log
+        // scale are resolved by the branches above.
+        horizontalXAxis.autorange = true;
+        horizontalXAxis.range = undefined;
       }
 
       if (state.gridStyle !== "none") {
