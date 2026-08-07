@@ -36,6 +36,37 @@
   var groupOrder = parseJsonNode("pd-data-order", []);
   var groupFactorMapPayload = parseJsonNode("pd-data-group-factor-map", {});
 
+  // Shared style tokens injected by html_exporter.py from visualization/style_tokens.py.
+  // Each field falls back to the historical literal so an older report still renders.
+  // These are DEFAULTS; the user can still change palette / colours interactively.
+  var styleTokens = parseJsonNode("pd-data-style", {});
+  function _numOr(v, d) { return (typeof v === "number" && isFinite(v)) ? v : d; }
+  var plotStyle = {
+    palettes: (styleTokens.palettes && typeof styleTokens.palettes === "object") ? styleTokens.palettes : {
+      Nature:  ["#4E79A7", "#F28E2B", "#E15759", "#76B7B2", "#59A14F", "#EDC948", "#B07AA1", "#FF9DA7"],
+      Science: ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#56B4E9", "#E69F00", "#999999"],
+      NEJM:    ["#BC3C29", "#0072B5", "#E18727", "#20854E", "#7876B1", "#6F99AD", "#FFDC91"],
+      Lancet:  ["#00468B", "#ED0000", "#42B540", "#0099B4", "#925E9F", "#FDAF91", "#AD002A"],
+      Tab10:   ["#1F77B4", "#FF7F0E", "#2CA02C", "#D62728", "#9467BD", "#8C564B", "#E377C2", "#7F7F7F", "#BCBD22", "#17BECF"]
+    },
+    defaultPalette: styleTokens.default_palette || "grayscale",
+    grayscaleFloor: styleTokens.grayscale_floor || "#404040",
+    pointFillColor: styleTokens.point_fill_color || "#000000",
+    pointEdgeColor: styleTokens.point_edge_color || "#000000",
+    pointEdgeWidth: _numOr(styleTokens.point_edge_width, 1),
+    pointSize: _numOr(styleTokens.point_size, 6),
+    shapeOutlineColor: styleTokens.shape_outline_color || "#000000",
+    shapeOutlineWidth: _numOr(styleTokens.shape_outline_width, 2)
+  };
+  function grayFloorChannel() {
+    var v = parseInt(String(plotStyle.grayscaleFloor).replace("#", "").slice(0, 2), 16);
+    return isFinite(v) ? v : 64;
+  }
+  // Data points: always solid black (fill + edge), independent of the palette.
+  function pointEdge() {
+    return { width: plotStyle.pointEdgeWidth, color: plotStyle.pointEdgeColor };
+  }
+
   function normalizeReferenceLines(rawLines) {
     if (!Array.isArray(rawLines)) {
       return [];
@@ -138,20 +169,19 @@
   // default is a grayscale ramp (like the desktop "Greys" default), generated
   // black -> white across however many groups the design has, so a t-test
   // (2 groups) and an ANOVA (>2 groups) both look right.
-  var PALETTES = {
-    Nature:  ["#4E79A7", "#F28E2B", "#E15759", "#76B7B2", "#59A14F", "#EDC948", "#B07AA1", "#FF9DA7"],
-    Science: ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#56B4E9", "#E69F00", "#999999"],
-    NEJM:    ["#BC3C29", "#0072B5", "#E18727", "#20854E", "#7876B1", "#6F99AD", "#FFDC91"],
-    Lancet:  ["#00468B", "#ED0000", "#42B540", "#0099B4", "#925E9F", "#FDAF91", "#AD002A"],
-    Tab10:   ["#1F77B4", "#FF7F0E", "#2CA02C", "#D62728", "#9467BD", "#8C564B", "#E377C2", "#7F7F7F", "#BCBD22", "#17BECF"]
-  };
-  var DEFAULT_PALETTE_NAME = "grayscale";
-  // Evenly spaced greys from black (#000) to white (#fff) for n groups.
+  // Palettes come from the shared source (visualization/style_tokens.py) via the
+  // injected pd-data-style blob; plotStyle.palettes carries a fallback copy.
+  var PALETTES = plotStyle.palettes;
+  var DEFAULT_PALETTE_NAME = plotStyle.defaultPalette;
+  // Evenly spaced greys from the shared floor (not pure black, so black data
+  // points stay legible on the darkest segment) up to white, for n groups.
   function grayscaleRamp(n) {
-    if (n <= 1) return ["#000000"];
+    var floor = grayFloorChannel();
+    var ceil = 255;
+    if (n <= 1) { var hf = ("0" + floor.toString(16)).slice(-2); return ["#" + hf + hf + hf]; }
     var out = [];
     for (var i = 0; i < n; i++) {
-      var v = Math.round(255 * i / (n - 1));
+      var v = Math.round(floor + (ceil - floor) * i / (n - 1));
       var h = ("0" + v.toString(16)).slice(-2);
       out.push("#" + h + h + h);
     }
@@ -166,7 +196,7 @@
   // user-adjustable width, applied uniformly so a white/light fill always has a
   // visible border on every plot type.
   function shapeOutline() {
-    return { color: "#000000", width: state.outlineWidth };
+    return { color: plotStyle.shapeOutlineColor, width: state.outlineWidth };
   }
   // Prioritize combinations that remain separable in dense grayscale exports.
   var defaultPatternCycle = ["x", "\\", "/", "-", "|", "+", "."];
@@ -249,7 +279,7 @@
     titleSize: 16,
     axisSize: 12,
     alpha: 0.85,
-    outlineWidth: 2,
+    outlineWidth: plotStyle.shapeOutlineWidth,
     showPoints: true,
     showErrorBars: true,
     centralMeasure: "mean",
@@ -1250,11 +1280,11 @@
           x: getPointXOffsets(group, values, 0, 0.22, groupIndex),
           y: values,
           marker: {
-            color: state.colors[group],
+            color: plotStyle.pointFillColor,
             symbol: getSymbolForGroup(group, groupIndex),
-            size: 6,
+            size: plotStyle.pointSize,
             opacity: 0.7,
-            line: { width: 1, color: "#000000" }
+            line: pointEdge()
           },
           legendgroup: group,
           name: group + " points",
@@ -1309,11 +1339,11 @@
           x: getPointXOffsets(group, values, 0, 0.22, undefined),
           y: values,
           marker: {
-            color: state.colors[group],
+            color: plotStyle.pointFillColor,
             symbol: getSymbolForGroup(group, groupIndex),
-            size: 6,
+            size: plotStyle.pointSize,
             opacity: 0.7,
-            line: { width: 1, color: "#000000" }
+            line: pointEdge()
           },
           legendgroup: group,
           name: group + " points",
@@ -1337,10 +1367,11 @@
           box: { visible: true },
           meanline: { visible: true },
           marker: {
-            color: state.colors[group],
+            color: plotStyle.pointFillColor,
             symbol: getSymbolForGroup(group, groupIndex),
-            size: 5,
-            opacity: 0.65
+            size: plotStyle.pointSize,
+            opacity: 0.65,
+            line: pointEdge()
           },
           line: shapeOutline(),
           fillcolor: state.colors[group],
@@ -1400,11 +1431,11 @@
             x: values,
             y: getPointXOffsets(group, values, pointOffset, pointJitter, groupIndex),
             marker: {
-              color: state.colors[group],
+              color: plotStyle.pointFillColor,
               symbol: getSymbolForGroup(group, groupIndex),
-              size: 5,
+              size: plotStyle.pointSize,
               opacity: 0.6,
-              line: { width: 0.4, color: "#16313a" }
+              line: pointEdge()
             },
             legendgroup: group,
             name: group,
@@ -1475,11 +1506,11 @@
           x: getPointXOffsets(group, values, 0, 0.22, groupIndex),
           y: values,
           marker: {
-            color: state.colors[group],
+            color: plotStyle.pointFillColor,
             symbol: getSymbolForGroup(group, groupIndex),
-            size: 6,
+            size: plotStyle.pointSize,
             opacity: 0.7,
-            line: { width: 1, color: "#000000" }
+            line: pointEdge()
           },
           legendgroup: group,
           name: group,
