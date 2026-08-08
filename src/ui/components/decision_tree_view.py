@@ -349,11 +349,16 @@ class InteractiveDecisionTreeWidget(QGraphicsView):
         if not min_row_gap:
             min_row_gap = 2.0
 
-        # Scale the x-grid so the widest box plus a 30px gutter always fits the
-        # tightest sibling gap -- long leaf labels used to overlap their neighbour
-        # at the old fixed SCALE_X=64. 64 stays the floor; a cap keeps a
-        # pathological gap from exploding the width (the view auto-fits anyway).
-        SCALE_X = max(64.0, min(320.0, (max_node_w + 30.0) / min_row_gap))
+        # Widen the x-grid so the widest box plus a 30px gutter clears the
+        # tightest sibling gap -- long leaf labels used to overlap their
+        # neighbour at the old fixed SCALE_X=64 (the compact method flowcharts:
+        # correlation/regression/ANCOVA). But keep the whole scene within a width
+        # budget so a large full-decision tree (78 nodes spanning ~120 x-units)
+        # can't explode: there the 64 floor (old behaviour) wins and the view
+        # pans/scrolls instead of shrinking everything to an unreadable sliver.
+        x_span = max(max_x - min_x, 1.0)
+        overlap_scale = (max_node_w + 30.0) / min_row_gap
+        SCALE_X = max(64.0, min(overlap_scale, 260.0, 2600.0 / x_span))
 
         def to_qt_coords(x, y):
             qx = (x - min_x) * SCALE_X + PAD + max_half_w

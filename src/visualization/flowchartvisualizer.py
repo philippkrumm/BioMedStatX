@@ -386,8 +386,13 @@ class FlowchartVisualizer:
                 "TIER_CLINICAL":   {"label": "Medium sample\n(20 ≤ N < 100) — standard approach",               "pos": ( 0.0,  8.5), "isSquare": True},
                 "TIER_ASYMPTOTIC": {"label": "Large sample\n(N ≥ 100) — robust results expected",                "pos": ( 1.3,  8.5), "isSquare": True},
                 "SKEW_KURT_CHECK": {"label": "Check if data is roughly\nnormally distributed",           "pos": ( 0.0,  7.0), "isSquare": True},
-                "PEARSON":         {"label": "Normal data\n→ Pearson r",                                   "pos": (-1.3,  5.5), "isSquare": False},
-                "SPEARMAN":        {"label": "Skewed data\n→ Spearman ρ",                                  "pos": ( 1.3,  5.5), "isSquare": False},
+                # SPEARMAN sits on the left (under TIER_MICRO) and PEARSON on the
+                # right: the very-small-sample path highlights TIER_MICRO->SPEARMAN
+                # directly, and with SPEARMAN below TIER_MICRO that edge runs
+                # straight down the left column instead of cutting diagonally
+                # through the centred SKEW_KURT_CHECK node (they were collinear).
+                "PEARSON":         {"label": "Normal data\n→ Pearson r",                                   "pos": ( 1.3,  5.5), "isSquare": False},
+                "SPEARMAN":        {"label": "Skewed data\n→ Spearman ρ",                                  "pos": (-1.3,  5.5), "isSquare": False},
                 "RESULT":          {"label": f"Is there a significant relationship?\n{r_label}  {p_label}\n{sig_lbl}", "pos": ( 0.0,  4.0), "isSquare": False},
                 "CI":              {"label": "How precise is the estimate?\n(95% CI, Fisher z-transform)", "pos": (-1.3,  2.5), "isSquare": False},
                 "EFFECT":          {"label": "How strong is the relationship?\n(|r|: ≥.1 small  ≥.3 med  ≥.5 large)", "pos": ( 1.3,  2.5), "isSquare": False},
