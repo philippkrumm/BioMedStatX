@@ -1,7 +1,7 @@
 import math
 from PyQt5.QtCore import Qt, QRectF, QPointF
 from PyQt5.QtGui import (
-    QColor, QPen, QBrush, QFont, QFontMetrics, QPolygonF, QPainter,
+    QColor, QPen, QBrush, QFont, QFontMetrics, QFontMetricsF, QPolygonF, QPainter,
     QStaticText, QTextOption, QPalette
 )
 from PyQt5.QtWidgets import (
@@ -38,16 +38,26 @@ def get_line_intersection(x1, y1, x2, y2, w_src, h_src, w_tgt, h_tgt):
 
 
 def node_metrics(label, is_active):
-    """Node box size + font, mirroring the HTML/SVG report renderer so the
-    in-app tree matches the exported one. See report_single.html.j2."""
+    """Node box size + font. The width is MEASURED with the same QFont the paint
+    method uses (via QFontMetricsF), not estimated from character count: a
+    char-count guess under-sized the box so long labels spilled past the rounded
+    border into neighbouring nodes. Measuring the real rendered advance (which
+    honours the actual font fallback, e.g. Helvetica Neue when Segoe UI is
+    absent) makes the box fit its text on every platform."""
     lines = str(label or "").split('\n')
     fs = 15 if is_active else 12
     lh = fs * 1.3
-    max_chars = max((len(line) for line in lines), default=0)
-    est_text_w = max_chars * fs * 0.57
+    font = QFont("Segoe UI")
+    font.setPixelSize(int(fs))
+    if is_active:
+        font.setBold(True)
+    fm = QFontMetricsF(font)
+    max_text_w = max((fm.horizontalAdvance(line) for line in lines), default=0.0)
     min_w = 155.0 if is_active else 130.0
     min_h = 60.0 if is_active else 52.0
-    node_w = max(min_w, min(500.0, est_text_w + 36.0))
+    # +24 clears the 6px-per-side text inset used by paint() plus a little air,
+    # so the label never wraps unexpectedly or touches the border.
+    node_w = max(min_w, min(760.0, max_text_w + 24.0))
     node_h = max(min_h, min(500.0, len(lines) * lh + 34.0))
     return node_w, node_h, fs
 
@@ -314,17 +324,36 @@ class InteractiveDecisionTreeWidget(QGraphicsView):
         min_x, max_x = min(xs), max(xs)
         min_y, max_y = min(ys), max(ys)
         
-        SCALE_X = 64.0
         SCALE_Y = 64.0 * 1.7
         PAD = 96.0
 
         # Largest node half-extent shifts the whole layout clear of the edges,
-        # exactly like the HTML renderer's maxNodeHalfW / maxNodeHalfH.
+        # exactly like the HTML renderer's maxNodeHalfW / maxNodeHalfH. Also track
+        # the widest box and the tightest horizontal gap between nodes on the same
+        # row so the x-grid can be scaled to keep siblings from overlapping.
         max_half_w, max_half_h = 65.0, 28.0
+        max_node_w = 160.0
         for node in nodes:
             nw, nh, _fs = node_metrics(node["label"], node["isActive"])
             max_half_w = max(max_half_w, nw / 2.0)
             max_half_h = max(max_half_h, nh / 2.0)
+            max_node_w = max(max_node_w, nw)
+
+        min_row_gap = None
+        for i in range(len(nodes)):
+            for j in range(i + 1, len(nodes)):
+                if abs(nodes[i]["y"] - nodes[j]["y"]) < 0.75:  # same visual row
+                    dx = abs(nodes[i]["x"] - nodes[j]["x"])
+                    if dx > 1e-6:
+                        min_row_gap = dx if min_row_gap is None else min(min_row_gap, dx)
+        if not min_row_gap:
+            min_row_gap = 2.0
+
+        # Scale the x-grid so the widest box plus a 30px gutter always fits the
+        # tightest sibling gap -- long leaf labels used to overlap their neighbour
+        # at the old fixed SCALE_X=64. 64 stays the floor; a cap keeps a
+        # pathological gap from exploding the width (the view auto-fits anyway).
+        SCALE_X = max(64.0, min(320.0, (max_node_w + 30.0) / min_row_gap))
 
         def to_qt_coords(x, y):
             qx = (x - min_x) * SCALE_X + PAD + max_half_w
