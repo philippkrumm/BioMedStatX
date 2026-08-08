@@ -194,16 +194,33 @@ const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.m
 const PAD=60,SCALE=64;
 const Y_SCALE=SCALE*1.3;
 const MIN_FOCUS_SCALE=0.3;
+// Measure ACTUAL rendered text width in the viewer's browser rather than
+// estimating from character count: the font stack falls back differently per
+// browser (Segoe UI is absent on macOS, so Safari renders the wider Helvetica
+// Neue), and a char-count guess that fit Chromium spilled past the border in
+// Safari. A hidden measuring <svg> using the same font gives the true width.
+const TREE_FONT='"Segoe UI","Helvetica Neue",Arial,sans-serif';
+const measSvg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+measSvg.setAttribute('width','0');measSvg.setAttribute('height','0');
+measSvg.style.cssText='position:absolute;left:-9999px;top:-9999px;overflow:hidden';
+document.body.appendChild(measSvg);
+function measureTextW(text,fs,bold){
+  const t=document.createElementNS('http://www.w3.org/2000/svg','text');
+  t.setAttribute('font-family',TREE_FONT);t.setAttribute('font-size',fs);
+  if(bold)t.setAttribute('font-weight','700');
+  t.textContent=text;measSvg.appendChild(t);
+  let w=0;try{w=t.getComputedTextLength();}catch(e){w=0;}
+  measSvg.removeChild(t);
+  if(!w||!isFinite(w))w=String(text).length*fs*0.62;
+  return w;
+}
 const nodeMetrics={};
 nodes.forEach(function(n){
   const lines=String(n.label||"").split('\n');
   const fs=n.isActive?17:15;
   const lh=fs*1.3;
-  const maxChars=lines.reduce(function(acc,line){return Math.max(acc,String(line).length);},0);
-  // 0.60 char-width fits Segoe UI incl. bold active nodes; high cap lets the box
-  // grow to the longest line so text never spills past the rounded border.
-  const estTextW=maxChars*fs*0.60;
-  const nodeW=Math.max(168,Math.min(900,estTextW+40));
+  const maxTextW=lines.reduce(function(acc,line){return Math.max(acc,measureTextW(String(line),fs,n.isActive));},0);
+  const nodeW=Math.max(168,Math.min(1100,maxTextW+40));
   const nodeH=Math.max(66,Math.min(540,lines.length*lh+32));
   nodeMetrics[n.id]={
     width:nodeW,
@@ -214,6 +231,7 @@ nodes.forEach(function(n){
     lineHeight:lh
   };
 });
+document.body.removeChild(measSvg);
 let maxNodeHalfW=65,maxNodeHalfH=28;
 nodes.forEach(function(n){
   const m=nodeMetrics[n.id];
