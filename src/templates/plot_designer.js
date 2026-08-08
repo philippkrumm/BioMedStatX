@@ -2308,18 +2308,12 @@
       layout.xaxis.gridwidth = Math.max(0.5, state.axisThickness * 0.75);
       layout.xaxis.gridcolor = "rgba(22,49,58," + state.gridAlpha + ")";
     }
-    if (state.minorTicks) {
-      layout.xaxis.minor = {
-        ticks: tickMode,
-        tickwidth: Math.max(0.5, state.axisThickness * 0.75),
-        ticklen: Math.max(3, Math.round(3 + state.axisThickness)),
-        showgrid: state.gridStyle === "minor" || state.gridStyle === "both"
-      };
-      if (state.gridStyle === "minor" || state.gridStyle === "both") {
-        layout.xaxis.minor.gridcolor = "rgba(22,49,58," + Math.max(0.05, state.gridAlpha * 0.7) + ")";
-        layout.xaxis.minor.gridwidth = Math.max(0.5, state.axisThickness * 0.6);
-      }
-    }
+    // Minor ticks belong on the numeric value axis only, never the categorical
+    // group-name axis. The value axis already got them above: yAxis for vertical
+    // Bar/Box/Violin, horizontalXAxis for Raincloud. layout.xaxis here is the
+    // categorical axis for vertical plots (group names) -- adding minor ticks to
+    // it dropped stray ticks between the group labels -- and is the already-set
+    // value axis for Raincloud, so no minor block is needed at this point.
 
     if (warningNode) {
       warningNode.textContent = warningMessages.join(" ");

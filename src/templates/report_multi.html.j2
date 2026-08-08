@@ -200,8 +200,10 @@ nodes.forEach(function(n){
   const fs=n.isActive?17:15;
   const lh=fs*1.3;
   const maxChars=lines.reduce(function(acc,line){return Math.max(acc,String(line).length);},0);
-  const estTextW=maxChars*fs*0.57;
-  const nodeW=Math.max(168,Math.min(540,estTextW+36));
+  // 0.60 char-width fits Segoe UI incl. bold active nodes; high cap lets the box
+  // grow to the longest line so text never spills past the rounded border.
+  const estTextW=maxChars*fs*0.60;
+  const nodeW=Math.max(168,Math.min(900,estTextW+40));
   const nodeH=Math.max(66,Math.min(540,lines.length*lh+32));
   nodeMetrics[n.id]={
     width:nodeW,

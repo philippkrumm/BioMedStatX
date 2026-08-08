@@ -430,11 +430,9 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
                 "Significance: *\u202fp\u202f<\u202f0.05 \u2002 **\u202fp\u202f<\u202f0.01 \u2002 ***\u202fp\u202f<\u202f0.001"
             ),
             "charts": (
-                "Interactive Plotly charts rendered fully offline inside this file.\n"
                 "Boxplots show the median (central line), interquartile range (box), "
                 "1.5\u00d7IQR whiskers, and individual observations as jittered points.\n"
                 "Interaction plots and profile plots show cell means \u00b1 SE across factor levels.\n"
-                "Click the \u24d8 button on each chart for a description of what it shows.\n"
                 "Hover over any element to see exact values."
             ),
             "raw": (
