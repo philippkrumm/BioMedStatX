@@ -741,7 +741,11 @@ def _ap_is_binary_outcome_for_help(self):
     if series.empty:
         return False
 
-    return _classify_binary_outcome(series.unique(), dv_col)
+    # Help Hub stays conservative: only an unambiguous 0/1 / two-string outcome
+    # suggests the logistic recipe. The ambiguous "maybe_binary" case is resolved
+    # by a confirmation prompt at real routing time, not by pre-emptively steering
+    # Help Hub recipes.
+    return _classify_binary_outcome(series.unique(), dv_col) == "binary"
 
 
 def _ap_is_continuous_factor1_for_help(self):
@@ -1070,20 +1074,111 @@ def _ap_load_sheet(self, index):
 
 
 def _classify_binary_outcome(unique_values, dv_col_name):
-    """Whether unique_values (from a single DV column) represent a binary outcome:
-    exactly 2 values that are 0/1 (or two strings), and the column name does not
-    hint at a grouping variable.
+    """Classify a single DV column's unique values as a binary outcome.
+
+    Returns one of three states:
+
+    ``"binary"``
+        Unambiguously binary: exactly 2 values that are 0/1 (or booleans, or two
+        strings), and the column name does not hint at a grouping variable.
+        Routed straight to logistic regression, no confirmation needed.
+
+    ``"maybe_binary"``
+        Exactly 2 *numeric* values that are NOT 0/1 (e.g. 1/2, 5/12) and the
+        column name does not hint at a grouping variable. Ambiguous: could be a
+        binary outcome coded with other integers, or a genuinely continuous
+        measure that happens to take only two values. The caller MUST confirm
+        with the user before treating it as binary. Silently defaulting such a
+        column to correlation shipped a plausible-but-wrong Pearson result for
+        a logistic-intended outcome coded 1/2 -- the old 0/1-only gate let it
+        slip past unnoticed.
+
+    ``"not_binary"``
+        Everything else: not exactly 2 values, mixed/other types, or a
+        grouping-named column.
+
+    Kept as a pure function (no UI, no self) so both real routing
+    (``_ap_build_analysis_context``) and the Help Hub hint
+    (``_ap_is_binary_outcome_for_help``) share one classifier and cannot drift.
     """
-    is_01 = set(unique_values) <= {0, 1, 0.0, 1.0}
-    is_str = all(isinstance(v, str) for v in unique_values)
+    values = list(unique_values)
+    if len(values) != 2:
+        return "not_binary"
+
     group_hints = {"group", "arm", "treatment", "condition", "sex",
                    "gender", "cohort", "batch", "grp"}
-    name_is_grouping = any(h in dv_col_name.lower() for h in group_hints)
-    return (
-        len(unique_values) == 2
-        and (is_01 or is_str)
-        and not name_is_grouping
+    if any(h in dv_col_name.lower() for h in group_hints):
+        return "not_binary"
+
+    is_01 = set(values) <= {0, 1, 0.0, 1.0}
+    is_str = all(isinstance(v, str) for v in values)
+    if is_01 or is_str:
+        return "binary"
+
+    # Two values, non-grouping name, but neither 0/1 nor two strings. If both are
+    # numeric (int/float, excluding bool which already satisfied is_01), it's an
+    # ambiguous binary candidate -- ask the user rather than silently guessing.
+    is_numeric = all(
+        isinstance(v, (int, float, np.integer, np.floating)) and not isinstance(v, bool)
+        for v in values
     )
+    if is_numeric:
+        return "maybe_binary"
+    return "not_binary"
+
+
+def _detect_unmapped_repeated_subject(df, factor_a, factor_b, mapped_cols):
+    """Detect an unmapped column that looks like repeated-measures subject IDs.
+
+    Returns ``(column_name, within_factor)`` when a two-factor design without a
+    mapped Subject ID nonetheless contains a column whose values carry the
+    hallmark of subjects measured across a within factor; otherwise ``None``.
+
+    Signature (deliberately strict, to avoid false positives on ordinary
+    categorical columns): grouping the data by the candidate column, one factor
+    is constant within *every* group (the between factor) and the other spans
+    more than one level in *every* group (the within factor). The candidate must
+    also be ID-like -- genuinely repeated (not constant, not unique-per-row) and
+    with strictly more distinct values than either factor has levels. That last
+    guard is what separates real subject IDs from a mere relabelling of a factor:
+    a column that aliases the within factor (same number of distinct values as
+    that factor) carries the identical between/within signature but is not a
+    subject column.
+
+    Without this, a mixed design (e.g. Subject × Timepoint with Subject left
+    unmapped) silently runs as a between-subjects Two-Way ANOVA, ignoring the
+    within-subject correlation and reporting invalid Timepoint / interaction
+    p-values.
+    """
+    n = len(df)
+    n_levels_a = int(df[factor_a].nunique(dropna=True))
+    n_levels_b = int(df[factor_b].nunique(dropna=True))
+    max_factor_levels = max(n_levels_a, n_levels_b)
+    for col in df.columns:
+        if col in mapped_cols or col in (factor_a, factor_b):
+            continue
+        series = df[col].dropna()
+        if series.empty:
+            continue
+        n_unique = int(series.nunique())
+        if n_unique < 2 or n_unique >= n:  # constant or unique-per-row -> not IDs
+            continue
+        if n_unique <= max_factor_levels:  # aliases a factor, not subject IDs
+            continue
+        try:
+            a_span = df.groupby(col)[factor_a].nunique(dropna=True)
+            b_span = df.groupby(col)[factor_b].nunique(dropna=True)
+        except Exception:
+            continue
+        if a_span.empty or b_span.empty:
+            continue
+        a_within, a_between = bool((a_span > 1).all()), bool((a_span == 1).all())
+        b_within, b_between = bool((b_span > 1).all()), bool((b_span == 1).all())
+        if a_within and b_between:
+            return col, factor_a
+        if b_within and a_between:
+            return col, factor_b
+    return None
 
 
 def _ap_lmm_vs_rmanova_needed(df, subject_column, within_factor, dv_column):
@@ -1106,6 +1201,62 @@ def _ap_lmm_vs_rmanova_needed(df, subject_column, within_factor, dv_column):
         return False
     except Exception:
         return False
+
+
+def _ap_confirm_binary_outcome(self, dv_col, values):
+    """Ask whether a two-value numeric outcome is binary or continuous.
+
+    Fires only for the ambiguous ``"maybe_binary"`` case (exactly two numeric
+    values not coded 0/1, e.g. 1/2). Returns ``True`` to treat the column as a
+    binary outcome (logistic regression), ``False`` to keep it continuous
+    (correlation / linear regression). This converts what used to be a silent,
+    plausible-but-wrong Pearson result into an explicit user decision.
+
+    Runs on the UI thread (``determine_and_run_test`` calls the context builder
+    synchronously), so a modal dialog is safe. No default button is set: this is
+    the high-severity anti-silent-wrong-selection path, so a deliberate click is
+    required rather than letting a reflexive Enter pick one. Dismissing the
+    dialog (Esc / window close) resolves to the safe non-logistic option, never
+    a silent logistic guess. The concrete two values are shown in the text so a
+    genuinely continuous pilot outcome (e.g. "1.023, 5.678") is obviously not a
+    coding and the user picks Continuous.
+    """
+    a, b = values
+    box = QMessageBox(self)
+    box.setIcon(QMessageBox.Question)
+    box.setWindowTitle("Binary outcome?")
+    box.setText(
+        f"The outcome column “{dv_col}” has exactly two distinct "
+        f"values ({a}, {b}), not coded as 0/1."
+    )
+    box.setInformativeText(
+        "Treat it as a binary outcome (logistic regression), or as a "
+        "continuous measure (correlation / linear regression)?"
+    )
+    binary_btn = box.addButton("Binary (logistic)", QMessageBox.AcceptRole)
+    continuous_btn = box.addButton("Continuous (correlation)", QMessageBox.RejectRole)
+    box.setEscapeButton(continuous_btn)
+    box.exec_()
+    return box.clickedButton() is binary_btn
+
+
+def _ap_warn_unmapped_subject(self, subject_col, within_factor):
+    """Advisory (non-blocking): a repeated-measures Subject column is present but
+    unmapped, so a mixed design ran as a plain between-subjects Two-Way ANOVA.
+
+    Informational only -- the analysis still proceeds; it just tells the user how
+    to get the mixed model they likely intended. Kept as its own method so tests
+    can stub it without a Qt event loop.
+    """
+    QMessageBox.warning(
+        self, "Possible mixed design",
+        f"Column “{subject_col}” looks like repeated-measures subject IDs "
+        f"(each subject spans multiple “{within_factor}” levels) but is not "
+        f"mapped as Subject ID.\n\n"
+        f"This analysis ran as a between-subjects Two-Way ANOVA. If the same "
+        f"subjects were measured across “{within_factor}”, map “{subject_col}” "
+        f"as Subject ID to run a Mixed ANOVA instead.",
+    )
 
 
 def _ap_build_analysis_context(self):
@@ -1158,10 +1309,19 @@ def _ap_build_analysis_context(self):
     # --- Binary DV detection: Logistic Regression ---
     if len(dv_columns) == 1:
         dv_col = dv_columns[0]
-        # Conservative check: exactly 2 values that are 0/1 (or two strings),
-        # AND column name does not hint at a grouping variable.
-        if _classify_binary_outcome(analysis_df[dv_col].dropna().unique(), dv_col):
+        _binary_status = _classify_binary_outcome(
+            analysis_df[dv_col].dropna().unique(), dv_col
+        )
+        if _binary_status == "binary":
+            # Unambiguous 0/1 / two-string outcome -> logistic, no prompt.
             context["outcome_type"] = "binary"
+        elif _binary_status == "maybe_binary":
+            # Exactly two numeric values not coded 0/1 (e.g. 1/2). Ambiguous:
+            # ask the user instead of silently defaulting to correlation, which
+            # would ship a wrong Pearson result for a binary-intended outcome.
+            _two_values = sorted(analysis_df[dv_col].dropna().unique().tolist())
+            if self._confirm_binary_outcome(dv_col, _two_values):
+                context["outcome_type"] = "binary"
 
     if len(factor_columns) == 1:
         factor = factor_columns[0]
@@ -1208,6 +1368,15 @@ def _ap_build_analysis_context(self):
             context["between_factors"] = factor_columns[:2]
             context["inferred_test"] = "two_way_anova"
             context["dependent"] = False
+            # Advisory: warn if an unmapped column looks like repeated-measures
+            # subject IDs -- otherwise the intended mixed design silently ran as
+            # a between-subjects Two-Way ANOVA.
+            _repeated = _detect_unmapped_repeated_subject(
+                analysis_df, factor_a, factor_b,
+                mapped_cols={*dv_columns, *factor_columns, *covariate_columns},
+            )
+            if _repeated is not None:
+                self._warn_unmapped_subject(_repeated[0], _repeated[1])
 
     # --- Clinical test upgrades ---
 
@@ -1238,7 +1407,12 @@ def _ap_build_analysis_context(self):
     # 4. Continuous primary factor → Correlation or Linear Regression
     #    Applied AFTER all other upgrades so it takes precedence over ANCOVA/t-test
     #    inferences when the factor is not a grouping variable.
-    if len(factor_columns) == 1 and not subject_column:
+    #    A binary outcome is excluded: logistic regression of a binary DV on a
+    #    continuous predictor is NOT a correlation, and without this guard a
+    #    single continuous predictor silently reverted logistic_regression (set
+    #    just above) back to correlation.
+    if (len(factor_columns) == 1 and not subject_column
+            and context.get("outcome_type") != "binary"):
         try:
             from analysis.correlation_models import _is_continuous as _corr_is_continuous
             if _corr_is_continuous(analysis_df, factor_columns[0]):
@@ -2357,6 +2531,8 @@ class AutopilotMixin:
     _ap_get_available_analysis_groups = _ap_get_available_analysis_groups
     _ap_update_analysis_group_selection_ui = _ap_update_analysis_group_selection_ui
     open_analysis_group_selector = _ap_open_analysis_group_selector
+    _confirm_binary_outcome = _ap_confirm_binary_outcome
+    _warn_unmapped_subject = _ap_warn_unmapped_subject
     _build_analysis_context = _ap_build_analysis_context
     _detected_test_label = _ap_detected_test_label
     _execute_single_analysis = _ap_execute_single_analysis
