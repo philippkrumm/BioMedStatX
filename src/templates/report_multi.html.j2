@@ -200,17 +200,14 @@ const MIN_FOCUS_SCALE=0.3;
 // Neue), and a char-count guess that fit Chromium spilled past the border in
 // Safari. A hidden measuring <svg> using the same font gives the true width.
 const TREE_FONT='"Segoe UI","Helvetica Neue",Arial,sans-serif';
-const measSvg=document.createElementNS('http://www.w3.org/2000/svg','svg');
-measSvg.setAttribute('width','0');measSvg.setAttribute('height','0');
-measSvg.style.cssText='position:absolute;left:-9999px;top:-9999px;overflow:hidden';
-document.body.appendChild(measSvg);
+// Canvas measureText is the reliable cross-browser text ruler (offscreen-SVG
+// getComputedTextLength returned nothing in Safari, so its fallback still
+// spilled). It resolves the same font fallback the page uses and matches what
+// the SVG <text> renders, in Chromium and Safari alike.
+const measCtx=document.createElement('canvas').getContext('2d');
 function measureTextW(text,fs,bold){
-  const t=document.createElementNS('http://www.w3.org/2000/svg','text');
-  t.setAttribute('font-family',TREE_FONT);t.setAttribute('font-size',fs);
-  if(bold)t.setAttribute('font-weight','700');
-  t.textContent=text;measSvg.appendChild(t);
-  let w=0;try{w=t.getComputedTextLength();}catch(e){w=0;}
-  measSvg.removeChild(t);
+  measCtx.font=(bold?'700 ':'400 ')+fs+'px '+TREE_FONT;
+  let w=measCtx.measureText(String(text)).width;
   if(!w||!isFinite(w))w=String(text).length*fs*0.62;
   return w;
 }
@@ -231,7 +228,6 @@ nodes.forEach(function(n){
     lineHeight:lh
   };
 });
-document.body.removeChild(measSvg);
 let maxNodeHalfW=65,maxNodeHalfH=28;
 nodes.forEach(function(n){
   const m=nodeMetrics[n.id];
