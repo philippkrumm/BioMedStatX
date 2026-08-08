@@ -19,7 +19,11 @@ def test_us_formatted_decimal_strings_are_not_corrupted():
         "Group": ["a", "a", "b", "b"],
         "Value": ["1.5", "2.75", "3.0", "4.25"],
     })
-    assert df["Value"].dtype == object, "test fixture must start as text, not already numeric"
+    # The fixture must start as text (not already float): that is when
+    # _convert_values_to_float runs. pandas >=3 infers a StringDtype for text
+    # columns instead of object, so assert on the intent -- non-numeric -- rather
+    # than a specific dtype.
+    assert not pd.api.types.is_numeric_dtype(df["Value"]), "test fixture must start as text, not already numeric"
 
     detector = OutlierDetector(df, "Group", "Value")
 
