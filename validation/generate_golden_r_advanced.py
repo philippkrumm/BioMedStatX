@@ -115,6 +115,16 @@ for(i in 1:nrow(emm_df)) {
 }
 results$ancova_emmeans <- emm_list
 
+# The Type-III ANOVAs above require sum contrasts (contr.sum) to match Python's
+# anova_lm(typ=3). The coefficient models below (lmer/glm/logistf) are instead
+# compared against the app's statsmodels output, which reports fixed-effect
+# coefficients under TREATMENT (dummy) coding. Fixed-effect estimates are
+# contrast-coding-dependent, so pin treatment contrasts here -- otherwise a
+# change in R's default coding silently reparametrises every coefficient and the
+# frozen reference no longer matches the app. F-tests / emmeans above are
+# contrast-invariant and already computed, so this switch does not affect them.
+options(contrasts=c("contr.treatment", "contr.poly"))
+
 # 4. LMM (lme4)
 # Model: y_mixed ~ groupA * time + covar + (1|subj)
 # REML=TRUE is default for lmer
