@@ -757,7 +757,12 @@ class UIDialogManager:
         dialog = ControlGroupDialog(groups, parent=parent)
         if dialog.exec_() == QDialog.Accepted:
             return dialog.selected_group
-        return groups[0]  # Default: first group
+        # Cancelled: return None, never a silent groups[0]. Every caller guards
+        # `control_group is None` and falls back appropriately (Dunnett ->
+        # Games-Howell for the pairwise paths; no designated control for
+        # ANCOVA/LMM). Returning the first group here made those guards dead code
+        # and ran Dunnett against an arbitrary control the user never chose.
+        return None
     
     @staticmethod
     def select_transformation_dialog(parent=None, progress_text=None, column_name=None, force_show=False,

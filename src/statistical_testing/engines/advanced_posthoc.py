@@ -102,6 +102,14 @@ class AdvancedPostHocEngine:
                 if posthoc_method in ("dunnett", "emm_mvt"):
                     if control_group_callback:
                         control_group = control_group_callback(group_names)
+                        if control_group is None:
+                            # Control-group selection cancelled: fall back to the
+                            # all-pairs default. Leaving method="dunnett"/"emm_mvt"
+                            # with control_group None selects all pairs but keeps a
+                            # control-referenced label -- an incoherent state. The
+                            # old dialog returned groups[0] here, silently running
+                            # against an arbitrary control the user never chose.
+                            posthoc_method = default_method
                     elif group_names:
                         control_group = group_names[0]
             except Exception as exc:

@@ -46,13 +46,22 @@ def dummy_file(tmp_path):
     return str(path)
 
 
-def _stub_custom_pairs(pairs):
-    """Force the parametric post-hoc dialog down the inline paired_custom block."""
+def _stub_custom_pairs(monkeypatch, pairs):
+    """Force the parametric post-hoc dialog down the inline paired_custom block.
+
+    Uses monkeypatch (not bare attribute assignment) so the stubs are reverted
+    after each test -- a leaked select_control_group_dialog stub otherwise poisons
+    every later test that exercises the real dialog (made the suite order-dependent).
+    """
     from analysis.statisticaltester import UIDialogManager
-    UIDialogManager.select_transformation_dialog = staticmethod(lambda *a, **k: None)
-    UIDialogManager.select_posthoc_test_dialog = staticmethod(lambda *a, **k: "paired_custom")
-    UIDialogManager.select_custom_pairs_dialog = staticmethod(lambda *a, **k: pairs)
-    UIDialogManager.select_control_group_dialog = staticmethod(lambda *a, **k: None)
+    monkeypatch.setattr(UIDialogManager, "select_transformation_dialog",
+                        staticmethod(lambda *a, **k: None))
+    monkeypatch.setattr(UIDialogManager, "select_posthoc_test_dialog",
+                        staticmethod(lambda *a, **k: "paired_custom"))
+    monkeypatch.setattr(UIDialogManager, "select_custom_pairs_dialog",
+                        staticmethod(lambda *a, **k: pairs))
+    monkeypatch.setattr(UIDialogManager, "select_control_group_dialog",
+                        staticmethod(lambda *a, **k: None))
 
 
 def _three_group_df(b_values):
@@ -87,10 +96,10 @@ def _ab_comparison(results):
     return None
 
 
-def test_inline_custom_pairs_is_row_order_invariant(dummy_file, tmp_path):
+def test_inline_custom_pairs_is_row_order_invariant(dummy_file, tmp_path, monkeypatch):
     rng = np.random.default_rng(0)
     b = list(rng.normal(13, 2, 8))
-    _stub_custom_pairs([("A", "B")])
+    _stub_custom_pairs(monkeypatch, [("A", "B")])
 
     df1, _ = _three_group_df(b)
     r1 = _run(df1, dummy_file, tmp_path, "inline_ident")
@@ -105,10 +114,10 @@ def test_inline_custom_pairs_is_row_order_invariant(dummy_file, tmp_path):
     )
 
 
-def test_inline_custom_pairs_matches_independent_ttest(dummy_file, tmp_path):
+def test_inline_custom_pairs_matches_independent_ttest(dummy_file, tmp_path, monkeypatch):
     rng = np.random.default_rng(0)
     b = list(rng.normal(13, 2, 8))
-    _stub_custom_pairs([("A", "B")])
+    _stub_custom_pairs(monkeypatch, [("A", "B")])
     df, a = _three_group_df(b)
     r = _run(df, dummy_file, tmp_path, "inline_ind")
     comp = _ab_comparison(r)
@@ -124,10 +133,10 @@ def test_inline_custom_pairs_matches_independent_ttest(dummy_file, tmp_path):
     )
 
 
-def test_inline_custom_pairs_label_does_not_claim_pairing(dummy_file, tmp_path):
+def test_inline_custom_pairs_label_does_not_claim_pairing(dummy_file, tmp_path, monkeypatch):
     rng = np.random.default_rng(0)
     b = list(rng.normal(13, 2, 8))
-    _stub_custom_pairs([("A", "B")])
+    _stub_custom_pairs(monkeypatch, [("A", "B")])
     df, _ = _three_group_df(b)
     r = _run(df, dummy_file, tmp_path, "inline_label")
     comp = _ab_comparison(r)
@@ -135,11 +144,11 @@ def test_inline_custom_pairs_label_does_not_claim_pairing(dummy_file, tmp_path):
     assert (comp.get("effect_size_type") or "") == "cohen_d"
 
 
-def test_inline_custom_pairs_survives_unequal_group_sizes(dummy_file, tmp_path):
+def test_inline_custom_pairs_survives_unequal_group_sizes(dummy_file, tmp_path, monkeypatch):
     """ttest_rel raises on unequal n; an independent comparison must not."""
     rng = np.random.default_rng(1)
     b = list(rng.normal(13, 2, 11))  # 11 vs 8 -> ttest_rel would raise
-    _stub_custom_pairs([("A", "B")])
+    _stub_custom_pairs(monkeypatch, [("A", "B")])
     df = pd.DataFrame({
         "Group": ["A"] * 8 + ["B"] * 11 + ["C"] * 8,
         "Value": list(rng.normal(10, 2, 8)) + b + list(rng.normal(16, 2, 8)),

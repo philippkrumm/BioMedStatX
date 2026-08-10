@@ -1262,11 +1262,14 @@ class AnalysisManager:
                                         "error": None
                                     }
                             else:
-                                # Dunnett needs a control group first; then this
-                                # plus games_howell/tukey all run via the refactored
-                                # post-hoc function.
-                                if posthoc_choice == "dunnett":
-                                    control_group = UIDialogManager.select_control_group_dialog(valid_groups)
+                                # Dunnett needs a control group; the refactored
+                                # post-hoc function prompts for it internally and
+                                # falls back to Games-Howell if that selection is
+                                # cancelled. Do NOT pre-prompt here: passing the
+                                # result back in would either double-prompt or, with
+                                # the old groups[0]-on-cancel dialog, silently run
+                                # Dunnett against an arbitrary control. control_group
+                                # is None here (see init above) unless already set.
                                 posthoc_results = StatisticalTester.perform_refactored_posthoc_testing(
                                     valid_groups, transformed_samples, test_recommendation,
                                     alpha=0.05, posthoc_choice=posthoc_choice, control_group=control_group

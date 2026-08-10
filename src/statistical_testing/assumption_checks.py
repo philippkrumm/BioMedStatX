@@ -329,10 +329,23 @@ class AssumptionCheckEngine:
                     parent=None, progress_text=progress_text, column_name=column_name
                 )
             except Exception:
-                transformation_type = "log10"
+                transformation_type = None
             if not transformation_type:
-                transformation_type = "log10"
-            test_info["transformation"] = transformation_type
+                # Cancelled / no choice / dialog unavailable: do NOT silently
+                # apply log10 the user never picked and then mislabel the report
+                # as "Transformation: log10". Drop the transform entirely — the
+                # untransformed data flows on and, being non-normal (that is why
+                # this dialog was shown), routes to the non-parametric test.
+                # Mirrors the arcsin-domain cancel path below.
+                transformation_type = None
+                test_info["transformation"] = None
+                add_note(
+                    "Transformation selection cancelled: no transformation was applied; "
+                    "the untransformed data is used (non-parametric test if residuals "
+                    "remain non-normal)."
+                )
+            else:
+                test_info["transformation"] = transformation_type
 
             # For arcsin_sqrt, ask the user to declare the data domain
             # (proportion 0-1 vs percent 0-100) so out-of-range data is
