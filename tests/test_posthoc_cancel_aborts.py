@@ -102,6 +102,40 @@ def test_nonparametric_posthoc_cancel_aborts(monkeypatch):
     assert glob.glob(out + "*.html") == [], "no report on nonparametric cancel"
 
 
+def test_comparison_selection_cancel_aborts(monkeypatch):
+    """Advanced paired_custom path: cancelling the ComparisonSelectionDialog
+    aborts (was a silent 'select all pairs' default). The _qt fixture makes the
+    real dialog's exec_ return Rejected; transform/post-hoc are stubbed so the
+    comparison dialog is the one that cancels."""
+    from analysis.statisticaltester import UIDialogManager
+    from analysis.analysis_core import AnalysisManager
+    monkeypatch.setattr(UIDialogManager, "select_transformation_dialog",
+                        staticmethod(lambda *a, **k: "skip"))
+    monkeypatch.setattr(UIDialogManager, "select_posthoc_test_dialog",
+                        staticmethod(lambda *a, **k: "paired_custom"))
+    d = tempfile.mkdtemp()
+    dummy = os.path.join(d, "x.xlsx")
+    pd.DataFrame({"a": [1]}).to_excel(dummy, index=False)
+    out = os.path.join(d, "out")
+    rng = np.random.default_rng(1)
+    rows = []
+    for i in range(10):
+        base = rng.normal(0, 1)
+        for t, eff in [("T1", 0), ("T2", 5), ("T3", 10)]:
+            rows.append({"Subject": f"S{i}", "Time": t, "Value": base + eff + rng.normal(0, 1)})
+    df = pd.DataFrame(rows)
+    ctx = {"injected_df": df, "factor_columns": ["Time"], "between_factors": [],
+           "within_factors": ["Time"], "dv_columns": ["Value"], "group_labels": ["T1", "T2", "T3"],
+           "mode": "single", "dependent": True, "subject_column": "Subject",
+           "inferred_test": "repeated_measures_anova"}
+    result = AnalysisManager.analyze(
+        file_path=dummy, group_col="Time", groups=["T1", "T2", "T3"], value_cols=["Value"],
+        save_plot=False, skip_plots=True, dependent=True, file_name=out,
+        analysis_context=ctx, subject_column="Subject", test="repeated_measures_anova")
+    assert result.get("cancelled") is True, f"comparison-select cancel must abort, got {list(result)}"
+    assert glob.glob(out + "*.html") == [], "no report on comparison-select cancel"
+
+
 def test_advanced_posthoc_cancel_aborts(monkeypatch):
     """RM-ANOVA (advanced engine) path: cancelling the post-hoc dialog aborts
     too, reaching through the advanced engine's except-Exception guards."""

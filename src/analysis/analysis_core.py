@@ -975,8 +975,17 @@ class AnalysisManager:
                     if dialog.exec_() == dialog.Accepted:
                         chosen = dialog.get_selected_comparisons()
                         return chosen if chosen else all_pairs
-                    return all_pairs
+                    # Cancelled -> abort the whole analysis, consistent with the
+                    # transformation / post-hoc dialogs (was a silent "select all
+                    # pairs" default). AnalysisCancelledError is a BaseException, so
+                    # the except-Exception below does not swallow it.
+                    raise AnalysisCancelledError(
+                        "Comparison selection cancelled — analysis aborted."
+                    )
                 except Exception as exc:
+                    # Infrastructure failure (dialog could not be shown) is NOT a
+                    # user cancel: fall back to all pairs rather than aborting, but
+                    # logged (already warned) so it is not invisible.
                     logger.warning("Could not show custom pairs dialog: %s", exc)
                     return all_pairs
 
