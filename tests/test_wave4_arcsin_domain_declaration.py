@@ -104,11 +104,13 @@ def test_classic_path_hard_rejects_out_of_range_declaration():
         )
 
 
-def test_cancel_domain_dialog_drops_transform_and_routes_nonparametric(monkeypatch):
-    """Cancelling the domain dialog must NOT apply an unvalidated arcsin (no
-    silent fallback, the original bug's reachable path): the transform is
-    dropped, the label is reset (no stale 'arcsin_sqrt'), and non-normal data
-    routes to the nonparametric test on the raw values."""
+def test_cancel_domain_dialog_aborts_analysis(monkeypatch):
+    """Cancelling the arcsin domain dialog aborts the whole analysis, consistent
+    with the transformation and post-hoc dialogs (Cancel == abort everywhere).
+    Previously this was the reference "drop + continue non-parametric" path; it
+    was aligned when the main transformation dialog gained an explicit "continue
+    without transformation" option and Cancel became a hard abort."""
+    from statistical_testing.validators import AnalysisCancelledError
     import statistical_testing.assumption_checks as ac
 
     class _Stub:
@@ -117,26 +119,23 @@ def test_cancel_domain_dialog_drops_transform_and_routes_nonparametric(monkeypat
             return "arcsin_sqrt"
         @staticmethod
         def select_arcsin_domain_type(*a, **k):
-            return None       # user cancels / does not declare
+            return None       # user cancels the domain declaration
     monkeypatch.setattr(ac, "_get_ui_dialog_manager", lambda: _Stub())
 
     rng = np.random.default_rng(3)
     samples = {g: list(c + rng.lognormal(1.0, 1.2, 20)) for g, c in [("A", 5.0), ("B", 30.0)]}
-    ts, rec, ti = ac.AssumptionCheckEngine.check_normality_and_variance(
-        ["A", "B"], samples, model_type="oneway", formula="Value ~ C(Group)"
-    )
-    assert ti.get("transformation") is None, f"stale transform label: {ti.get('transformation')!r}"
-    assert rec == "non_parametric", f"cancelled arcsin must route nonparametric, got {rec!r}"
-    # arcsin was not applied — transformed values equal the raw values
-    assert np.allclose(np.sort(ts["A"]), np.sort(samples["A"]))
+    with pytest.raises(AnalysisCancelledError):
+        ac.AssumptionCheckEngine.check_normality_and_variance(
+            ["A", "B"], samples, model_type="oneway", formula="Value ~ C(Group)"
+        )
 
 
 @pytest.mark.parametrize("model_type", ["oneway", "rm", "twoway"])
-def test_cancel_drops_transform_on_classic_and_advanced_paths(monkeypatch, model_type):
-    """The cancel drop must hold on the classic (oneway) AND the advanced
-    (rm, twoway) routes -- all consume the same assumption_checks writer, but a
-    future refactor at statisticaltester.py:1122 could silently break one, so
-    each is pinned rather than assumed architecturally."""
+def test_cancel_domain_aborts_on_classic_and_advanced_paths(monkeypatch, model_type):
+    """The abort must hold on the classic (oneway) AND the advanced (rm, twoway)
+    routes -- all consume the same assumption_checks writer, so each is pinned
+    rather than assumed architecturally."""
+    from statistical_testing.validators import AnalysisCancelledError
     import statistical_testing.assumption_checks as ac
 
     class _Stub:
@@ -157,8 +156,7 @@ def test_cancel_drops_transform_on_classic_and_advanced_paths(monkeypatch, model
         formula = "Value ~ C(Group)"
     samples = {g: list(20.0 + rng.lognormal(1.0, 1.2, 20)) for g in groups}
 
-    ts, rec, ti = ac.AssumptionCheckEngine.check_normality_and_variance(
-        groups, samples, model_type=model_type, formula=formula
-    )
-    assert ti.get("transformation") is None, f"{model_type}: stale label {ti.get('transformation')!r}"
-    assert rec == "non_parametric", f"{model_type}: expected nonparametric, got {rec!r}"
+    with pytest.raises(AnalysisCancelledError):
+        ac.AssumptionCheckEngine.check_normality_and_variance(
+            groups, samples, model_type=model_type, formula=formula
+        )

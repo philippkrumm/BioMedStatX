@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 from statistical_testing.decision_logic import select_comparison_test, strategy_to_recommendation
 from statistical_testing.validators import (
+    AnalysisCancelledError,
     GroupValidationError,
     ValidationError,
     bounded_boxcox_lambda,
@@ -323,24 +324,39 @@ class AssumptionCheckEngine:
                 test_info["transformation"] = "No further"
                 return transformed_samples, "non_parametric", test_info
 
-            transformation_type = None
             try:
                 transformation_type = ui_dialog_manager.select_transformation_dialog(
                     parent=None, progress_text=progress_text, column_name=column_name
                 )
             except Exception:
-                transformation_type = None
-            if not transformation_type:
-                # Cancelled / no choice / dialog unavailable: do NOT silently
-                # apply log10 the user never picked and then mislabel the report
-                # as "Transformation: log10". Drop the transform entirely — the
-                # untransformed data flows on and, being non-normal (that is why
-                # this dialog was shown), routes to the non-parametric test.
-                # Mirrors the arcsin-domain cancel path below.
+                # Dialog could not be shown (e.g. headless, or a resource failure
+                # in the shipped app): an infrastructure failure is not a user
+                # cancel, so do not abort. Fall back to the explicit "no transform"
+                # path (non-parametric) -- but LOG it, so a real production failure
+                # is not completely invisible.
+                logger.warning(
+                    "Transformation dialog could not be shown; continuing without a "
+                    "transformation (non-parametric test).", exc_info=True,
+                )
+                transformation_type = "skip"
+
+            if transformation_type is None:
+                # User CANCELLED the transformation dialog -> abort the whole
+                # analysis, consistent with the post-hoc dialog. "No transform" is
+                # a distinct explicit option ("skip"), so Cancel is unambiguous.
+                raise AnalysisCancelledError(
+                    "Transformation selection cancelled — analysis aborted."
+                )
+
+            if transformation_type in ("skip", "none"):
+                # Explicit "continue without transformation": keep the raw data,
+                # which is non-normal (that is why this dialog was shown), so it
+                # routes to the non-parametric test. No silent transform, no false
+                # "Transformation: log10" label.
                 transformation_type = None
                 test_info["transformation"] = None
                 add_note(
-                    "Transformation selection cancelled: no transformation was applied; "
+                    "No transformation applied (user chose to continue without one); "
                     "the untransformed data is used (non-parametric test if residuals "
                     "remain non-normal)."
                 )
@@ -349,29 +365,40 @@ class AssumptionCheckEngine:
 
             # For arcsin_sqrt, ask the user to declare the data domain
             # (proportion 0-1 vs percent 0-100) so out-of-range data is
-            # hard-rejected below. None when not declared/cancelled — then the
-            # legacy behaviour is kept (no domain validation).
+            # hard-rejected below.
             if transformation_type == "arcsin_sqrt":
-                _declared = None
                 try:
                     _declared = ui_dialog_manager.select_arcsin_domain_type(parent=None)
                 except Exception:
-                    _declared = None
-                if _declared:
-                    test_info["arcsin_declared_type"] = _declared
-                else:
-                    # Cancelled / no domain declared: do NOT apply arcsin to
-                    # undeclared data — no silent fallback to an unvalidated
-                    # transform. Drop the transform entirely; the data stays
-                    # untransformed and, if still non-normal, routes to the
-                    # nonparametric test. Reset the label so no stale "arcsin_sqrt"
-                    # is reported for a transform that never ran.
+                    # Infra failure (not a user cancel): drop the arcsin transform
+                    # and continue non-parametric, logged so it is not invisible.
+                    logger.warning(
+                        "Arcsin domain dialog could not be shown; dropping the arcsin "
+                        "transform and continuing without one (non-parametric test).",
+                        exc_info=True,
+                    )
                     transformation_type = None
                     test_info["transformation"] = None
                     add_note(
-                        "arcsin-sqrt cancelled: no data domain (proportion / percent) "
-                        "was declared, so no transformation was applied."
+                        "Arcsin domain dialog unavailable; no transformation was applied."
                     )
+                else:
+                    # select_arcsin_domain_type returns "proportion"/"percent" for a
+                    # valid choice, None on cancel (or OK with no selection). Test
+                    # `is None` explicitly -- matching the transformation block -- so
+                    # a future non-empty-but-falsy return could never be misread as a
+                    # cancel on this now thrice-hardened path.
+                    if _declared is None:
+                        # User CANCELLED the domain declaration -> abort the whole
+                        # analysis, consistent with the transformation and post-hoc
+                        # dialogs (this dialog was the reference case Bug 1 copied;
+                        # aligning it keeps Cancel == abort everywhere). To run
+                        # non-parametric without a transform, pick "Continue without
+                        # transformation" in the main dialog instead.
+                        raise AnalysisCancelledError(
+                            "Arcsin domain declaration cancelled — analysis aborted."
+                        )
+                    test_info["arcsin_declared_type"] = _declared
 
             # Calculate a uniform global shift across the entire raw dependent variable column vector in df_raw
             global_min = df_raw["Value"].min() if (not df_raw.empty and "Value" in df_raw.columns) else 0

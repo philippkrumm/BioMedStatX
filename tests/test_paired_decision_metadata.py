@@ -40,7 +40,9 @@ def _qt_and_dialogs():
     QDialog.exec = lambda self, *a, **k: 0
     try:
         from analysis.statisticaltester import UIDialogManager
-        UIDialogManager.select_transformation_dialog = staticmethod(lambda *a, **k: None)
+        # "skip" = continue without transformation (non-parametric); None now
+        # means the user cancelled the dialog, which aborts the whole analysis.
+        UIDialogManager.select_transformation_dialog = staticmethod(lambda *a, **k: "skip")
         for name in ("select_posthoc_test_dialog", "select_nonparametric_posthoc_dialog",
                      "select_control_group_dialog", "select_custom_pairs_dialog"):
             setattr(UIDialogManager, name, staticmethod(lambda *a, **k: None))

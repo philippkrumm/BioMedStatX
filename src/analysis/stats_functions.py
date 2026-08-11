@@ -801,6 +801,10 @@ class UIDialogManager:
                 ("Log10 transformation (for positive, right-skewed data)", "log10"),
                 ("Box-Cox transformation (automatic lambda optimization)", "boxcox"),
                 ("Arcsin square root transformation (for percentages/proportions)", "arcsin_sqrt"),
+                # Explicit "no transform" choice so it is distinct from Cancel:
+                # Cancel aborts the whole analysis, this option continues without a
+                # transform (routes to the non-parametric test).
+                ("Continue without transformation (use non-parametric test)", "skip"),
             ]
         else:
             options = list(transforms)
