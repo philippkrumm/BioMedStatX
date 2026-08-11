@@ -59,6 +59,17 @@ class DataQualityError(ValidationError):
     overflow risk, constant paired differences, etc.)."""
 
 
+class AnalysisCancelledError(BaseException):
+    """User backed out of a mid-analysis dialog that must abort the whole run
+    (e.g. the post-hoc selection). Deliberately derived from BaseException, NOT
+    Exception, so the many ``except Exception`` handlers between the raise site
+    (deep inside the post-hoc engines) and analyze()'s dedicated handler cannot
+    swallow it and convert a user cancel into a defaulted method or an error
+    result. analyze() catches it explicitly, writes no report, and returns a
+    ``{"cancelled": True}`` result the pipeline honours (no render, no confetti,
+    back to the mapping state). Nothing went wrong -- the user simply cancelled."""
+
+
 @dataclass(frozen=True)
 class ValidationIssue:
     code: str

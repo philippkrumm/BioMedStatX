@@ -41,8 +41,10 @@ def _qt_and_dialogs():
         from analysis.statisticaltester import UIDialogManager
         UIDialogManager.select_transformation_dialog = staticmethod(lambda *a, **k: "log10")
         UIDialogManager.select_posthoc_test_dialog = staticmethod(lambda *a, **k: "tukey")
-        for name in ("select_nonparametric_posthoc_dialog", "select_control_group_dialog",
-                     "select_custom_pairs_dialog"):
+        # Explicit post-hoc choices, not None: None now means the user cancelled
+        # the dialog, which aborts the whole analysis (no golden result to compare).
+        UIDialogManager.select_nonparametric_posthoc_dialog = staticmethod(lambda *a, **k: "dunn")
+        for name in ("select_control_group_dialog", "select_custom_pairs_dialog"):
             setattr(UIDialogManager, name, staticmethod(lambda *a, **k: None))
     except Exception:
         pass

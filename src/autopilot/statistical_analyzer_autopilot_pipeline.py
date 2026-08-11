@@ -1892,6 +1892,9 @@ def _ap_determine_and_run_test(self):
         if context["mode"] == "single":
             file_base_override = os.path.splitext(ap_file_path)[0]
             result = self._execute_single_analysis(context, context["dv_columns"][0], output_dir, skip_plots=True, file_base_override=file_base_override)
+            if result.get("cancelled"):
+                self._handle_cancelled_result(result)
+                return
             if result.get("blocked"):
                 self._handle_blocked_result(result)
                 return
@@ -1921,6 +1924,10 @@ def _ap_determine_and_run_test(self):
                     )
                 QApplication.processEvents()
                 all_results[dv_column] = self._execute_single_analysis(per_dv_context, dv_column, output_dir, skip_plots=True)
+                if all_results[dv_column].get("cancelled"):
+                    # User cancelled a dialog for this DV -> abort the whole batch.
+                    self._handle_cancelled_result(all_results[dv_column])
+                    return
 
             combined_report = ap_file_path
             export_result = ExportDispatcher.export_multi_dataset_results(all_results, combined_report)
@@ -1949,6 +1956,23 @@ def _ap_determine_and_run_test(self):
         self._set_workflow_state("map", "Analysis failed")
         self.decision_tree_panel.show_placeholder(f"Analysis failed: {exc}")
         QMessageBox.critical(self, "Analysis Error", str(exc))
+
+
+def _ap_handle_cancelled_result(self, result):
+    """User backed out of a mid-analysis dialog (e.g. post-hoc selection): abort
+    the whole run. No results rendered, no report written (analyze() raised before
+    the export step), no confetti. Returns to the mapping state so the user can
+    re-run. Distinct from a data-quality block -- nothing went wrong."""
+    reason = result.get("cancel_reason") or "Analysis cancelled."
+    # NOT show_block: a cancel is not a data-quality block. show_cancelled uses a
+    # neutral "Analysis cancelled" headline so the user is not told their data
+    # failed a check. The workflow chip and mapping feedback also say "cancelled".
+    self.result_cockpit.show_cancelled(reason)
+    self.decision_tree_panel.show_placeholder(reason)
+    self._set_workflow_state("map", "Analysis cancelled")
+    self.mapping_feedback_label.setText(reason)
+    self.current_analysis_result = None
+    self.current_multi_results = {}
 
 
 def _ap_handle_blocked_result(self, result):
@@ -2548,6 +2572,7 @@ class AutopilotMixin:
     _format_context_sample_overview = _ap_format_context_sample_overview
     _format_context_analysis_scope = _ap_format_context_analysis_scope
     _render_result_summary = _ap_render_result_summary
+    _handle_cancelled_result = _ap_handle_cancelled_result
     _handle_blocked_result = _ap_handle_blocked_result
     determine_and_run_test = _ap_determine_and_run_test
     configure_plot_from_result = _ap_configure_plot_from_result

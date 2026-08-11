@@ -4,6 +4,7 @@ from itertools import combinations
 from typing import Any, Mapping
 
 from ..models import StatisticalResult
+from ..validators import AnalysisCancelledError
 
 
 logger = logging.getLogger(__name__)
@@ -94,10 +95,15 @@ class AdvancedPostHocEngine:
                 default_method = "paired_custom"
                 if posthoc_method_callback:
                     posthoc_method = posthoc_method_callback(test, dv, default_method)
+                    if posthoc_method is None:
+                        # User cancelled the post-hoc dialog -> abort the whole
+                        # analysis (BaseException, so the except-Exception guards
+                        # in this engine do not swallow it into a defaulted method).
+                        raise AnalysisCancelledError(
+                            "Post-hoc selection cancelled — analysis aborted."
+                        )
                 else:
                     posthoc_method = default_method
-                if posthoc_method is None:
-                    posthoc_method = "paired_custom"
                 
                 if posthoc_method in ("dunnett", "emm_mvt"):
                     if control_group_callback:

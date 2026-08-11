@@ -8,6 +8,7 @@ from scipy import stats
 from core.lazy_imports import get_statsmodels_multitest
 from analysis.nonparametricanovas import posthoc_marginaleffects
 from analysis.stats_functions import UIDialogManager, PostHocFactory, PostHocAnalyzer, PostHocStatistics
+from statistical_testing.validators import AnalysisCancelledError
 
 logger = logging.getLogger(__name__)
 
@@ -566,8 +567,11 @@ class PosthocFallbackEngine:
                     )
                     logger.debug(f"DEBUG: Parametric post-hoc dialog returned: {posthoc_choice}")
                     if posthoc_choice is None:
-                        posthoc_choice = default_method
-                        logger.debug(f"DEBUG: Parametric post-hoc dialog cancelled, defaulting to {default_method}")
+                        # Cancelled -> abort the whole analysis (BaseException, so
+                        # the except-Exception below does not swallow it).
+                        raise AnalysisCancelledError(
+                            "Post-hoc selection cancelled — analysis aborted."
+                        )
                 except Exception as e:
                     logger.debug(f"DEBUG: Error showing parametric post-hoc dialog: {e}")
                     posthoc_choice = default_method
@@ -579,10 +583,12 @@ class PosthocFallbackEngine:
                         parent=None, progress_text=None, column_name=None
                     )
                     logger.debug(f"DEBUG: Non-parametric post-hoc dialog returned: {posthoc_choice}")
-                    # If dialog was cancelled or returned None, default to Dunn
                     if posthoc_choice is None:
-                        posthoc_choice = "dunn"
-                        logger.debug("DEBUG: Non-parametric post-hoc dialog cancelled, defaulting to Dunn test")
+                        # Cancelled -> abort the whole analysis (BaseException, so
+                        # the except-Exception below does not swallow it).
+                        raise AnalysisCancelledError(
+                            "Post-hoc selection cancelled — analysis aborted."
+                        )
                 except Exception as e:
                     logger.debug(f"DEBUG: Error showing non-parametric post-hoc dialog: {e}")
                     import traceback

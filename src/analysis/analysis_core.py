@@ -95,6 +95,11 @@ PostHocStatistics = _PostHocStatisticsProxy
 
 
 
+# AnalysisCancelledError lives in statistical_testing.validators (a leaf module)
+# so the post-hoc engines can raise it without importing analysis_core (circular).
+from statistical_testing.validators import AnalysisCancelledError
+
+
 # Modified AnalysisManager.analyze function
 class AnalysisManager:
     @staticmethod
@@ -1275,14 +1280,16 @@ class AnalysisManager:
                                     alpha=0.05, posthoc_choice=posthoc_choice, control_group=control_group
                                 )
                         else:
-                            # User cancelled the dialog (or chose "none"): no
-                            # fallback is forced — the user declined post-hoc, so
-                            # the report omits pairwise comparisons.
-                            posthoc_results = {
-                                "posthoc_test": "No post-hoc tests performed (declined by user)",
-                                "pairwise_comparisons": [],
-                                "error": None,
-                            }
+                            # Reaching here means posthoc_choice is falsy: the user
+                            # CANCELLED the post-hoc dialog (it only ever returns a
+                            # method name or None -- it offers no "none" option).
+                            # Per product decision, cancelling post-hoc aborts the
+                            # whole analysis. Raise here, before the report is
+                            # exported below, so no results, no report file, and no
+                            # confetti reach the user.
+                            raise AnalysisCancelledError(
+                                "Post-hoc selection cancelled — analysis aborted."
+                            )
                     # Process results uniformly - ONLY ONCE here!
                     if posthoc_results:                      
                         if posthoc_choice == "dunnett" and "control_group" in posthoc_results:
@@ -1642,6 +1649,18 @@ class AnalysisManager:
 
             results["analysis_log"] = analysis_log
             return results
+
+        except AnalysisCancelledError as _cx:
+            # User backed out of a mid-analysis dialog (e.g. post-hoc selection).
+            # Not an error: return a clean cancelled result (no report was written
+            # -- the raise unwound before the export step). The pipeline resets to
+            # the mapping state with no render and no confetti.
+            analysis_log += f"\nAnalysis cancelled by user: {_cx}\n"
+            return {
+                "cancelled": True,
+                "cancel_reason": str(_cx) or "Analysis cancelled by user.",
+                "analysis_log": analysis_log,
+            }
 
         except Exception as e:
             error_message = str(e) if str(e) else "Unknown error occurred"

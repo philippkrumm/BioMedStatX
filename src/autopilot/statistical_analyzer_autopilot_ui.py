@@ -1346,6 +1346,23 @@ class ResultCockpitWidget(QFrame):
         self.open_output_button.setEnabled(False)
         self._clear_card_effects()
 
+    def show_cancelled(self, reason):
+        """Render a user-cancelled state. Distinct from show_block: nothing went
+        wrong with the data -- the user backed out of a mid-analysis dialog -- so
+        the headline must NOT claim a data-quality problem. Blanks the cards so no
+        stale/partial numbers linger."""
+        self.subtitle.setText(f"Analysis cancelled\n\n{reason}")
+        blank = "—"
+        for card in self.metric_cards.values():
+            card.set_value(blank)
+        for card in self.inference_cards.values():
+            card.set_value(blank)
+        for card in self.context_cards.values():
+            card.set_value(blank)
+        self.configure_plot_button.setEnabled(False)
+        self.open_output_button.setEnabled(False)
+        self._clear_card_effects()
+
     def _animate_cards(self):
         # Animation disabled: QSequentialAnimationGroup crashes on macOS 26 Tahoe
         # with dual Qt binaries (Homebrew + conda). Cards appear instantly instead.

@@ -74,14 +74,22 @@ def test_dunnett_control_dialog_failure_falls_back_to_games_howell(monkeypatch):
     assert "Games-Howell" in label, label
 
 
-def test_cancelled_dialog_default_is_an_option_the_dialog_actually_offers(monkeypatch):
-    """default_method is echoed back into the dialog for pre-selection and is
-    also what a cancelled dialog runs, so it must be one of the one-way values."""
-    from analysis.stats_functions import UIDialogManager
+def test_cancelled_post_hoc_dialog_aborts_analysis(monkeypatch):
+    """Cancelling the one-way post-hoc dialog aborts the whole analysis
+    (AnalysisCancelledError propagates up) rather than silently running a default
+    method. (Product decision: post-hoc cancel = abort.)"""
+    import pytest
+    from statistical_testing.validators import AnalysisCancelledError
 
-    res, seen_default = _run(monkeypatch, dialog_returns=None)
+    with pytest.raises(AnalysisCancelledError):
+        _run(monkeypatch, dialog_returns=None)
+
+
+def test_default_method_offered_to_dialog_is_a_valid_one_way_option(monkeypatch):
+    """default_method is echoed into the dialog for pre-selection, so it must be a
+    real one-way option (games_howell), never tukey after a Welch omnibus."""
+    res, seen_default = _run(monkeypatch, dialog_returns="games_howell")
     assert seen_default in {"games_howell", "dunnett", "paired_custom"}, seen_default
     assert seen_default != "tukey"
-
     label = res.get("posthoc_test") or ""
     assert "Tukey" not in label, label
