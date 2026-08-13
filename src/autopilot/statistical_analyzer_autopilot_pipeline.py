@@ -1843,9 +1843,13 @@ def _ap_render_result_summary(self, context, results, output_dir, subtitle):
         "context_analysis_scope": self._format_context_analysis_scope(context, results),
     }
     self.result_cockpit.set_summary(summary, enable_plot=False, enable_output=bool(output_dir))
-    from PyQt5.QtCore import QSettings
+    from PyQt5.QtCore import QSettings, QTimer
     if QSettings("BioMedStatX", "BioMedStatX").value("ui/confetti_enabled", True, type=bool):
-        ConfettiOverlay(self)
+        # Defer the burst to the event loop (singleShot 0) so it starts only after
+        # the synchronous decision-tree render below and the rest of the analysis-
+        # completion chain have unwound and the main thread is idle -- launching it
+        # here would let that render eat the first frames and make it stutter.
+        QTimer.singleShot(0, lambda: ConfettiOverlay(self))
     self.decision_tree_panel.update_results(results)
     self._set_workflow_state("results", "Results ready")
     self.current_output_dir = output_dir

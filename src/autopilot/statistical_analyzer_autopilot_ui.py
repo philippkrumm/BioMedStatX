@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 from PyQt5.QtCore import (
     QEasingCurve,
+    QElapsedTimer,
     QMimeData,
     QPoint,
     QPropertyAnimation,
@@ -989,7 +990,7 @@ class GlowFrame(QFrame):
 
 
 class ConfettiOverlay(QWidget):
-    """Full-window confetti burst overlay. Self-destructs after ~2 s."""
+    """Full-window confetti burst overlay. Self-destructs after ~2.8 s."""
 
     _COLORS = ["#0f766e", "#1f7a5a", "#b7791f", "#9f3a38", "#1d4ed8", "#7c3aed", "#2dd4bf"]
 
@@ -1002,37 +1003,54 @@ class ConfettiOverlay(QWidget):
         self.show()
 
         import random
+        # Velocities are per SECOND (integrated against real elapsed time in
+        # ``_update``), not per frame, so the burst keeps a constant wall-clock
+        # duration and a steady fall speed even when the main thread is busy (e.g.
+        # right after the first analysis) and the timer cannot keep 60 fps. The
+        # fall is a gentle constant drift (no gravity) so the pieces stay on
+        # screen for the whole burst rather than accelerating off the bottom.
         self._particles = []
         for _ in range(90):
             self._particles.append({
                 "x": random.uniform(0.05, 0.95),
                 "y": random.uniform(-0.25, 0.0),
-                "vx": random.uniform(-0.0025, 0.0025),
-                "vy": random.uniform(0.004, 0.010),
+                "vx": random.uniform(-0.10, 0.10),
+                "vy": random.uniform(0.20, 0.42),
                 "size": random.randint(6, 13),
                 "color": QColor(random.choice(self._COLORS)),
                 "angle": random.uniform(0, 360),
-                "spin": random.uniform(-5, 5),
+                "spin": random.uniform(-180, 180),
             })
 
+        self._duration = 2.8          # seconds, wall-clock
         self._opacity = 1.0
-        self._tick = 0
-        self._total_ticks = 120  # ~2 s at 60 fps
+        self._clock = QElapsedTimer()
+        self._clock.start()
+        self._last_ms = 0
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._update)
         self._timer.start(16)
 
     def _update(self):
-        self._tick += 1
+        now_ms = self._clock.elapsed()
+        t = now_ms / 1000.0
+        # Clamp the per-frame step so a single stalled frame (a busy main thread
+        # under cold start) advances the pieces by a bounded amount instead of
+        # teleporting them across the screen -- motion degrades to "a bit slower"
+        # rather than "jumpy". Duration/fade still track real wall-clock time.
+        dt = min((now_ms - self._last_ms) / 1000.0, 0.033)
+        self._last_ms = now_ms
+        if dt <= 0:
+            return
         for p in self._particles:
-            p["x"] += p["vx"]
-            p["y"] += p["vy"]
-            p["angle"] += p["spin"]
-        fade_start = self._total_ticks * 0.6
-        if self._tick > fade_start:
-            self._opacity = max(0.0, 1.0 - (self._tick - fade_start) / (self._total_ticks * 0.4))
-        if self._tick >= self._total_ticks:
+            p["x"] += p["vx"] * dt
+            p["y"] += p["vy"] * dt
+            p["angle"] += p["spin"] * dt
+        fade_start = self._duration * 0.6
+        if t > fade_start:
+            self._opacity = max(0.0, 1.0 - (t - fade_start) / (self._duration * 0.4))
+        if t >= self._duration:
             self._timer.stop()
             self.setParent(None)
             self.deleteLater()
