@@ -36,6 +36,11 @@ All notable changes to this project will be documented in this file.
   the other clinical trees) no longer renders with overlapping, unreadable nodes:
   spacing scales to the measured node width within a width budget, and the
   highlighted path no longer routes an arrow through the middle of a node.
+- The post-analysis confetti burst is smoother. It now animates against real
+  elapsed time instead of per frame, so it keeps a steady speed and a constant
+  duration even on the first analysis, when the busy main thread previously made
+  it crawl in slow motion; the burst is also deferred until the result render
+  finishes so it no longer stutters on launch.
 
 ### Testing / validation
 
