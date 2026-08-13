@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [2.0] - 2026-07-30
+## [2.0] - 2026-08-11
 
 ### Plots and visualisation
 
@@ -29,6 +29,13 @@ All notable changes to this project will be documented in this file.
 - The report's interactive decision tree now fits the active path into the frame
   on load instead of opening zoomed into a corner, with a tighter layout, larger
   legible node labels, correctly sized arrowheads, and a slower path animation.
+  Node widths are measured from the actual rendered text (Canvas / font metrics)
+  rather than a character-count guess, so labels no longer overflow their boxes —
+  including in Safari, where the previous offscreen-SVG measurement returned zero.
+- The in-app Decision Tree Dashboard (Correlation, Regression, ANCOVA, LMM, and
+  the other clinical trees) no longer renders with overlapping, unreadable nodes:
+  spacing scales to the measured node width within a width budget, and the
+  highlighted path no longer routes an arrow through the middle of a node.
 
 ### Testing / validation
 
@@ -107,6 +114,40 @@ upgrading.
   versions could fall through to all-pairwise comparisons, which Dunnett's test
   is not designed for.
 
+### Dialog cancel behaviour (behavioral)
+
+Cancelling a mid-analysis dialog now consistently aborts the whole analysis — no
+results, no report file, no success animation, the app returns to the mapping
+state — instead of silently substituting a value the user never chose. Several
+dialogs previously turned Cancel into a hidden default:
+
+- **Transformation dialog.** Cancel silently applied a log10 transform and then
+  labelled the report "Transformation: log10" — a transform the user had
+  declined, mislabelled on the actually-computed result. Cancel now aborts. A new
+  explicit **Continue without transformation (use non-parametric test)** option
+  provides the deliberate no-transform path that Cancel used to stand in for.
+- **Arcsin data-domain dialog.** Cancel dropped the arcsin transform and
+  continued; it now aborts, so Cancel means the same thing everywhere. (To run
+  non-parametric without a transform, pick the explicit option above.)
+- **Post-hoc selection dialog** (parametric, non-parametric, and the advanced
+  RM/Mixed/Two-Way engine). Cancel ran the default method (Games-Howell or Dunn)
+  and celebrated a result the user had just cancelled; it now aborts. The dialog
+  only appears after a significant omnibus, but Cancel there discards that run
+  rather than proceeding without the post-hoc.
+- **Comparison-selection dialog** (advanced custom pairs). Cancel silently ran
+  every pairwise comparison; it now aborts.
+- **Control-group dialog.** Cancel silently ran Dunnett against the first group.
+  It no longer does: cancelling the control selection falls back to Games-Howell
+  (the heteroscedasticity-robust all-pairs test) rather than testing against an
+  arbitrary control the user never chose. (Bringing this dialog fully onto the
+  "Cancel aborts" line, via an explicit "no control group" option, is a tracked
+  follow-up.)
+
+A dialog that genuinely cannot be shown (an infrastructure failure, not a user
+Cancel) still continues rather than aborting, but now logs a warning so it is not
+invisible. A cancelled analysis leaves no corrupted state: the next run — even
+after two cancels in a row — proceeds cleanly.
+
 ### Removed
 
 - **Beta Regression.** It was never a documented feature and had no entry point
@@ -163,8 +204,8 @@ upgrading.
   proportions). The classic one-way path also rescales out-of-range data against
   the global data range rather than per group, matching the advanced pipeline;
   the previous per-group min-max rescale collapsed the between-group differences
-  the test is about. Cancelling the domain prompt drops the transform (the raw
-  data routes to the nonparametric test) rather than applying an unchecked
+  the test is about. Cancelling the domain prompt now aborts the analysis
+  (see **Dialog cancel behaviour** above) rather than applying an unchecked
   arcsin.
 - Outlier detection now defaults to Grubbs' test rather than the Modified
   Z-Score. On clean data the Modified Z-Score flags a phantom outlier in about
@@ -193,6 +234,18 @@ upgrading.
   same subjects were measured across a factor; the upgrade to a mixed model is
   enforced, its trigger condition tightened, and a warning is shown when the
   chosen model changes as a result.
+- A binary outcome coded as anything other than 0/1 (for example 1/2) is no
+  longer silently analysed as a Pearson correlation. The autopilot now treats any
+  two-value numeric outcome as a binary candidate and, when the coding is
+  ambiguous, asks whether to run logistic regression or keep it continuous —
+  showing the two actual values so a genuine two-point continuous measure is
+  obvious — instead of shipping a plausible-but-wrong correlation. A two-value
+  outcome coded 0/1 still routes straight to logistic with no prompt.
+- A two-factor design whose subject-ID column is present in the sheet but left
+  unmapped now warns that it is running as a between-subjects Two-Way ANOVA and
+  points to the subject column to map for a Mixed ANOVA, instead of silently
+  ignoring the repeated-measures structure and reporting between-subjects
+  p-values for a within-subject factor.
 - Linear mixed models and logistic regression no longer drop unbalanced subjects.
   These likelihood-based models were routed through the same two-group paired
   inner-join as the t-tests, which silently discarded any subject without a
