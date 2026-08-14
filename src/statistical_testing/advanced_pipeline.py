@@ -15,6 +15,7 @@ from .engines.reporting import ReportingEngine
 from .engines.transformation import TransformationEngine
 from .validators import (
     ValidationError,
+    grouped_samples_changed,
     validate_outcome,
     validate_samples_for_test,
     validate_test_design,
@@ -314,7 +315,12 @@ def perform_advanced_test_pipeline(
                         warnings_list.append(advanced_posthoc_updates["error"])
 
             res["raw_data"] = original_samples
-            if transformation_type and transformation_type not in ["none", "None", "Keine"]:
+            # Store transformed raw data only when the transformation actually
+            # changed the values — a truthy-but-no-op label (e.g. "No further",
+            # or a name that maps to no transform branch) must not emit a
+            # Transformed column identical to Raw (report bug 2026-08).
+            if (transformation_type and transformation_type not in ["none", "None", "Keine"]
+                    and grouped_samples_changed(original_samples, transformed_samples)):
                 res["raw_data_transformed"] = transformed_samples
 
             if test == "repeated_measures_anova" and subject and within:
@@ -394,7 +400,10 @@ def perform_advanced_test_pipeline(
 
             if transformation_type and transformation_type not in ["none", "None", "Keine"]:
                 res["transformation"] = transformation_type
-                res["raw_data_transformed"] = transformed_samples
+                # Gate the transformed dict on an actual value change (see the
+                # parametric branch above; report bug 2026-08).
+                if grouped_samples_changed(original_samples, transformed_samples):
+                    res["raw_data_transformed"] = transformed_samples
 
             if test == "repeated_measures_anova" and subject and within:
                 res["plot_subject_trajectories"] = StatisticalTester._build_subject_trajectories_from_long_df(
