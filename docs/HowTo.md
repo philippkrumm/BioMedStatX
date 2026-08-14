@@ -68,7 +68,7 @@ For raw Excel sheets not structured as a table, click **Select Data Ranges…** 
 
 ## 3. Smart Mapping
 
-The center panel provides five mapping buckets. Drag column cards from the **Columns** list into the appropriate bucket. The application auto-detects an initial mapping, which you can override.
+The center panel provides six mapping buckets. Drag column cards from the **Columns** list into the appropriate bucket. The application auto-detects an initial mapping, which you can override.
 
 Each bucket carries an **ⓘ info button** describing what belongs there.
 
@@ -77,6 +77,7 @@ Each bucket carries an **ⓘ info button** describing what belongs there.
 - **Factor 2** *(optional)*: A second grouping variable. Without Subject ID → Two-Way ANOVA. With Subject ID → Mixed ANOVA.
 - **Subject ID** *(optional)*: The individual-level identifier for paired or repeated-measures designs. Assign this only when the same participant or experimental unit contributes more than one row.
 - **Covariates** *(optional)*: Continuous confounders to control for (e.g. Age, BMI, Baseline). Categorical Factor 1 + Covariates → ANCOVA. Continuous Factor 1 + Covariates → Multiple Regression.
+- **Filter** *(optional)*: Restricts the analysis to a subset of rows before any assumption checks or model fitting. See Section 15.
 
 ### Factor 1 vs. Subject ID: where most mistakes happen
 
@@ -96,7 +97,13 @@ A grouping variable and a subject identifier look identical in the data (both co
 | Correlation | Outcome | Predictor (continuous) | — | — |
 | Linear Regression | Outcome | Predictor (continuous) | — | — | + Covariates |
 
-The **mapping status line** below the buckets updates in real time and confirms which test will run.
+The **mapping status line** below the buckets updates in real time and confirms which test will run. The messages are literal:
+
+- *"Load a file to activate the mapping workflow."* — no file loaded yet.
+- *"Assign at least one factor column."* — Dependent Variable is filled but Factor 1 is not.
+- *"Auto-pilot currently supports at most two factor columns."* — too many factor columns mapped; reduce to one or two.
+- *"Mapping looks valid. Start the analysis when you are ready."* — all required buckets are filled.
+- *"Auto-pilot is analyzing the mapped design."* — analysis is running and the interface is locked.
 
 After assigning Factor 1, use **Select Groups For Analysis** to restrict the analysis to a subset of factor levels. Leaving this empty runs all available groups.
 
@@ -130,7 +137,7 @@ Two interactive prompts may appear: transformation choice (Section 7) and post-h
 
 ## 6. Export Settings
 
-Set the **output file name** before or after analysis.
+Set the **output file name** before or after analysis. **Browse…**, next to the file-name field, opens a save dialog to choose the folder and name used for all exports from the next run (Excel file, HTML report, and plot image).
 
 ---
 
@@ -171,6 +178,8 @@ A significant main test with $\geq 3$ groups triggers a post-hoc selection promp
 - After **Friedman**, the app applies the **Conover-Iman** post-hoc (all pairs, Holm-corrected) directly, without a prompt; pairwise Wilcoxon signed-rank is used only as a fallback if the Conover-Iman routine is unavailable. The advanced nonparametric fallbacks (e.g. after Brunner–Langer) apply pairwise Wilcoxon/Mann–Whitney with Holm correction.
 
 Cancelling a post-hoc prompt is a valid choice: the analysis keeps the main-test result and reports no pairwise comparisons. Pick it when only the overall effect matters.
+
+The group-selection dialog and the pairwise-comparison dialog both provide **Select All**, **Deselect All**, and **Select None** buttons to check or clear the whole list at once rather than ticking boxes individually.
 
 Results appear as significance letters or bracket annotations on the plot and as a comparison table in the HTML report.
 
@@ -231,6 +240,8 @@ Effect sizes reported per test family:
 
 The HTML report contains an interactive decision tree. The path actually taken is highlighted with animated arrows that replay in sequence. The initial view centres on the active path. Zoom, pan, and reset are available.
 
+The decision-tree panel in the results area also has a **Maximize** button that opens the tree in a full-window overlay — useful on complex designs where the default panel size clips branches.
+
 ---
 
 ## 12. Reviewing Results: HTML Report
@@ -286,7 +297,23 @@ Review flagged observations before proceeding. Removing outliers changes the ana
 
 ---
 
-## 15. Correlation Analysis
+## 15. Filter Bucket — Subgroup Analysis
+
+The Filter bucket restricts the dataset **before** assumption checks and model fitting — the correct approach for a subgroup analysis, rather than filtering results after the fact.
+
+**How to use:**
+
+1. Drag a categorical column (e.g. `OP_Group`, `Sex`) into the Filter bucket.
+2. Select the value to keep from its dropdown.
+3. Click **Start Auto Analysis** — the whole pipeline runs on the restricted subset.
+
+If the chosen subset leaves too few observations for the design, the analysis stops with a *"Too few observations after filter"* message rather than running on unstable data.
+
+The ⓘ button on the bucket title explains its purpose at any time.
+
+---
+
+## 16. Correlation Analysis
 
 **Trigger conditions:** Factor 1 continuous (> 10 unique numeric values), no Covariates, no Subject ID.
 
@@ -331,7 +358,7 @@ Strength thresholds follow Cohen (1988): $|r| < 0.10$ negligible, $0.10$–$0.29
 
 ---
 
-## 16. Linear Regression (OLS)
+## 17. Linear Regression (OLS)
 
 **Trigger conditions:** Factor 1 continuous + at least one Covariate assigned. Or: Regression toggle active (no Covariate needed for simple regression).
 
@@ -385,7 +412,7 @@ If **both X and Y are log-transformed** (Log-Log model), $\beta$ represents an e
 
 ---
 
-## 17. Exploratory Correlation Matrix
+## 18. Exploratory Correlation Matrix
 
 **Analysis → Exploratory Correlation Matrix** computes all pairwise correlations across selected numeric variables and corrects for multiple testing.
 
@@ -406,7 +433,7 @@ For $m$ variables, the matrix contains $\binom{m}{2}$ tests. With $m = 20$, that
 
 ---
 
-## 18. ANCOVA / Two-Way ANCOVA
+## 19. ANCOVA / Two-Way ANCOVA
 
 ANCOVA tests group mean differences while partitioning out the linear effect of one or more continuous covariates. The adjusted group mean for group $j$ estimates:
 
@@ -439,7 +466,7 @@ ANCOVA assumes parallel regression slopes. When this assumption fails, the adjus
 
 ---
 
-## 19. Linear Mixed Model (LMM)
+## 20. Linear Mixed Model (LMM)
 
 LMM is the appropriate tool for longitudinal data where the same subjects are measured at multiple levels of a continuous factor (e.g. repeated timepoints, varying pump durations). Unlike simple regression, LMM accounts for the within-subject correlation between repeated measurements.
 
@@ -490,7 +517,7 @@ Fixed effects table ($\hat{\beta}$, SE, $df$, $t/z$, $p$, 95% CI), random effect
 
 ---
 
-## 20. Logistic Regression
+## 21. Logistic Regression
 
 **Trigger conditions:** Dependent Variable contains exactly 2 distinct values, either $\{0, 1\}$ or two unique string labels. The application encodes non-numeric outcomes as 0/1 internally.
 
