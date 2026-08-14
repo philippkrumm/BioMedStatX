@@ -19,6 +19,48 @@ VAR_ATOL = 1e-08
 IMBALANCE_RATIO = 10.0
 
 
+def grouped_samples_changed(
+    raw: Mapping[str, Sequence[float]],
+    transformed: Mapping[str, Sequence[float]],
+    keys: Iterable[str] | None = None,
+) -> bool:
+    """Whether a transformation actually altered any value.
+
+    Returns True iff, for at least one group, ``transformed`` differs from
+    ``raw``. Used to gate ``raw_data_transformed`` / ``transformed_data`` in the
+    result dict: a transformation that was merely *named* but left the data
+    untouched — a ``None``/``"None"``/``"Keine"`` selection, an unrecognised
+    label such as ``"No further"``, or an effective identity (e.g. Box-Cox with
+    lambda 1) — must NOT surface a transformed column that only mirrors the raw
+    one (report bug 2026-08: an untransformed independent t-test showed a
+    Transformed-value column identical to Raw).
+
+    Mirrors the intent of statisticaltester.py's ``original != transformed``
+    guard, but is safe against ndarray element containers (a plain ``!=`` on
+    numpy arrays raises the ambiguous-truth error) and treats a NaN in the same
+    position on both sides as unchanged, so an identity copy of NaN-containing
+    data is still recognised as a no-op.
+    """
+    if not isinstance(raw, Mapping) or not isinstance(transformed, Mapping):
+        return False
+    if keys is None:
+        keys = set(raw) & set(transformed)
+    for key in keys:
+        if key not in raw or key not in transformed:
+            continue
+        try:
+            a = np.asarray(raw[key], dtype=float).ravel()
+            b = np.asarray(transformed[key], dtype=float).ravel()
+        except (TypeError, ValueError):
+            # Non-numeric payload: fall back to a plain element comparison.
+            if list(raw[key]) != list(transformed[key]):
+                return True
+            continue
+        if a.shape != b.shape or not np.array_equal(a, b, equal_nan=True):
+            return True
+    return False
+
+
 def _max_safe_abs(n: int) -> float:
     """Safe per-element magnitude bound for a variance / sum-of-squares over n
     points. Variance sums n squared terms, so the safe bound is

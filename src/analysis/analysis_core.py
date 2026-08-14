@@ -1523,7 +1523,16 @@ class AnalysisManager:
             _safe_groups = [g for g in groups if g in filtered_samples]
             if not _safe_groups: _safe_groups = list(filtered_samples.keys())
             results['raw_data'] = {g: filtered_samples[g][:] for g in _safe_groups}
-            if results.get('transformation', 'None') != 'None':
+            # Only expose transformed raw data when the transformation actually
+            # changed the values. The old `results.get('transformation','None')
+            # != 'None'` guard was broken: with no transformation the value is
+            # Python None (not the string 'None'), so `None != 'None'` was always
+            # True and a Transformed column identical to Raw was emitted on every
+            # untransformed analysis (report bug 2026-08). Keeps the _safe_ts_groups
+            # robustness added upstream.
+            from statistical_testing.validators import grouped_samples_changed
+            if (isinstance(transformed_samples, dict)
+                    and grouped_samples_changed(filtered_samples, transformed_samples, groups)):
                 _safe_ts_groups = [g for g in groups if g in transformed_samples]
                 if not _safe_ts_groups: _safe_ts_groups = list(transformed_samples.keys())
                 results['raw_data_transformed'] = {g: transformed_samples[g][:] for g in _safe_ts_groups}
@@ -1653,8 +1662,15 @@ class AnalysisManager:
                     "report": os.path.abspath(report_file)
                 }
 
-            if results.get('transformation', 'None') != 'None':
-                results['transformed_data'] = transformed_samples
+            # Same fix as raw_data_transformed above: gate on an actual value
+            # change, not on the (broken) None-vs-'None' name comparison
+            # (report bug 2026-08).
+            from statistical_testing.validators import grouped_samples_changed
+            if (isinstance(transformed_samples, dict)
+                    and grouped_samples_changed(filtered_samples, transformed_samples, groups)):
+                results['transformed_data'] = {
+                    g: list(transformed_samples[g]) for g in groups if g in transformed_samples
+                }
 
             results["analysis_log"] = analysis_log
             return results
