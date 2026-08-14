@@ -786,7 +786,16 @@ class _SummariesMixin:
                     })
         return {
             "rows": rows,
-            "has_transformed": any(row["transformed_value"] != "N/A" for row in rows),
+            # Show the transformed column only when a transformation actually
+            # changed the values. Some engines populate raw_data_transformed
+            # with a no-op copy of the raw data (transformation selected but
+            # identity, e.g. Box-Cox with lambda 1); a transformed column that
+            # merely mirrors the raw column is meaningless and confusing.
+            "has_transformed": any(
+                row["transformed_value"] != "N/A"
+                and row["transformed_value"] != row["raw_value"]
+                for row in rows
+            ),
             "column_mode": False,
             "columns": [],
         }
