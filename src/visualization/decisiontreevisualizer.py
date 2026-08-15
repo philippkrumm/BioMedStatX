@@ -161,8 +161,11 @@ class DecisionTreeVisualizer:
             variance_test = test_info.get("variance_test", results.get("variance_test", {}))
             # Fallback: read from nested pre_transformation / post_transformation structure
             if not normality_tests and test_info:
-                _has_tr = test_info.get("transformation") not in (None, "None", "No further")
-                _phase = "post_transformation" if _has_tr else "pre_transformation"
+                # Fill-gate, not name-gate (presence-vs-value audit 2026-08): read post
+                # only when the post block is present -- today absent only on the
+                # already-transformed "No further" early-return, and robust if a future
+                # engine skips the post recompute when no transform was needed.
+                _phase = "post_transformation" if test_info.get("post_transformation") else "pre_transformation"
                 normality_tests = {"all_data": test_info.get(_phase, {}).get("residuals_normality", {})}
                 variance_test = test_info.get(_phase, {}).get("variance", {})
             sphericity_test = results.get("sphericity_test", results.get("within_sphericity_test", {}))
@@ -206,7 +209,7 @@ class DecisionTreeVisualizer:
             if not isinstance(sphericity_test, dict):
                 sphericity_test = {}
             has_sphericity = sphericity_test.get("sphericity_assumed", None)
-            was_transformed = transformation != "None"
+            was_transformed = bool(transformation) and str(transformation) not in ("None", "No further")
 
             # Resolve retroactive pre-transformation contradiction:
             pre_trans = test_info.get("pre_transformation", {}) if isinstance(test_info, dict) else {}

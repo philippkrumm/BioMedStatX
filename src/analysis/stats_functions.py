@@ -346,7 +346,15 @@ class AssumptionVisualizer:
             # Get transformation info
             transformation = results.get('transformation', 'None')
             transformed_data = results.get('raw_data_transformed', results.get('transformed_data', {}))
-            
+
+            # Gate the "Before/After Transformation" labelling and the AFTER plots on
+            # an ACTUAL value change, not on the transformation NAME: a truthy label
+            # whose apply-loop left the data untouched (identity Box-Cox, an
+            # unrecognised label) must not spawn an "After Transformation" plot that
+            # merely mirrors the raw data (presence-vs-value audit, 2026-08).
+            from statistical_testing.validators import grouped_samples_changed
+            _values_changed = grouped_samples_changed(raw_data or {}, transformed_data or {})
+
             # Filter out non-data keys
             raw_data_filtered = {k: v for k, v in raw_data.items() if str(k).lower() not in ['group', 'sample', '']}
             
@@ -354,20 +362,21 @@ class AssumptionVisualizer:
             if raw_data_filtered:
                 logger.debug(f"DEBUG: Generating BEFORE plots for {len(raw_data_filtered)} groups: {list(raw_data_filtered.keys())}")
                 plot_paths['normality_before'] = AssumptionVisualizer.create_normality_plot(
-                    raw_data_filtered, " - Before Transformation" if transformation and transformation.lower() != 'none' else "",
+                    raw_data_filtered, " - Before Transformation" if _values_changed else "",
                     results=results
                 )
                 logger.debug(f"DEBUG: Q-Q plot BEFORE path: {plot_paths['normality_before']}")
                 
                 plot_paths['homoscedasticity_before'] = AssumptionVisualizer.create_homoscedasticity_plot(
-                    raw_data_filtered, " - Before Transformation" if transformation and transformation.lower() != 'none' else ""
+                    raw_data_filtered, " - Before Transformation" if _values_changed else ""
                 )
                 logger.debug(f"DEBUG: Boxplot BEFORE path: {plot_paths['homoscedasticity_before']}")
             else:
                 logger.debug("DEBUG: No valid raw data found after filtering")
             
-            # Generate AFTER transformation plots (if transformation was applied)
-            if transformed_data and transformation and transformation.lower() != 'none':
+            # Generate AFTER transformation plots (only if a transformation actually
+            # changed the values, not merely if one was named)
+            if _values_changed:
                 transformed_filtered = {k: v for k, v in transformed_data.items() if str(k).lower() not in ['group', 'sample', '']}
                 if transformed_filtered:
                     logger.debug(f"DEBUG: Generating AFTER plots for {len(transformed_filtered)} groups: {list(transformed_filtered.keys())}")

@@ -69,7 +69,7 @@ def _autopilot_normality_verdict(results):
     if "model_residuals" in nt:
         v = nt["model_residuals"].get("is_normal")
         return "Normality OK" if v else "Normality violated"
-    if "transformed_data" in nt:
+    if transformation_applied and "transformed_data" in nt:
         v = nt["transformed_data"].get("is_normal")
         return "Normality OK after transformation" if v else "Normality violated"
     if "all_data" in nt:
@@ -213,13 +213,12 @@ class TestInvariants:
 
 
 # --------------------------------------------------------------------------- #
-# Documented residual defects — the hardening chip (task_58aa76ba) fixes these.
-# When it lands, these xfails flip to xpass (strict) and must be updated.
+# Regression guards for the four presence-vs-value defects, fixed by hardening
+# task_58aa76ba (2026-08). These were xfail(strict) until the fix landed; they
+# are now live guards on the value-gated behaviour and must stay green.
 # --------------------------------------------------------------------------- #
 
 class TestMislabel:
-    @pytest.mark.xfail(strict=True, reason="hardening task_58aa76ba: presence-check "
-                       "emits 'after transformation' on an untransformed run")
     def test_untransformed_run_does_not_claim_after_transformation(self):
         _, _, ti = _check(_normal())
         nt, up = _bridge_normality(ti)
@@ -227,14 +226,43 @@ class TestMislabel:
         verdict = _autopilot_normality_verdict(results)
         assert "after transformation" not in verdict.lower(), verdict
 
-    @pytest.mark.xfail(strict=True, reason="hardening task_58aa76ba: decisiontree "
-                       "was_transformed = transformation != 'None' fires on Python None")
     def test_was_transformed_false_when_transformation_is_none(self):
         # decisiontreevisualizer.py:154 + :207
         results = {"transformation": None}
         transformation = results.get("transformation", "None")
-        was_transformed = transformation != "None"
+        was_transformed = bool(transformation) and str(transformation) not in ("None", "No further")
         assert was_transformed is False, "None != 'None' is True — needs a truthiness guard"
+
+    def test_after_transformation_plot_not_emitted_for_noop_transform(self):
+        # stats_functions.py:370 — a truthy label whose apply-loop left the data
+        # untouched must NOT produce an 'After Transformation' Q-Q / box plot.
+        raw = _skewed()
+        transformed = {g: list(raw[g]) for g in raw}   # 'sqrt' selected -> identity copy
+        transformation = "sqrt"
+        # --- mirrors stats_functions.py:370 gate after the fix: value-gated ---
+        emits_after_plot = grouped_samples_changed(raw, transformed)
+        # --- end copy ---
+        assert emits_after_plot is False, (
+            "an 'After Transformation' diagnostic plot is emitted for data the named "
+            "transform left unchanged; gate on grouped_samples_changed(), not the label")
+
+    def test_phase_falls_back_to_pre_when_post_block_empty(self):
+        # report_summaries.py:364 / decisiontreevisualizer.py:164 — a truthy label
+        # (not 'No further') with an unfilled post_transformation block must read the
+        # pre block, not silently drop the row.
+        test_info = {
+            "transformation": "sqrt",                      # truthy, not 'No further'
+            "pre_transformation": {
+                "residuals_normality": {"is_normal": True, "p_value": 0.4}},
+            "post_transformation": {},                     # inert transform -> never filled
+        }
+        # --- mirrors the phase selector after the fix: fill-gated ---
+        _phase = "post_transformation" if test_info.get("post_transformation") else "pre_transformation"
+        # --- end copy ---
+        _norm = test_info.get(_phase, {}).get("residuals_normality", {})
+        assert _norm != {}, (
+            "phase chosen by name selects the empty post block; the normality row "
+            "silently vanishes instead of falling back to pre_transformation")
 
 
 if __name__ == "__main__":

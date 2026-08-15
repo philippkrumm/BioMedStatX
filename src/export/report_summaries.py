@@ -361,8 +361,11 @@ class _SummariesMixin:
             # Fallback: extract from nested test_info structure used by one-way ANOVA path
             test_info_raw = results.get("test_info", {}) or {}
             if not normality_tests and test_info_raw:
-                _has_tr = test_info_raw.get("transformation") not in (None, "None", "No further")
-                _phase = "post_transformation" if _has_tr else "pre_transformation"
+                # Fill-gate, not name-gate (presence-vs-value audit 2026-08): read post
+                # only when the post block is present -- today absent only on the
+                # already-transformed "No further" early-return, and robust if a future
+                # engine skips the post recompute when no transform was needed.
+                _phase = "post_transformation" if test_info_raw.get("post_transformation") else "pre_transformation"
                 _norm = test_info_raw.get(_phase, {}).get("residuals_normality", {})
                 if _norm:
                     normality_tests = {"Model residuals": _norm}
@@ -380,8 +383,11 @@ class _SummariesMixin:
             variance_test = results.get("variance_test", {}) or {}
             # Fallback: extract from nested test_info structure
             if not variance_test and test_info_raw:
-                _has_tr = test_info_raw.get("transformation") not in (None, "None", "No further")
-                _phase = "post_transformation" if _has_tr else "pre_transformation"
+                # Fill-gate, not name-gate (presence-vs-value audit 2026-08): read post
+                # only when the post block is present -- today absent only on the
+                # already-transformed "No further" early-return, and robust if a future
+                # engine skips the post recompute when no transform was needed.
+                _phase = "post_transformation" if test_info_raw.get("post_transformation") else "pre_transformation"
                 variance_test = test_info_raw.get(_phase, {}).get("variance", {}) or {}
             if isinstance(variance_test, dict) and variance_test:
                 _var_name = variance_test.get("test_name", "Levene")
@@ -504,7 +510,15 @@ class _SummariesMixin:
         for row in rows:
             row["status_label"] = _icons.get(row["status_class"], "") + row["status_label"]
         _trafo_label = str(results.get("transformation") or "").strip()
-        _has_transform = _trafo_label.lower() not in ("", "none", "identity", "no transformation")
+        # Gate the transformed-data plots on an ACTUAL value change, not the label
+        # (presence-vs-value audit 2026-08): mirror the value-comparison already used
+        # for the transformed COLUMN below, so a named-but-inert transform does not
+        # spawn a transformed Q-Q / distribution plot identical to the raw one.
+        from statistical_testing.validators import grouped_samples_changed
+        _has_transform = grouped_samples_changed(
+            results.get("raw_data", {}) or {},
+            results.get("raw_data_transformed") or results.get("transformed_data") or {},
+        )
         _test_info = results.get("test_info") if isinstance(results.get("test_info"), dict) else {}
         transform_warning = results.get("transform_warning") or _test_info.get("transform_warning")
         # Level-ordering transparency: natural_order logs a warning (once per

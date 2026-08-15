@@ -1575,7 +1575,7 @@ def _ap_format_assumptions(self, results):
     elif "model_residuals" in normality_tests:
         is_normal = normality_tests["model_residuals"].get("is_normal")
         normality = "Normality OK" if is_normal else "Normality violated"
-    elif "transformed_data" in normality_tests:
+    elif transformation_applied and "transformed_data" in normality_tests:
         is_normal = normality_tests["transformed_data"].get("is_normal")
         normality = "Normality OK after transformation" if is_normal else "Normality violated"
     elif "all_data" in normality_tests:
@@ -1625,7 +1625,7 @@ def _ap_extract_normality_metric(self, results):
     if "model_residuals" in normality_tests:
         is_normal = normality_tests["model_residuals"].get("is_normal")
         return "OK" if is_normal else "Violated"
-    if "transformed_data" in normality_tests:
+    if transformation_applied and "transformed_data" in normality_tests:
         is_normal = normality_tests["transformed_data"].get("is_normal")
         return "OK (after transformation)" if is_normal else "Violated"
     if "all_data" in normality_tests:
