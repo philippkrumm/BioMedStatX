@@ -5,8 +5,11 @@ __pycache__/
 .venv/
 .venv*_backup_*/
 
-# Claude Code internal files
+# Claude Code internal files (local only — agents, skills, settings, plans)
 .claude/
+
+# Local Claude Code pre-commit hook — private; active via `git config core.hooksPath .githooks`
+.githooks/
 
 # R output artifacts
 Rplots.pdf
