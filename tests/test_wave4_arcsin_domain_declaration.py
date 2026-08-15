@@ -80,7 +80,7 @@ def test_engine_allows_declared_proportion_in_range():
 
 # ---- integration: the classic assumption_checks path hard-rejects ----
 
-def test_classic_path_hard_rejects_out_of_range_declaration():
+def test_classic_path_hard_rejects_out_of_range_declaration(monkeypatch):
     """assumption_checks must call the same validator and raise (no transform,
     no silent fallback) when the declaration does not match the data."""
     import statistical_testing.assumption_checks as ac
@@ -92,7 +92,7 @@ def test_classic_path_hard_rejects_out_of_range_declaration():
         @staticmethod
         def select_arcsin_domain_type(*a, **k):
             return "proportion"       # declared proportion, but data are > 1
-    ac._get_ui_dialog_manager = lambda: _Stub()
+    monkeypatch.setattr(ac, "_get_ui_dialog_manager", lambda: _Stub())
 
     rng = np.random.default_rng(3)
     # strongly non-normal, all > 1 -> transform is offered, declared proportion,

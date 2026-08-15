@@ -36,22 +36,24 @@ def _qt_and_dialogs():
         yield
         return
     app = QApplication.instance() or QApplication([])
-    QDialog.exec_ = lambda self, *a, **k: 0
-    QDialog.exec = lambda self, *a, **k: 0
+    mp = pytest.MonkeyPatch()
+    mp.setattr(QDialog, "exec_", lambda self, *a, **k: 0, raising=False)
+    mp.setattr(QDialog, "exec", lambda self, *a, **k: 0, raising=False)
     try:
         from analysis.statisticaltester import UIDialogManager
         for name in ("select_transformation_dialog",
                      "select_nonparametric_posthoc_dialog", "select_control_group_dialog",
                      "select_custom_pairs_dialog"):
-            setattr(UIDialogManager, name, staticmethod(lambda *a, **k: None))
+            mp.setattr(UIDialogManager, name, staticmethod(lambda *a, **k: None), raising=False)
         # This suite only checks group-label normalization, not post-hoc. Pick a
         # real method so the analysis COMPLETES and the raw_data these tests
         # inspect is present. None would mean the user cancelled the post-hoc
         # dialog, which now aborts the whole analysis and discards raw_data.
-        UIDialogManager.select_posthoc_test_dialog = staticmethod(lambda *a, **k: "games_howell")
+        mp.setattr(UIDialogManager, "select_posthoc_test_dialog", staticmethod(lambda *a, **k: "games_howell"), raising=False)
     except Exception:
         pass
     yield app
+    mp.undo()
 
 
 def _run(long_df, groups):

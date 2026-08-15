@@ -2,6 +2,7 @@ import sys
 
 import numpy as np
 import pandas as pd
+import pytest
 from PyQt5.QtWidgets import QApplication
 
 from analysis.analysis_core import AnalysisManager
@@ -9,6 +10,30 @@ from analysis.analysis_core import AnalysisManager
 # Reuse an existing QApplication if another Qt test already created one in this
 # process; only construct one if none exists. Avoids a double-initialization.
 app = QApplication.instance() or QApplication(sys.argv)
+
+
+@pytest.fixture(autouse=True)
+def _qt_and_dialogs(monkeypatch):
+    """Self-contained dialog suppression. This module builds no dialog stubs of
+    its own; it was only passing because an earlier module's (now torn-down)
+    global patches leaked in. Neutralise every modal here so a headless run can
+    never block on a real dialog (function-scoped monkeypatch auto-reverts)."""
+    try:
+        from PyQt5.QtWidgets import QDialog
+        from analysis.statisticaltester import UIDialogManager
+    except Exception:
+        return
+    monkeypatch.setattr(QDialog, "exec_", lambda self, *a, **k: 0, raising=False)
+    monkeypatch.setattr(QDialog, "exec", lambda self, *a, **k: 0, raising=False)
+    monkeypatch.setattr(UIDialogManager, "select_transformation_dialog",
+                        staticmethod(lambda *a, **k: None), raising=False)
+    monkeypatch.setattr(UIDialogManager, "select_posthoc_test_dialog",
+                        staticmethod(lambda *a, **k: "tukey"), raising=False)
+    monkeypatch.setattr(UIDialogManager, "select_nonparametric_posthoc_dialog",
+                        staticmethod(lambda *a, **k: "dunn"), raising=False)
+    for name in ("select_control_group_dialog", "select_custom_pairs_dialog"):
+        monkeypatch.setattr(UIDialogManager, name,
+                            staticmethod(lambda *a, **k: None), raising=False)
 
 
 def test_mixed_anova_autopilot_flow(tmp_path):

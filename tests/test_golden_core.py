@@ -35,20 +35,22 @@ def _qt_and_dialogs():
         yield
         return
     app = QApplication.instance() or QApplication([])
-    QDialog.exec_ = lambda self, *a, **k: 0
-    QDialog.exec = lambda self, *a, **k: 0
+    mp = pytest.MonkeyPatch()
+    mp.setattr(QDialog, "exec_", lambda self, *a, **k: 0, raising=False)
+    mp.setattr(QDialog, "exec", lambda self, *a, **k: 0, raising=False)
     try:
         from analysis.statisticaltester import UIDialogManager
-        UIDialogManager.select_transformation_dialog = staticmethod(lambda *a, **k: "log10")
-        UIDialogManager.select_posthoc_test_dialog = staticmethod(lambda *a, **k: "tukey")
+        mp.setattr(UIDialogManager, "select_transformation_dialog", staticmethod(lambda *a, **k: "log10"), raising=False)
+        mp.setattr(UIDialogManager, "select_posthoc_test_dialog", staticmethod(lambda *a, **k: "tukey"), raising=False)
         # Explicit post-hoc choices, not None: None now means the user cancelled
         # the dialog, which aborts the whole analysis (no golden result to compare).
-        UIDialogManager.select_nonparametric_posthoc_dialog = staticmethod(lambda *a, **k: "dunn")
+        mp.setattr(UIDialogManager, "select_nonparametric_posthoc_dialog", staticmethod(lambda *a, **k: "dunn"), raising=False)
         for name in ("select_control_group_dialog", "select_custom_pairs_dialog"):
-            setattr(UIDialogManager, name, staticmethod(lambda *a, **k: None))
+            mp.setattr(UIDialogManager, name, staticmethod(lambda *a, **k: None), raising=False)
     except Exception:
         pass
     yield app
+    mp.undo()
 
 
 def _assert_close(label, actual, expected, tol):

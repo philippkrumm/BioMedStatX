@@ -46,23 +46,26 @@ def _nonnormal_three_group():
 def _run(tmp, tag, df, *, transform, posthoc, nonparam=None):
     from analysis.statisticaltester import UIDialogManager
     from analysis.analysis_core import AnalysisManager
-    UIDialogManager.select_transformation_dialog = staticmethod(lambda *a, **k: transform)
-    UIDialogManager.select_posthoc_test_dialog = staticmethod(lambda *a, **k: posthoc)
-    UIDialogManager.select_nonparametric_posthoc_dialog = staticmethod(lambda *a, **k: nonparam)
-    UIDialogManager.select_control_group_dialog = staticmethod(lambda *a, **k: None)
-
-    dummy = os.path.join(tmp, "x.xlsx")
-    if not os.path.exists(dummy):
-        pd.DataFrame({"a": [1]}).to_excel(dummy, index=False)
-    out = os.path.join(tmp, f"out_{tag}")
-    groups = sorted(df["Group"].unique().tolist())
-    ctx = {"injected_df": df.copy(), "factor_columns": ["Group"], "between_factors": ["Group"],
-           "dv_columns": ["Value"], "group_labels": groups, "mode": "single", "dependent": False}
-    cwd_before = os.getcwd()
-    result = AnalysisManager.analyze(
-        file_path=dummy, group_col="Group", groups=groups, value_cols=["Value"],
-        save_plot=False, skip_plots=True, dependent=False, file_name=out, analysis_context=ctx)
-    return result, glob.glob(out + "*.html"), cwd_before == os.getcwd()
+    mp = pytest.MonkeyPatch()
+    mp.setattr(UIDialogManager, "select_transformation_dialog", staticmethod(lambda *a, **k: transform), raising=False)
+    mp.setattr(UIDialogManager, "select_posthoc_test_dialog", staticmethod(lambda *a, **k: posthoc), raising=False)
+    mp.setattr(UIDialogManager, "select_nonparametric_posthoc_dialog", staticmethod(lambda *a, **k: nonparam), raising=False)
+    mp.setattr(UIDialogManager, "select_control_group_dialog", staticmethod(lambda *a, **k: None), raising=False)
+    try:
+        dummy = os.path.join(tmp, "x.xlsx")
+        if not os.path.exists(dummy):
+            pd.DataFrame({"a": [1]}).to_excel(dummy, index=False)
+        out = os.path.join(tmp, f"out_{tag}")
+        groups = sorted(df["Group"].unique().tolist())
+        ctx = {"injected_df": df.copy(), "factor_columns": ["Group"], "between_factors": ["Group"],
+               "dv_columns": ["Value"], "group_labels": groups, "mode": "single", "dependent": False}
+        cwd_before = os.getcwd()
+        result = AnalysisManager.analyze(
+            file_path=dummy, group_col="Group", groups=groups, value_cols=["Value"],
+            save_plot=False, skip_plots=True, dependent=False, file_name=out, analysis_context=ctx)
+        return result, glob.glob(out + "*.html"), cwd_before == os.getcwd()
+    finally:
+        mp.undo()
 
 
 def test_two_cancels_back_to_back_do_not_break_next_run():

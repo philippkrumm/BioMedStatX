@@ -43,9 +43,11 @@ def _qt_and_dialogs():
         yield
         return
     app = QApplication.instance() or QApplication([])
-    QDialog.exec_ = lambda self, *a, **k: 0
-    QDialog.exec = lambda self, *a, **k: 0
+    mp = pytest.MonkeyPatch()
+    mp.setattr(QDialog, "exec_", lambda self, *a, **k: 0, raising=False)
+    mp.setattr(QDialog, "exec", lambda self, *a, **k: 0, raising=False)
     yield app
+    mp.undo()
 
 def _assert_close(label, actual, expected, tol=1e-3):
     """Assert numerical closeness with labeled diagnostics.
