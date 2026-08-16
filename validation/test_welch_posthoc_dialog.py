@@ -73,7 +73,17 @@ def test_welch_oneway_dunnett_choice_honoured():
 
 
 def test_welch_oneway_cancel_means_no_posthoc():
-    """Cancelling the dialog declines post-hoc — no fallback is forced."""
+    """Cancelling the post-hoc dialog aborts the whole run — no fallback is forced.
+
+    Contract (validators.AnalysisCancelledError / analysis_core): backing out of a
+    mid-analysis dialog raises AnalysisCancelledError, which analyze() converts into
+    a ``{"cancelled": True, "cancel_reason": ...}`` result — no report, no defaulted
+    post-hoc method. The earlier "declined" posthoc_test label is gone; cancelling
+    now aborts rather than completing the ANOVA with an empty post-hoc.
+    """
     res, _ = _run_welch_oneway(None)  # user cancels the dialog
+    assert res.get("cancelled") is True, res
+    assert "cancel" in (res.get("cancel_reason") or "").lower(), res.get("cancel_reason")
+    # No post-hoc fallback was forced.
     assert res.get("pairwise_comparisons", []) == [], res.get("pairwise_comparisons")
-    assert "declined" in (res.get("posthoc_test") or "").lower(), res.get("posthoc_test")
+    assert not res.get("posthoc_test"), res.get("posthoc_test")
