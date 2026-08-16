@@ -428,7 +428,7 @@ def test_rendered_html_includes_pattern_symbol_designer_controls_and_mappings():
     assert "state.legendYAnchor" in html
     assert "applyLegendPreset" in html
     assert 'var defaultPatternCycle = ["x", "\\\\", "/", "-", "|", "+", "."]' in html
-    assert 'var defaultSymbolCycle = ["diamond", "square", "circle", "cross", "triangle-up"]' in html
+    assert 'var defaultSymbolCycle = ["circle", "square", "diamond", "cross", "triangle-up"]' in html
     assert '<option value="Bar" selected>Bar</option>' in html
     assert "plotType: \"Bar\"" in html
     assert "autoPatternsEnabled: false" in html
