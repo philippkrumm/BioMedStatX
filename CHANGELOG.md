@@ -2,6 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Reporting
+
+- Transformation display is gated on an actual change in the data, not on the
+  presence of a transformation label. Four paths previously showed a
+  "Transformed" column, transformed-data normality metrics, or a "transformed"
+  decision-tree node whenever a transformation was *named* — even when the
+  chosen transformation left the values unchanged (e.g. "None" / "No further") —
+  and now compare values and surface the transformation only when it moved the
+  data. Covers the assumption summary (`stats_functions.py`), the autopilot
+  assumptions formatter (`statistical_analyzer_autopilot_pipeline.py`), the
+  report summaries (`report_summaries.py`), and the decision-tree node label
+  (`decisiontreevisualizer.py`). A frozen audit test pins the four paths.
+
+### Testing / validation
+
+- Ended global dialog-state leaks across the test suite (11+ files): bare
+  `QDialog` / `UIDialogManager` patches that stayed live past their own test were
+  converted to function-scoped `monkeypatch` fixtures with teardown, so a
+  cancelled or suppressed dialog can no longer leak into an unrelated test. The
+  suite is now order-independent, verified under `pytest-randomly` (seeds
+  1 / 42 / 1337 produce identical results).
+- Corrected the R validation oracle for the independent t-test effect size
+  (`validation/r_templates/indep_ttest.R`). It used Student's t plus a classic
+  Cohen's d; since the Welch default the app computes pooled-SD Hedges' g, so the
+  oracle now uses `t.test(var.equal=FALSE)` with
+  `effsize::cohen.d(hedges.correction=TRUE)` — an independent implementation of
+  the same J correction. No production code changed; the app was already correct.
+- Updated several stale test expectations to the current contracts — the
+  post-hoc / transformation cancel contract (`{"cancelled": True}` abort with no
+  report written), the plot symbol-cycle order (circle-first), and the
+  Freedman-Lane permutation test name on the nonparametric two-way path. No
+  production code changed.
+
 ## [2.0] - 2026-08-11
 
 ### Plots and visualisation

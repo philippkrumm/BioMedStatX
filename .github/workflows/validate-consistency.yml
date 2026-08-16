@@ -1,0 +1,27 @@
+name: consistency
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # validate_consistency.py parses the source with the standard library only
+      # (re, sys, pathlib) — no project dependencies, no Qt, no pip install needed.
+      - name: Run consistency validator
+        run: python tools/validate_consistency.py
