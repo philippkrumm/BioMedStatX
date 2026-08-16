@@ -57,12 +57,42 @@ def patch_dialogs():
     mock_manager.select_nonparametric_posthoc_dialog.return_value = "dunn"
     mock_manager.select_control_group_dialog.return_value = None
     mock_manager.select_custom_pairs_dialog.return_value = []
-    mock_manager.select_transformation_dialog.return_value = None  # no transformation
+    # "skip" = the explicit "Continue without transformation" radio choice (the
+    # real dialog returns "skip" for it and None only on Cancel). Returning None
+    # here would simulate the user cancelling, which correctly aborts the whole
+    # analysis (AnalysisCancelledError) — not what a headless happy-path run wants.
+    mock_manager.select_transformation_dialog.return_value = "skip"  # no transformation, proceed
 
     # Patch before any stats_functions import loads UIDialogManager
     with patch("analysis.stats_functions.UIDialogManager", mock_manager), \
          patch("analysis.statisticaltester.UIDialogManager", mock_manager):
         yield mock_manager
+
+
+@pytest.fixture(autouse=True)
+def _stub_comparison_selection_dialog(monkeypatch):
+    """Headless stub for the direct ComparisonSelectionDialog modal.
+
+    The advanced/two-way nonparametric post-hoc path (Freedman-Lane fallback)
+    instantiates ComparisonSelectionDialog DIRECTLY in
+    analysis_core._custom_pairs_cb — not via UIDialogManager — and calls exec_().
+    Headless that modal blocks forever, so stub it to "accept, select all pairs"
+    (get_selected_comparisons -> [] makes _custom_pairs_cb fall back to all_pairs).
+    The transformation dialog used to abort before this path was reached, which
+    masked the hang; now that "skip" lets nonparametric paths proceed, it must be
+    stubbed too.
+
+    MUST be function-scoped (monkeypatch, auto-reverted) — NOT folded into the
+    session-scoped patch_dialogs fixture. A session-scoped class patch stays live
+    across the whole session and, under randomized test interleaving, shadows the
+    inherited QDialog.exec_ that tests/test_posthoc_cancel_aborts.py deliberately
+    patches to Rejected, turning that real cancel-abort test into a false failure.
+    """
+    from ui.dialogs.comparison_selection_dialog import ComparisonSelectionDialog
+    monkeypatch.setattr(ComparisonSelectionDialog, "exec_", lambda self: 1, raising=False)
+    monkeypatch.setattr(
+        ComparisonSelectionDialog, "get_selected_comparisons", lambda self: [], raising=False
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -478,7 +508,10 @@ DESIGNS = [
         "subject_column": None,
         "dependent": False,
         "inferred_test": "two_way_anova",
-        "expected_test_keywords": ["two-way", "two_way", "anova", "non-parametric", "nonparam"],
+        # The documented nonparametric two-way method is the Freedman-Lane
+        # permutation test (ADVANCED_ANOVA_GUIDE.md; NONPARAMETRIC_ADVANCED_ANOVA
+        # _IMPLEMENTATION_NOTES.md §B, model_class "Freedman-Lane Permutation").
+        "expected_test_keywords": ["freedman", "permutation", "two-way", "two_way", "anova", "non-parametric", "nonparam"],
         "r_test": None,   # No valid R equivalent: Python uses rank/permutation, R uses parametric aov()
         "r_output_format": ["p_value", "statistic"],
         "levels": 4,
