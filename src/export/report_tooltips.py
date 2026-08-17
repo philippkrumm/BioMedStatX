@@ -42,18 +42,6 @@ STAT_ROW_DESCRIPTIONS: Mapping[str, str] = {
         "Standardised magnitude of the effect, independent of sample size. "
         "Tells you whether a significant result is also practically meaningful."
     ),
-    "Assumptions (Linear Regression)": (
-        "Linear regression assumes that the residuals (errors) are normally distributed "
-        "(tested via Shapiro-Wilk), that the variance of the residuals is constant across "
-        "all fitted values (homoscedasticity, tested via Breusch-Pagan), and that the "
-        "model is correctly specified without non-linear patterns (tested via Ramsey RESET). "
-        "Violations indicate the model may not fit the data well or that standard errors "
-        "could be biased."
-    ),
-    "Effect size type": (
-        "Which effect-size metric is reported (e.g. Cohen's d, η², partial η², r). "
-        "Each has its own scale and benchmarks."
-    ),
     "Confidence interval": (
         "Plausible range for the true value, given your data. Formally (95%): "
         "if you repeated the experiment many times, 95% of the intervals computed "
