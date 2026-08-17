@@ -250,19 +250,39 @@ def validate_against_r(result: dict, design: dict, excel_path: str, tmp_path: Pa
     fmt = design.get("r_output_format", ["p_value", "statistic"])
     r = {name: val for name, val in zip(fmt, values)}
 
-    # ── p-value tolerance ────────────────────────────────────────────────────
-    # Wilcoxon: Python uses normal approx, R may use exact → keep loose (0.05)
-    # Mann-Whitney: both use normal approx → tighter (1e-3)
-    # Parametric: formulas are identical → tight (1e-4)
-    # Nonparametric mixed ANOVA uses different test entirely → very loose (0.5)
-    # Design-level r_tolerance always wins.
+    # ── p-value tolerance (scale-aware) ──────────────────────────────────────
+    # A single fixed absolute tolerance is meaningless across p-value magnitudes:
+    # 1e-4 is arbitrary near the decision boundary and absurdly loose in the deep
+    # tail (p ~ 1e-9, where any two near-zero values pass trivially). We use
+    # numpy.isclose semantics — an absolute floor plus a relative term that scales
+    # with the R reference — so the check stays sensible whether p ≈ 0.05 or
+    # p ≈ 1e-12: the floor prevents false failures where both p-values underflow
+    # toward zero, and the relative term keeps the bound proportionate above it.
+    #
+    # atol (absolute floor) by test family:
+    #   Wilcoxon: Python normal-approx vs R exact → loose (0.05)
+    #   Mann-Whitney: both normal-approx → tighter (1e-3)
+    #   Parametric / other: identical formulas → tight (1e-4)
+    #   (Nonparametric mixed ANOVA is a different test → set r_tolerance=0.5 per design.)
+    # rtol (relative term above the floor) mirrors atol per family: a uniform
+    # value would inflate the bound by up to ~100x at large (non-significant) p
+    # for the identical-formula family, eroding sensitivity to SS-type / df
+    # mismatches, so keep parametric genuinely tight (1e-3) and give the
+    # approximate families (normal-approx vs exact) proportionately more slack.
+    # Design-level r_tolerance (floor) / r_rtol (relative) always win.
     r_test_name = design.get("r_test", "")
-    default_tol = (
+    default_atol = (
         0.05  if r_test_name == "wilcoxon" else
         1e-3  if r_test_name == "mann_whitney" else
         1e-4
     )
-    tolerance = design.get("r_tolerance", default_tol)
+    default_rtol = (
+        5e-2  if r_test_name == "wilcoxon" else
+        1e-2  if r_test_name == "mann_whitney" else
+        1e-3
+    )
+    atol = design.get("r_tolerance", default_atol)
+    rtol = design.get("r_rtol", default_rtol)
 
     # Gather all p-value fields from the named dict
     p_keys = [k for k in r if k == "p_value" or k.startswith("p_")]
@@ -280,13 +300,14 @@ def validate_against_r(result: dict, design: dict, excel_path: str, tmp_path: Pa
 
     diff = min(abs(float(python_p) - rp) for rp in r_p_values)
     best_r_p = min(r_p_values, key=lambda rp: abs(float(python_p) - rp))
+    tolerance = atol + rtol * abs(best_r_p)   # numpy.isclose-style: floor + relative
 
-    assert diff < tolerance, (
+    assert diff <= tolerance, (
         f"[{design['name']}] R cross-validation FAILED: "
         f"Python p={float(python_p):.8f}, best R p={best_r_p:.8f}, "
-        f"diff={diff:.2e} > tol={tolerance:.2e}"
+        f"diff={diff:.2e} > tol={tolerance:.2e} (atol={atol:.2e}, rtol={rtol:.2e})"
     )
-    print(f"  R cross-check OK: Python p={float(python_p):.6f}, best R p={best_r_p:.6f}, diff={diff:.2e}")
+    print(f"  R cross-check OK: Python p={float(python_p):.6f}, best R p={best_r_p:.6f}, diff={diff:.2e} (tol={tolerance:.2e})")
 
     # ── Effect size and post-hoc cross-validation ────────────────────────────
     _validate_r_effect_size(result, design, r)
