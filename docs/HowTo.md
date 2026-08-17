@@ -97,7 +97,7 @@ A grouping variable and a subject identifier look identical in the data (both co
 | Correlation | Outcome | Predictor (continuous) | — | — |
 | Linear Regression | Outcome | Predictor (continuous) | — | — | + Covariates |
 
-The **mapping status line** below the buckets updates in real time and confirms which test will run. The messages are literal:
+The **mapping status line** below the buckets updates in real time and confirms which test will run. The messages are literal; the most common are (the app shows further messages for other incomplete states, e.g. a missing measurement column or too many subject-ID columns):
 
 - *"Load a file to activate the mapping workflow."* — no file loaded yet.
 - *"Assign at least one factor column."* — Dependent Variable is filled but Factor 1 is not.
@@ -137,7 +137,7 @@ Two interactive prompts may appear: transformation choice (Section 7) and post-h
 
 ## 6. Export Settings
 
-Set the **output file name** before or after analysis. **Browse…**, next to the file-name field, opens a save dialog to choose the folder and name used for all exports from the next run (Excel file, HTML report, and plot image).
+When you click **Start Auto Analysis**, a **Save Analysis Report** dialog opens first. Choose the folder and file name there: the location you pick becomes the output directory, and the base name is reused for all exports from that run (Excel file, HTML report, and plot image). The dialog suggests a name derived from your data file and measurement column; cancelling it aborts the run. There is no separate file-name field on the main window — the save dialog is where the output location is set.
 
 ---
 
@@ -179,7 +179,7 @@ A significant main test with $\geq 3$ groups triggers a post-hoc selection promp
 
 Cancelling a post-hoc prompt is a valid choice: the analysis keeps the main-test result and reports no pairwise comparisons. Pick it when only the overall effect matters.
 
-The group-selection dialog and the pairwise-comparison dialog both provide **Select All**, **Deselect All**, and **Select None** buttons to check or clear the whole list at once rather than ticking boxes individually.
+The group-selection dialog and the pairwise-comparison dialog both provide **Select All** and **Deselect All** buttons to check or clear the whole list at once rather than ticking boxes individually.
 
 Results appear as significance letters or bracket annotations on the plot and as a comparison table in the HTML report.
 
@@ -280,8 +280,8 @@ Review flagged observations before proceeding. Removing outliers changes the ana
 2. Load file; select worksheet.
 3. Assign: Dependent Variable, Factor 1, and (if needed) Factor 2, Subject ID, Covariates.
 4. Choose Single or Multi-Dataset mode.
-5. Set output file name and group order.
-6. Click **Start Auto Analysis**.
+5. Optionally restrict the analysis to a subset of levels with **Select Groups For Analysis**.
+6. Click **Start Auto Analysis**, then set the output folder and file name in the save dialog.
 7. Respond to transformation and post-hoc prompts if they appear.
 8. Open the HTML report from the output directory.
 
@@ -339,7 +339,7 @@ The choice is driven by sample size and distribution shape (skewness and excess 
 
 When Factor 1 is continuous and Covariates is empty, a checkbox appears:
 
-**"Analyse as Linear Regression (Y = a + bX)"**
+**"Analyze as Linear Regression (Y = a + bX)"**
 
 Leaving it unchecked runs Correlation. Checking it runs Simple OLS Regression with one predictor: slope coefficient $\hat{\beta}_1$, 95% CI on $\hat{\beta}_1$, and the full residual diagnostic battery (Shapiro–Wilk, Breusch–Pagan, Ramsey RESET).
 
