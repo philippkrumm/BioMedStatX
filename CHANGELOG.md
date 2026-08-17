@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [2.0] - 2026-08-17
 
 ### Reporting
 
@@ -16,28 +16,6 @@ All notable changes to this project will be documented in this file.
   assumptions formatter (`statistical_analyzer_autopilot_pipeline.py`), the
   report summaries (`report_summaries.py`), and the decision-tree node label
   (`decisiontreevisualizer.py`). A frozen audit test pins the four paths.
-
-### Testing / validation
-
-- Ended global dialog-state leaks across the test suite (11+ files): bare
-  `QDialog` / `UIDialogManager` patches that stayed live past their own test were
-  converted to function-scoped `monkeypatch` fixtures with teardown, so a
-  cancelled or suppressed dialog can no longer leak into an unrelated test. The
-  suite is now order-independent, verified under `pytest-randomly` (seeds
-  1 / 42 / 1337 produce identical results).
-- Corrected the R validation oracle for the independent t-test effect size
-  (`validation/r_templates/indep_ttest.R`). It used Student's t plus a classic
-  Cohen's d; since the Welch default the app computes pooled-SD Hedges' g, so the
-  oracle now uses `t.test(var.equal=FALSE)` with
-  `effsize::cohen.d(hedges.correction=TRUE)` — an independent implementation of
-  the same J correction. No production code changed; the app was already correct.
-- Updated several stale test expectations to the current contracts — the
-  post-hoc / transformation cancel contract (`{"cancelled": True}` abort with no
-  report written), the plot symbol-cycle order (circle-first), and the
-  Freedman-Lane permutation test name on the nonparametric two-way path. No
-  production code changed.
-
-## [2.0] - 2026-08-11
 
 ### Plots and visualisation
 
@@ -95,6 +73,28 @@ All notable changes to this project will be documented in this file.
 - Added parsing-core coverage for the cell-range selector, and a regression test
   that forces the statsmodels ANOVA fallback (`pingouin` made unavailable) so the
   degrees-of-freedom key fix cannot silently regress behind the primary engine.
+- Ended global dialog-state leaks across the test suite (11+ files): bare
+  `QDialog` / `UIDialogManager` patches that stayed live past their own test were
+  converted to function-scoped `monkeypatch` fixtures with teardown, so a
+  cancelled or suppressed dialog can no longer leak into an unrelated test. The
+  suite is now order-independent, verified under `pytest-randomly` (seeds
+  1 / 42 / 1337 produce identical results).
+- Corrected the R validation oracle for the independent t-test effect size
+  (`validation/r_templates/indep_ttest.R`). It used Student's t plus a classic
+  Cohen's d; since the Welch default the app computes pooled-SD Hedges' g, so the
+  oracle now uses `t.test(var.equal=FALSE)` with
+  `effsize::cohen.d(hedges.correction=TRUE)` — an independent implementation of
+  the same J correction. No production code changed; the app was already correct.
+- Updated several stale test expectations to the current contracts — the
+  post-hoc / transformation cancel contract (`{"cancelled": True}` abort with no
+  report written), the plot symbol-cycle order (circle-first), and the
+  Freedman-Lane permutation test name on the nonparametric two-way path. No
+  production code changed.
+- Made the R p-value cross-validation tolerance scale-aware
+  (`validation/test_all_paths.py`): a single fixed absolute tolerance was
+  meaningless across p-value magnitudes, so it now uses `numpy.isclose` semantics
+  — a per-family absolute floor plus a per-family relative term. No production
+  code changed.
 
 This release is the result of a multi-round statistical and release-readiness
 audit. Many changes make the default behavior more conservative and correct
