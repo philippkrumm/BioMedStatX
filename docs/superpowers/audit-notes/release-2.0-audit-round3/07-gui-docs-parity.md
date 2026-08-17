@@ -103,6 +103,61 @@ tracked doc inherited those refs. The stale copy exists only as a local, git-ign
   (`decisiontreevisualizer.py:212`) and `_phase` selection introduce no stale recipe or tutorial
   text, and are correctly recorded in `CHANGELOG.md [Unreleased]`.
 
+## report_tooltips.py — deferred parity check (Strang B)
+
+`src/export/report_tooltips.py` was named in the Round-3 scope but never examined in Round 1/2. It
+holds `STAT_ROW_DESCRIPTIONS` — 24 layperson tooltips keyed by stat-row **label** — surfaced via
+`stat_row_info(label)`, attached to each rendered row in `html_exporter.py:93,205`
+(`_r["info"] = _stat_row_info(_r.get("label",""))`). Parity here means two things: (a) each key
+matches a label a report row actually emits, and (b) the copy accurately describes current behavior.
+
+### What I mechanically verified (not eyeballed)
+
+| Check | Command / method | Result |
+|---|---|---|
+| Tooltip consumers | `git grep stat_row_info -- src/` | Only `html_exporter.py:93,205`, keyed by each row's `label`. No other path. |
+| Riskiest content claim — "Assumptions (Linear Regression)" names Shapiro-Wilk + Breusch-Pagan + Ramsey RESET | Read `correlation_models.py:805-842` | All three genuinely execute: `scipy_stats.shapiro` (:807), `het_breuschpagan` (:821), `linear_reset(power=2)` (:834). **Copy is accurate.** (A scoped grep of `analysis/`+`statistical_testing/` alone returned zero — a false-negative; the broad tree grep found them. GD4 lesson applied.) |
+| Which of the 24 keys map to an emitted row label | `git grep -F '"<key>"' -- src/` per key, then broad case-insensitive re-check on the zero-hit ones | 21 keys map to real emitted labels (`report_stat_rows.py`: "Test" :321, "Model type" :322, "Statistic" :506, "p-value" :507, "Transformation" :389, "Post-hoc test" :390, "Sample size (n)" :645, "Correlation method" :648, "Interpretation" :651, etc.). **3 keys emit nowhere** — orphans (below). |
+| Are the 3 zero-hit keys built dynamically / under another case? | `git grep -niE` bare-phrase, plus read of `report_association.py` (253L) | No dynamic construction; `report_association.py` renders LR assumptions and β-interpretation as custom HTML and never calls `stat_row_info`. Confirmed orphan, not false-negative. |
+
+### Findings
+
+**GD15 — three orphan tooltip keys (dead copy).** `report_tooltips.py:45,72-75,93-95` (and the
+`"Effect size type"` key at `:53`). No stat row is ever labeled `"Assumptions (Linear Regression)"`,
+`"β Interpretation"`, or `"Effect size type"`, so `stat_row_info` can never return them:
+- LR assumptions render as bespoke HTML in `report_association.py`, not as a labelled stat row.
+- The β-interpretation is emitted as inline **value** text (`correlation_models.py:670,711`), not a
+  row whose label is `"β Interpretation"`.
+- The effect-size row is labelled by the metric's **name** (`html_exporter.py:286`,
+  `effect_label = str(results.get("effect_size_type") or "Effect size")`), so the literal
+  `"Effect size type"` is never a label.
+**Impact:** none at runtime — unused, and the copy is accurate if a matching row were ever added.
+Pure maintenance dead-weight, same class as GD2/GD13. **Severity: LOW.** **Fix:** delete the three
+keys, or (better, if the intent is to document those outputs) wire the copy to the labels the report
+actually emits.
+
+**GD16 — effect-size row loses its tooltip when labelled by metric name.** `html_exporter.py:286`
+labels the effect-size row with the metric name (e.g. "Cohen's d", "η²") and only falls back to the
+literal "Effect size" when `effect_size_type` is empty. `stat_row_info("Cohen's d")` returns `""`, so
+the row that carries a specific effect-size metric shows **no** tooltip, while the generic-labelled
+fallback does. **Impact:** minor, cosmetic — the most informative rows are the ones missing the
+help text. **Severity: LOW.** **Fix:** look the tooltip up by a stable key (e.g. always keep an
+`"Effect size"` info regardless of the displayed metric name), or add per-metric entries.
+
+### Strengths (verified)
+
+- **The copy is technically sound and genuinely layperson-readable.** Spot-checks held up: the
+  p-value tooltip correctly states it is *not* P(H₀ true); df₂ is correctly "N − k, not the number of
+  groups"; the adjusted-p note names BH and correctly flags its independence/positive-dependence
+  assumption. No content inaccuracy found across the 24 entries.
+- **The riskiest, most specific claim is true.** The "Assumptions (Linear Regression)" tooltip names
+  three exact tests and the code runs all three — no overstatement (contrast the R2 GD1/GD9 pattern
+  where docs drifted from code).
+
+> Note: the three open items from the Round-3 body (GD6, GD13, GD14) were fixed after this report was
+> written — commits `5eb4984` (GD14), `445af4b` (GD6), `fce568d` (GD13). The remediation order below
+> is retained as the as-audited snapshot; GD15/GD16 (this section) remain open.
+
 ## Recommended remediation order
 
 1. **GD14** (two-string translation) — trivial, user-visible.
