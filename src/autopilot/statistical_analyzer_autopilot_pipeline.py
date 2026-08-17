@@ -1480,8 +1480,8 @@ def _ap_detected_test_label(self, context):
         "two_way_ancova": "Two-Way ANCOVA",
         "lmm": "Linear Mixed Model (handles missing visits)",
         "logistic_regression": "Logistic Regression (Binary Outcome)",
-        "correlation": "Korrelationsanalyse (Spearman/Pearson)",
-        "linear_regression": "Lineare Regression (OLS)",
+        "correlation": "Correlation (Spearman/Pearson)",
+        "linear_regression": "Linear Regression (OLS)",
     }
     return labels.get(context["inferred_test"], context["inferred_test"])
 
