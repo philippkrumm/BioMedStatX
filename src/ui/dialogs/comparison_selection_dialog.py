@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QCheckBox, QDialogButtonBox, QWidget, QScrollArea, QPushButton, QHBoxLayout
+from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QCheckBox, QDialogButtonBox, QWidget, QScrollArea, QPushButton, QHBoxLayout, QMessageBox
 from PyQt5.QtCore import Qt
 
 class ComparisonSelectionDialog(QDialog):
@@ -86,6 +86,21 @@ class ComparisonSelectionDialog(QDialog):
         """Deselect all checkboxes"""
         for cb in self.checkboxes:
             cb.setChecked(False)
+
+    def accept(self):
+        # Block OK on an all-unchecked selection instead of letting the caller
+        # silently fall back to "all pairs". _custom_pairs_cb does
+        # `chosen if chosen else all_pairs`, so an empty return is invisible —
+        # a getter-level guard (the outlier dialog's "return None" pattern)
+        # would still be swallowed by that fallback. Enforcing it at accept-time
+        # keeps the dialog open with a warning; Cancel still aborts the analysis.
+        if not any(cb.isChecked() for cb in self.checkboxes):
+            QMessageBox.warning(
+                self, "No comparisons selected",
+                "Select at least one comparison, or press Cancel to abort the analysis.",
+            )
+            return
+        super().accept()
 
     def get_selected_comparisons(self):
         selected = []
