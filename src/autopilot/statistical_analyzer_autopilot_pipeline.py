@@ -2017,8 +2017,6 @@ def _ap_configure_plot_from_result(self):
         default_filename=default_filename,
         dependent=self.current_analysis_context.get("dependent", False),
     )
-    if hasattr(dialog, 'create_plot_check'):
-        dialog.create_plot_check.setChecked(False)
 
     if dialog.exec_() != QDialog.Accepted:
         return
