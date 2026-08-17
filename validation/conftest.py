@@ -432,6 +432,7 @@ DESIGNS = [
             "p_value", "statistic", "eta_squared", "cohens_f",
             "p_tukey_1", "p_tukey_2", "p_tukey_3",
         ],
+        "r_p_key": "p_value",  # omnibus F p; p_tukey_* are post-hoc pairs, not the primary
         "levels": 3,
         "factors": 1,
     },
@@ -496,6 +497,7 @@ DESIGNS = [
             "F_FactorA",  "F_FactorB",  "F_Interaction",
             "peta_FactorA", "peta_FactorB", "peta_Interaction",
         ],
+        "r_p_key": "p_Interaction",  # Python's canonical p_value = interaction row (statisticaltester.py:2172-2174)
         "levels": 4,
         "factors": 2,
     },
@@ -533,6 +535,7 @@ DESIGNS = [
             "F_between",  "F_within",  "F_interaction",
             "peta_between", "peta_within", "peta_interaction",
         ],
+        "r_p_key": "p_interaction",  # Python's canonical p_value = interaction row (statisticaltester.py:1821-1823)
         "levels": 6,
         "factors": 2,
         "between_factors": ["Group"],
@@ -554,6 +557,7 @@ DESIGNS = [
             "F_between",  "F_within",  "F_interaction",
             "peta_between", "peta_within", "peta_interaction",
         ],
+        "r_p_key": "p_interaction",  # Python's canonical p_value = interaction row (Brunner-Langer; large tol below)
         # Nonparametric mixed ANOVA uses different test (Brunner-Langer) — large tolerance
         "r_tolerance": 0.5,
         "levels": 6,
@@ -589,6 +593,7 @@ DESIGNS = [
         "expected_test_keywords": ["ancova", "covariate"],
         "r_test": "ancova",
         "r_output_format": ["p_value", "statistic", "eta_squared", "p_covariate"],
+        "r_p_key": "p_value",  # ANCOVA main-effect p; p_covariate is the nuisance term
         "levels": 2,
         "factors": 1,
         "covariate_columns": ["Covariate"],

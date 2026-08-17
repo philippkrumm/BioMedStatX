@@ -284,9 +284,26 @@ def validate_against_r(result: dict, design: dict, excel_path: str, tmp_path: Pa
     atol = design.get("r_tolerance", default_atol)
     rtol = design.get("r_rtol", default_rtol)
 
-    # Gather all p-value fields from the named dict
-    p_keys = [k for k in r if k == "p_value" or k.startswith("p_")]
-    r_p_values = [r[k] for k in p_keys if not (r[k] != r[k])]  # skip NaN
+    # Select the R p-value(s) to compare Python's primary p against.
+    # For multi-p designs (factorial ANOVA, ANCOVA, omnibus+post-hoc) the R
+    # output carries several semantically distinct p-values (interaction, a
+    # second factor, a covariate, Tukey pairs). Pooling them and taking the
+    # nearest to Python's single primary p can silently validate against the
+    # wrong effect, and — since the tolerance now scales with the chosen
+    # reference — let a mis-matched decoy inflate the bound. Such designs name
+    # the semantically-correct field via r_p_key, which is what Python's
+    # canonical p_value actually holds (e.g. factorial results set the top-level
+    # p_value from the interaction row). Single-p designs omit r_p_key and keep
+    # the original pooled behavior.
+    primary_key = design.get("r_p_key")
+    if primary_key is not None:
+        if primary_key not in r or (r[primary_key] != r[primary_key]):  # missing / NaN
+            print(f"  SKIP R comparison [{design['name']}]: r_p_key '{primary_key}' absent or NaN in R output")
+            return
+        r_p_values = [r[primary_key]]
+    else:
+        p_keys = [k for k in r if k == "p_value" or k.startswith("p_")]
+        r_p_values = [r[k] for k in p_keys if not (r[k] != r[k])]  # skip NaN
     if not r_p_values:
         print(f"  SKIP R comparison [{design['name']}]: no valid p-values in R output")
         return
