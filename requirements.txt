@@ -28,5 +28,15 @@ networkx
 requests
 packaging
 
+# --- Build tooling (frozen-app packaging only, no effect on numeric results) ---
+# PyInstaller's altgraph still does `import pkg_resources`; setuptools >= 81
+# removed the bundled pkg_resources, which aborts the build before it even reads
+# the spec ("ModuleNotFoundError: No module named 'pkg_resources'"). Pin below 81
+# until altgraph/PyInstaller drop the dependency. Build from a dedicated venv
+# created from THIS file (see BUILD.md), not a shared Anaconda base — otherwise
+# unrelated packages (e.g. torch) leak into the frozen bundle via PyInstaller's
+# dependency graph.
+setuptools<81
+
 # Optional / alternatives:
 # PySide2  # use instead of PyQt5 if preferred
