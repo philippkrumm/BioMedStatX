@@ -136,6 +136,28 @@ a = Analysis(
         # numpy.f2py.cfuncs crashes with "'NoneType' object has no attribute
         # 'write'". Excluding nltk removes the rthook and the crash.
         "nltk",
+        # Bundle-slimming: transitive packages the app never imports. Verified
+        # absent from every src import AND from the frozen import-smoke list
+        # (statistical_analyzer.py). Removing them cost ~120 MB with the import
+        # smoke still 43/43 OK. If any of these is ever imported at runtime,
+        # the frozen import smoke (BIOMEDSTATX_SMOKE_IMPORTS=1) will fail loudly.
+        #   - AWS/cloud IO: pulled via fsspec's s3 backend, never used locally
+        "boto3", "botocore", "s3fs",
+        #   - dask/distributed parallelism: not used; pandas runs in-process
+        "dask", "distributed",
+        #   - altair: unused alt viz lib (the app uses matplotlib/plotly/seaborn)
+        "altair",
+        #   - HDF5 stack: unused, and h5py here is ABI-mismatched against numpy 2.x
+        "h5py", "tables",
+        #   - mypy: a static type checker, never a runtime dependency
+        "mypy", "mypyc",
+        #   - torch / jax: ~400 MB of GPU/autodiff frameworks pulled ONLY via
+        #     scipy/sklearn's optional array_api_compat backends and the
+        #     marginaleffects[autodiff] extra. The app passes NumPy arrays, never
+        #     torch/jax tensors, so these backends are dead weight. (If either
+        #     isn't installed this is a harmless no-op.)
+        "torch", "torchvision", "torchaudio",
+        "jax", "jaxlib",
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
