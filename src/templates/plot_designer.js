@@ -2319,6 +2319,20 @@
       warningNode.textContent = warningMessages.join(" ");
     }
 
+    // Every axis grows its own margin to fit its tick labels AND its axis title,
+    // at any tick angle (0/45/90), on every plot type -- so long x/y-axis titles
+    // and long rotated group labels are never clipped by the fixed-size #pd-plot
+    // container. A fixed pixel margin can never fit arbitrary-length rotated text,
+    // which is why the clipping kept coming back after every hand-tuned margin.
+    // Centralised here (after all plot-type branches have built their axes, and
+    // covering x/y/x2/y2 alike) so a new plot type or a second axis can never
+    // silently miss it.
+    Object.keys(layout).forEach(function (axisKey) {
+      if (/^[xy]axis\d*$/.test(axisKey) && layout[axisKey] && typeof layout[axisKey] === "object") {
+        layout[axisKey].automargin = true;
+      }
+    });
+
     Plotly.react("pd-plot", traces, layout, {
       responsive: true,
       displaylogo: false,

@@ -955,8 +955,8 @@ class _ChartsMixin:
                 height=fig_h,
                 margin=dict(l=20, r=20, t=36, b=20),
                 font=dict(family="Segoe UI, Helvetica Neue, sans-serif", size=12, color="#16313a"),
-                xaxis=dict(side="bottom", tickangle=-35),
-                yaxis=dict(autorange="reversed"),
+                xaxis=dict(side="bottom", tickangle=-35, automargin=True),
+                yaxis=dict(autorange="reversed", automargin=True),
             )
             div_r = f"biomedstatx-corrmat-r-{title_prefix.replace(' ', '-').lower()}"
             html_r = _ChartsMixin._figure_to_html(fig_r, div_id=div_r)
@@ -1022,8 +1022,8 @@ class _ChartsMixin:
                 height=fig_h,
                 margin=dict(l=20, r=20, t=36, b=20),
                 font=dict(family="Segoe UI, Helvetica Neue, sans-serif", size=12, color="#16313a"),
-                xaxis=dict(side="bottom", tickangle=-35),
-                yaxis=dict(autorange="reversed"),
+                xaxis=dict(side="bottom", tickangle=-35, automargin=True),
+                yaxis=dict(autorange="reversed", automargin=True),
             )
             div_p = f"biomedstatx-corrmat-p-{title_prefix.replace(' ', '-').lower()}"
             html_p = _ChartsMixin._figure_to_html(fig_p, div_id=div_p)
