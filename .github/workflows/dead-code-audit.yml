@@ -1,0 +1,46 @@
+name: dead-code-audit
+
+# Informational only — never a merge gate. Static reachability cannot see
+# runtime-gated dead weight (see the report header), so a green run means
+# "statically clean", not "no dead weight". No push/PR trigger: on a solo
+# project with this push rhythm that would only produce empty runs.
+on:
+  schedule:
+    - cron: "0 6 1 * *"   # monthly, 06:00 UTC on the 1st — a "don't forget" safety net
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest       # pure static analysis; no Qt/GUI runtime needed
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # ruff/vulture parse the source files statically — no project deps, no import
+      # of the app. Pinned to the versions the audit was calibrated against.
+      - name: Install analysers
+        run: pip install ruff==0.15.14 vulture==2.16
+
+      - name: Run dead-code audit
+        run: python tools/audit_dead_code.py --report
+
+      # Sections 1-4 (ruff / vulture / namespace collisions / regex) go to the step
+      # summary; the high-volume section 5 (import-provenance noise) is cut at the
+      # SUMMARY_CUT marker and lives only in the uploaded artifact. The report's own
+      # header carries the "static reachability only" caveat, so it rides along.
+      - name: Step summary (sections 1-4)
+        run: sed '/SUMMARY_CUT/,$d' tools/audit_report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload full report
+        uses: actions/upload-artifact@v4
+        with:
+          name: dead-code-audit-report
+          path: tools/audit_report.md
