@@ -139,7 +139,7 @@ a = Analysis(
         # Bundle-slimming: transitive packages the app never imports. Verified
         # absent from every src import AND from the frozen import-smoke list
         # (statistical_analyzer.py). Removing them cost ~120 MB with the import
-        # smoke still 43/43 OK. If any of these is ever imported at runtime,
+        # smoke still fully green. If any of these is ever imported at runtime,
         # the frozen import smoke (BIOMEDSTATX_SMOKE_IMPORTS=1) will fail loudly.
         #   - AWS/cloud IO: pulled via fsspec's s3 backend, never used locally
         "boto3", "botocore", "s3fs",
@@ -152,10 +152,9 @@ a = Analysis(
         #   - mypy: a static type checker, never a runtime dependency
         "mypy", "mypyc",
         #   - torch / jax: ~400 MB of GPU/autodiff frameworks pulled ONLY via
-        #     scipy/sklearn's optional array_api_compat backends and the
-        #     marginaleffects[autodiff] extra. The app passes NumPy arrays, never
-        #     torch/jax tensors, so these backends are dead weight. (If either
-        #     isn't installed this is a harmless no-op.)
+        #     scipy/sklearn's optional array_api_compat backends. The app passes
+        #     NumPy arrays, never torch/jax tensors, so these backends are dead
+        #     weight. (If either isn't installed this is a harmless no-op.)
         "torch", "torchvision", "torchaudio",
         "jax", "jaxlib",
     ],

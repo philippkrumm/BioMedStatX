@@ -11,7 +11,6 @@ statsmodels==0.14.6
 pingouin==0.6.1          # central engine: rm/mixed/welch ANOVA, sphericity
 scikit-posthocs==0.12.0  # Dunn / Games-Howell post-hoc
 scikit-learn==1.8.0
-marginaleffects==0.5.0   # EMM contrasts (does not expose __version__)
 
 # --- Rendering / export: pinned ---
 jinja2==3.1.6            # was 3.1.4 (CVE-2024-56326 / CVE-2025-27516); now matches installed
