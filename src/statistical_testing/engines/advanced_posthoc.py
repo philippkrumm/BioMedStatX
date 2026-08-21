@@ -219,10 +219,8 @@ class AdvancedPostHocEngine:
             from analysis.statisticaltester import StatisticalTester
 
             fallback_posthoc = None
-            marginaleffects_error = None
-            if test == "repeated_measures_anova" and within:
-                fallback_posthoc = StatisticalTester._run_rm_marginaleffects_posthoc(res, within[0], alpha=alpha)
-            elif (
+            posthoc_error = None
+            if (
                 test == "mixed_anova" and between and within
                 and df_original is not None
                 and res.get("model_class") == "Brunner-Langer ATS"
@@ -231,8 +229,6 @@ class AdvancedPostHocEngine:
                     res, df_original, dv, between, within, subject, alpha,
                     payload.get("custom_pairs_callback")
                 )
-            elif test == "mixed_anova" and between and within:
-                fallback_posthoc = StatisticalTester._run_mixed_marginaleffects_posthoc(res, between, within, alpha=alpha)
             elif (
                 test == "two_way_anova" and between and len(between) == 2
                 and df_original is not None
@@ -244,9 +240,9 @@ class AdvancedPostHocEngine:
             warnings_list = list(res.get("warnings", []))
 
             if fallback_posthoc and fallback_posthoc.get("error"):
-                marginaleffects_error = fallback_posthoc["error"]
-                if marginaleffects_error not in warnings_list:
-                    warnings_list.append(marginaleffects_error)
+                posthoc_error = fallback_posthoc["error"]
+                if posthoc_error not in warnings_list:
+                    warnings_list.append(posthoc_error)
 
             _nonparam_classes = {"Friedman", "Freedman-Lane Permutation", "Brunner-Langer ATS"}
             if res.get("model_class") not in _nonparam_classes and (
@@ -261,10 +257,10 @@ class AdvancedPostHocEngine:
                     within=within,
                     alpha=alpha,
                 )
-                if marginaleffects_error:
+                if posthoc_error:
                     fallback_note = (
                         " Post-hoc comparisons used a robust non-parametric fallback "
-                        "because the marginaleffects step failed. See warnings for details."
+                        "because the primary post-hoc step failed. See warnings for details."
                     )
                     analysis_note = str(res.get("analysis_note", ""))
                     if fallback_note.strip() not in analysis_note:

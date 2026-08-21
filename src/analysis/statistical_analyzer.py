@@ -555,7 +555,6 @@ def _run_import_smoke_if_requested():
         "jinja2",
         "requests",
         "packaging",
-        "marginaleffects",
         "analysis.analysis_core",
         "analysis.posthoc_core",
         "analysis.nonparametricanovas",

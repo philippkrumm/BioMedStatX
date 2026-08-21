@@ -2595,11 +2595,6 @@ class StatisticalTester:
 
     _prefix_pairwise_labels = staticmethod(PosthocFallbackEngine._prefix_pairwise_labels)
     _build_rm_aligned_samples = staticmethod(PosthocFallbackEngine._build_rm_aligned_samples)
-    _apply_pairwise_multiplicity = staticmethod(PosthocFallbackEngine._apply_pairwise_multiplicity)
-    _map_marginaleffects_to_exporter = staticmethod(PosthocFallbackEngine._map_marginaleffects_to_exporter)
-    _run_two_way_marginaleffects_posthoc = staticmethod(PosthocFallbackEngine._run_two_way_marginaleffects_posthoc)
-    _run_rm_marginaleffects_posthoc = staticmethod(PosthocFallbackEngine._run_rm_marginaleffects_posthoc)
-    _run_mixed_marginaleffects_posthoc = staticmethod(PosthocFallbackEngine._run_mixed_marginaleffects_posthoc)
     _run_modern_fallback_posthoc = staticmethod(PosthocFallbackEngine._run_modern_fallback_posthoc)
     perform_dependent_posthoc_tests = staticmethod(PosthocFallbackEngine.perform_dependent_posthoc_tests)
     perform_refactored_posthoc_testing = staticmethod(PosthocFallbackEngine.perform_refactored_posthoc_testing)
