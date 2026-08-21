@@ -22,11 +22,10 @@ from enum import Enum
 
 from statistical_testing.validators import ModelDesignError
 
-# scipy integrates the multivariate-t CDF by Monte Carlo. Without a fixed
-# random_state the same data yields a different adjusted p-value on every run,
-# and near alpha the significance verdict itself flips. Pinned so a reported
-# p-value can be reproduced from the same input.
-MVT_RANDOM_STATE = 0
+# Shared with the pure-Python EMM post-hoc so both multivariate-t paths pin the
+# same Monte-Carlo seed (see the rationale on the definition). Re-exported here
+# because this module used to own it.
+from analysis.emm_posthoc import MVT_RANDOM_STATE
 
 
 class DesignType(str, Enum):

@@ -73,15 +73,43 @@ def test_estimate_equals_cell_mean_difference():
 
 def test_mvt_less_conservative_than_bonferroni():
     from scipy.stats import t as student_t
+    from analysis.emm_posthoc import _mvt_adjusted_p
+
     df = _rm_df()
     s = rm_strata(df, dv="y", subject="subject", within="time")
     contrasts = rm_dunnett_emm_mvt(df, dv="y", subject="subject",
                                    within="time", control_level="T0")
     k = len(contrasts)
+
+    # scipy integrates the multivariate-t CDF by Monte Carlo, so every adjusted
+    # p carries ~1e-4 of absolute noise. Deep in the tail the mvt bound and the
+    # Bonferroni bound converge (1-(1-p)^k -> k*p), so the true gap between them
+    # shrinks below that noise and its SIGN stops being resolvable: measured on
+    # this fixture, the gap is +18% at t=2.2 but -3% at t=5.2, decided purely by
+    # the RNG draw. The former `<= bound + 1e-9` form therefore tested the draw,
+    # not the method — it failed for 10 of 40 Monte-Carlo seeds. Raising maxpts
+    # is no remedy either (5x the budget costs ~4300 ms per call instead of 1 ms).
+    # So the bound is asserted down to the noise floor here. Note this loop is a
+    # COARSE sanity bound only — at this fixture's steep t-values (1.93/4.23/4.60)
+    # both p and the bound are far below MC_SLACK, so it would also pass with a
+    # broken correlation structure. It guards gross breakage (inverted CDF, df
+    # blow-up); the correlation-aware property is guarded by the strict check
+    # below, which is the real correctness assertion of this test.
+    MC_SLACK = 5e-4          # ~8x the worst excess observed across 40 seeds
     for c in contrasts:
         p_raw = 2.0 * student_t.sf(abs(c["t"]), s.df_res)
-        # mvt adjusted p must not exceed the Bonferroni bound (k * p_raw).
-        assert c["p_value"] <= min(1.0, k * p_raw) + 1e-9
+        assert c["p_value"] <= min(1.0, k * p_raw) + MC_SLACK
+
+    # ...and the property itself is asserted where it IS resolvable. At a
+    # moderate t the correlation benefit dwarfs the noise: p_mvt/Bonferroni sits
+    # at a stable 0.835-0.837 over 30 seeds, while dropping the equicorrelation
+    # (shape=I, i.e. the Sidak case) moves it to 0.945-0.946. The threshold below
+    # is placed in that gap and was mutation-checked against exactly that break —
+    # a looser 0.95 would NOT have caught it.
+    t_moderate = 2.2
+    p_mvt = _mvt_adjusted_p([t_moderate] * k, float(s.df_res))[0]
+    bonferroni = min(1.0, k * 2.0 * student_t.sf(t_moderate, s.df_res))
+    assert p_mvt < 0.90 * bonferroni
 
 
 def test_incomplete_design_raises():

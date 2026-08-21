@@ -14,6 +14,16 @@ import numpy as np
 import pandas as pd
 from scipy.stats import multivariate_t, t as student_t
 
+# scipy integrates the multivariate-t CDF by Monte Carlo. Without a fixed
+# random_state the same data yields a different adjusted p-value on every run,
+# and near alpha the significance verdict itself flips. Pinned so a reported
+# p-value can be reproduced from the same input. Note that seeding the frozen
+# distribution (multivariate_t(..., seed=...)) does NOT help: that seed feeds
+# .rvs(), not the .cdf() integration — random_state has to be passed to .cdf()
+# itself. Owned here (this module is pure numpy/pandas/scipy) and imported by
+# clinical_models, so both multivariate-t post-hoc paths share one value.
+MVT_RANDOM_STATE = 0
+
 
 class UnsupportedDesignError(ValueError):
     """Raised when the design is not a balanced, complete split-plot."""
@@ -114,7 +124,8 @@ def _mvt_adjusted_p(t_values: list[float], df: float) -> list[float]:
     out = []
     for tv in t_values:
         c = abs(float(tv))
-        p_all = float(rv.cdf(np.full(k, c), lower_limit=np.full(k, -c)))
+        p_all = float(rv.cdf(np.full(k, c), lower_limit=np.full(k, -c),
+                             random_state=MVT_RANDOM_STATE))
         out.append(float(min(1.0, max(0.0, 1.0 - p_all))))
     return out
 

@@ -8,6 +8,13 @@ from scipy import stats as sp_stats
 from scipy.linalg import block_diag
 import statsmodels.formula.api as smf
 
+# The Freedman-Lane test estimates its p-values by permutation. Left unseeded
+# (default_rng(None)) the same data yields a different p on every run — Monte-
+# Carlo error is ~1/sqrt(n_permutations) (~0.014 at the default 5000), enough to
+# flip the verdict near alpha. Pinned so a reported p-value can be reproduced
+# from the same input; callers may still pass an explicit seed to override it.
+PERMUTATION_RANDOM_STATE = 0
+
 
 def _holm_correct(p_values):
     """Holm step-down correction. Returns list of corrected p-values (same order)."""
@@ -321,7 +328,8 @@ def perform_friedman_test(data, dv, within_factor, subject_col, alpha=0.05):
         }
 
 
-def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05, n_permutations=5000, seed=None):
+def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05,
+                               n_permutations=5000, seed=PERMUTATION_RANDOM_STATE):
     """
     Freedman-Lane permutation test as nonparametric fallback for Two-Way ANOVA.
 
