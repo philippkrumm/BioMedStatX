@@ -1450,7 +1450,12 @@
             x: values,
             y: getPointXOffsets(group, values, pointOffset, pointJitter, groupIndex),
             marker: {
-              color: plotStyle.pointFillColor,
+              // Raincloud is the one plot type whose points take the group's own
+              // colour instead of the shared black fill: the cloud, the box and
+              // the rain read as one unit that way. Bar/Box/Violin keep black
+              // points, where the fill is the group colour and black reads best
+              // against it. The black outline from pointEdge() stays either way.
+              color: state.colors[group],
               symbol: getSymbolForGroup(group, groupIndex),
               size: plotStyle.pointSize,
               opacity: 0.6,
