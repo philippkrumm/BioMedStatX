@@ -215,6 +215,31 @@ Cohen's benchmarks: $\eta^2_p = 0.01$ small, $0.06$ medium, $0.14$ large.
 
 Post-hoc tests are only run when the corresponding main effect or interaction is significant.
 
+### Precision of reported $p$-values
+
+Two of the reported $p$-values are estimated by simulation rather than from a
+closed-form formula, so each carries a resolution limit. Both are reproducible —
+the random seeds are pinned, so the same data always yields the same numbers —
+but reproducible is not the same as precise.
+
+**Multivariate-$t$ adjusted $p$ (Dunnett / EMM post-hoc).** The joint adjustment
+integrates a multivariate-$t$ distribution by Monte Carlo. For moderate effects
+the result is stable to several digits, but far out in the tail the estimate is
+good to roughly **one significant figure**: at $t = 8$ the adjusted $p$ ranges
+from $4.97\times10^{-9}$ to $8.26\times10^{-8}$ depending only on the random
+draw — a span that crosses a power of ten. Read any adjusted $p$ below about
+$10^{-6}$ as "$p < 10^{-6}$" rather than as the printed digits. Increasing the
+integration budget does not fix this at a usable speed. Note this never changes a
+significance decision: a $p$ anywhere in that range is highly significant at any
+conventional $\alpha$.
+
+**Permutation $p$ (Freedman–Lane).** A permutation test cannot resolve a $p$
+smaller than $1/(N_{\text{perm}} + 1)$, which is $\approx 2.0\times10^{-4}$ at
+the default 5000 permutations. The reported value uses the add-one estimator, so
+$p = 0$ can never occur; a reported $2.0\times10^{-4}$ means "no permutation
+reached the observed $F$", i.e. $p \le 2\times10^{-4}$, not exactly that value.
+Raise the permutation count if a finer resolution is needed.
+
 ---
 
 ## Visualisations in the HTML Report
