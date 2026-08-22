@@ -63,20 +63,9 @@ def resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 
-def _apply_elevation(widget, radius=18, x_offset=0, y_offset=4, opacity=0.18):
-    """Apply a drop shadow to give a widget visual elevation. QSS cannot do this."""
-    shadow = QGraphicsDropShadowEffect(widget)
-    shadow.setBlurRadius(radius)
-    shadow.setOffset(x_offset, y_offset)
-    shadow.setColor(QColor(0, 0, 0, int(255 * opacity)))
-    widget.setGraphicsEffect(shadow)
+from ui.widget_style import apply_elevation as _apply_elevation  # shared: see ui/widget_style.py
 
-def _configure_dialog(dialog, object_name=None, remove_context_help=True):
-    """Apply common dialog defaults so all windows pick up the same QSS rules."""
-    if object_name:
-        dialog.setObjectName(object_name)
-    if remove_context_help and isinstance(dialog, QDialog):
-        dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+from ui.widget_style import configure_dialog as _configure_dialog  # shared: see ui/widget_style.py
 
 
 from ui.dialogs.statistical_analyzer_dialogs import (

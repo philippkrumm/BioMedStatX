@@ -82,13 +82,7 @@ def _resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 
-def _apply_elevation(widget, radius=18, x_offset=0, y_offset=4, opacity=0.18):
-    """Apply a drop shadow to give a widget visual elevation. QSS cannot do this."""
-    shadow = QGraphicsDropShadowEffect(widget)
-    shadow.setBlurRadius(radius)
-    shadow.setOffset(x_offset, y_offset)
-    shadow.setColor(QColor(0, 0, 0, int(255 * opacity)))
-    widget.setGraphicsEffect(shadow)
+from ui.widget_style import apply_elevation as _apply_elevation  # shared: see ui/widget_style.py
 
 def _load_auto_pilot_stylesheet():
     stylesheet_paths = [

@@ -206,14 +206,9 @@ class TutorialOverlay(QWidget):
         row.addWidget(self._next)
         lay.addLayout(row)
         self.bubble.adjustSize()
-        # Drop shadow for elevation (matches _apply_elevation style)
-        from PyQt5.QtWidgets import QGraphicsDropShadowEffect
-        shadow = QGraphicsDropShadowEffect(self.bubble)
-        shadow.setBlurRadius(24)
-        shadow.setXOffset(0)
-        shadow.setYOffset(6)
-        shadow.setColor(QColor(0, 0, 0, 46))
-        self.bubble.setGraphicsEffect(shadow)
+        # Drop shadow for elevation, through the shared helper (alpha 46/255 = 0.18)
+        from ui.widget_style import apply_elevation
+        apply_elevation(self.bubble, radius=24, y_offset=6, opacity=0.18)
 
     # ---- lifecycle ----
     def start(self):

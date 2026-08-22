@@ -29,6 +29,14 @@ def _sanitize_columns(df, columns):
 
     Returns a dict mapping original name -> sanitized name.
     The DataFrame is renamed in-place (same pattern as clinical_models.py).
+
+    Deliberately NOT merged with the same-named helper in clinical_models: that
+    one additionally renames columns called C, I or Q, because its formulas wrap
+    factors as ``C(col)`` and a column literally named ``C`` then makes patsy
+    resolve the call against the data ("'Series' object is not callable").
+    The models here only ever use bare continuous terms, where patsy resolves a
+    column named ``C`` from the data namespace and the result is correct, so the
+    extra renaming would only mangle the user's column names for no benefit.
     """
     mapping = {}
     for col in columns:

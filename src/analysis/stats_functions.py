@@ -503,9 +503,10 @@ class UIDialogManager:
 
     @staticmethod
     def _configure_dialog(dialog, object_name=None):
-        if object_name:
-            dialog.setObjectName(object_name)
-        dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        """Thin wrapper kept for the existing call sites; the behaviour lives in
+        ui.widget_style so every dialog picks up the same defaults."""
+        from ui.widget_style import configure_dialog
+        configure_dialog(dialog, object_name=object_name)
 
     @staticmethod
     def _posthoc_prompt_text(progress_text):

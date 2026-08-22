@@ -12,13 +12,7 @@ from statistical_testing.validators import AnalysisCancelledError
 logger = logging.getLogger(__name__)
 
 
-def _get_ui_dialog_manager():
-    """Resolve dialog manager through statisticaltester to honor test-time monkeypatches."""
-    try:
-        from analysis.statisticaltester import UIDialogManager as patched_dialog_manager
-        return patched_dialog_manager
-    except Exception:
-        return UIDialogManager
+from statistical_testing.dialog_access import get_ui_dialog_manager as _get_ui_dialog_manager  # shared: see statistical_testing/dialog_access.py
 
 
 class PosthocFallbackEngine:

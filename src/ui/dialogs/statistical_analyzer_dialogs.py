@@ -45,12 +45,7 @@ except ImportError as e:
     logger.info(f"Warning: help content not available: {e}")
 
 
-def _configure_dialog(dialog, object_name=None, remove_context_help=True):
-    """Apply common dialog defaults so all windows pick up the same QSS rules."""
-    if object_name:
-        dialog.setObjectName(object_name)
-    if remove_context_help and isinstance(dialog, QDialog):
-        dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+from ui.widget_style import configure_dialog as _configure_dialog  # shared: see ui/widget_style.py
 
 class GroupSelectionDialog(QDialog):
     """Dialog for selecting groups for a plot or analysis."""
