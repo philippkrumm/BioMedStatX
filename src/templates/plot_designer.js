@@ -408,6 +408,37 @@
     }
   }
 
+  // A plot type that cannot render a setting has it switched off, so the value
+  // never reaches a builder that would choke on it — but the user's choice is
+  // REMEMBERED and restored as soon as they return to a type that supports it.
+  // Before this, one visit to Forest permanently wiped the log axes, reference
+  // lines, y-limits and significance brackets: switching back left every box
+  // unchecked and the user had to redo the whole configuration. The same trap
+  // had already been fixed once for error bars (see below); this generalises it.
+  var hiddenControlStash = {};
+
+  function suspendWhileUnsupported(name, supported, capture, clear, restore) {
+    if (!supported) {
+      if (!(name in hiddenControlStash)) {
+        hiddenControlStash[name] = capture();
+      }
+      clear();
+    } else if (name in hiddenControlStash) {
+      restore(hiddenControlStash[name]);
+      delete hiddenControlStash[name];
+    }
+  }
+
+  function setChecked(id, value) {
+    var el = document.getElementById(id);
+    if (el) el.checked = !!value;
+  }
+
+  function setValue(id, value) {
+    var el = document.getElementById(id);
+    if (el) el.value = (value === null || value === undefined) ? "" : String(value);
+  }
+
   function resetStateForHiddenControls() {
     var type = state.plotType;
     var barBoxViolin = ["Bar", "Box", "Violin"];
@@ -418,47 +449,81 @@
     // silently dropped the user's choice when switching type and back.
 
     // Reference lines: Bar, Box, Violin only
-    if (barBoxViolin.indexOf(type) === -1) {
-      state.showZeroReferenceLine = false;
-      state.showUnitReferenceLine = false;
-      state.showThresholdReferenceLines = false;
-      ["pd-ref-zero", "pd-ref-unit", "pd-ref-thresholds"].forEach(function (id) {
-        var el = document.getElementById(id);
-        if (el) el.checked = false;
+    suspendWhileUnsupported("referenceLines", barBoxViolin.indexOf(type) !== -1,
+      function () {
+        return {
+          zero: state.showZeroReferenceLine,
+          unit: state.showUnitReferenceLine,
+          thresholds: state.showThresholdReferenceLines
+        };
+      },
+      function () {
+        state.showZeroReferenceLine = false;
+        state.showUnitReferenceLine = false;
+        state.showThresholdReferenceLines = false;
+        ["pd-ref-zero", "pd-ref-unit", "pd-ref-thresholds"].forEach(function (id) {
+          setChecked(id, false);
+        });
+      },
+      function (saved) {
+        state.showZeroReferenceLine = saved.zero;
+        state.showUnitReferenceLine = saved.unit;
+        state.showThresholdReferenceLines = saved.thresholds;
+        setChecked("pd-ref-zero", saved.zero);
+        setChecked("pd-ref-unit", saved.unit);
+        setChecked("pd-ref-thresholds", saved.thresholds);
       });
-    }
 
     // Grouping: Bar, Box, Violin, Raincloud only
-    if (barBoxViolinRaincloud.indexOf(type) === -1) {
-      state.grouping.enabled = false;
-      var grpEl = document.getElementById("pd-group-enabled");
-      if (grpEl) grpEl.checked = false;
-    }
+    suspendWhileUnsupported("grouping", barBoxViolinRaincloud.indexOf(type) !== -1,
+      function () { return { enabled: state.grouping.enabled }; },
+      function () {
+        state.grouping.enabled = false;
+        setChecked("pd-group-enabled", false);
+      },
+      function (saved) {
+        state.grouping.enabled = saved.enabled;
+        setChecked("pd-group-enabled", saved.enabled);
+      });
 
     // Log axes + Y range/format: Bar, Box, Violin, Raincloud only
-    if (barBoxViolinRaincloud.indexOf(type) === -1) {
-      state.logX = false;
-      state.logY = false;
-      var logXEl = document.getElementById("pd-log-x");
-      var logYEl = document.getElementById("pd-log-y");
-      if (logXEl) logXEl.checked = false;
-      if (logYEl) logYEl.checked = false;
-
-      state.yMin = null;
-      state.yMax = null;
-      var yMinEl = document.getElementById("pd-y-min");
-      var yMaxEl = document.getElementById("pd-y-max");
-      if (yMinEl) yMinEl.value = "";
-      if (yMaxEl) yMaxEl.value = "";
-    }
+    suspendWhileUnsupported("axisScale", barBoxViolinRaincloud.indexOf(type) !== -1,
+      function () {
+        return { logX: state.logX, logY: state.logY, yMin: state.yMin, yMax: state.yMax };
+      },
+      function () {
+        state.logX = false;
+        state.logY = false;
+        state.yMin = null;
+        state.yMax = null;
+        setChecked("pd-log-x", false);
+        setChecked("pd-log-y", false);
+        setValue("pd-y-min", "");
+        setValue("pd-y-max", "");
+      },
+      function (saved) {
+        state.logX = saved.logX;
+        state.logY = saved.logY;
+        state.yMin = saved.yMin;
+        state.yMax = saved.yMax;
+        setChecked("pd-log-x", saved.logX);
+        setChecked("pd-log-y", saved.logY);
+        setValue("pd-y-min", saved.yMin);
+        setValue("pd-y-max", saved.yMax);
+      });
 
     // Forest ignores showPoints in its builder, so leave the user's choice
     // intact across switches; only significance brackets are not drawn there.
-    if (type === "Forest") {
-      state.showSignificance = false;
-      var sigEl = document.getElementById("pd-show-significance");
-      if (sigEl) sigEl.checked = false;
-    }
+    suspendWhileUnsupported("significance", type !== "Forest",
+      function () { return { show: state.showSignificance }; },
+      function () {
+        state.showSignificance = false;
+        setChecked("pd-show-significance", false);
+      },
+      function (saved) {
+        state.showSignificance = saved.show;
+        setChecked("pd-show-significance", saved.show);
+      });
   }
 
   function updateControlAvailability() {
