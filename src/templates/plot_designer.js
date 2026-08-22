@@ -56,8 +56,27 @@
     pointEdgeWidth: _numOr(styleTokens.point_edge_width, 1),
     pointSize: _numOr(styleTokens.point_size, 6),
     shapeOutlineColor: styleTokens.shape_outline_color || "#000000",
-    shapeOutlineWidth: _numOr(styleTokens.shape_outline_width, 2)
+    shapeOutlineWidth: _numOr(styleTokens.shape_outline_width, 2),
+    frameColor: styleTokens.frame_color || "rgba(22,49,58,0.75)",
+    frameLinewidth: _numOr(styleTokens.frame_linewidth, 0.7)
   };
+  // The frame styling below used to be copy-pasted into every axis of every
+  // plot type (Bar/Box/Violin, Raincloud, Forest, plus the value axis), so a
+  // change had to be made in six places and in practice never was — that is how
+  // the x-label clipping survived several fixes. Build every axis through this.
+  // tickMode/axisMirror are per-render locals, so they are passed in.
+  function axisFrame(tickMode, axisMirror) {
+    return {
+      showline: true,
+      linecolor: plotStyle.frameColor,
+      linewidth: Math.max(0.5, state.axisThickness),
+      ticks: tickMode,
+      tickwidth: Math.max(0.5, state.axisThickness),
+      ticklen: Math.max(4, Math.round(4 + state.axisThickness * 2)),
+      mirror: axisMirror
+    };
+  }
+
   function grayFloorChannel() {
     var v = parseInt(String(plotStyle.grayscaleFloor).replace("#", "").slice(0, 2), 16);
     return isFinite(v) ? v : 64;
@@ -2011,13 +2030,7 @@
       axisMirror = "ticks";
     }
 
-    yAxis.showline = true;
-    yAxis.linecolor = "rgba(22,49,58,0.75)";
-    yAxis.linewidth = Math.max(0.5, state.axisThickness);
-    yAxis.ticks = tickMode;
-    yAxis.tickwidth = Math.max(0.5, state.axisThickness);
-    yAxis.ticklen = Math.max(4, Math.round(4 + state.axisThickness * 2));
-    yAxis.mirror = axisMirror;
+    Object.assign(yAxis, axisFrame(tickMode, axisMirror));
     if (state.gridStyle !== "none") {
       yAxis.gridwidth = Math.max(0.5, state.axisThickness * 0.75);
       yAxis.gridcolor = "rgba(22,49,58," + state.gridAlpha + ")";
@@ -2124,15 +2137,9 @@
         title: { text: state.xLabel, font: { size: state.axisSize } },
         tickangle: state.xTickAngle,
         showgrid: state.gridStyle === "major" || state.gridStyle === "both",
-        zeroline: false,
-        showline: true,
-        linecolor: "rgba(22,49,58,0.75)",
-        linewidth: Math.max(0.5, state.axisThickness),
-        ticks: tickMode,
-        tickwidth: Math.max(0.5, state.axisThickness),
-        ticklen: Math.max(4, Math.round(4 + state.axisThickness * 2)),
-        mirror: axisMirror
+        zeroline: false
       };
+      Object.assign(xAxisConfig, axisFrame(tickMode, axisMirror));
       
       if (state.grouping.enabled) {
         xAxisConfig.type = "multicategory";
@@ -2189,28 +2196,16 @@
         title: { text: "", font: { size: state.axisSize } },
         type: "category",
         showgrid: true,
-        zeroline: false,
-        showline: true,
-        linecolor: "rgba(22,49,58,0.75)",
-        linewidth: Math.max(0.5, state.axisThickness),
-        ticks: tickMode,
-        tickwidth: Math.max(0.5, state.axisThickness),
-        ticklen: Math.max(4, Math.round(4 + state.axisThickness * 2)),
-        mirror: axisMirror
+        zeroline: false
       };
+      Object.assign(layout.yaxis, axisFrame(tickMode, axisMirror));
       layout.xaxis = {
         title: { text: "Effect Size", font: { size: state.axisSize } },
         type: built.isRatioEffect ? "log" : "linear",
         showgrid: true,
-        zeroline: false,
-        showline: true,
-        linecolor: "rgba(22,49,58,0.75)",
-        linewidth: Math.max(0.5, state.axisThickness),
-        ticks: tickMode,
-        tickwidth: Math.max(0.5, state.axisThickness),
-        ticklen: Math.max(4, Math.round(4 + state.axisThickness * 2)),
-        mirror: axisMirror
+        zeroline: false
       };
+      Object.assign(layout.xaxis, axisFrame(tickMode, axisMirror));
       layout.shapes = [{
         type: "line",
         xref: "x",
@@ -2229,15 +2224,9 @@
         title: { text: state.yLabel, font: { size: state.axisSize } },
         type: state.logY ? "log" : "linear",
         showgrid: state.gridStyle === "major" || state.gridStyle === "both",
-        zeroline: !state.logY,
-        showline: true,
-        linecolor: "rgba(22,49,58,0.75)",
-        linewidth: Math.max(0.5, state.axisThickness),
-        ticks: tickMode,
-        tickwidth: Math.max(0.5, state.axisThickness),
-        ticklen: Math.max(4, Math.round(4 + state.axisThickness * 2)),
-        mirror: axisMirror
+        zeroline: !state.logY
       };
+      Object.assign(horizontalXAxis, axisFrame(tickMode, axisMirror));
 
       if (!state.logY && state.yMin != null && state.yMax != null && state.yMax > state.yMin) {
         horizontalXAxis.range = [state.yMin, state.yMax];
@@ -2247,15 +2236,9 @@
         title: { text: state.xLabel, font: { size: state.axisSize } },
         tickangle: state.xTickAngle,
         showgrid: state.gridStyle === "major" || state.gridStyle === "both",
-        zeroline: false,
-        showline: true,
-        linecolor: "rgba(22,49,58,0.75)",
-        linewidth: Math.max(0.5, state.axisThickness),
-        ticks: tickMode,
-        tickwidth: Math.max(0.5, state.axisThickness),
-        ticklen: Math.max(4, Math.round(4 + state.axisThickness * 2)),
-        mirror: axisMirror
+        zeroline: false
       };
+      Object.assign(horizontalYAxis, axisFrame(tickMode, axisMirror));
       
       if (state.grouping.enabled) {
         horizontalYAxis.type = "multicategory";

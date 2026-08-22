@@ -8,6 +8,7 @@ HTML serialization, significance brackets and plot-data prep. Stateless
 """
 
 import math
+import re
 from core.level_order import natural_order
 
 import numpy as np
@@ -16,6 +17,9 @@ from scipy import stats
 from export.report_association import _AssociationMixin
 from export.report_formatting import _FormattingMixin
 from visualization import style_tokens
+
+_AXIS_RE = re.compile(r"^[xy]axis\d*$")
+_AXIS_TITLE_RE = re.compile(r"^[xy]axis\d*_title$")
 
 try:
     from core.logger_config import get_logger
@@ -31,6 +35,65 @@ logger = get_logger(__name__)
 
 class _ChartsMixin:
     """Charts helpers mixed into ``HTMLExporter``."""
+
+    # ---- shared layout -------------------------------------------------
+    # Every chart in the report goes through _base_layout(). Before this the
+    # eleven charts each repeated their own template/font/background block, so
+    # a styling fix had to be applied eleven times and in practice never was:
+    # only the group chart had been migrated to style_tokens (commit eb717c3),
+    # leaving it rendering in Arial while the other ten stayed on a hardcoded
+    # "Segoe UI" — two different fonts in the same report. The same drift hit
+    # automargin, which four charts still lacked. Route new charts through this
+    # helper instead of writing another update_layout block by hand.
+    @staticmethod
+    def _axis(**overrides) -> dict:
+        """One axis, with the shared frame styling and automargin.
+
+        automargin lets Plotly measure the rendered tick labels and axis title
+        and grow the margin to fit them, so long or rotated labels cannot be
+        clipped by a fixed pixel margin.
+        """
+        axis = dict(
+            showline=True,
+            linewidth=style_tokens.FRAME_LINEWIDTH,
+            linecolor=style_tokens.FRAME_COLOR,
+            automargin=True,
+        )
+        axis.update(overrides)
+        return axis
+
+    @staticmethod
+    def _base_layout(**overrides) -> dict:
+        """Shared Plotly layout skeleton; per-chart values override it.
+
+        `xaxis`/`yaxis` (and their numbered variants) are merged onto _axis()
+        defaults, and the `xaxis_title`/`yaxis_title` shorthands are folded into
+        those dicts, so every axis of every chart is framed and automargined
+        even when the caller only passes a title.
+        """
+        layout = dict(
+            template="plotly_white",
+            paper_bgcolor=style_tokens.PAPER_BGCOLOR,
+            plot_bgcolor=style_tokens.PLOT_BGCOLOR,
+            font=dict(family=style_tokens.FONT_FAMILY_STACK,
+                      color=style_tokens.INK, size=style_tokens.AXIS_SIZE),
+        )
+        layout.update(overrides)
+
+        # fold `<axis>_title="..."` into the axis dict so both spellings work
+        for key in [k for k in list(layout) if _AXIS_TITLE_RE.match(k)]:
+            axis_key = key[: -len("_title")]
+            axis = dict(layout.get(axis_key) or {})
+            axis.setdefault("title", layout.pop(key))
+            layout[axis_key] = axis
+
+        # both axes always exist, so automargin is never silently skipped
+        for axis_key in ("xaxis", "yaxis"):
+            layout.setdefault(axis_key, {})
+        for axis_key in [k for k in list(layout) if _AXIS_RE.match(k)]:
+            layout[axis_key] = _ChartsMixin._axis(**(layout[axis_key] or {}))
+
+        return layout
 
     @staticmethod
     def _build_lmm_chart(results: dict) -> dict | None:
@@ -89,17 +152,13 @@ class _ChartsMixin:
                 hovertemplate="<b>%{y}</b><br>β = %{x:.4f}<extra></extra>",
                 name="Fixed effect",
             ))
-            figure.update_layout(
-                template="plotly_white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#fffdf8",
+            figure.update_layout(**_ChartsMixin._base_layout(
                 margin=dict(l=180, r=30, t=24, b=48),
-                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
                 xaxis_title="Coefficient (β)",
                 yaxis=dict(title="", automargin=True),
                 showlegend=False,
-                height=max(260, len(params) * 44 + 80),
-            )
+                height=max(260, len(params) * 44 + 80)
+            ))
             html = _ChartsMixin._figure_to_html(figure, div_id="biomedstatx-lmm-chart")
             if not html:
                 return None
@@ -181,12 +240,8 @@ class _ChartsMixin:
                 showlegend=True,
             ))
 
-            figure.update_layout(
-                template="plotly_white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#fffdf8",
+            figure.update_layout(**_ChartsMixin._base_layout(
                 margin=dict(l=48, r=20, t=24, b=56),
-                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
                 xaxis=dict(
                     tickmode="array",
                     tickvals=list(range(len(all_groups))),
@@ -194,8 +249,8 @@ class _ChartsMixin:
                     title="Condition / Timepoint",
                 ),
                 yaxis_title="Observed values",
-                legend=dict(orientation="h", x=0.01, y=1.08),
-            )
+                legend=dict(orientation="h", x=0.01, y=1.08)
+            ))
 
             html = _ChartsMixin._figure_to_html(figure, div_id="biomedstatx-trajectory-chart")
             if not html:
@@ -316,12 +371,8 @@ class _ChartsMixin:
                         f"Interaction p = {_FormattingMixin._format_p_value(ip)}"
                         + (" — significant" if ip < 0.05 else "")
                     )
-            fig.update_layout(
-                template="plotly_white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#fffdf8",
+            fig.update_layout(**_ChartsMixin._base_layout(
                 margin=dict(l=56, r=20, t=36, b=64),
-                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
                 xaxis=dict(title=factor_x, automargin=True),
                 yaxis=dict(title="Cell Mean"),
                 legend=dict(title=dict(text=factor_line), orientation="h", x=0.01, y=1.1),
@@ -329,8 +380,8 @@ class _ChartsMixin:
                     x=0.5, y=-0.2, xref="paper", yref="paper",
                     text=interaction_note, showarrow=False,
                     font=dict(size=11, color="#b7791f" if interaction_sig else "#555"),
-                )] if interaction_note else [],
-            )
+                )] if interaction_note else []
+            ))
             html = _ChartsMixin._figure_to_html(fig, div_id="biomedstatx-interaction-plot")
             if not html:
                 return None
@@ -429,12 +480,8 @@ class _ChartsMixin:
                 error_y=dict(type="data", array=ses, visible=True,
                              color=palette[0], thickness=1.5, width=5),
             ))
-            fig.update_layout(
-                template="plotly_white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#fffdf8",
+            fig.update_layout(**_ChartsMixin._base_layout(
                 margin=dict(l=56, r=20, t=36, b=60),
-                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
                 xaxis=dict(
                     tickmode="array",
                     tickvals=list(range(len(levels_sorted))),
@@ -443,8 +490,8 @@ class _ChartsMixin:
                     automargin=True,
                 ),
                 yaxis=dict(title="Observed values"),
-                legend=dict(orientation="h", x=0.01, y=1.1),
-            )
+                legend=dict(orientation="h", x=0.01, y=1.1)
+            ))
             n_subjects = len(trajectories)
             subtitle = f"Mean ± SE across {within_factor} levels"
             if n_subjects:
@@ -552,16 +599,12 @@ class _ChartsMixin:
                     hovertext=hover_texts,
                     hoverinfo="text",
                 ))
-            fig.update_layout(
-                template="plotly_white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#fffdf8",
+            fig.update_layout(**_ChartsMixin._base_layout(
                 margin=dict(l=56, r=20, t=36, b=60),
-                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
                 xaxis=dict(title=factor_within, automargin=True),
                 yaxis=dict(title="Group mean"),
-                legend=dict(title=dict(text=factor_between), orientation="h", x=0.01, y=1.1),
-            )
+                legend=dict(title=dict(text=factor_between), orientation="h", x=0.01, y=1.1)
+            ))
             html = _ChartsMixin._figure_to_html(fig, div_id="biomedstatx-mixed-profile-plot")
             if not html:
                 return None
@@ -761,17 +804,12 @@ class _ChartsMixin:
                 return None
             _frame = dict(showline=True, linewidth=style_tokens.FRAME_LINEWIDTH,
                           linecolor=style_tokens.FRAME_COLOR)
-            figure.update_layout(
-                template="plotly_white",
-                paper_bgcolor=style_tokens.PAPER_BGCOLOR,
-                plot_bgcolor=style_tokens.PLOT_BGCOLOR,
+            figure.update_layout(**_ChartsMixin._base_layout(
                 margin=dict(l=40, r=20, t=24, b=56),
-                font=dict(family=style_tokens.FONT_FAMILY_STACK,
-                          color=style_tokens.INK, size=style_tokens.AXIS_SIZE),
                 xaxis=dict(automargin=True, **_frame),
                 yaxis=dict(title="Observed values", **_frame),
-                showlegend=False,
-            )
+                showlegend=False
+            ))
             html = _ChartsMixin._figure_to_html(figure, div_id="biomedstatx-group-chart")
             if not html:
                 return None
@@ -827,19 +865,15 @@ class _ChartsMixin:
                     borderwidth=1,
                     borderpad=6,
                 )
-            figure.update_layout(
-                template="plotly_white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#fffdf8",
+            figure.update_layout(**_ChartsMixin._base_layout(
                 margin=dict(l=50, r=20, t=24, b=56),
-                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
                 xaxis_title="False Positive Rate",
                 yaxis_title="True Positive Rate",
                 xaxis=dict(range=[0, 1]),
                 yaxis=dict(range=[0, 1]),
                 showlegend=True,
-                legend=dict(x=0.55, y=0.06),
-            )
+                legend=dict(x=0.55, y=0.06)
+            ))
             html = _ChartsMixin._figure_to_html(figure, div_id="biomedstatx-roc-chart")
             if not html:
                 return None
@@ -947,17 +981,13 @@ class _ChartsMixin:
                 colorbar=dict(title="r", thickness=14, len=0.8),
                 hovertemplate="<b>%{y}</b> × <b>%{x}</b><br>r = %{z:.3f}<extra></extra>",
             ))
-            fig_r.update_layout(
+            fig_r.update_layout(**_ChartsMixin._base_layout(
                 annotations=annots_r,
-                template="plotly_white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#fffdf8",
                 height=fig_h,
                 margin=dict(l=20, r=20, t=36, b=20),
-                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", size=12, color="#16313a"),
                 xaxis=dict(side="bottom", tickangle=-35, automargin=True),
-                yaxis=dict(autorange="reversed", automargin=True),
-            )
+                yaxis=dict(autorange="reversed", automargin=True)
+            ))
             div_r = f"biomedstatx-corrmat-r-{title_prefix.replace(' ', '-').lower()}"
             html_r = _ChartsMixin._figure_to_html(fig_r, div_id=div_r)
 
@@ -1014,17 +1044,13 @@ class _ChartsMixin:
                 colorbar=dict(title="p", thickness=14, len=0.8),
                 hovertemplate="<b>%{y}</b> × <b>%{x}</b><br>p = %{z:.4f}<extra></extra>",
             ))
-            fig_p.update_layout(
+            fig_p.update_layout(**_ChartsMixin._base_layout(
                 annotations=annots_p,
-                template="plotly_white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#fffdf8",
                 height=fig_h,
                 margin=dict(l=20, r=20, t=36, b=20),
-                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", size=12, color="#16313a"),
                 xaxis=dict(side="bottom", tickangle=-35, automargin=True),
-                yaxis=dict(autorange="reversed", automargin=True),
-            )
+                yaxis=dict(autorange="reversed", automargin=True)
+            ))
             div_p = f"biomedstatx-corrmat-p-{title_prefix.replace(' ', '-').lower()}"
             html_p = _ChartsMixin._figure_to_html(fig_p, div_id=div_p)
 
@@ -1144,17 +1170,13 @@ class _ChartsMixin:
                 )
             )
 
-            figure.update_layout(
-                template="plotly_white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#fffdf8",
+            figure.update_layout(**_ChartsMixin._base_layout(
                 margin=dict(l=40, r=20, t=24, b=40),
-                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
                 xaxis_title=str(payload.get("x_label") or "X"),
                 yaxis_title=str(payload.get("y_label") or "Y"),
                 showlegend=True,
-                legend=dict(orientation="h", x=0.01, y=1.08),
-            )
+                legend=dict(orientation="h", x=0.01, y=1.08)
+            ))
             html = _ChartsMixin._figure_to_html(figure, div_id=div_id)
             if not html:
                 return None
@@ -1229,17 +1251,13 @@ class _ChartsMixin:
             _ChartsMixin._build_significance_brackets(figure, results, group_order)
 
             cov_str = ", ".join(covariates_used) if covariates_used else "none"
-            figure.update_layout(
-                template="plotly_white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#fffdf8",
+            figure.update_layout(**_ChartsMixin._base_layout(
                 margin=dict(l=48, r=20, t=24, b=56),
-                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
                 yaxis_title="Outcome",
                 xaxis_title="Group",
                 showlegend=True,
-                legend=dict(orientation="h", x=0.01, y=1.08),
-            )
+                legend=dict(orientation="h", x=0.01, y=1.08)
+            ))
             html = _ChartsMixin._figure_to_html(figure, div_id="biomedstatx-ancova-chart")
             if not html:
                 return None

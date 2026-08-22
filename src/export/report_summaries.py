@@ -871,16 +871,12 @@ class _SummariesMixin:
                     name="Reference",
                 )
             )
-            figure.update_layout(
-                template="plotly_white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#fffdf8",
+            figure.update_layout(**_ChartsMixin._base_layout(
                 margin=dict(l=56, r=16, t=30, b=60),
-                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", size=11, color="#16313a"),
                 xaxis=dict(title=dict(text="Theoretical quantiles", font=dict(size=11), standoff=8)),
                 yaxis=dict(title=dict(text="Observed quantiles", font=dict(size=11), standoff=8)),
-                legend=dict(orientation="h", y=1.08, x=0),
-            )
+                legend=dict(orientation="h", y=1.08, x=0)
+            ))
             div_id = "biomedstatx-qq-chart" if source == "raw" else "biomedstatx-qq-chart-transformed"
             return _ChartsMixin._figure_to_html(figure, div_id=div_id)
         except Exception as exc:
@@ -923,14 +919,10 @@ class _SummariesMixin:
                 added += 1
             if added == 0:
                 return None
-            figure.update_layout(
-                template="plotly_white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#fffdf8",
+            figure.update_layout(**_ChartsMixin._base_layout(
                 margin=dict(l=48, r=20, t=24, b=48),
-                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
-                height=500,
-            )
+                height=500
+            ))
             figure.update_xaxes(title_text="Groups")
             figure.update_yaxes(title_text="Observed values", zeroline=False)
             return _ChartsMixin._figure_to_html(figure)
@@ -960,15 +952,11 @@ class _SummariesMixin:
                 ]
             )
             figure.add_hline(y=0, line=dict(color="#9f3a38", dash="dash"))
-            figure.update_layout(
-                template="plotly_white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#fffdf8",
+            figure.update_layout(**_ChartsMixin._base_layout(
                 margin=dict(l=48, r=20, t=24, b=42),
-                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
                 xaxis_title="Fitted values",
-                yaxis_title="Residuals",
-            )
+                yaxis_title="Residuals"
+            ))
             return _ChartsMixin._figure_to_html(figure)
         except Exception as exc:
             logger.warning("residual-vs-fitted chart generation failed: %s", exc, exc_info=True)

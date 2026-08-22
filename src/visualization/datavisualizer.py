@@ -24,6 +24,20 @@ def _lazy_get_output_path():
         return _fallback
 
 
+# Point jitter and display down-sampling are cosmetic, but drawn from the global
+# numpy RNG they made a figure non-reproducible: re-exporting the same analysis
+# scattered the points differently, and the down-sampled scatter showed a
+# different random subset of the data each time. Pinned so a figure regenerated
+# from the same data is pixel-stable. (The interactive builder solves this with
+# its own deterministic stableJitter(); this is the desktop/static equivalent.)
+PLOT_RANDOM_STATE = 0
+
+
+def _plot_rng():
+    """Fresh RNG pinned to PLOT_RANDOM_STATE, so every render draws the same."""
+    return np.random.default_rng(PLOT_RANDOM_STATE)
+
+
 class FontManager:
     """Zentrale Font-Verwaltung für konsistente Schriftart-Anwendung"""
     
@@ -1728,7 +1742,7 @@ class DataVisualizer:
             idxs = np.arange(len(y))
             out = y.astype(float)
             _jit = group_spacing * 0.08
-            out.flat[idxs] += np.random.uniform(low=-_jit, high=_jit, size=len(idxs))
+            out.flat[idxs] += _plot_rng().uniform(low=-_jit, high=_jit, size=len(idxs))
             y = out
             marker = 'o'
             if isinstance(marker_shapes, dict) and idx < len(groups):
@@ -1976,14 +1990,14 @@ class DataVisualizer:
         for i, group in enumerate(groups):
             values = samples.get(group, [])
             if max_points and len(values) > max_points:
-                values = np.random.choice(values, size=max_points, replace=False)
+                values = _plot_rng().choice(values, size=max_points, replace=False)
             
             x_pos = i
             
             if style == 'jitter':
                 # Custom jitter implementation
                 if len(values) > 1:
-                    jitter = np.random.uniform(-jitter_strength/2, jitter_strength/2, len(values))
+                    jitter = _plot_rng().uniform(-jitter_strength/2, jitter_strength/2, len(values))
                 else:
                     jitter = [0]
                 
