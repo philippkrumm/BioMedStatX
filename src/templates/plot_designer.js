@@ -2195,6 +2195,10 @@
       layout.yaxis = {
         title: { text: "", font: { size: state.axisSize } },
         type: "category",
+        // Forest is drawn horizontally, so the group labels live on the y-axis
+        // (same as Raincloud). The label-angle control drives them here too, so
+        // rotating labels works on every plot type that has any.
+        tickangle: state.xTickAngle,
         showgrid: true,
         zeroline: false
       };
