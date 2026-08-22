@@ -23,11 +23,6 @@ def get_export_dispatcher():
     from export.export_dispatcher import ExportDispatcher
     return ExportDispatcher
 
-def get_data_visualizer():
-    """Get DataVisualizer class lazily"""
-    from visualization.datavisualizer import DataVisualizer
-    return DataVisualizer
-
 def get_statistical_tester():
     """Get StatisticalTester class lazily"""
     from analysis.statisticaltester import StatisticalTester
@@ -882,5 +877,4 @@ from analysis.outlier_core import OUTLIER_IMPORTS_AVAILABLE, OutlierDetector
 
 
 # Note: Classes are imported lazily to avoid circular imports.
-# Use get_data_visualizer(), get_statistical_tester() functions instead.
-DataVisualizer = get_data_visualizer()
+# Use get_statistical_tester() instead.

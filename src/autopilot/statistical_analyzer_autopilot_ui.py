@@ -1119,7 +1119,6 @@ class ResultCardWidget(QFrame):
 
 
 class ResultCockpitWidget(QFrame):
-    configure_plot_requested = pyqtSignal()
     open_output_requested = pyqtSignal()
 
     def __init__(self, parent=None):
@@ -1278,14 +1277,8 @@ class ResultCockpitWidget(QFrame):
         layout.addWidget(self.context_grid_widget)
 
         buttons_row = QHBoxLayout()
-        # Configure Plot button disabled — plot config lives in HTML report (plot designer)
-        # self.configure_plot_button = QPushButton("Configure Plot...")
-        # self.configure_plot_button.clicked.connect(self.configure_plot_requested.emit)
-        # self.configure_plot_button.setEnabled(False)
-        # buttons_row.addWidget(self.configure_plot_button)
-        self.configure_plot_button = QPushButton()  # stub — keeps signal wiring intact
-        self.configure_plot_button.setVisible(False)
-
+        # Plot configuration lives in the HTML report (the figure builder);
+        # the old "Configure Plot..." button and its matplotlib path are gone.
         self.open_output_button = QPushButton("Open Output Folder")
         self.open_output_button.clicked.connect(self.open_output_requested.emit)
         self.open_output_button.setEnabled(False)
@@ -1316,10 +1309,9 @@ class ResultCockpitWidget(QFrame):
             self.inference_cards[key].set_value(text)
         for key, text in context_defaults.items():
             self.context_cards[key].set_value(text)
-        self.configure_plot_button.setEnabled(False)
         self.open_output_button.setEnabled(False)
 
-    def set_summary(self, summary, enable_plot=False, enable_output=False):
+    def set_summary(self, summary, enable_output=False):
         self.subtitle.setText(summary.get("subtitle", "Analysis complete."))
         for key, card in self.metric_cards.items():
             card.set_value(summary.get(key, "N/A"))
@@ -1339,7 +1331,6 @@ class ResultCockpitWidget(QFrame):
             summary.get("context_analysis_scope", summary.get("posthoc", "N/A"))
         )
 
-        self.configure_plot_button.setEnabled(enable_plot)
         self.open_output_button.setEnabled(enable_output)
         self._animate_cards()
 
@@ -1360,7 +1351,6 @@ class ResultCockpitWidget(QFrame):
             card.set_value(blank)
         for card in self.context_cards.values():
             card.set_value(blank)
-        self.configure_plot_button.setEnabled(False)
         self.open_output_button.setEnabled(False)
         self._clear_card_effects()
 
@@ -1377,7 +1367,6 @@ class ResultCockpitWidget(QFrame):
             card.set_value(blank)
         for card in self.context_cards.values():
             card.set_value(blank)
-        self.configure_plot_button.setEnabled(False)
         self.open_output_button.setEnabled(False)
         self._clear_card_effects()
 

@@ -32,10 +32,8 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from visualization.datavisualizer import DataVisualizer
 from export.export_dispatcher import ExportDispatcher
 from core.csv_import import read_csv_localized, CSV_FORMAT_PRESETS, DEFAULT_CSV_FORMAT
-from ui.dialogs.plot_aesthetics_dialog import PlotAestheticsDialog
 from ui.dialogs.statistical_analyzer_dialogs import ExploratoryMatrixDialog, GroupSelectionDialog
 from autopilot.statistical_analyzer_autopilot_ui import (
     ConfettiOverlay,
@@ -448,7 +446,6 @@ def _ap_init_ui(self):
     right_layout.addWidget(self.decision_tree_panel, 1)
 
     self.result_cockpit = ResultCockpitWidget()
-    self.result_cockpit.configure_plot_requested.connect(self.configure_plot_from_result)
     self.result_cockpit.open_output_requested.connect(self.open_current_output_folder)
     # Cockpit scrolls internally so its many result cards never force the whole
     # window to scroll — the right column stays bounded to the viewport height.
@@ -1836,7 +1833,7 @@ def _ap_render_result_summary(self, context, results, output_dir, subtitle):
         "context_sample_overview": self._format_context_sample_overview(context, results),
         "context_analysis_scope": self._format_context_analysis_scope(context, results),
     }
-    self.result_cockpit.set_summary(summary, enable_plot=False, enable_output=bool(output_dir))
+    self.result_cockpit.set_summary(summary, enable_output=bool(output_dir))
     from PyQt5.QtCore import QSettings, QTimer
     if QSettings("BioMedStatX", "BioMedStatX").value("ui/confetti_enabled", True, type=bool):
         # Defer the burst to the event loop (singleShot 0) so it starts only after
@@ -1984,99 +1981,6 @@ def _ap_handle_blocked_result(self, result):
     self._set_workflow_state("map", "Analysis blocked")
     self.current_analysis_result = result
     self.current_multi_results = getattr(self, "current_multi_results", {}) or {}
-
-
-def _ap_configure_plot_from_result(self):
-    if not self.current_analysis_result or not self.current_analysis_context:
-        QMessageBox.information(self, "No Result", "Run an analysis before configuring a plot.")
-        return
-
-    groups = list((self.current_analysis_result.get("raw_data") or self.current_analysis_result.get("samples") or {}).keys())
-    if not groups:
-        QMessageBox.warning(self, "Plot Configuration", "No group data are available for plot configuration.")
-        return
-
-    self.samples = self.current_analysis_result.get("raw_data") or self.current_analysis_result.get("samples")
-    self.available_groups = groups
-
-    default_filename = os.path.splitext(os.path.basename(self.file_path))[0]
-    if self.current_rendered_dataset:
-        default_filename = f"{default_filename}_{_safe_file_slug(self.current_rendered_dataset)}"
-
-    dialog = PlotAestheticsDialog(
-        groups=groups,
-        samples=self.samples or {},
-        analysis_result=self.current_analysis_result,
-        parent=self,
-        default_filename=default_filename,
-        dependent=self.current_analysis_context.get("dependent", False),
-    )
-
-    if dialog.exec_() != QDialog.Accepted:
-        return
-
-    plot_config = dialog.get_config()
-    if not plot_config:
-        return
-
-    output_dir = self.current_output_dir or QFileDialog.getExistingDirectory(self, "Select output directory for plot export")
-    if not output_dir:
-        return
-
-    try:
-        self._set_workflow_state("analyze", "Rendering plot", running=True)
-        QApplication.processEvents()
-
-        context = dict(self.current_analysis_context)
-        if self.current_rendered_dataset:
-            context["dv_columns"] = [self.current_rendered_dataset]
-            context["current_dv"] = self.current_rendered_dataset
-        context["group_labels"] = plot_config["groups"]
-        # Single source of truth: re-inject current in-memory df (see _execute_single_analysis).
-        if getattr(self, "df", None) is not None and context.get("injected_df") is None:
-            context["injected_df"] = self.df
-
-        file_base = os.path.join(
-            output_dir,
-            plot_config.get("file_name") or f"{_safe_file_slug(os.path.splitext(os.path.basename(self.file_path))[0])}_{_safe_file_slug(context['dv_columns'][0])}_plot"
-        )
-        appearance = plot_config.get("appearance_settings", {})
-        plot_result = AnalysisManager.analyze(
-            file_path=self.file_path,
-            group_col=context.get("display_group_col", context["factor_columns"][0]),
-            groups=plot_config["groups"],
-            sheet_name=self.auto_sheet_combo.currentText() if self.auto_sheet_combo.isEnabled() else 0,
-            value_cols=context["dv_columns"],
-            dependent=context.get("dependent", False),
-            compare=None,
-            colors=[plot_config["colors"].get(group, DEFAULT_COLORS[index % len(DEFAULT_COLORS)]) for index, group in enumerate(plot_config["groups"])],
-            hatches=[plot_config["hatches"].get(group, "") for group in plot_config["groups"]],
-            title=plot_config.get("title") or context["dv_columns"][0],
-            x_label=plot_config.get("x_label"),
-            y_label=plot_config.get("y_label"),
-            file_name=file_base,
-            save_plot=True,
-            skip_plots=not plot_config.get("create_plot", True),
-            error_type=plot_config.get("error_type", "sd"),
-            analysis_context=context,
-            subject_column=context.get("subject_column"),
-            plot_type=appearance.get("plot_type", "Bar"),
-            dpi=appearance.get("dpi", 300),
-            colors_override=plot_config["colors"],
-            test=context.get("inferred_test", ""),
-        )
-
-        files = []
-        for ext in ("xlsx", "pdf", "png"):
-            candidate = f"{file_base}.{ext}"
-            if os.path.exists(candidate):
-                files.append(candidate)
-        self.show_analysis_success_dialog("Configured plot export", files, output_dir)
-        self.current_analysis_result = plot_result
-        self._set_workflow_state("results", "Results ready")
-    except Exception as exc:
-        self._set_workflow_state("results", "Plot export failed")
-        QMessageBox.critical(self, "Plot Error", str(exc))
 
 
 def _ap_open_current_output_folder(self):
@@ -2571,7 +2475,6 @@ class AutopilotMixin:
     _handle_cancelled_result = _ap_handle_cancelled_result
     _handle_blocked_result = _ap_handle_blocked_result
     determine_and_run_test = _ap_determine_and_run_test
-    configure_plot_from_result = _ap_configure_plot_from_result
     open_current_output_folder = _ap_open_current_output_folder
     reset_application_state = _ap_reset_application_state
     _maybe_pivot = _ap_maybe_pivot

@@ -18,11 +18,6 @@ def get_export_dispatcher():
     return ExportDispatcher
 
 
-def get_data_visualizer():
-    from visualization.datavisualizer import DataVisualizer
-    return DataVisualizer
-
-
 def get_statistical_tester():
     from analysis.statisticaltester import StatisticalTester
     return StatisticalTester
@@ -523,7 +518,6 @@ class AnalysisManager:
         
         # Get classes lazily to avoid circular imports
         StatisticalTester = get_statistical_tester()
-        DataVisualizer = get_data_visualizer()
         
         # CRITICAL FIX: Ensure additional_factors is available in kwargs
         # since the advanced test logic looks for it there
@@ -1578,89 +1572,14 @@ class AnalysisManager:
                     os.chdir(original_dir)
                     logger.debug(f"DEBUG: Restored original directory: {original_dir}")
 
-            # Create the plot, if not skipped
-            if not skip_plots:
-                logger.debug(f"DEBUG: Current working directory before export: {os.getcwd()}")
-                pairwise_comparisons = results.get('pairwise_comparisons', None)
-                
-                # Get plot type from kwargs, default to 'Bar'
-                plot_type = kwargs.get('plot_type', 'Bar')
-                logger.debug(f"DEBUG: Creating plot of type: {plot_type}")
-                
-                # Create a clean kwargs dict without parameters that plotting methods don't accept
-                # Only exclude parameters that definitely don't exist in plot methods
-                plot_kwargs = {k: v for k, v in kwargs.items() if k not in [
-                    'plot_type', 'file_path', 'group_col', 'groups', 'sheet_name',
-                    'value_cols', 'combine_columns', 'skip_plots',
-                    'dependent', 'show_individual_lines', 'compare', 'additional_factors',
-                    'dataset_name', 'dialog_column', 'dialog_progress',
-                    'subject_column', 'subject_id', 'subject', 'test', 'posthoc_test',
-                    # Parameters that don't exist in plot_bar method
-                    'aspect',
-                    'refline', 'panel_labels', 'value_annotations', 'significance_mode',
-                    'embed_fonts', 'add_metadata',
-                    # Legacy keys that are not supported by plotting signatures
-                    'font_main', 'font_axis', 'axis_linewidth', 'gridline_width',
-                    # Analysis metadata — not a plot parameter
-                    'analysis_context',
-                ]}
-                
-                # Choose the appropriate plot function based on plot_type
-                if plot_type == "Bar":
-                    plot_kwargs['show_points'] = plot_kwargs.get('show_points', True)
-                    plot_kwargs['point_size'] = plot_kwargs.get('point_size', 80)
-                    plot_kwargs['point_alpha'] = plot_kwargs.get('point_alpha', 0.8)
-                    # Always pass colors to legend
-                    fig, ax = DataVisualizer.plot_bar(
-                        groups, filtered_samples, width=width, height=height,
-                        colors=colors, hatches=hatches, compare=compare,
-                        test_recommendation=test_recommendation,
-                        x_label=x_label, y_label=y_label,
-                        title=title, save_plot=save_plot, error_type=error_type,
-                        pairwise_results=pairwise_comparisons,
-                        file_name=file_base, legend_colors=colors, **plot_kwargs)
-                elif plot_type == "Box":
-                    fig, ax = DataVisualizer.plot_box(
-                        groups, filtered_samples, width=width, height=height,
-                        colors=colors, hatches=hatches,
-                        test_recommendation=test_recommendation,
-                        x_label=x_label, y_label=y_label,
-                        title=title, save_plot=save_plot,
-                        pairwise_results=pairwise_comparisons,
-                        file_name=file_base, legend_colors=colors, **plot_kwargs)
-                elif plot_type == "Violin":
-                    fig, ax = DataVisualizer.plot_violin(
-                        groups, filtered_samples, width=width, height=height,
-                        colors=colors, hatches=hatches,
-                        test_recommendation=test_recommendation,
-                        x_label=x_label, y_label=y_label,
-                        title=title, save_plot=save_plot,
-                        pairwise_results=pairwise_comparisons,
-                        file_name=file_base, legend_colors=colors, **plot_kwargs)
-                elif plot_type == "Raincloud":
-                    fig, ax = DataVisualizer.plot_raincloud(
-                        groups, filtered_samples, width=width, height=height,
-                        colors=colors, hatches=hatches,
-                        test_recommendation=test_recommendation,
-                        x_label=x_label, y_label=y_label,
-                        title=title, save_plot=save_plot,
-                        pairwise_results=pairwise_comparisons,
-                        file_name=file_base, legend_colors=colors, **plot_kwargs)
-                else:
-                    raise ValueError(f"Unknown plot type: {plot_type!r}")
-                analysis_log += "\nPlots were saved as:\n"
-                analysis_log += f"  {file_base}.pdf\n"
-                analysis_log += f"  {file_base}.png\n"
-                get_matplotlib_pyplot().close(fig)
-                results["_file_paths"] = {
-                    "report": os.path.abspath(report_file),
-                    "pd": os.path.abspath(f"{file_base}.pd"),
-                    "png": os.path.abspath(f"{file_base}.png")
-                }
-            else:
-                results["_file_paths"] = {
-                    "report": os.path.abspath(report_file)
-                }
+            # The matplotlib figure export used to run here behind "if not
+            # skip_plots". Its only entry point was the "Configure Plot..."
+            # button, which is commented out, so skip_plots was True on every
+            # reachable path and this branch never ran. The figures the user
+            # actually sees come from the HTML report.
+            results["_file_paths"] = {
+                "report": os.path.abspath(report_file)
+            }
 
             # Same fix as raw_data_transformed above: gate on an actual value
             # change, not on the (broken) None-vs-'None' name comparison

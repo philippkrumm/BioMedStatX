@@ -9,10 +9,11 @@ Consumed by the two HTML-report rendering systems:
   a ``pd-data-style`` JSON blob; the designer initialises its defaults from it
   (with hardcoded fallbacks, so an older report still renders).
 
-The curated journal palettes below mirror the desktop app
-(``visualization/datavisualizer.py`` / ``ui/dialogs/plot_aesthetics_dialog.py``)
-so the HTML report and the desktop app agree on colour. This module is the one
-place a palette or marker rule is defined; both systems read from here.
+This module is the one place a palette or marker rule is defined; both report
+renderers -- the static charts in ``export/report_charts.py`` and the interactive
+figure builder in ``templates/plot_designer.js`` -- read from here, so they agree
+on colour. (It used to mirror a matplotlib figure-export layer as well; that
+layer had no reachable entry point and was removed.)
 
 Leaf module (imports nothing from the app) — safe to import from any package.
 """
