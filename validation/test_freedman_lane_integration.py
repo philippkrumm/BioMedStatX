@@ -1,5 +1,3 @@
-import sys
-sys.path.insert(0, "/Users/philippkrumm/Documents/BioMedStatX/src")
 import numpy as np, pandas as pd
 from analysis.nonparametricanovas import perform_freedman_lane_test
 from statistical_testing.engines.advanced_posthoc import AdvancedPostHocEngine

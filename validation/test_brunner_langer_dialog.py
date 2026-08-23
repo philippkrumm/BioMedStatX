@@ -1,5 +1,3 @@
-import sys
-sys.path.insert(0, "/Users/philippkrumm/Documents/BioMedStatX/src")
 import numpy as np, pandas as pd
 from analysis.nonparametricanovas import perform_brunner_langer_ats
 from statistical_testing.engines.advanced_posthoc import AdvancedPostHocEngine
