@@ -789,12 +789,21 @@ class _SummariesMixin:
                 transformed_source = transformed.get(group_name, []) if isinstance(transformed, dict) else []
                 transformed_values = list(transformed_source) if transformed_source is not None else []
                 max_len = max(len(raw_values), len(transformed_values), 1)
+                # No per-group row number here. Within an independent design the
+                # order inside a group is just import order and carries nothing.
+                # Worse, in a repeated-measures design two columns sharing a row
+                # number read as "the same subject", which the extraction does
+                # not guarantee: the raw values are filtered per level without
+                # sorting on the subject, so the k-th value of one level and the
+                # k-th of another can belong to different subjects. The analysis
+                # aligns on the subject id (see _build_rm_aligned_samples); only
+                # this table ever implied the pairing. Column-mode above keeps
+                # its index, where a row genuinely is one observation.
                 for index in range(max_len):
                     raw_value = raw_values[index] if index < len(raw_values) else None
                     transformed_value = transformed_values[index] if index < len(transformed_values) else None
                     rows.append({
                         "group": str(group_name),
-                        "index": index + 1,
                         "raw_value": _FormattingMixin._format_metric(raw_value, digits=6),
                         "transformed_value": _FormattingMixin._format_metric(transformed_value, digits=6),
                     })
