@@ -181,7 +181,7 @@ Cancelling a post-hoc prompt is a valid choice: the analysis keeps the main-test
 
 The group-selection dialog and the pairwise-comparison dialog both provide **Select All** and **Deselect All** buttons to check or clear the whole list at once rather than ticking boxes individually.
 
-Results appear as significance letters or bracket annotations on the plot and as a comparison table in the HTML report.
+Results appear on the plot as either significance brackets with stars or a compact letter display (see §9), and as a comparison table in the HTML report.
 
 ---
 
@@ -191,10 +191,12 @@ The HTML report includes an interactive **Plot Designer** section that rebuilds 
 
 The Plot Designer has five tabs:
 
-- **Plot**: chart type (Bar, Box, Violin, or Raincloud), data point overlay (Jitter or Beeswarm), error bars (SD, SEM, 95% CI, IQR, or Range), central measure (mean or median), and paired subject lines for repeated-measures designs. Box plots show the median and interquartile range only; a mean ± error overlay is not drawn on a box (use the bar or violin plot for mean-based error bars).
+- **Plot**: chart type (Bar, Box, Violin, Raincloud, Forest, or Estimation), data point overlay (Jitter or Beeswarm), error bars (SD, SEM, 95% CI, IQR, or Range), central measure (mean or median), and paired subject lines for repeated-measures designs. Box plots show the median and interquartile range only; a mean ± error overlay is not drawn on a box (use the bar or violin plot for mean-based error bars).
 - **Axes**: X/Y axis labels, Y-axis range and format, grid style, tick direction, legend position and orientation, and optional reference lines (y = 0 baseline, y = 1 fold-change, threshold lines from payload).
 - **Style**: plot title, axis labels, font family and size, per-group colours (six curated palettes: Nature, Okabe-Ito, Grayscale HC, Muted Pastel, Deep, and Turbo, with Nature the default), bar fill patterns, and data point symbols.
-- **Stats**: significance bracket visibility, bracket line width and spacing, star size. Non-significant (n.s.) brackets are hidden by default; tick **Show non-significant brackets** to draw every tested pair. Significance letters and significant-only brackets are unaffected.
+- **Stats**: the **Significance display** selector (None, Brackets + stars, or Letters), line width, spacing, label size and offset, plus a checkbox per comparison. The selector opens on whichever form suits the result: letters when the post-hoc compared every pair and four or more groups are shown, brackets otherwise. Only significant pairs are drawn.
+  - **Brackets + stars** annotate each comparison individually. Their checkboxes hide single brackets to declutter a crowded plot; the ones left standing each remain true on their own.
+  - **Letters** label every group instead: groups sharing a letter are not significantly different. This stays available only when the post-hoc compared all pairs, because a comparison that was never run cannot honestly be shown as “not different” — with Dunnett or another control-referenced post-hoc the option is greyed out and the panel explains why. Letters are computed from the complete set of comparisons, so the per-pair checkboxes are disabled in this mode: dropping one comparison would merge two groups that do differ onto a shared letter and make the plot state the opposite of the result.
 - **Export**: figure dimensions in inches, PNG scale (1x to 4x, up to ~400 DPI), SVG download, and PNG download.
 
 ---
