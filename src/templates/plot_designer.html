@@ -42,6 +42,8 @@
     .pd-row.is-disabled label, .pd-check.is-disabled { opacity: 0.5; }
     .pd-row.is-disabled input:not([type="checkbox"]):not([type="range"]), .pd-row.is-disabled select { background: rgba(22,49,58,0.05); color: var(--muted); cursor: not-allowed; }
     .pd-check.is-disabled input[type="checkbox"] { cursor: not-allowed; }
+    #pd-pair-controls.is-disabled { opacity: 0.45; }
+    #pd-pair-controls.is-disabled .pd-pair-toggle { cursor: not-allowed; }
     [data-plot-types].pd-hidden-by-type { display: none !important; }
     .pd-button-row { display: flex; flex-wrap: wrap; gap: 6px; }
     .pd-button-row button { border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; background: var(--surface); color: var(--ink); cursor: pointer; font-size: 0.78rem; }
@@ -354,7 +356,15 @@
         <section data-tab-panel="stats" role="tabpanel" class="is-hidden">
           <div class="pd-group" data-plot-types="Bar,Box,Violin,Raincloud,Estimation">
             <h4>Significance</h4>
-            <label class="pd-check"><input id="pd-show-significance" type="checkbox" checked> Show brackets</label>
+            <div class="pd-row">
+              <label for="pd-significance-mode">Significance display</label>
+              <select id="pd-significance-mode">
+                <option value="none">None</option>
+                <option value="brackets">Brackets + stars</option>
+                <option value="letters">Letters (a, b, ab)</option>
+              </select>
+            </div>
+            <div id="pd-significance-note" class="pd-note"></div>
             <div class="pd-row-inline">
               <div class="pd-row">
                 <label for="pd-significance-line-width">Bracket line width</label>
@@ -463,7 +473,7 @@
       plot:   ["pd-plot-type","pd-show-points","pd-show-error-bars","pd-central-measure","pd-error-type","pd-error-direction"],
       axes:   ["pd-log-x","pd-log-y","pd-minor-ticks","pd-grid-style","pd-grid-alpha","pd-axis-thickness","pd-tick-direction","pd-x-tick-angle","pd-y-axis-format","pd-y-min","pd-y-max","pd-ref-zero","pd-ref-unit","pd-ref-thresholds","pd-ref-style","pd-ref-width","pd-show-legend","pd-legend-orientation","pd-legend-x","pd-legend-y","pd-legend-xanchor","pd-legend-yanchor"],
       style:  ["pd-title","pd-x-label","pd-y-label","pd-font-family","pd-title-size","pd-axis-size","pd-alpha","pd-auto-pattern"],
-      stats:  ["pd-show-significance","pd-significance-line-width","pd-significance-spacing","pd-significance-size","pd-significance-star-offset"],
+      stats:  ["pd-significance-mode","pd-significance-line-width","pd-significance-spacing","pd-significance-size","pd-significance-star-offset"],
       export: ["pd-export-width","pd-export-height","pd-png-scale"]
     };
 

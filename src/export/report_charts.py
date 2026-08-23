@@ -16,6 +16,8 @@ from scipy import stats
 
 from export.report_association import _AssociationMixin
 from export.report_formatting import _FormattingMixin
+from export.report_stat_rows import _StatRowsMixin
+from analysis.compact_letters import letters_from_pairs, letters_supported
 from visualization import style_tokens
 
 _AXIS_RE = re.compile(r"^[xy]axis\d*$")
@@ -1246,9 +1248,9 @@ class _ChartsMixin:
             if not figure.data:
                 return None
 
-            # Overlay EMM post-hoc significance brackets (group labels match the
+            # Overlay the EMM post-hoc significance layer (group labels match the
             # contrast group1/group2, which are the adjusted-means level labels).
-            _ChartsMixin._build_significance_brackets(figure, results, group_order)
+            _ChartsMixin._build_significance_layer(figure, results, group_order)
 
             cov_str = ", ".join(covariates_used) if covariates_used else "none"
             figure.update_layout(**_ChartsMixin._base_layout(
@@ -1290,14 +1292,142 @@ class _ChartsMixin:
             return None
 
     @staticmethod
+    def _pairs_for_plot(results: dict, group_order: list) -> list[dict]:
+        """Canonical post-hoc pair list behind every significance layer.
+
+        Single source of truth: the rows come from ``_build_pairwise_rows`` --
+        the same builder that fills the interactive designer's payload -- so the
+        static and interactive annotations can never disagree on group names,
+        significance or star count. Previously the bracket layer re-derived the
+        stars from ``p_value`` with its own hardcoded thresholds, which is how a
+        divergence gets in unnoticed.
+
+        Pairs whose groups are not both on the plot are dropped. ``i1``/``i2``
+        are category indices with ``i1 < i2``. Both significant and
+        non-significant pairs are returned: brackets filter for the significant
+        ones, the letter display needs the full matrix.
+        """
+        index_of = {str(name): i for i, name in enumerate(group_order)}
+        pairs = []
+        for row in _StatRowsMixin._build_pairwise_rows(results):
+            i1 = index_of.get(str(row.get("group1") or ""))
+            i2 = index_of.get(str(row.get("group2") or ""))
+            if i1 is None or i2 is None or i1 == i2:
+                continue
+            if i1 > i2:
+                i1, i2 = i2, i1
+            significant = bool(row.get("significant"))
+            pairs.append({
+                "i1": i1,
+                "i2": i2,
+                "group1": group_order[i1],
+                "group2": group_order[i2],
+                "stars": row.get("stars") or ("*" if significant else ""),
+                "significant": significant,
+            })
+        return pairs
+
+    @staticmethod
+    def _significance_mode(group_order: list, pairs: list) -> str:
+        """Pick the default annotation form. Shared with the interactive designer.
+
+        Letters need every pairwise comparison to exist (see
+        ``analysis.compact_letters.letters_supported``); on top of that they only
+        earn their keep once brackets get crowded. Brackets grow as k(k-1)/2 --
+        3 at three groups, 6 at four, 15 at six -- so four groups is where the
+        letter display starts paying for itself. ``k >= 4`` is the only size
+        condition; two and three groups fall through to brackets on their own
+        rather than through a special case.
+        """
+        supported, _reason = letters_supported(group_order, pairs)
+        if supported and len(group_order) >= 4:
+            return "letters"
+        return "brackets"
+
+    @staticmethod
+    def _build_significance_layer(figure, results: dict, group_order: list) -> None:
+        """Annotate a group figure with whichever significance form fits."""
+        pairs = _ChartsMixin._pairs_for_plot(results, group_order)
+        if _ChartsMixin._significance_mode(group_order, pairs) == "letters":
+            _ChartsMixin._build_significance_letters(figure, results, group_order, pairs)
+        else:
+            _ChartsMixin._build_significance_brackets(figure, results, group_order)
+
+    @staticmethod
+    def _group_tops(figure, group_order: list) -> dict:
+        """Per-group upper edge, error bars included, keyed by category index."""
+        tops = {}
+        for trace in figure.data:
+            ys = getattr(trace, "y", None)
+            xs = getattr(trace, "x", None)
+            if ys is None:
+                continue
+            error_y = getattr(trace, "error_y", None)
+            errors = getattr(error_y, "array", None) if error_y is not None else None
+            for pos, value in enumerate(ys):
+                if value is None:
+                    continue
+                try:
+                    top = float(value)
+                except (TypeError, ValueError):
+                    continue
+                if errors is not None and pos < len(errors) and errors[pos] is not None:
+                    try:
+                        top += abs(float(errors[pos]))
+                    except (TypeError, ValueError):
+                        pass
+                # A trace either carries its own category (one bar per trace) or
+                # runs along the whole axis (one box per position).
+                label = None
+                if xs is not None and pos < len(xs):
+                    label = str(xs[pos])
+                if label in (None, "") or label not in group_order:
+                    label = group_order[pos] if pos < len(group_order) else None
+                if label is None:
+                    continue
+                index = group_order.index(label)
+                tops[index] = max(tops.get(index, top), top)
+        return tops
+
+    @staticmethod
+    def _build_significance_letters(figure, results: dict, group_order: list,
+                                    pairs: list | None = None) -> None:
+        """Add a compact letter display: groups sharing a letter do not differ."""
+        try:
+            if pairs is None:
+                pairs = _ChartsMixin._pairs_for_plot(results, group_order)
+            supported, reason = letters_supported(group_order, pairs)
+            if not supported:
+                logger.debug("letter display skipped: %s", reason)
+                return
+            tops = _ChartsMixin._group_tops(figure, group_order)
+            if not tops:
+                return
+            sort_by = {str(name): tops.get(i, 0.0) for i, name in enumerate(group_order)}
+            letters = letters_from_pairs(group_order, pairs, sort_by=sort_by)
+            span = max(abs(max(tops.values()) - min(tops.values())), 1e-9)
+            headroom = max(span * 0.08, abs(max(tops.values())) * 0.04, 1e-9)
+            for index, name in enumerate(group_order):
+                code = letters.get(str(name))
+                if not code or index not in tops:
+                    continue
+                figure.add_annotation(
+                    x=index, y=tops[index] + headroom, text=f"<b>{code}</b>",
+                    showarrow=False, xref="x", yref="y", yshift=4,
+                    font=dict(size=13, color="#16313a"),
+                )
+            figure.update_yaxes(range=None, autorange=True)
+        except Exception as exc:
+            logger.warning("letter display failed: %s", exc, exc_info=True)
+
+    @staticmethod
     def _build_significance_brackets(figure, results: dict, group_order: list) -> None:
         """Add significance bracket annotations (*, **, ***) to a Plotly group comparison figure."""
         try:
-            pairwise = results.get("pairwise_comparisons") or []
-            sig_pairs = [p for p in pairwise if p.get("significant")]
+            sig_pairs = [p for p in _ChartsMixin._pairs_for_plot(results, group_order)
+                         if p["significant"]]
             if not sig_pairs:
                 return
-            group_to_idx = {name: i for i, name in enumerate(group_order)}
             y_vals = []
             for trace in figure.data:
                 if hasattr(trace, "y") and trace.y is not None:
@@ -1308,20 +1438,8 @@ class _ChartsMixin:
             y_range = max(abs(y_max - y_min), 1e-9)
             step = y_range * 0.13
             tick = step * 0.28
-            brackets = []
-            for pair in sig_pairs:
-                g1 = pair.get("group1") or pair.get("comparison", "").split(" vs ")[0].strip()
-                g2 = pair.get("group2") or pair.get("comparison", "").split(" vs ")[-1].strip()
-                i1, i2 = group_to_idx.get(str(g1)), group_to_idx.get(str(g2))
-                if i1 is None or i2 is None:
-                    continue
-                if i1 > i2:
-                    i1, i2 = i2, i1
-                p_val = pair.get("p_value")
-                if not isinstance(p_val, (int, float)):
-                    continue
-                stars = "***" if p_val < 0.001 else "**" if p_val < 0.01 else "*"
-                brackets.append((i1, i2, stars, i2 - i1))
+            brackets = [(p["i1"], p["i2"], p["stars"], p["i2"] - p["i1"])
+                        for p in sig_pairs]
             brackets.sort(key=lambda b: (b[3], b[0]))
             line_style = dict(color="rgba(22,49,58,0.65)", width=1.5)
             for level, (i1, i2, stars, _) in enumerate(brackets):

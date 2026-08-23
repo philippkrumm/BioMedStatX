@@ -326,7 +326,7 @@
     legendY: 1.0,
     legendXAnchor: "left",
     legendYAnchor: "top",
-    showSignificance: true,
+    significanceMode: "brackets",
     significanceLineWidth: 1.7,
     significanceSpacingScale: 1.0,
     significanceStarSize: 14,
@@ -387,6 +387,44 @@
     }
   }
 
+  // Letters are refused when the post-hoc did not compare every pair, and the
+  // pair checkboxes are meaningless in letters mode (see buildLetters). Both are
+  // explained rather than silently removed -- a greyed-out control with a reason
+  // teaches; a missing one confuses.
+  function updateSignificanceAvailability() {
+    var noteNode = document.getElementById("pd-significance-note");
+    var lettersOption = document.querySelector("#pd-significance-mode option[value=\"letters\"]");
+    var pairRoot = document.getElementById("pd-pair-controls");
+    var support = lettersSupported(pairsForPlot(groupIndexMap()));
+    var lettersUsable = support.ok && state.plotType !== "Forest";
+
+    if (lettersOption) lettersOption.disabled = !lettersUsable;
+    if (!lettersUsable && state.significanceMode === "letters") {
+      state.significanceMode = "brackets";
+      setSelect("pd-significance-mode", "brackets");
+    }
+
+    var lettersActive = state.significanceMode === "letters";
+    if (pairRoot) {
+      pairRoot.classList.toggle("is-disabled", lettersActive);
+      Array.from(pairRoot.querySelectorAll(".pd-pair-toggle")).forEach(function (node) {
+        node.disabled = lettersActive;
+      });
+    }
+
+    if (!noteNode) return;
+    if (state.plotType === "Forest") {
+      noteNode.textContent = "Forest rows are contrasts, not groups \u2014 no significance layer applies.";
+    } else if (!support.ok) {
+      noteNode.textContent = support.reason;
+    } else if (lettersActive) {
+      noteNode.textContent = "Groups sharing a letter are not significantly different. "
+        + "Letters use all comparisons, so individual pairs cannot be hidden.";
+    } else {
+      noteNode.textContent = "";
+    }
+  }
+
   function applyPlotTypeVisibility() {
     var currentType = state.plotType;
     var elements = document.querySelectorAll("[data-plot-types]");
@@ -432,6 +470,11 @@
   function setChecked(id, value) {
     var el = document.getElementById(id);
     if (el) el.checked = !!value;
+  }
+
+  function setSelect(id, value) {
+    var el = document.getElementById(id);
+    if (el) el.value = String(value);
   }
 
   function setValue(id, value) {
@@ -513,16 +556,16 @@
       });
 
     // Forest ignores showPoints in its builder, so leave the user's choice
-    // intact across switches; only significance brackets are not drawn there.
+    // intact across switches; only the significance layer is not drawn there.
     suspendWhileUnsupported("significance", type !== "Forest",
-      function () { return { show: state.showSignificance }; },
+      function () { return { mode: state.significanceMode }; },
       function () {
-        state.showSignificance = false;
-        setChecked("pd-show-significance", false);
+        state.significanceMode = "none";
+        setSelect("pd-significance-mode", "none");
       },
       function (saved) {
-        state.showSignificance = saved.show;
-        setChecked("pd-show-significance", saved.show);
+        state.significanceMode = saved.mode;
+        setSelect("pd-significance-mode", saved.mode);
       });
   }
 
@@ -554,6 +597,9 @@
 
     // Reference note text
     updateReferenceNote();
+
+    // Significance form: availability, fallback and the reason shown to the user
+    updateSignificanceAvailability();
   }
 
   var errorOptionsByCentral = {
@@ -720,7 +766,7 @@
     document.getElementById("pd-legend-y").value = state.legendY;
     document.getElementById("pd-legend-xanchor").value = state.legendXAnchor;
     document.getElementById("pd-legend-yanchor").value = state.legendYAnchor;
-    document.getElementById("pd-show-significance").checked = state.showSignificance;
+    setSelect("pd-significance-mode", state.significanceMode);
     document.getElementById("pd-significance-line-width").value = state.significanceLineWidth;
     document.getElementById("pd-significance-spacing").value = state.significanceSpacingScale;
     document.getElementById("pd-significance-size").value = state.significanceStarSize;
@@ -828,7 +874,7 @@
     if (!Number.isFinite(state.legendY)) state.legendY = 1.1;
     state.legendXAnchor = document.getElementById("pd-legend-xanchor").value || "left";
     state.legendYAnchor = document.getElementById("pd-legend-yanchor").value || "bottom";
-    state.showSignificance = document.getElementById("pd-show-significance").checked;
+    state.significanceMode = document.getElementById("pd-significance-mode").value || "brackets";
     state.significanceLineWidth = parseFloat(document.getElementById("pd-significance-line-width").value);
     if (!Number.isFinite(state.significanceLineWidth)) state.significanceLineWidth = 1.7;
     state.significanceLineWidth = Math.min(4, Math.max(0.8, state.significanceLineWidth));
@@ -1663,44 +1709,52 @@
     };
   }
 
-  function bracketYBase() {
-    var candidates = [];
-    if (state.plotType === "Bar") {
-      groupOrder.forEach(function (group) {
+  // Upper edge of each group as drawn, error bars included. Mirrors
+  // _group_tops() in report_charts.py. Brackets collapse this to a single
+  // baseline; the letter display needs it per group.
+  function groupTops() {
+    var tops = {};
+    groupOrder.forEach(function (group) {
+      var top;
+      if (state.plotType === "Bar") {
         var barSummary = getBarSummaryAndErrors(group);
-        if (!barSummary) {
-          return;
-        }
-        var top = barSummary.center;
-        if (state.showErrorBars) {
-          top += barSummary.upperErr;
-        }
-        candidates.push(top);
-      });
-    } else {
-      groupOrder.forEach(function (group) {
-        var top = getStat(group, "max");
-        if (isFiniteNumber(top)) {
-          candidates.push(top);
-        }
-      });
-    }
+        if (!barSummary) return;
+        top = barSummary.center;
+        if (state.showErrorBars) top += barSummary.upperErr;
+      } else {
+        top = getStat(group, "max");
+      }
+      if (isFiniteNumber(top)) tops[group] = top;
+    });
+    return tops;
+  }
+
+  // The violin body is a KDE that overshoots the data maximum, so any
+  // annotation placed at the data max collides with the visible tip.
+  function violinHeadroom(tops) {
+    if (state.plotType !== "Violin") return 0;
+    var values = Object.keys(tops).map(function (g) { return tops[g]; });
+    if (!values.length) return 0;
+    var lower = [];
+    groupOrder.forEach(function (group) {
+      var mn = getStat(group, "min");
+      if (isFiniteNumber(mn)) lower.push(mn);
+    });
+    var dataMin = lower.length ? Math.min.apply(null, lower) : 0;
+    return Math.max((Math.max.apply(null, values) - dataMin) * 0.30, 1.5);
+  }
+
+  function bracketYBase() {
+    var tops = groupTops();
+    var candidates = groupOrder.map(function (g) { return tops[g]; })
+      .filter(function (v) { return isFiniteNumber(v); });
     if (!candidates.length) return null;
     var dataMax = Math.max.apply(null, candidates);
     // Violin KDE rendering overshoots the data maximum; add buffer so brackets
     // start above the visible violin tip rather than colliding with it.
     // KDE bandwidth can push the violin tip well beyond the data max, especially
     // when data is clustered near the extremes — use a larger buffer (30 %).
-    if (state.plotType === "Violin") {
-      var lowerCandidates = [];
-      groupOrder.forEach(function (group) {
-        var mn = getStat(group, "min");
-        if (isFiniteNumber(mn)) lowerCandidates.push(mn);
-      });
-      var dataMin = lowerCandidates.length ? Math.min.apply(null, lowerCandidates) : 0;
-      return dataMax + Math.max((dataMax - dataMin) * 0.30, 1.5);
-    }
-    return dataMax;
+    return dataMax + violinHeadroom(tops);
   }
 
   function assignLanes(activePairs, yBase, yMin, yMax) {
@@ -1777,23 +1831,235 @@
     return placed;
   }
 
+  // Canonical pair list behind every significance layer (brackets today, the
+  // letter display below). Mirrors _pairs_for_plot() in report_charts.py so the
+  // static report and this designer can never disagree on which comparisons
+  // count. Both significant and non-significant pairs come back: brackets take
+  // the significant ones, the letter display needs the full matrix.
+  function pairsForPlot(idxMap) {
+    return pairwiseData.filter(function (pair) {
+      return pair && idxMap[pair.group1] && idxMap[pair.group2];
+    }).map(function (pair) {
+      return {
+        pair_id: pair.pair_id,
+        group1: pair.group1,
+        group2: pair.group2,
+        stars: pair.stars || (pair.significant ? "*" : ""),
+        significant: !!pair.significant,
+        i1: idxMap[pair.group1],
+        i2: idxMap[pair.group2]
+      };
+    });
+  }
+
+  // Brackets additionally honour the per-pair checkboxes: hiding one bracket is
+  // pure decluttering, every remaining bracket stays true on its own. The letter
+  // display must NOT use this filter -- see buildLetters().
+  function visibleSignificantPairs(idxMap) {
+    return pairsForPlot(idxMap).filter(function (pair) {
+      return pair.significant && state.visiblePairIds.indexOf(pair.pair_id) !== -1;
+    });
+  }
+
+  // ---- Compact letter display -------------------------------------------
+  // Mirror of src/analysis/compact_letters.py. Both sides must agree letter for
+  // letter on the same data, so keep the two in step: same completeness gate,
+  // same Bron-Kerbosch cliques, same sort_by ordering rule.
+
+  // Letters assert something about EVERY pair on the plot ("same letter = not
+  // different"). A pair that was never tested is unknown, not equal -- but the
+  // clique algorithm cannot tell the two apart. So letters are only honest when
+  // the comparisons cover the complete graph. Structural on purpose: it settles
+  // every post-hoc the project has, including paired_custom where the user picks
+  // the pairs by hand, and any test added later, without a name list to forget.
+  function lettersSupported(pairs) {
+    var k = groupOrder.length;
+    if (k < 2) return { ok: false, reason: "A letter display needs at least two groups." };
+    var known = {};
+    groupOrder.forEach(function (g) { known[g] = true; });
+    var tested = {};
+    (pairs || []).forEach(function (pair) {
+      if (!known[pair.group1] || !known[pair.group2] || pair.group1 === pair.group2) return;
+      var key = [pair.group1, pair.group2].sort().join("\u0000");
+      tested[key] = true;
+    });
+    var required = k * (k - 1) / 2;
+    var have = Object.keys(tested).length;
+    if (have < required) {
+      return {
+        ok: false,
+        reason: "Letters require all " + required + " pairwise comparisons between the "
+          + k + " groups shown; this post-hoc provides " + have
+          + ". Comparisons that were never run cannot be shown as \u2018not different\u2019."
+      };
+    }
+    return { ok: true, reason: "" };
+  }
+
+  // Two groups share a letter IFF they are not significantly different --
+  // equivalently, they sit in a common maximal clique of the non-significance
+  // graph. A star ({group} + its non-different partners) is NOT a substitute:
+  // on an intransitive pattern (A~B, B~C, A#C) it collapses A, B, C onto one
+  // letter and hides the real A-C difference.
+  function compactLetters(pairs, sortBy) {
+    var n = groupOrder.length;
+    if (n === 0) return {};
+    if (n === 1) { var one = {}; one[groupOrder[0]] = "a"; return one; }
+
+    var indexOf = {};
+    groupOrder.forEach(function (g, i) { indexOf[g] = i; });
+
+    // notDiff[i][j] true = not significantly different. Untested pairs stay
+    // true, which is why lettersSupported() has to gate this.
+    var notDiff = [];
+    for (var i = 0; i < n; i++) {
+      notDiff.push([]);
+      for (var j = 0; j < n; j++) notDiff[i].push(true);
+    }
+    (pairs || []).forEach(function (pair) {
+      if (!pair.significant) return;
+      var a = indexOf[pair.group1], b = indexOf[pair.group2];
+      if (a === undefined || b === undefined) return;
+      notDiff[a][b] = notDiff[b][a] = false;
+    });
+
+    var adj = [];
+    for (var v = 0; v < n; v++) {
+      var neighbours = {};
+      for (var w = 0; w < n; w++) if (w !== v && notDiff[v][w]) neighbours[w] = true;
+      adj.push(neighbours);
+    }
+
+    function intersect(setObj, neighbours) {
+      var out = {};
+      Object.keys(setObj).forEach(function (key) { if (neighbours[key]) out[key] = true; });
+      return out;
+    }
+
+    var cliques = [];
+    (function expand(R, P, X) {
+      var pKeys = Object.keys(P), xKeys = Object.keys(X);
+      if (!pKeys.length && !xKeys.length) { cliques.push(Object.keys(R).map(Number)); return; }
+      pKeys.forEach(function (vKey) {
+        var nextR = {};
+        Object.keys(R).forEach(function (key) { nextR[key] = true; });
+        nextR[vKey] = true;
+        expand(nextR, intersect(P, adj[vKey]), intersect(X, adj[vKey]));
+        delete P[vKey];
+        X[vKey] = true;
+      });
+    })({}, (function () { var all = {}; for (var q = 0; q < n; q++) all[q] = true; return all; })(), {});
+
+    // Deterministic order so letter 'a' lands on the leading group.
+    var rank = {};
+    for (var r = 0; r < n; r++) {
+      rank[r] = sortBy ? [-(sortBy[groupOrder[r]] || 0), r] : [r, r];
+    }
+    function rankLess(a, b) {
+      return rank[a][0] - rank[b][0] || rank[a][1] - rank[b][1];
+    }
+    cliques.forEach(function (clique) { clique.sort(rankLess); });
+    cliques.sort(function (c1, c2) {
+      for (var idx = 0; idx < Math.min(c1.length, c2.length); idx++) {
+        var cmp = rankLess(c1[idx], c2[idx]);
+        if (cmp) return cmp;
+      }
+      return c1.length - c2.length;
+    });
+
+    var alphabet = "abcdefghijklmnopqrstuvwxyz";
+    var letters = {};
+    groupOrder.forEach(function (g) { letters[g] = ""; });
+    cliques.forEach(function (clique, k) {
+      var letter = k < 26 ? alphabet[k]
+        : alphabet[Math.floor(k / 26) - 1] + alphabet[k % 26];
+      clique.forEach(function (memberIndex) {
+        letters[groupOrder[memberIndex]] += letter;
+      });
+    });
+    return letters;
+  }
+
+  // Default annotation form, shared with _significance_mode() in report_charts.py.
+  // Brackets grow as k(k-1)/2 -- 3 at three groups, 6 at four, 15 at six -- so
+  // four groups is where letters start paying for themselves. k >= 4 is the only
+  // size condition; two and three groups fall through to brackets on their own
+  // rather than through a special case.
+  function defaultSignificanceMode(pairs) {
+    if (lettersSupported(pairs).ok && groupOrder.length >= 4) return "letters";
+    return "brackets";
+  }
+
+  // Letters are computed from the FULL comparison matrix, never from
+  // state.visiblePairIds. Hiding a bracket is decluttering -- every remaining
+  // bracket stays true on its own. Dropping a comparison from a letter display
+  // is not: two groups that do differ would merge onto a shared letter, so the
+  // plot would state the opposite of the result. The pair checkboxes are
+  // disabled in this mode (see updateControlAvailability).
+  function buildLetters(yMin, yMax, idxMap) {
+    var empty = { shapes: [], annotations: [], yAxisMax: yMax };
+    if (state.significanceMode !== "letters") return empty;
+
+    var pairs = pairsForPlot(idxMap);
+    var support = lettersSupported(pairs);
+    if (!support.ok) {
+      return { shapes: [], annotations: [], yAxisMax: yMax, warning: support.reason };
+    }
+
+    var tops = groupTops();
+    var values = groupOrder.map(function (g) { return tops[g]; })
+      .filter(function (v) { return isFiniteNumber(v); });
+    if (!values.length) return empty;
+
+    var letters = compactLetters(pairs, tops);
+    var headroomBase = violinHeadroom(tops);
+    var span = Math.max(Math.abs(Math.max.apply(null, values) - Math.min.apply(null, values)), 1e-9);
+    var step = Math.max(span * 0.08, Math.abs(Math.max.apply(null, values)) * 0.04, 1e-9)
+      * state.significanceSpacingScale;
+
+    var isHorizontal = state.plotType === "Raincloud";
+    var annotations = [];
+    var axisMax = Math.max.apply(null, values);
+    groupOrder.forEach(function (group) {
+      var code = letters[group];
+      var top = tops[group];
+      if (!code || !isFiniteNumber(top)) return;
+      var placed = top + headroomBase + step;
+      axisMax = Math.max(axisMax, placed);
+      annotations.push({
+        x: isHorizontal ? placed : idxMap[group],
+        y: isHorizontal ? idxMap[group] : placed,
+        text: "<b>" + code + "</b>",
+        showarrow: false,
+        xref: "x",
+        yref: "y",
+        xanchor: isHorizontal ? "left" : "center",
+        yanchor: isHorizontal ? "middle" : "bottom",
+        xshift: isHorizontal ? state.significanceStarOffset : 0,
+        yshift: isHorizontal ? 0 : state.significanceStarOffset,
+        font: { size: state.significanceStarSize, color: "#16313a" }
+      });
+    });
+
+    if (isHorizontal) {
+      return { shapes: [], annotations: annotations, yAxisMax: yMax, xAxisMax: axisMax };
+    }
+    return { shapes: [], annotations: annotations, yAxisMax: axisMax };
+  }
+
+  // One entry point for the significance layer, whichever form it takes.
+  function buildSignificanceLayer(yMin, yMax, idxMap) {
+    if (state.significanceMode === "letters") return buildLetters(yMin, yMax, idxMap);
+    return buildBrackets(yMin, yMax, idxMap);
+  }
+
   function buildBrackets(yMin, yMax, idxMap) {
-    if (!state.showSignificance || !state.visiblePairIds.length) {
+    if (state.significanceMode !== "brackets" || !state.visiblePairIds.length) {
       return { shapes: [], annotations: [], yAxisMax: yMax };
     }
 
     if (state.plotType === "Raincloud") {
-      var horizontalPairs = pairwiseData.filter(function (pair) {
-        if (!pair || !pair.significant) return false;
-        if (state.visiblePairIds.indexOf(pair.pair_id) === -1) return false;
-        return idxMap[pair.group1] && idxMap[pair.group2];
-      }).map(function (pair) {
-        return {
-          stars: pair.stars || "*",
-          i1: idxMap[pair.group1],
-          i2: idxMap[pair.group2]
-        };
-      });
+      var horizontalPairs = visibleSignificantPairs(idxMap);
 
       if (!horizontalPairs.length) {
         return { shapes: [], annotations: [], yAxisMax: yMax, xAxisMax: null };
@@ -1842,19 +2108,7 @@
       return { shapes: shapesHorizontal, annotations: annotationsHorizontal, yAxisMax: yMax, xAxisMax: xAxisMax };
     }
 
-    var visiblePairs = pairwiseData.filter(function (pair) {
-      if (!pair || !pair.significant) return false;
-      if (state.visiblePairIds.indexOf(pair.pair_id) === -1) return false;
-      return idxMap[pair.group1] && idxMap[pair.group2];
-    }).map(function (pair) {
-      return {
-        group1: pair.group1,
-        group2: pair.group2,
-        stars: pair.stars || "*",
-        i1: idxMap[pair.group1],
-        i2: idxMap[pair.group2]
-      };
-    });
+    var visiblePairs = visibleSignificantPairs(idxMap);
 
     if (!visiblePairs.length) {
       return { shapes: [], annotations: [], yAxisMax: yMax };
@@ -2140,7 +2394,7 @@
       }
     }
 
-    var bracketLayer = buildBrackets(built.yMin, built.yMax, built.idxMap);
+    var bracketLayer = buildSignificanceLayer(built.yMin, built.yMax, built.idxMap);
     if (bracketLayer.warning && warningNode) {
       warningMessages.push(bracketLayer.warning);
     }
@@ -2421,6 +2675,12 @@
   buildPatternControls();
   buildSymbolControls();
   buildPairControls();
+
+  // Resolve the initial significance form from the result itself: an all-pairs
+  // post-hoc on four or more groups opens in letters, everything else in
+  // brackets. The user sees the right form before touching anything.
+  state.significanceMode = defaultSignificanceMode(pairsForPlot(groupIndexMap()));
+  setSelect("pd-significance-mode", state.significanceMode);
 
   Array.from(document.querySelectorAll("#plot-designer-panel input, #plot-designer-panel select")).forEach(function (node) {
     node.addEventListener("change", buildPlot);
