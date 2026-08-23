@@ -1729,10 +1729,13 @@
     return tops;
   }
 
-  // The violin body is a KDE that overshoots the data maximum, so any
-  // annotation placed at the data max collides with the visible tip.
+  // The violin body is a KDE that overshoots the data extremes, so any
+  // annotation placed at the data max lands inside the visible tip. Raincloud
+  // draws a violin too -- along x rather than y -- and needs the same buffer;
+  // leaving it out is what put the letters inside the cloud. Single owner of
+  // the rule: the bracket layer reads it from here as well.
   function violinHeadroom(tops) {
-    if (state.plotType !== "Violin") return 0;
+    if (state.plotType !== "Violin" && state.plotType !== "Raincloud") return 0;
     var values = Object.keys(tops).map(function (g) { return tops[g]; });
     if (!values.length) return 0;
     var lower = [];
@@ -2065,10 +2068,10 @@
         return { shapes: [], annotations: [], yAxisMax: yMax, xAxisMax: null };
       }
 
-      // Raincloud KDE also overshoots the data maximum on the x-axis — apply
-      // the same 30 % range buffer used for vertical Violin plots.
-      var dataRangeRaincloud = Math.abs(yMax - yMin) || Math.abs(yMax) || 1;
-      var xBase = yMax + Math.max(dataRangeRaincloud * 0.30, 1.5);
+      // Raincloud KDE also overshoots the data maximum on the x-axis; the
+      // buffer comes from violinHeadroom() so brackets and letters clear the
+      // cloud by the same amount.
+      var xBase = yMax + violinHeadroom(groupTops());
       if (!Number.isFinite(xBase)) {
         return { shapes: [], annotations: [], yAxisMax: yMax, xAxisMax: null };
       }

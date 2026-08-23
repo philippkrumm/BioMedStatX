@@ -142,3 +142,28 @@ def test_pair_helper_is_the_single_source_for_stars():
         ("A", "B", "***"), ("A", "C", "*"), ("B", "C", ""),
     ]
     assert all(p["i1"] < p["i2"] for p in pairs)
+
+
+def test_kde_headroom_rule_has_a_single_owner():
+    """The buffer that keeps annotations out of a violin's KDE tail lives once.
+
+    A KDE overshoots the data extremes, so anything placed at the data maximum
+    lands inside the visible tip. That rule was written out three times -- for
+    the vertical violin baseline, inline in the raincloud bracket branch, and
+    then missed entirely when the letter layer was added, which put the letters
+    inside the cloud. It now belongs to violinHeadroom() alone; a second literal
+    copy means someone is drifting again.
+    """
+    source = _JS_SOURCE.read_text()
+    assert source.count("0.30") == 1, "the 30% KDE buffer was copied again"
+    assert source.count("function violinHeadroom(") == 1
+    # Both annotation layers must read it rather than compute their own.
+    assert source.count("violinHeadroom(") >= 4  # definition + 3 call sites
+
+
+def test_raincloud_is_covered_by_the_kde_buffer():
+    """Raincloud draws a violin too, along x; leaving it out was the bug."""
+    source = _JS_SOURCE.read_text()
+    guard = source[source.index("function violinHeadroom("):]
+    guard = guard[:guard.index("\n  }")]
+    assert '"Violin"' in guard and '"Raincloud"' in guard
