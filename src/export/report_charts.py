@@ -804,6 +804,14 @@ class _ChartsMixin:
                 )
             if not figure.data:
                 return None
+
+            # The chart most readers actually look at showed no post-hoc result
+            # at all -- brackets existed only on the ANCOVA figure. Same layer,
+            # same default rule as the interactive designer, so a report and the
+            # figure builder never disagree about what was significant.
+            _ChartsMixin._build_significance_layer(
+                figure, results, group_order, brackets_drawn_client_side=True)
+
             _frame = dict(showline=True, linewidth=style_tokens.FRAME_LINEWIDTH,
                           linecolor=style_tokens.FRAME_COLOR)
             figure.update_layout(**_ChartsMixin._base_layout(
@@ -1345,48 +1353,70 @@ class _ChartsMixin:
         return "brackets"
 
     @staticmethod
-    def _build_significance_layer(figure, results: dict, group_order: list) -> None:
-        """Annotate a group figure with whichever significance form fits."""
+    def _build_significance_layer(figure, results: dict, group_order: list,
+                                  brackets_drawn_client_side: bool = False) -> None:
+        """Annotate a group figure with whichever significance form fits.
+
+        ``brackets_drawn_client_side`` is for the main group chart, where the
+        report page owns the brackets: it redraws them through Plotly.relayout
+        whenever the reader ticks a comparison off, so drawing them here as well
+        would only be overwritten. Letters have no such toggle and are always
+        rendered here, from the complete comparison set.
+        """
         pairs = _ChartsMixin._pairs_for_plot(results, group_order)
         if _ChartsMixin._significance_mode(group_order, pairs) == "letters":
             _ChartsMixin._build_significance_letters(figure, results, group_order, pairs)
-        else:
+        elif not brackets_drawn_client_side:
             _ChartsMixin._build_significance_brackets(figure, results, group_order)
 
     @staticmethod
     def _group_tops(figure, group_order: list) -> dict:
         """Per-group upper edge, error bars included, keyed by category index."""
         tops = {}
-        for trace in figure.data:
+
+        def _record(index, value):
+            if index is None or index < 0 or index >= len(group_order):
+                return
+            tops[index] = max(tops.get(index, value), value)
+
+        for trace_index, trace in enumerate(figure.data):
             ys = getattr(trace, "y", None)
-            xs = getattr(trace, "x", None)
             if ys is None:
                 continue
+            xs = getattr(trace, "x", None)
             error_y = getattr(trace, "error_y", None)
             errors = getattr(error_y, "array", None) if error_y is not None else None
-            for pos, value in enumerate(ys):
-                if value is None:
-                    continue
+
+            def _value(pos):
                 try:
-                    top = float(value)
+                    top = float(ys[pos])
                 except (TypeError, ValueError):
-                    continue
+                    return None
                 if errors is not None and pos < len(errors) and errors[pos] is not None:
                     try:
                         top += abs(float(errors[pos]))
                     except (TypeError, ValueError):
                         pass
-                # A trace either carries its own category (one bar per trace) or
-                # runs along the whole axis (one box per position).
-                label = None
-                if xs is not None and pos < len(xs):
-                    label = str(xs[pos])
-                if label in (None, "") or label not in group_order:
-                    label = group_order[pos] if pos < len(group_order) else None
-                if label is None:
+                return top
+
+            if xs is None:
+                # The whole trace sits on one category -- a box or violin drawn
+                # per group, where y holds that group's observations rather than
+                # one value per category. Traces are appended in group order.
+                values = [v for v in (_value(pos) for pos in range(len(ys))) if v is not None]
+                if values:
+                    _record(trace_index, max(values))
+                continue
+
+            # One point per category: the x entry names the group it belongs to.
+            for pos in range(len(ys)):
+                if ys[pos] is None or pos >= len(xs):
                     continue
-                index = group_order.index(label)
-                tops[index] = max(tops.get(index, top), top)
+                value = _value(pos)
+                label = str(xs[pos])
+                if value is None or label not in group_order:
+                    continue
+                _record(group_order.index(label), value)
         return tops
 
     @staticmethod

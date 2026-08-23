@@ -140,6 +140,13 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
         if not group_order:
             group_order = list(plot_data.keys())
 
+        # One decision for the whole report: the static chart is annotated
+        # server-side, and the bracket overlay below has to know which form won
+        # so it does not relayout letters away. Same rule as the figure builder.
+        significance_mode = _ChartsMixin._significance_mode(
+            group_order, HTMLExporter._pairs_for_plot(results_copy, group_order)
+        )
+
         plot_subject_trajectories = HTMLExporter._build_plot_subject_trajectories(
             results_copy,
             group_order=group_order,
@@ -176,6 +183,7 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
             "plot_designer_enabled": plot_designer_enabled,
             "group_order_json": HTMLExporter._safe_json_dumps(group_order),
             "group_chart_div_id": "biomedstatx-group-chart" if group_chart_block else "",
+            "significance_mode": significance_mode,
             "raw_data_table": raw_table,
             "chart_blocks": charts,
             "methods_text": methods_text,
