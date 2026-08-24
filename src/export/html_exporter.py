@@ -298,7 +298,8 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
             "title": title,
             "subtitle": subtitle,
             "test_name": test_name,
-            "p_value_display": HTMLExporter._format_p_value(p_value),
+            "p_value_display": HTMLExporter._format_p_value(
+                p_value, results.get("p_value_resolution")),
             "is_significant": is_significant,
             "significance_label": "Significant" if is_significant else "Not significant",
             "significance_class": "is-significant" if is_significant else "is-neutral",

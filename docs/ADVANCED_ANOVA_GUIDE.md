@@ -233,11 +233,20 @@ integration budget does not fix this at a usable speed. Note this never changes 
 significance decision: a $p$ anywhere in that range is highly significant at any
 conventional $\alpha$.
 
+The report no longer leaves this to the reader: below $10^{-6}$ it prints the
+bound $p < 1.00\times10^{-6}$ instead of the unresolvable digits. Above that
+threshold nothing changes, and the significance stars are unaffected.
+
 **Permutation $p$ (Freedman–Lane).** A permutation test cannot resolve a $p$
 smaller than $1/(N_{\text{perm}} + 1)$, which is $\approx 2.0\times10^{-4}$ at
 the default 5000 permutations. The reported value uses the add-one estimator, so
 $p = 0$ can never occur; a reported $2.0\times10^{-4}$ means "no permutation
 reached the observed $F$", i.e. $p \le 2\times10^{-4}$, not exactly that value.
+
+The report states this directly: when the estimate lands on the floor it is
+shown as $p < 2.00\times10^{-4}$. The bound is derived from the permutation
+count actually used, so running fewer or more permutations moves it accordingly
+rather than being compared against a fixed threshold.
 Raise the permutation count if a finer resolution is needed.
 
 ---

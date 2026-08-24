@@ -24,6 +24,15 @@ from scipy.stats import multivariate_t, t as student_t
 # clinical_models, so both multivariate-t post-hoc paths share one value.
 MVT_RANDOM_STATE = 0
 
+# The multivariate-t CDF is integrated by Monte Carlo, so a reported p carries
+# simulation error that grows as the value shrinks. Deep in the tail only the
+# leading digit is meaningful -- repeated runs at t = 8 spread over more than an
+# order of magnitude -- while the verdict against alpha is unaffected. Reports
+# therefore show this bound instead of a figure that would not reproduce.
+# Raising it is not a matter of precision: seeding pins the number, it does not
+# make it accurate; only a far larger maxpts would, at roughly 4000x the cost.
+MVT_P_RESOLUTION = 1e-6
+
 
 class UnsupportedDesignError(ValueError):
     """Raised when the design is not a balanced, complete split-plot."""
@@ -203,6 +212,7 @@ def rm_dunnett_emm_mvt(df: pd.DataFrame, dv: str, subject: str, within: str,
     results: list[dict] = []
     for row, p in zip(rows, p_adj):
         row["p_value"] = p
+        row["p_value_resolution"] = MVT_P_RESOLUTION
         row["significant"] = bool(p < alpha)
         results.append(row)
     return results
@@ -234,6 +244,7 @@ def mixed_dunnett_emm_mvt(df: pd.DataFrame, dv: str, subject: str, between: str,
         p_adj = _mvt_adjusted_p(t_values, ddf)
         for row, p in zip(rows, p_adj):
             row["p_value"] = p
+            row["p_value_resolution"] = MVT_P_RESOLUTION
             row["significant"] = bool(p < alpha)
             results.append(row)
     return results

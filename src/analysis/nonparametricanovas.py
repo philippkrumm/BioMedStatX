@@ -565,6 +565,12 @@ def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05,
             "design_type": DesignType.INDEPENDENT.value,
             "test": "Freedman-Lane Permutation Test",
             "p_value": primary_p,
+            # A permutation test cannot resolve below its own grid: with the
+            # add-one estimator the smallest attainable p is 1/(n_perm+1), and a
+            # p sitting exactly there means "no permutation beat the observed F",
+            # not a measured magnitude. Reports show that bound rather than a
+            # figure that is really the floor.
+            "p_value_resolution": 1.0 / (n_permutations + 1),
             "statistic": primary_F,
             "posthoc_test": posthoc_name,
             "pairwise_comparisons": posthoc_comps,

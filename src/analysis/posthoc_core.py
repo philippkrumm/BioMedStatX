@@ -447,6 +447,7 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
                             statistic=c["t"],
                             significant=c["significant"],
                             correction_method="multivariate-t (within level)",
+                            p_value_resolution=c.get("p_value_resolution"),
                         )
                     return emm_result
 
@@ -576,6 +577,7 @@ class RMAnovaPostHocAnalyzer(PostHocAnalyzer):
                             statistic=c["t"],
                             significant=c["significant"],
                             correction_method="multivariate-t (level vs baseline)",
+                            p_value_resolution=c.get("p_value_resolution"),
                         )
                     return emm_result
 

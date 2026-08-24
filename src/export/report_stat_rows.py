@@ -758,7 +758,8 @@ class _StatRowsMixin:
                 "comparison": f"{comp.get('group1', 'Group 1')} vs {comp.get('group2', 'Group 2')}",
                 "test": str(comp.get("test") or results.get("posthoc_test") or "Pairwise comparison"),
                 "statistic": _FormattingMixin._format_metric(comp.get("statistic")),
-                "p_value": _FormattingMixin._format_p_value(p_val),
+                "p_value": _FormattingMixin._format_p_value(
+                    p_val, comp.get("p_value_resolution")),
                 "p_value_style": _FormattingMixin._p_heat_style(p_val),
                 "effect_size": _FormattingMixin._format_metric(comp.get("effect_size")),
                 "effect_size_type": str(es_type) if es_type else "",
