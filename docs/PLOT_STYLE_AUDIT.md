@@ -2,6 +2,8 @@
 
 **Status:** Report for review. No code has been changed. Phase 4 (implementation) requires explicit go-ahead.
 
+> **Superseded in part — read this first.** This report describes the state of the code in early August 2026. **System A no longer exists**: the desktop matplotlib stack was removed on 2026-08-22. Section 0's "three independent rendering systems" table and every System A finding below are kept as the historical record of what the audit found, not as a description of the code today. See *Final status* at the end for what is true now.
+
 **Evidence rigor:** every cell below is **Class A** (read directly from the file at the cited line, and cross-checked by a second direct read during this audit) unless marked **Class B** (inferred — e.g. "this is Plotly's built-in default because no override exists in the codebase," which relies on Plotly library behavior, not on this repo's code). One agent-reported citation (`report_summaries.py:527,1822`) was checked and found **wrong** — that file has no `default_colors`; it has been dropped from the evidence below. Everything else quoted was independently verified.
 
 ---
@@ -213,3 +215,21 @@ Plot-specific values (bar width, violin bandwidth, jitter amount, raincloud's ha
 
 - The palette-dedup "bounded exception" from Q5 that would have touched `plot_preview.py`, `plot_aesthetics_dialog.py`, and the autopilot pipeline is **withdrawn**. Phase 4 as shipped repoints **only** Systems B (`plot_designer.js` via the serialized `plot_style_json`) and C (`report_charts.py`) at `style_tokens.py`; the desktop-adjacent copies of the teal literal are deliberately left untouched, because those files are going away. Touching them now would be wasted work.
 - **Q3 (dead code — `plot_forest`/`plot_roc_curve`) and Q6 (preview-vs-export divergence) are deprioritized as moot** pending System A's removal. They are **not resolved** — the underlying conditions still exist in the code today — but they are no longer worth further investigation or a fix, since the code that hosts them is scheduled for deletion.
+
+---
+
+## Final status (2026-08-22 / 2026-08-23) — System A removed, two systems left
+
+**System A is gone.** Commit `e9d304d` deleted `datavisualizer.py` (3426 lines), `plot_aesthetics_dialog.py` (1934) and `plot_preview.py` (272) along with the dead plotting block in `analysis_core`, the orphaned `configure_plot_requested` signal and 18 test files — 7223 lines across 27 files. The removal was safe to make because the layer had already been unreachable: the "Configure Plot..." button was commented out in `statistical_analyzer_autopilot_ui.py`, so nothing could emit the signal and `skip_plots` was true on every live path. A report generated through the real export pipeline before and after the deletion is byte-identical apart from its timestamp.
+
+What that settles, in the terms this report used:
+
+- **Q1 (scope)** — answered by deletion rather than by unification. Only Systems B and C remain, and both already read `style_tokens.py`.
+- **Q3 (`plot_forest` / `plot_roc_curve` dead code)** and **Q6 (preview-vs-export divergence)** — no longer moot-pending-removal but actually gone; the code that hosted them does not exist.
+- **Q5 (palette sprawl)** — the five desktop-adjacent copies of the teal literal went with their files. The literal now lives in `style_tokens.py`, consumed by C directly and by B through the serialized `plot_style_json`.
+- **Q2 (black point fill)** — settled per plot type rather than per system: Bar, Box and Violin keep black points, Raincloud takes the group's own colour so cloud, box and rain read as one unit.
+
+Two things about **System C** have changed since the table in §0:
+
+- It is no longer style-independent. `_base_layout()` in `report_charts.py` owns template, font, backgrounds and axis frame for all 14 static charts, which is what exposed that 13 of them had been rendering in Segoe UI while one used the style-token Arial.
+- It carries a significance layer (`3a27ace`). The chart previously had no server-rendered post-hoc annotation at all; brackets came from a minified overlay inside `report_single.html.j2`, which is a **fourth** bracket implementation the original audit did not list, because it lives in a Jinja template rather than in a `.py` or `.js` file. Letters and brackets are now chosen once in Python and shared with System B.
