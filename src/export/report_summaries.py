@@ -782,6 +782,9 @@ class _SummariesMixin:
         # Group-mode: group-based analyses embed raw data keyed by group name
         raw_data = results.get("raw_data") or results.get("samples") or {}
         transformed = results.get("raw_data_transformed") or results.get("transformed_data") or {}
+        subjects = results.get("raw_data_subjects") or {}
+        if not isinstance(subjects, dict):
+            subjects = {}
         rows = []
         if isinstance(raw_data, dict):
             for group_name, values in raw_data.items():
@@ -789,24 +792,26 @@ class _SummariesMixin:
                 transformed_source = transformed.get(group_name, []) if isinstance(transformed, dict) else []
                 transformed_values = list(transformed_source) if transformed_source is not None else []
                 max_len = max(len(raw_values), len(transformed_values), 1)
-                # No per-group row number here. Within an independent design the
-                # order inside a group is just import order and carries nothing.
-                # Worse, in a repeated-measures design two columns sharing a row
-                # number read as "the same subject", which the extraction does
-                # not guarantee: the raw values are filtered per level without
-                # sorting on the subject, so the k-th value of one level and the
-                # k-th of another can belong to different subjects. The analysis
-                # aligns on the subject id (see _build_rm_aligned_samples); only
-                # this table ever implied the pairing. Column-mode above keeps
-                # its index, where a row genuinely is one observation.
+                # A per-group row number is deliberately absent. In an
+                # independent design the order inside a group is import order
+                # and carries nothing; in a repeated-measures design a shared
+                # row number reads across levels as "the same subject" and is
+                # not, because the values are filtered per level in whatever
+                # order the frame holds. Where the design actually has subjects
+                # the extractor hands them over and they are printed instead --
+                # a real identity rather than a position that resembles one.
+                subject_ids = subjects.get(group_name) or []
                 for index in range(max_len):
                     raw_value = raw_values[index] if index < len(raw_values) else None
                     transformed_value = transformed_values[index] if index < len(transformed_values) else None
-                    rows.append({
+                    row = {
                         "group": str(group_name),
                         "raw_value": _FormattingMixin._format_metric(raw_value, digits=6),
                         "transformed_value": _FormattingMixin._format_metric(transformed_value, digits=6),
-                    })
+                    }
+                    if index < len(subject_ids):
+                        row["subject"] = str(subject_ids[index])
+                    rows.append(row)
         return {
             "rows": rows,
             # Show the transformed column only when a transformation actually
@@ -821,6 +826,7 @@ class _SummariesMixin:
             ),
             "column_mode": False,
             "columns": [],
+            "has_subjects": any("subject" in row for row in rows),
         }
 
     @staticmethod

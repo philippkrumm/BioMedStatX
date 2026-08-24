@@ -1289,7 +1289,19 @@ class StatisticalTester:
         # 5. Extract raw data
         if extract_raw:
             log_step("Extracting raw data for DV and factors...")
-            results["raw_data"] = extract_raw(df, dv, between, within, subject)
+            extracted = extract_raw(df, dv, between, within, subject)
+            # Within-subject designs also hand back the subject each value came
+            # from. The raw-data table used to print a per-group row number,
+            # which reads across columns as "the same subject" and is not: the
+            # values are filtered per level in whatever order the frame holds,
+            # so the k-th value of two levels can belong to different subjects.
+            # Between-only designs have nothing to pair and return None.
+            if isinstance(extracted, tuple):
+                results["raw_data"], subjects = extracted
+                if subjects:
+                    results["raw_data_subjects"] = subjects
+            else:
+                results["raw_data"] = extracted
 
         # 6. Add main ANOVA results to log
         # Main and interaction effects
@@ -1370,13 +1382,16 @@ class StatisticalTester:
     @staticmethod
     def _extract_raw_data_mixed_anova(df, dv, between, within, subject):
         # Example implementation: return all individual values per group
-        raw = {}
+        raw, subjects = {}, {}
         b, w = between[0], within[0]
         for b_val in df[b].unique():
             for w_val in df[w].unique():
                 key = f"{b}={b_val}, {w}={w_val}"
-                raw[key] = df[(df[b] == b_val) & (df[w] == w_val)][dv].tolist()
-        return raw
+                block = df[(df[b] == b_val) & (df[w] == w_val)]
+                raw[key] = block[dv].tolist()
+                if subject and subject in block.columns:
+                    subjects[key] = [str(v) for v in block[subject].tolist()]
+        return raw, (subjects or None)
     
     @staticmethod
     def _run_repeated_measures_anova_logged(df, dv, subject, within, alpha=0.05, force_posthoc=False, custom_posthoc_alpha=None, **kwargs):
@@ -1425,11 +1440,15 @@ class StatisticalTester:
     
     @staticmethod
     def _extract_raw_data_rm_anova(df, dv, between, within, subject):
-        raw = {}
+        raw, subjects = {}, {}
         w = within[0]
         for lvl in df[w].unique():
-            raw[f"{w}={lvl}"] = df[df[w] == lvl][dv].tolist()
-        return raw
+            block = df[df[w] == lvl]
+            key = f"{w}={lvl}"
+            raw[key] = block[dv].tolist()
+            if subject and subject in block.columns:
+                subjects[key] = [str(v) for v in block[subject].tolist()]
+        return raw, (subjects or None)
     
     @staticmethod
     def _run_two_way_anova_logged(df, dv, between, alpha=0.05, test_info=None):
