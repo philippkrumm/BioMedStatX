@@ -8,7 +8,7 @@ call sites unchanged via the MRO.
 """
 
 import numpy as np
-from core.level_order import natural_order
+from core.level_order import natural_order, order_is_defined
 from scipy import stats
 
 from export.report_charts import _ChartsMixin
@@ -521,14 +521,22 @@ class _SummariesMixin:
         )
         _test_info = results.get("test_info") if isinstance(results.get("test_info"), dict) else {}
         transform_warning = results.get("transform_warning") or _test_info.get("transform_warning")
-        # Level-ordering transparency: natural_order logs a warning (once per
-        # analysis) when it falls back to a pure alphabetical guess for >=2
-        # unrecognized non-numeric levels. Kept as a debug-log diagnostic only --
-        # not surfaced in the user report, where it fired on every composite
-        # interaction-cell label and read as noise rather than actionable advice.
-        natural_order(results.get("groups") or [], notes=[])
+        # Level-ordering transparency. This note used to fire on every composite
+        # interaction-cell label, because the old test asked whether a label was
+        # *entirely* numeric rather than whether a number had decided its
+        # position; it was muted rather than corrected. With order_is_defined()
+        # it speaks only when the order really is alphabetical guesswork, which
+        # is worth saying: it is also the reason a plot will not connect
+        # individual subjects across those levels.
+        order_defined, order_note = order_is_defined(results.get("groups") or [])
         return {
             "rows": rows,
+            # Kept out of data_health_warnings on purpose: that block is the
+            # red "pre-analysis data quality" table, and a level order being
+            # alphabetical is neither a data defect nor a danger. It is a
+            # statement about how the axis was arranged, so it renders as a
+            # plain note.
+            "level_order_note": "" if order_defined else order_note,
             "data_health_warnings": _SummariesMixin._build_data_health_warnings(results),
             "transformation": _trafo_label or "None",
             "interpretation": _SummariesMixin._build_assumption_interpretation(results, rows),

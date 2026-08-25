@@ -43,8 +43,32 @@ _TERMINAL_TERMS = {
 _NUMERIC_LEVEL_RE = re.compile(r"\s*-?\d+(?:\.\d+)?\s*[a-zA-Z%µ°]*\s*$")
 
 
+_COMPOSITE_SEGMENT_RE = re.compile(r"^\s*[^=,]+=(?P<value>.*)$")
+
+
+def _level_part(label):
+    """Strip the factor names out of a composite cell label.
+
+    The raw-data keys for repeated-measures and mixed designs are built as
+    ``f"{factor}={level}"`` (and ``"a=1, b=2"`` for a cell), so the level itself
+    is buried behind a prefix that is identical for every category. Left in, the
+    prefix dominates both the reference-term lookup and the sort key: ranking
+    saw ``"Timepoint=Pre"`` as an unrecognized label rather than a baseline, and
+    ordered ``Post`` ahead of ``Pre``. Ordering on the values restores what the
+    bare labels always did, and leaves a label without ``=`` untouched.
+    """
+    text = str(label)
+    if "=" not in text:
+        return text
+    parts = []
+    for segment in text.split(","):
+        match = _COMPOSITE_SEGMENT_RE.match(segment)
+        parts.append(match.group("value").strip() if match else segment.strip())
+    return ", ".join(parts)
+
+
 def _norm(label):
-    return re.sub(r"[\s\-]+", "", str(label).strip().lower())
+    return re.sub(r"[\s\-]+", "", _level_part(label).strip().lower())
 
 
 def _hierarchy_rank(label):
@@ -59,7 +83,7 @@ def _hierarchy_rank(label):
 def _natural_key(label):
     # Split into text/number chunks; wrap each in a (type, value) tuple so mixed
     # numeric/text keys stay comparable (numbers sort before text at a position).
-    parts = re.split(r"(\d+(?:\.\d+)?)", str(label))
+    parts = re.split(r"(\d+(?:\.\d+)?)", _level_part(label))
     key = []
     for i, part in enumerate(parts):
         if i % 2 == 1:
@@ -70,7 +94,83 @@ def _natural_key(label):
 
 
 def _is_numeric_level(label):
-    return bool(_NUMERIC_LEVEL_RE.match(str(label)))
+    """True when the whole label is a number with an optional unit ("24h").
+
+    Deliberately narrow, and NOT the test for "is this factor ordered" -- a
+    number embedded in text ("Week 4") fails here while still deciding the
+    order. Use :func:`order_is_defined` for that question.
+    """
+    return bool(_NUMERIC_LEVEL_RE.match(_level_part(label)))
+
+
+def _first_difference_is_numeric(key_a, key_b):
+    """Did a number decide the order of these two labels, or the alphabet?
+
+    ``_natural_key`` splits a label into alternating text and number chunks,
+    each tagged ``(0, float)`` for a number and ``(1, text)`` for text. Whatever
+    chunk the two keys first disagree on is the one that placed them, so asking
+    its kind answers the question exactly rather than by pattern-matching the
+    label. Returns None when one key is a prefix of the other, where nothing but
+    length decided.
+    """
+    for chunk_a, chunk_b in zip(key_a, key_b):
+        if chunk_a == chunk_b:
+            continue
+        return chunk_a[0] == 0 and chunk_b[0] == 0
+    return None
+
+
+def _ambiguous_labels(ordered_labels):
+    """Labels whose position rests on nothing but alphabetical order.
+
+    A label is placed meaningfully if its rank did it (a recognized baseline or
+    terminal term sits first or last by definition) or if a number separated it
+    from its neighbour. Only a textual first difference between two neighbours
+    of the same rank is a guess, and then both of them are guesses.
+
+    This replaces an earlier test that asked whether each label was *entirely*
+    numeric. That version called "Week 4, Week 12" and "Timepoint 1, 2, 3"
+    alphabetical although their numbers had ordered them correctly, and it fired
+    on every composite interaction-cell label -- which is why the resulting
+    report note was muted as noise instead of the test being corrected.
+    """
+    ambiguous = set()
+    run = []
+    for label in list(ordered_labels) + [None]:
+        rank = _hierarchy_rank(label) if label is not None else None
+        if run and (label is None or rank != _hierarchy_rank(run[0])):
+            for left, right in zip(run, run[1:]):
+                decided = _first_difference_is_numeric(_natural_key(left), _natural_key(right))
+                if not decided:
+                    ambiguous.update((left, right))
+            run = []
+        if label is not None:
+            run.append(label)
+    return [label for label in ordered_labels if label in ambiguous]
+
+
+def order_is_defined(values):
+    """Report whether the level order comes from the data or from the alphabet.
+
+    Returns ``(defined, reason)``; ``reason`` is empty when defined and
+    otherwise names the levels that were merely sorted alphabetically. One
+    computation with two consumers: the transparency note in the report and the
+    gate that decides whether connecting individual subjects across levels would
+    draw a trajectory the data never established.
+    """
+    by_label = {}
+    for value in values:
+        by_label.setdefault(str(value), value)
+    ambiguous = _ambiguous_labels(
+        sorted(by_label, key=lambda s: (_hierarchy_rank(s), _natural_key(s)))
+    )
+    if not ambiguous:
+        return True, ""
+    return False, (
+        "Factor levels " + ", ".join(ambiguous)
+        + " were ordered alphabetically (no numeric or recognized reference "
+        "pattern). Define explicit level order if a specific order is intended."
+    )
 
 
 def natural_order(values, notes=None):
@@ -93,17 +193,10 @@ def natural_order(values, notes=None):
         by_label, key=lambda s: (_hierarchy_rank(s), _natural_key(s))
     )
 
-    ambiguous = [
-        s for s in ordered_labels
-        if _hierarchy_rank(s) == 1 and not _is_numeric_level(s)
-    ]
-    if notes is not None and len(ambiguous) >= 2:
-        message = (
-            "Factor levels " + ", ".join(ambiguous)
-            + " were ordered alphabetically (no numeric or recognized reference "
-            "pattern). Define explicit level order if a specific order is intended."
-        )
-        notes.append(message)
+    if notes is not None:
+        defined, message = order_is_defined(values)
+        if not defined:
+            notes.append(message)
         # Log at the same point the report note is captured (callers that care
         # pass `notes`), so this fires once per analysis, not once per redraw.
         logger.warning(message)

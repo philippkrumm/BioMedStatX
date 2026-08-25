@@ -52,27 +52,49 @@ def test_no_note_for_numeric_or_recognized_levels():
         assert notes == [], levels
 
 
-def test_single_unknown_level_no_note():
+def test_a_lone_unknown_beside_a_numeric_level_is_still_a_guess():
+    """Behaviour change: the old rule needed two unrecognized non-numeric levels.
+
+    "6h" ahead of "DrugX" rests on nothing but the alphabet -- one is a
+    duration, the other a compound, and no number separates them. The previous
+    test asked whether each label was *entirely* numeric and counted unknowns,
+    which stayed silent here while flagging "Week 4, Week 12", where a number
+    had in fact done the ordering. The predicate now asks which chunk the sort
+    keys first disagree on, so both cases come out the other way round.
+    """
     notes = []
-    natural_order(["DrugX", "6h"], notes=notes)  # only one non-numeric unknown
-    assert notes == []
+    natural_order(["DrugX", "6h"], notes=notes)
+    assert len(notes) == 1
+    assert "DrugX" in notes[0]
+
+    numerically_separated = []
+    natural_order(["Week 12", "Week 4"], notes=numerically_separated)
+    assert numerically_separated == []
 
 
-def test_report_assumption_summary_omits_ordering_note_but_logs_it(caplog):
-    """(b): the alphabetical-fallback note is a debug-log diagnostic only — it is
-    NOT surfaced in the user report (it fired on every composite interaction-cell
-    label and was noise, not actionable). natural_order still logs the warning
-    once per analysis for transparency."""
-    import logging
+def test_the_ordering_note_reaches_the_report_only_when_the_order_is_guessed(caplog):
+    """The note was muted rather than corrected; it is back, and it is precise.
+
+    It used to fire on every composite interaction-cell label -- because the old
+    predicate could not see the level behind a "factor=level" prefix -- so it
+    was demoted to a debug log. With the corrected predicate it speaks only for
+    a genuinely alphabetical order, which is worth saying: it is also why a plot
+    will not connect subjects across those levels.
+
+    It is deliberately NOT part of data_health_warnings, which renders as the
+    red pre-analysis data-quality table. An alphabetical axis order is neither a
+    data defect nor a danger.
+    """
     from export.report_summaries import _SummariesMixin
 
-    with caplog.at_level(logging.WARNING, logger="core.level_order"):
-        unknown = _SummariesMixin._build_assumption_summary({"groups": ["DrugX", "DrugA"]})
-    assert "level_ordering_note" not in unknown          # not in the report payload
-    assert any("alphabetically" in r.message for r in caplog.records)  # but logged
+    guessed = _SummariesMixin._build_assumption_summary({"groups": ["DrugX", "DrugA"]})
+    assert "alphabetically" in guessed["level_order_note"]
+    assert guessed["data_health_warnings"] == []
 
-    caplog.clear()
-    with caplog.at_level(logging.WARNING, logger="core.level_order"):
-        known = _SummariesMixin._build_assumption_summary({"groups": ["6h", "24h", "48h"]})
-    assert "level_ordering_note" not in known
-    assert not any("alphabetically" in r.message for r in caplog.records)  # numeric -> no warning
+    numeric = _SummariesMixin._build_assumption_summary({"groups": ["6h", "24h", "48h"]})
+    assert numeric["level_order_note"] == ""
+
+    # The composite form that caused the muting in the first place.
+    composite = _SummariesMixin._build_assumption_summary(
+        {"groups": ["Timepoint=Pre", "Timepoint=Post"]})
+    assert composite["level_order_note"] == ""
