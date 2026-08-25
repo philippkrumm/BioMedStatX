@@ -18,6 +18,7 @@ from export.report_association import _AssociationMixin
 from export.report_formatting import _FormattingMixin
 from export.report_stat_rows import _StatRowsMixin
 from analysis.compact_letters import letters_from_pairs, letters_supported
+from analysis.paired_lines import build_paired_trajectories, paired_lines_supported
 from visualization import style_tokens
 
 _AXIS_RE = re.compile(r"^[xy]axis\d*$")
@@ -805,6 +806,10 @@ class _ChartsMixin:
             if not figure.data:
                 return None
 
+            # Paired designs first: the lines belong under the annotations, and
+            # they are what a within-subject test actually analysed.
+            _ChartsMixin._build_paired_line_layer(figure, results, group_order)
+
             # The chart most readers actually look at showed no post-hoc result
             # at all -- brackets existed only on the ANCOVA figure. Same layer,
             # same default rule as the interactive designer, so a report and the
@@ -1334,6 +1339,54 @@ class _ChartsMixin:
                 "significant": significant,
             })
         return pairs
+
+    @staticmethod
+    def _build_paired_line_layer(figure, results: dict, group_order: list) -> str:
+        """Connect each subject across the levels, where that is defensible.
+
+        Returns the reason it was skipped, or an empty string when lines were
+        drawn -- the caller passes that on to the reader instead of leaving an
+        unexplained absence.
+
+        Drawn as one trace with gaps between subjects rather than one trace per
+        subject: a legend of thirty identical grey entries helps nobody, and the
+        subject is on the hover of every point anyway.
+        """
+        try:
+            raw_data = results.get("raw_data") or results.get("samples") or {}
+            subjects = results.get("raw_data_subjects") or {}
+            supported, reason = paired_lines_supported(group_order, subjects)
+            if not supported:
+                return reason
+
+            trajectories = build_paired_trajectories(group_order, raw_data, subjects)
+            if not trajectories:
+                return "No subject could be followed across levels."
+
+            xs, ys, hover = [], [], []
+            for trajectory in trajectories:
+                for point in trajectory["points"]:
+                    xs.append(point["level_index"])
+                    ys.append(point["value"])
+                    hover.append(f"{trajectory['subject']} — {point['group']}")
+                xs.append(None)
+                ys.append(None)
+                hover.append(None)
+
+            import plotly.graph_objects as go
+
+            figure.add_trace(go.Scatter(
+                x=xs, y=ys, mode="lines+markers",
+                line=dict(color="rgba(22,49,58,0.38)", width=1.1),
+                marker=dict(size=4, color="rgba(22,49,58,0.55)"),
+                hovertext=hover, hoverinfo="text",
+                name="Subject", showlegend=False,
+                connectgaps=False,
+            ))
+            return ""
+        except Exception as exc:
+            logger.warning("paired subject lines failed: %s", exc, exc_info=True)
+            return ""
 
     @staticmethod
     def _significance_mode(group_order: list, pairs: list) -> str:

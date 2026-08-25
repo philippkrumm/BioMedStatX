@@ -115,6 +115,8 @@
               </select>
             </div>
             <label class="pd-check" data-plot-types="Bar,Box,Violin,Raincloud,Estimation"><input id="pd-show-points" type="checkbox" checked> Show points</label>
+            <label class="pd-check" id="pd-paired-lines-row" data-plot-types="Bar,Box,Violin"><input id="pd-show-paired-lines" type="checkbox"> Connect subjects</label>
+            <div id="pd-paired-lines-note" class="pd-note"></div>
             <div class="pd-row" id="pd-point-layout-row" data-plot-types="Bar,Box,Violin,Raincloud,Estimation">
               <label for="pd-point-layout">Point layout</label>
               <select id="pd-point-layout">
@@ -429,6 +431,7 @@
   <script id="pd-data-stats-summary" type="application/json">{{ context.stats_summary_json | safe }}</script>
   <script id="pd-data-stats" type="application/json">{{ context.plot_stats_json | safe }}</script>
   <script id="pd-data-pairs" type="application/json">{{ context.pairwise_data_json | safe }}</script>
+  <script id="pd-data-paired-lines" type="application/json">{{ context.paired_lines_json | safe }}</script>
   <script id="pd-data-order" type="application/json">{{ context.group_order_json | safe }}</script>
   <script id="pd-data-group-factor-map" type="application/json">{{ context.group_factor_map_json | safe }}</script>
   <script>
@@ -470,7 +473,7 @@
 
     // Per-tab status dots — dirty if any owned control differs from default, invalid for y-min ≥ y-max
     var tabOwners = {
-      plot:   ["pd-plot-type","pd-show-points","pd-show-error-bars","pd-central-measure","pd-error-type","pd-error-direction"],
+      plot:   ["pd-plot-type","pd-show-points","pd-show-paired-lines","pd-show-error-bars","pd-central-measure","pd-error-type","pd-error-direction"],
       axes:   ["pd-log-x","pd-log-y","pd-minor-ticks","pd-grid-style","pd-grid-alpha","pd-axis-thickness","pd-tick-direction","pd-x-tick-angle","pd-y-axis-format","pd-y-min","pd-y-max","pd-ref-zero","pd-ref-unit","pd-ref-thresholds","pd-ref-style","pd-ref-width","pd-show-legend","pd-legend-orientation","pd-legend-x","pd-legend-y","pd-legend-xanchor","pd-legend-yanchor"],
       style:  ["pd-title","pd-x-label","pd-y-label","pd-font-family","pd-title-size","pd-axis-size","pd-alpha","pd-auto-pattern"],
       stats:  ["pd-significance-mode","pd-significance-line-width","pd-significance-spacing","pd-significance-size","pd-significance-star-offset"],

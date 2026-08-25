@@ -33,6 +33,7 @@
     plotStats = parseJsonNode("pd-data-stats", {});
   }
   var pairwiseData = parseJsonNode("pd-data-pairs", []);
+  var pairedLines = parseJsonNode("pd-data-paired-lines", {supported: false, reason: "", trajectories: [], max_subjects: 30});
   var groupOrder = parseJsonNode("pd-data-order", []);
   var groupFactorMapPayload = parseJsonNode("pd-data-group-factor-map", {});
 
@@ -327,6 +328,7 @@
     legendXAnchor: "left",
     legendYAnchor: "top",
     significanceMode: "brackets",
+    showPairedLines: false,
     significanceLineWidth: 1.7,
     significanceSpacingScale: 1.0,
     significanceStarSize: 14,
@@ -360,7 +362,32 @@
   }
 
   function updatePairedLineControlState() {
-    // Paired-lines controls were removed from the UI; nothing to sync.
+    // Kept as the name the rest of the file calls; the work is in
+    // updatePairedLineAvailability(), which runs from updateControlAvailability
+    // once the plot type and state have been read.
+  }
+
+  function updatePairedLineAvailability() {
+    var toggle = document.getElementById("pd-show-paired-lines");
+    var note = document.getElementById("pd-paired-lines-note");
+    if (!toggle) return;
+    var info = pairedLineState(groupIndexMap());
+    var raincloud = state.plotType === "Raincloud";
+    setControlDisabled("pd-show-paired-lines", !info.usable || raincloud);
+    if (!info.usable && state.showPairedLines) {
+      state.showPairedLines = false;
+      setChecked("pd-show-paired-lines", false);
+    }
+    if (!note) return;
+    if (raincloud) {
+      note.textContent = "Raincloud draws each group on its own row, so a line between groups has nowhere to go.";
+    } else if (!info.usable) {
+      note.textContent = info.reason;
+    } else if (state.showPairedLines) {
+      note.textContent = "Each line follows one subject across the levels \u2014 what a paired test actually analyses.";
+    } else {
+      note.textContent = "";
+    }
   }
 
   function setControlDisabled(controlId, disabled) {
@@ -555,6 +582,20 @@
         setValue("pd-y-max", saved.yMax);
       });
 
+    // Subject lines: Bar, Box, Violin. Raincloud puts each group on its own
+    // row, so a line between groups would cross the layout rather than follow a
+    // subject; Forest and Estimation plot contrasts, not groups.
+    suspendWhileUnsupported("pairedLines", barBoxViolin.indexOf(type) !== -1,
+      function () { return { show: state.showPairedLines }; },
+      function () {
+        state.showPairedLines = false;
+        setChecked("pd-show-paired-lines", false);
+      },
+      function (saved) {
+        state.showPairedLines = saved.show;
+        setChecked("pd-show-paired-lines", saved.show);
+      });
+
     // Forest ignores showPoints in its builder, so leave the user's choice
     // intact across switches; only the significance layer is not drawn there.
     suspendWhileUnsupported("significance", type !== "Forest",
@@ -600,6 +641,9 @@
 
     // Significance form: availability, fallback and the reason shown to the user
     updateSignificanceAvailability();
+
+    // Subject lines: same treatment -- refuse with a reason rather than in silence
+    updatePairedLineAvailability();
   }
 
   var errorOptionsByCentral = {
@@ -767,6 +811,7 @@
     document.getElementById("pd-legend-xanchor").value = state.legendXAnchor;
     document.getElementById("pd-legend-yanchor").value = state.legendYAnchor;
     setSelect("pd-significance-mode", state.significanceMode);
+    setChecked("pd-show-paired-lines", state.showPairedLines);
     document.getElementById("pd-significance-line-width").value = state.significanceLineWidth;
     document.getElementById("pd-significance-spacing").value = state.significanceSpacingScale;
     document.getElementById("pd-significance-size").value = state.significanceStarSize;
@@ -875,6 +920,8 @@
     state.legendXAnchor = document.getElementById("pd-legend-xanchor").value || "left";
     state.legendYAnchor = document.getElementById("pd-legend-yanchor").value || "bottom";
     state.significanceMode = document.getElementById("pd-significance-mode").value || "brackets";
+    var pairedToggle = document.getElementById("pd-show-paired-lines");
+    state.showPairedLines = !!(pairedToggle && pairedToggle.checked);
     state.significanceLineWidth = parseFloat(document.getElementById("pd-significance-line-width").value);
     if (!Number.isFinite(state.significanceLineWidth)) state.significanceLineWidth = 1.7;
     state.significanceLineWidth = Math.min(4, Math.max(0.8, state.significanceLineWidth));
@@ -2056,6 +2103,62 @@
     return buildBrackets(yMin, yMax, idxMap);
   }
 
+  // Subject lines. The eligibility verdict is computed server-side (see
+  // analysis/paired_lines.py) because it leans on the level-order tables; what
+  // has to happen here is filtering the trajectories to the groups currently on
+  // screen and re-checking the readability limit, since hiding a group changes
+  // both. A subject left with a single visible point is dropped rather than
+  // drawn as a lone marker pretending to be a line.
+  function visibleTrajectories(idxMap) {
+    var out = [];
+    (pairedLines.trajectories || []).forEach(function (trajectory) {
+      var points = (trajectory.points || []).filter(function (point) {
+        return idxMap[point.group] !== undefined;
+      });
+      if (points.length >= 2) out.push({subject: trajectory.subject, points: points});
+    });
+    return out;
+  }
+
+  function pairedLineState(idxMap) {
+    if (!pairedLines.supported) {
+      return {usable: false, reason: pairedLines.reason || "", trajectories: []};
+    }
+    var trajectories = visibleTrajectories(idxMap);
+    if (!trajectories.length) {
+      return {usable: false, reason: "No subject spans two of the groups shown.", trajectories: []};
+    }
+    var limit = pairedLines.max_subjects || 30;
+    if (trajectories.length > limit) {
+      return {usable: false, trajectories: [],
+              reason: trajectories.length + " subjects exceed the " + limit
+                + " that stay readable as individual lines."};
+    }
+    return {usable: true, reason: "", trajectories: trajectories};
+  }
+
+  function buildPairedLineTraces(idxMap) {
+    if (!state.showPairedLines || state.plotType === "Raincloud") return [];
+    var info = pairedLineState(idxMap);
+    if (!info.usable) return [];
+    var xs = [], ys = [], hover = [];
+    info.trajectories.forEach(function (trajectory) {
+      trajectory.points.forEach(function (point) {
+        xs.push(idxMap[point.group]);
+        ys.push(point.value);
+        hover.push(trajectory.subject + " \u2014 " + point.group);
+      });
+      xs.push(null); ys.push(null); hover.push(null);
+    });
+    return [{
+      type: "scatter", mode: "lines+markers", x: xs, y: ys,
+      line: {color: "rgba(22,49,58,0.38)", width: 1.1},
+      marker: {size: 4, color: "rgba(22,49,58,0.55)"},
+      hovertext: hover, hoverinfo: "text",
+      name: "Subject", showlegend: false, connectgaps: false
+    }];
+  }
+
   function buildBrackets(yMin, yMax, idxMap) {
     if (state.significanceMode !== "brackets" || !state.visiblePairIds.length) {
       return { shapes: [], annotations: [], yAxisMax: yMax };
@@ -2396,6 +2499,8 @@
         yAxis.range = state.logY ? [Math.log10(state.yMin), Math.log10(state.yMax)] : [state.yMin, state.yMax];
       }
     }
+
+    traces = traces.concat(buildPairedLineTraces(built.idxMap));
 
     var bracketLayer = buildSignificanceLayer(built.yMin, built.yMax, built.idxMap);
     if (bracketLayer.warning && warningNode) {

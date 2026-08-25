@@ -12,6 +12,8 @@ from export.report_association import _AssociationMixin
 from export.report_charts import _ChartsMixin
 from export.report_summaries import _SummariesMixin
 from visualization import style_tokens
+from analysis.paired_lines import (PAIRED_LINE_MAX_SUBJECTS, build_paired_trajectories,
+                                   paired_lines_supported)
 
 try:
     from core.logger_config import get_logger
@@ -140,6 +142,24 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
         if not group_order:
             group_order = list(plot_data.keys())
 
+        # Paired subject lines. The eligibility question is answered once, here,
+        # and shipped as a verdict rather than mirrored into JavaScript: it
+        # depends on core.level_order, whose reference-term tables and sort-key
+        # logic would be a large surface to duplicate and keep in step. The
+        # figure builder only filters the trajectories to the groups on screen
+        # and re-checks the count, which is the part that can change client-side.
+        line_supported, line_reason = paired_lines_supported(group_order, results_copy.get("raw_data_subjects") or {})
+        paired_lines_payload = {
+            "supported": bool(line_supported),
+            "reason": line_reason,
+            "max_subjects": PAIRED_LINE_MAX_SUBJECTS,
+            "trajectories": build_paired_trajectories(
+                group_order,
+                results_copy.get("raw_data") or results_copy.get("samples") or {},
+                results_copy.get("raw_data_subjects") or {},
+            ) if line_supported else [],
+        }
+
         # One decision for the whole report: the static chart is annotated
         # server-side, and the bracket overlay below has to know which form won
         # so it does not relayout letters away. Same rule as the figure builder.
@@ -184,6 +204,7 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
             "group_order_json": HTMLExporter._safe_json_dumps(group_order),
             "group_chart_div_id": "biomedstatx-group-chart" if group_chart_block else "",
             "significance_mode": significance_mode,
+            "paired_lines_json": HTMLExporter._safe_json_dumps(paired_lines_payload, cls=_ResultsEncoder),
             "raw_data_table": raw_table,
             "chart_blocks": charts,
             "methods_text": methods_text,
