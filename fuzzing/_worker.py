@@ -36,21 +36,45 @@ for p in (_ROOT, os.path.join(_ROOT, "src")):
 
 
 _TRANSFORMS = ["log10", "sqrt", "box_cox", None]
-_POSTHOC_PARAMETRIC = ["tukey", "games_howell", "dunnett"]
 _POSTHOC_NONPARAM = ["dunn", None]
+
+
+def _posthoc_options(progress_text):
+    """The choices the real dialog would have offered for this design.
+
+    Mirrors UIDialogManager.select_posthoc_test_dialog rather than guessing.
+    The fuzzer used to answer "tukey" for every parametric design, which the
+    one-way dialog does not offer at all -- a studentized-range post-hoc has no
+    place after the Welch ANOVA that runs there -- so one-way post-hoc fuzzing
+    drove a value no user can produce while Games-Howell and the pair dialog
+    went under-exercised. RM and mixed reach their EMM/multivariate-t option
+    only through this list, and with it the estimated p-values whose resolution
+    the report has to respect.
+    """
+    text = str(progress_text or "")
+    if "two_way_anova" in text:
+        return ["tukey", "paired_custom"]
+    if "mixed_anova" in text or "repeated_measures_anova" in text:
+        return ["paired_custom", "emm_mvt"]
+    return ["games_howell", "dunnett", "paired_custom"]
 
 
 def _neutralize_dialogs(seed: int):
     """Replace every interactive Qt dialog with a randomized-but-deterministic default.
 
-    Randomizing transform and posthoc ensures every method is exercised across seeds
-    instead of always hitting the same code path.
+    Randomizing the answers ensures every branch is exercised across seeds
+    instead of always hitting the same code path. The choices are drawn from
+    what the real dialog offers, so a fuzzed run stays a run a user could have
+    had.
     """
     import numpy as np
     rng = np.random.default_rng(seed + 0xDEAD)
     chosen_transform = _TRANSFORMS[int(rng.integers(0, len(_TRANSFORMS)))]
-    chosen_posthoc = _POSTHOC_PARAMETRIC[int(rng.integers(0, len(_POSTHOC_PARAMETRIC)))]
     chosen_nonparam = _POSTHOC_NONPARAM[int(rng.integers(0, len(_POSTHOC_NONPARAM)))]
+    # Whether this user ticks every box in the pair dialog. Both answers matter:
+    # all pairs is a complete comparison matrix and lets compact letters through,
+    # a subset is exactly the case the letter gate has to refuse.
+    takes_all_pairs = bool(rng.integers(0, 2))
 
     try:
         from PyQt5.QtWidgets import QDialog
@@ -66,19 +90,76 @@ def _neutralize_dialogs(seed: int):
     UIDialogManager.select_transformation_dialog = staticmethod(
         lambda *a, _t=chosen_transform, **k: _t
     )
-    UIDialogManager.select_posthoc_test_dialog = staticmethod(
-        lambda *a, _p=chosen_posthoc, **k: _p
-    )
+
+    def _posthoc_dialog(parent=None, progress_text=None, column_name=None, default_method=None):
+        options = _posthoc_options(progress_text)
+        return options[int(rng.integers(0, len(options)))]
+
+    UIDialogManager.select_posthoc_test_dialog = staticmethod(_posthoc_dialog)
     UIDialogManager.select_nonparametric_posthoc_dialog = staticmethod(
         lambda *a, _np=chosen_nonparam, **k: _np
     )
-    # Dunnett needs a control group; return the first group if available
-    def _control_group_dialog(*a, groups=None, **k):
-        if groups:
-            return groups[0]
-        return None
+
+    def _control_group_dialog(*args, **kwargs):
+        """Dunnett needs a control; pick one the way a user would.
+
+        The real dialog is ``select_control_group_dialog(groups, parent=None)``
+        and is called both positionally and by keyword. The stub only read the
+        keyword, so every positional call answered None -- Dunnett then fell
+        back to the all-pairs default and the fuzzer never actually ran it.
+        """
+        groups = kwargs.get("groups")
+        if groups is None and args:
+            groups = args[0]
+        groups = list(groups or [])
+        return groups[int(rng.integers(0, len(groups)))] if groups else None
     UIDialogManager.select_control_group_dialog = staticmethod(_control_group_dialog)
-    UIDialogManager.select_custom_pairs_dialog = staticmethod(lambda *a, **k: [])
+
+    def _custom_pairs_dialog(groups, parent=None):
+        """A user who actually ticks boxes, rather than one who ticks none.
+
+        Returning an empty list meant every seed that reached the pair dialog
+        produced zero comparisons, so the branch ran without ever testing
+        anything.
+        """
+        names = [g for g in (groups or [])]
+        all_pairs = [(a, b) for i, a in enumerate(names) for b in names[i + 1:]]
+        if not all_pairs or takes_all_pairs:
+            return all_pairs
+        count = int(rng.integers(1, len(all_pairs) + 1))
+        picked = rng.choice(len(all_pairs), size=count, replace=False)
+        return [all_pairs[int(i)] for i in sorted(picked)]
+
+    UIDialogManager.select_custom_pairs_dialog = staticmethod(_custom_pairs_dialog)
+
+    # Advanced designs do not reach the pair selection through UIDialogManager:
+    # analysis_core builds a ComparisonSelectionDialog directly. With only
+    # QDialog.exec_ stubbed that dialog reported "Rejected", which the pipeline
+    # correctly reads as a user cancelling -- so every repeated-measures, mixed
+    # and two-way run that chose paired_custom aborted, and the branch was never
+    # tested. A stand-in that answers like a user who picked pairs restores it.
+    try:
+        from ui.dialogs import comparison_selection_dialog as _csd_module
+
+        class _FuzzComparisonDialog:
+            Accepted = 1
+
+            def __init__(self, all_pairs, checked_by_default=False, *args, **kwargs):
+                self._all_pairs = list(all_pairs or [])
+
+            def exec_(self):
+                return self.Accepted
+
+            def get_selected_comparisons(self):
+                if not self._all_pairs or takes_all_pairs:
+                    return self._all_pairs
+                count = int(rng.integers(1, len(self._all_pairs) + 1))
+                picked = rng.choice(len(self._all_pairs), size=count, replace=False)
+                return [self._all_pairs[int(i)] for i in sorted(picked)]
+
+        _csd_module.ComparisonSelectionDialog = _FuzzComparisonDialog
+    except Exception:
+        pass
 
 
 def _locate_report(directory: str) -> str:

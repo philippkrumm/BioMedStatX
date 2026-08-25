@@ -35,6 +35,11 @@ MUTATIONS = [
     "empty_factor_cell", "cross_level_missing", "rank_ties",
 ]
 
+# Effect sizes the designs draw from, in units of the residual SD. Zero is in the
+# list twice so a fair share of seeds still carry no effect at all -- both the
+# null and the real case are things users bring.
+EFFECT_SIZES = (0.0, 0.0, 1.0, 2.0, 3.0)
+
 # Simple categorical palette so plotting (when enabled) gets valid colors/hatches.
 _PALETTE = ["#0f766e", "#d97706", "#0369a1", "#be123c", "#7e22ce", "#65a30d", "#0891b2", "#475569"]
 _HATCHES = ["", "/", "\\", "x", ".", "o", "+", "*"]
@@ -71,14 +76,33 @@ def _base_design(rng: np.random.Generator, test_label: str):
                   "dependent": bool(rng.integers(0, 2)) if test_label == "ttest" else False}
 
     elif test_label in ("rm_anova", "mixed_anova"):
-        n_subj = int(rng.integers(4, 10))
+        # Four subjects leaves a mixed model roughly two residual df, so even a
+        # large effect rarely clears the omnibus and the post-hoc branch behind
+        # it stays unreached. The lower bound is kept -- small studies are real
+        # -- and the tiny_groups mutation still shrinks designs deliberately.
+        n_subj = int(rng.integers(4, 16))
         within_levels = [f"T{i}" for i in range(int(rng.integers(2, 4)))]
         between = [f"B{i%2}" for i in range(n_subj)]
+        # Effects, and a subject random intercept, both drawn per seed. Without
+        # them every repeated-measures and mixed case was pure noise: the
+        # omnibus was significant only by type-I error, so the post-hoc branch
+        # -- the whole advanced pipeline, its pair dialog and its EMM/mvt option
+        # -- was reached by almost no seed. Zero is kept in the draw so the null
+        # case still occurs; a design with no subject effect at all also gives
+        # the repeated-measures model no within-subject variance to work with.
+        within_effect = float(rng.choice(EFFECT_SIZES))
+        between_effect = float(rng.choice(EFFECT_SIZES))
+        subject_sd = float(rng.choice([0.5, 1.0, 2.0]))
+        subject_offsets = rng.normal(0, subject_sd, size=n_subj)
         for s in range(n_subj):
-            for lvl in within_levels:
+            for li, lvl in enumerate(within_levels):
+                group_index = int(between[s][1:])
                 rows.append({
                     "Subject": f"S{s}", "Time": lvl, "Between": between[s],
-                    "Val": float(rng.normal(0, 1)),
+                    "Val": float(within_effect * li
+                                 + between_effect * group_index
+                                 + subject_offsets[s]
+                                 + rng.normal(0, 1)),
                 })
         df = pd.DataFrame(rows)
         if test_label == "rm_anova":
@@ -97,10 +121,19 @@ def _base_design(rng: np.random.Generator, test_label: str):
     elif test_label == "two_way_anova":
         fa = [f"A{i}" for i in range(2)]
         fb = [f"B{i}" for i in range(2)]
-        for a in fa:
-            for b in fb:
+        # Same reason as the repeated-measures block: null-only cells meant the
+        # two-way post-hoc, and with it the permutation fallback whose p-value
+        # has a resolution to respect, were effectively never run.
+        effect_a = float(rng.choice(EFFECT_SIZES))
+        effect_b = float(rng.choice(EFFECT_SIZES))
+        interaction = float(rng.choice([0.0, 0.0, 1.5]))
+        for ai, a in enumerate(fa):
+            for bi, b in enumerate(fb):
                 for _ in range(n_per):
-                    rows.append({"FacA": a, "FacB": b, "Val": float(rng.normal(0, 1))})
+                    rows.append({"FacA": a, "FacB": b,
+                                 "Val": float(effect_a * ai + effect_b * bi
+                                              + interaction * ai * bi
+                                              + rng.normal(0, 1))})
         df = pd.DataFrame(rows)
         ctx = {"factor_columns": ["FacA", "FacB"], "dv_columns": ["Val"],
                "group_labels": fa, "mode": "single", "inferred_test": "two_way_anova"}
@@ -278,10 +311,10 @@ def build_case(seed: int) -> FuzzCase:
 
     ctx["injected_df"] = df
     kwargs["analysis_context"] = ctx
-    # Exercise the full pipeline including matplotlib plot rendering (Agg backend)
-    # and the HTML/Excel export — that's where C-level rendering faults can hide.
-    kwargs.setdefault("save_plot", True)
-    kwargs.setdefault("skip_plots", False)
+    # The matplotlib figure export these two kwargs used to drive was removed
+    # with the desktop plot layer; the figures the pipeline still produces are
+    # the Plotly ones inside the HTML report, which is what the report oracles
+    # read back. Kept only because analyze() still accepts them.
     kwargs.setdefault("plot_type", "Bar")
     return FuzzCase(seed=seed, test_label=test_label, df=df, mutations=[str(m) for m in muts],
                     analyze_kwargs=kwargs)

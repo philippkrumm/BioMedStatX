@@ -53,11 +53,13 @@ def _check_f_p_consistency(result: dict, violations: List[str]) -> None:
         violations.append(
             f"F/chi2={stat:.1f} is huge but p_value={p:.4f} is not small — likely wrong tail"
         )
-    # F < 0 is impossible (sum-of-squares ratio)
-    if stat < 0 and result.get("test") and any(
-        kw in str(result.get("test", "")).lower()
-        for kw in ("anova", "f-test", "welch")
-    ):
+    # F < 0 is impossible (sum-of-squares ratio). A t is not: Welch's *t*-test
+    # matched the "welch" keyword and every negative t it reported was filed as
+    # an impossible F, so the check reported findings that meant nothing.
+    label = str(result.get("test", "")).lower()
+    is_f_test = any(kw in label for kw in ("anova", "f-test", "welch"))
+    is_t_test = "t-test" in label or "t test" in label
+    if stat < 0 and label and is_f_test and not is_t_test:
         violations.append(f"F-statistic={stat} is negative — impossible for ANOVA")
 
 
@@ -88,10 +90,15 @@ def check_result(result: Any) -> List[str]:
 
     blocked = result.get("blocked") is True
     has_error = bool(result.get("error"))
+    # A mid-analysis dialog the user backs out of returns a cancelled result with
+    # no test label, which is correct behaviour and was missing from this list --
+    # the check flagged every clean abort as a nameless result.
+    cancelled = result.get("cancelled") is True
 
-    # A graceful result must self-identify: either a test label, a block, or an error.
-    if result.get("test") is None and not blocked and not has_error:
-        violations.append("no 'test' label and not marked blocked/error")
+    # A graceful result must self-identify: a test label, a block, a cancellation
+    # or an error.
+    if result.get("test") is None and not blocked and not has_error and not cancelled:
+        violations.append("no 'test' label and not marked blocked/cancelled/error")
 
     p = result.get("p_value")
     if _is_number(p):

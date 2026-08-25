@@ -351,3 +351,33 @@ def test_an_analytic_twin_of_the_same_number_is_not_a_violation(tmp_path):
     violations, fired = _check(tmp_path, html, result=payload)
     assert "p_precision_capped" in fired
     assert violations == [], violations
+
+
+# --- the statistical oracles, whose stale assumptions the fuzzer exposed ------
+
+
+def test_a_negative_t_is_not_reported_as_an_impossible_f():
+    """Welch's *t*-test matched the "welch" keyword meant for Welch's ANOVA.
+
+    Every negative t it produced was filed as an impossible F -- a finding that
+    looked like a bug and was noise from the checker.
+    """
+    from fuzzing.oracles import check_result
+
+    t_test = {"test": "Welch's t-test (unequal variances)", "statistic": -1.29,
+              "p_value": 0.21}
+    assert check_result(t_test) == []
+
+    anova = {"test": "Welch ANOVA", "statistic": -1.29, "p_value": 0.21}
+    assert any("negative" in v for v in check_result(anova))
+
+
+def test_a_cancelled_analysis_is_a_self_identifying_result():
+    """Backing out of a mid-analysis dialog is correct behaviour, not a defect."""
+    from fuzzing.oracles import check_result
+
+    cancelled = {"cancelled": True, "cancel_reason": "unequal sample sizes"}
+    assert check_result(cancelled) == []
+
+    nameless = {"analysis_log": "..."}
+    assert any("test' label" in v for v in check_result(nameless))
