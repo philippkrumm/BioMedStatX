@@ -184,9 +184,19 @@ _NUMERIC_MUTS = {
 }
 
 
-def _apply_mutation(df: pd.DataFrame, mut: str, rng: np.random.Generator) -> pd.DataFrame:
+def _apply_mutation(df: pd.DataFrame, mut: str, rng: np.random.Generator,
+                    dv_col: str = "Val") -> pd.DataFrame:
+    """Layer one mutation onto a clean design.
+
+    ``dv_col`` used to be hardcoded to "Val", which three of the ten designs do
+    not use -- correlation and regression call it "Y", the Firth logistic design
+    "Outcome". Every mutated seed landing on those raised KeyError inside the
+    generator, so the orchestrator recorded UNKNOWN_RC and the design was never
+    actually exercised under mutation. Half the seeds of a run were doing
+    nothing.
+    """
     df = df.copy()
-    val = "Val"
+    val = dv_col if dv_col in df.columns else df.columns[-1]
     groups_col = df.columns[0]
     if mut in _NUMERIC_MUTS:
         df[val] = pd.to_numeric(df[val], errors="coerce").astype(float)
@@ -262,8 +272,9 @@ def build_case(seed: int) -> FuzzCase:
 
     n_mut = int(rng.integers(0, 4))
     muts = list(rng.choice(MUTATIONS, size=n_mut, replace=False)) if n_mut else ["none"]
+    dv_col = (ctx.get("dv_columns") or ["Val"])[0]
     for m in muts:
-        df = _apply_mutation(df, m, rng)
+        df = _apply_mutation(df, m, rng, dv_col=dv_col)
 
     ctx["injected_df"] = df
     kwargs["analysis_context"] = ctx
