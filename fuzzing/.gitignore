@@ -1,2 +1,3 @@
 __pycache__/
 fuzz_report.json
+failures/

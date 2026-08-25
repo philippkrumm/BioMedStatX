@@ -5,14 +5,22 @@ malformed tensor terminate the process with no Python traceback. Running each
 case in a child means a segfault kills only the child; the orchestrator records
 the offending seed (returncode = negative signal) and moves on.
 
+The exported HTML report is checked before the working directory goes away.
+It used to be written into a TemporaryDirectory and deleted immediately after
+``analyze()`` returned, so the artefact the user actually receives was produced
+and destroyed without anything ever looking at it. A failing report is copied
+out so the seed can be inspected rather than only re-run.
+
 Exit codes:
   0  graceful (valid result or clean block/error) and oracles passed
-  2  oracle violation (silent statistical failure)
+  2  oracle violation (silent statistical failure, in the result or the report)
   3  uncaught Python exception escaped analyze()
   <0 (signal) crash/segfault — observed by the orchestrator, not set here
 """
+import glob
 import json
 import os
+import shutil
 import sys
 import tempfile
 
@@ -73,8 +81,28 @@ def _neutralize_dialogs(seed: int):
     UIDialogManager.select_custom_pairs_dialog = staticmethod(lambda *a, **k: [])
 
 
-def main(seed: int) -> int:
+def _locate_report(directory: str) -> str:
+    """The written HTML report, or "" if the run produced none."""
+    reports = sorted(glob.glob(os.path.join(directory, "*.html")))
+    return reports[0] if reports else ""
+
+
+def _report_was_expected(result) -> bool:
+    """A run that got as far as a result should have written its report.
+
+    Blocked, cancelled and errored runs unwind before the export step, which is
+    correct behaviour rather than a missing artefact.
+    """
+    if not isinstance(result, dict):
+        return False
+    return not (result.get("blocked") is True
+                or result.get("cancelled") is True
+                or result.get("error"))
+
+
+def main(seed: int, keep_dir: str = "") -> int:
     from fuzzing.generators import build_case, case_to_analyze_kwargs
+    from fuzzing.html_oracles import check_report
     from fuzzing.oracles import check_result
 
     _neutralize_dialogs(seed)
@@ -99,7 +127,36 @@ def main(seed: int) -> int:
             print("__FUZZ__" + json.dumps(verdict))
             return 3
 
-    violations = check_result(result)
+        violations = check_result(result)
+
+        # The report is still on disk here; the temp directory closes below.
+        report_path = _locate_report(tmp)
+        fired = []
+        if report_path:
+            report_violations, fired = check_report(report_path, result)
+            violations += report_violations
+        elif _report_was_expected(result):
+            violations.append("analysis produced a result but wrote no HTML report")
+        verdict["oracles_fired"] = fired
+        verdict["report_written"] = bool(report_path)
+        # Recorded so the coverage summary can say which branches a run actually
+        # reached, rather than only how many seeds were green.
+        if isinstance(result, dict):
+            verdict["posthoc"] = result.get("posthoc_test")
+            verdict["had_resolution"] = bool(
+                result.get("p_value_resolution")
+                or any(isinstance(c, dict) and c.get("p_value_resolution")
+                       for c in (result.get("pairwise_comparisons") or [])))
+
+        if violations and keep_dir and report_path:
+            try:
+                os.makedirs(keep_dir, exist_ok=True)
+                kept = os.path.join(keep_dir, f"seed_{seed}.html")
+                shutil.copyfile(report_path, kept)
+                verdict["report_kept"] = kept
+            except Exception as exc:  # keeping the evidence must not mask the finding
+                verdict["report_keep_error"] = f"{type(exc).__name__}: {exc}"
+
     if violations:
         verdict["status"] = "oracle_violation"
         verdict["violations"] = violations
@@ -114,4 +171,4 @@ def main(seed: int) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main(int(sys.argv[1])))
+    sys.exit(main(int(sys.argv[1]), sys.argv[2] if len(sys.argv) > 2 else ""))
