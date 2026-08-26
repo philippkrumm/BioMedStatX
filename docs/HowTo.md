@@ -117,6 +117,8 @@ Switch between modes with the radio buttons above the table preview.
 
 **Multi-Dataset Analysis** runs two or more measurement columns through the same factor mapping in sequence. The HTML report presents a summary card per column, with Benjamini–Hochberg FDR correction applied across all $m$ p-values. Restricted to ANOVA-capable designs.
 
+A column that cannot be analysed does not silently drop out of the overview. The report states how many columns were summarized and how many failed, and lists each failed column with the reason under **Not Analysed**, so the summary cards are read against the full selection rather than only its survivors. The overview is written even when no column could be analysed at all. Note that the FDR family covers the columns that produced a p-value: with fewer than two survivors no correction is applied, and the report then carries no FDR note.
+
 ---
 
 ## 5. Starting the Analysis

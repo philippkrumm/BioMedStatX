@@ -35,7 +35,7 @@ class ExportDispatcher:
         }
 
     @staticmethod
-    def export_multi_dataset_results(all_results, output_file) -> dict:
+    def export_multi_dataset_results(all_results, output_file, failed_datasets=None) -> dict:
         base_path = Path(output_file).resolve()
         base_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -45,7 +45,8 @@ class ExportDispatcher:
         try:
             from export.html_exporter import HTMLExporter
 
-            html_result = HTMLExporter.export_multi_dataset_results_to_html(all_results, str(html_path))
+            html_result = HTMLExporter.export_multi_dataset_results_to_html(
+                all_results, str(html_path), failed_datasets)
             if html_result is None:
                 warning = f"HTML overview export failed for '{html_path.name}'."
         except Exception as exc:

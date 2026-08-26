@@ -480,14 +480,18 @@ class AnalysisManager:
             except Exception as e:
                 logger.info(f"Warning: FDR correction failed: {str(e)}")
 
-        # Create combined HTML report
-        if all_results:
+        # Create combined HTML report. Written even when nothing survived: a run
+        # in which every dataset failed is exactly the one the user most needs a
+        # report for, and the outlier path already behaves this way.
+        report_path = None
+        if all_results or failed_datasets:
             base_name = file_name if file_name else "multi_dataset_analysis"
             report_path = f"{base_name}_combined_results.html"
 
             try:
                 ExportDispatcher = get_export_dispatcher()
-                export_result = ExportDispatcher.export_multi_dataset_results(all_results, report_path)
+                export_result = ExportDispatcher.export_multi_dataset_results(
+                    all_results, report_path, failed_datasets)
                 if export_result.get("warning"):
                     logger.warning(f"WARNING: {export_result['warning']}")
                 logger.info(f"Combined results saved to: {report_path}")
@@ -500,7 +504,7 @@ class AnalysisManager:
             "successful_datasets": list(all_results.keys()),
             "failed_datasets": failed_datasets,
             "results": all_results,
-            "combined_report": report_path if all_results else None,
+            "combined_report": report_path,
             "summary": {
                 "total_datasets": len(selected_datasets),
                 "successful": len(all_results),

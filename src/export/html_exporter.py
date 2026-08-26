@@ -67,11 +67,12 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
             return None
 
     @staticmethod
-    def export_multi_dataset_results_to_html(all_results: dict, output_file: str) -> str | None:
+    def export_multi_dataset_results_to_html(all_results: dict, output_file: str,
+                                             failed_datasets: dict | None = None) -> str | None:
         try:
             output_path = Path(output_file).resolve()
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            context = HTMLExporter._prepare_multi_report_context(all_results)
+            context = HTMLExporter._prepare_multi_report_context(all_results, failed_datasets)
             html = HTMLExporter._render_template(context, mode="multi")
             with open(output_path, "w", encoding="utf-8") as handle:
                 handle.write(html)
@@ -216,7 +217,7 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
         }
 
     @staticmethod
-    def _prepare_multi_report_context(all_results: dict) -> dict:
+    def _prepare_multi_report_context(all_results: dict, failed_datasets: dict | None = None) -> dict:
         cards = []
         significant_count = 0
         for idx, (dataset_name, results) in enumerate((all_results or {}).items()):
@@ -290,12 +291,24 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
         if any((res or {}).get("p_value_fdr") is not None for res in (all_results or {}).values()):
             fdr_note = f"FDR correction (Benjamini-Hochberg) applied to m = {n_valid_for_fdr} tests."
 
+        # A dataset whose analysis failed never reaches ``all_results`` and would
+        # otherwise disappear from the overview entirely -- indistinguishable, to
+        # the reader, from one that was never selected.
+        failure_cards = [
+            {"dataset_name": str(name), "error": str(message)}
+            for name, message in (failed_datasets or {}).items()
+        ]
+        subtitle = f"{len(cards)} datasets summarized, {significant_count} significant main results."
+        if failure_cards:
+            subtitle += f" {len(failure_cards)} failed."
+
         return {
             "mode": "multi",
             "report_title": "BioMedStatX Multi-Dataset Scientific Report",
-            "subtitle": f"{len(cards)} datasets summarized, {significant_count} significant main results.",
+            "subtitle": subtitle,
             "fdr_note": fdr_note,
             "dataset_cards": cards,
+            "failed_cards": failure_cards,
             "generated_warning": None,
             "math_render_enabled": math_render_enabled,
         }
