@@ -221,16 +221,30 @@ class AnalysisManager:
             analysis_context = analysis_context.copy()
             analysis_context["group_factor_map"] = group_factor_map
             if not groups_to_use:
-                groups_to_use = natural_order(working_df[display_group_col].dropna().unique())
+                groups_to_use = list(working_df[display_group_col].dropna().unique())
         else:
             if not groups_to_use:
-                groups_to_use = natural_order(working_df[display_group_col].dropna().unique())
+                groups_to_use = list(working_df[display_group_col].dropna().unique())
 
         # Strip whitespace so "A" and "A " (a stray space from a dirty sheet) are
         # the same group, not two. Must match the identical strip on group_key
         # below, or the split stops matching. Case is deliberately NOT folded --
         # that is a separate design decision.
         groups_to_use = [str(g).strip() for g in groups_to_use]
+
+        # One authoritative ranking, applied to whatever the caller supplied
+        # rather than only when they supplied nothing. natural_order used to be
+        # reached solely from the `if not groups_to_use` branches above -- and
+        # the window always supplies groups, taken from _sorted_unique, a plain
+        # sorted(key=str). So on the path every real user walks the ranking was
+        # skipped and the axis came out alphabetical: KO drawn before its WT
+        # control, a timecourse rendered D0, D14, D21, D7. Ranking here rather
+        # than trusting each caller to do it is the same call as the CLD gate
+        # and style_tokens: one place decides. It is safe unconditionally
+        # because natural_order preserves membership -- `groups` is a selection
+        # as well as an order, and a deselected group must not come back -- and
+        # is idempotent, so a caller that already had it right is untouched.
+        groups_to_use = [str(g) for g in natural_order(groups_to_use)]
 
         # The group split below matches stringified labels, so the column has to
         # be compared as text. Casting it in place is what the categorical branch
