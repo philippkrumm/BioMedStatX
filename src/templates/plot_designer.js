@@ -2428,6 +2428,20 @@
     var traces = built.traces;
     if (!traces.length) {
       if (warningNode) warningNode.textContent = "No plottable data found.";
+      // Returning here used to leave the previous figure standing, which makes
+      // the refusal a lie: pick Forest on a design that has no effect sizes to
+      // draw and the plot-type control reads "Forest" while a bar chart is
+      // still on screen -- with its significance letters, at their old
+      // coordinates, under a significance control that has switched itself to
+      // "none". Clearing the canvas makes the warning the whole story.
+      Plotly.react("pd-plot", [], {
+        template: "plotly_white",
+        font: { family: resolveFontFamilyStack(state.fontFamily), size: state.axisSize,
+                color: "#16313a" },
+        xaxis: { visible: false },
+        yaxis: { visible: false },
+        margin: { l: 40, r: 24, t: 40, b: 40 }
+      }, { responsive: true, displaylogo: false });
       return;
     }
 
@@ -2664,15 +2678,30 @@
     }
 
     if (isHorizontalRaincloud) {
+      // Log needs positive values, and the raincloud is the one layout that
+      // does not degrade gracefully without them. The vertical types put the
+      // values on y, where Plotly drops non-positive points by itself; the
+      // raincloud draws its violins from x, and a log x axis with a value <= 0
+      // produces a path with a missing coordinate -- Chromium reports
+      // '<path> attribute d: Expected number, "M,402.91L-6127.5..."' and the
+      // shape lands thousands of pixels off-canvas. Same precondition the
+      // significance layer already states, so state it here rather than render
+      // a broken figure.
+      var logValuesUsable = Number.isFinite(built.yMin) && built.yMin > 0;
+      var useLogValues = state.logY && logValuesUsable;
+      if (state.logY && !logValuesUsable) {
+        warningMessages.push("Log scale ignored: log requires positive values.");
+      }
+
       var horizontalXAxis = {
         title: { text: state.yLabel, font: { size: state.axisSize } },
-        type: state.logY ? "log" : "linear",
+        type: useLogValues ? "log" : "linear",
         showgrid: state.gridStyle === "major" || state.gridStyle === "both",
-        zeroline: !state.logY
+        zeroline: !useLogValues
       };
       Object.assign(horizontalXAxis, axisFrame(tickMode, axisMirror));
 
-      if (!state.logY && state.yMin != null && state.yMax != null && state.yMax > state.yMin) {
+      if (!useLogValues && state.yMin != null && state.yMax != null && state.yMax > state.yMin) {
         horizontalXAxis.range = [state.yMin, state.yMax];
       }
 

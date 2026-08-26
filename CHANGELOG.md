@@ -11,6 +11,19 @@ All notable changes to this project will be documented in this file.
   top edge of the figure at 42 pt — the largest size the control itself offers.
   The default (16 pt) is unchanged. Found by the new visual fuzzer on its first
   real batch, and pinned by a negative control that restores the old margin.
+- Choosing a plot type that cannot be drawn no longer leaves the previous figure
+  on screen. `buildPlot` warned ("No plottable data found.") and returned, so
+  picking **Forest** on a design without per-comparison effect sizes left the
+  bar chart standing — with its significance letters, at their old coordinates,
+  under a significance control that had switched itself to "none". The canvas is
+  now cleared, so the warning is the whole story.
+- The raincloud layout no longer applies a log scale to values that include zero
+  or less. It draws its violins along x, and a log x axis with a non-positive
+  value produced SVG paths with a missing coordinate — Chromium reported
+  `<path> attribute d: Expected number` and the shape landed thousands of pixels
+  off-canvas. Log is now skipped for that data with an explicit note, matching
+  the wording the significance layer and the reference lines already use; an
+  all-positive raincloud still plots on log as before.
 
 ## [2.0] - 2026-08-17
 
