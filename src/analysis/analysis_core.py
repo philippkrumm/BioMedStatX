@@ -435,7 +435,11 @@ class AnalysisManager:
                     **kwargs
                 )
                 
-                if "error" in result:
+                # Ask what the error says, not whether the key is there:
+                # `_standardize_results` gives every result it returns a full set
+                # of standard keys, "error": None among them, so a membership
+                # test marks every standardised success as a failure.
+                if result.get("error"):
                     failed_datasets[dataset_name] = result["error"]
                     logger.error(f"ERROR analyzing {dataset_name}: {result['error']}")
                 else:
