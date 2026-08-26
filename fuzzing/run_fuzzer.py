@@ -74,15 +74,26 @@ def _coverage(records: list, oracle_names: list) -> dict:
         for name in rec.get("oracles_fired") or []:
             oracles[name] += 1
     posthocs = Counter(rec["posthoc"] for rec in records if rec.get("posthoc"))
+    written = [r for r in records if r.get("report_written")]
+    # A blocked run still writes a report, honestly, with placeholders -- and
+    # almost nothing to check. Substance separates "thin because rightly gated"
+    # from "thin because the checks did not apply"; the firing count cannot.
+    substantial = [r for r in written
+                   if (r.get("report_stats") or {}).get("figures")]
     return {"designs": dict(designs), "mutations": dict(mutations),
             "oracles_fired": dict(oracles), "posthoc_tests": dict(posthocs),
             "estimated_p_values": sum(1 for r in records if r.get("had_resolution")),
-            "reports_written": sum(1 for r in records if r.get("report_written"))}
+            "reports_written": len(written),
+            "report_files": sum(r.get("reports_written") or 0 for r in records),
+            "multi_dataset_runs": sum(1 for r in records if (r.get("datasets") or 1) > 1),
+            "reports_with_a_figure": len(substantial),
+            "empty_state_blocks": sum((r.get("report_stats") or {}).get("empty_states", 0)
+                                      for r in written)}
 
 
 def main() -> int:
     from fuzzing.generators import MUTATIONS, TEST_TYPES
-    from fuzzing.html_oracles import ORACLES
+    from fuzzing.html_oracles import MULTI_ORACLES, ORACLES
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--count", type=int, default=200)
@@ -94,7 +105,7 @@ def main() -> int:
     args = ap.parse_args()
 
     env = dict(os.environ, QT_QPA_PLATFORM="offscreen", MPLBACKEND="Agg")
-    oracle_names = [name for name, _ in ORACLES]
+    oracle_names = [name for name, _ in ORACLES] + [name for name, _ in MULTI_ORACLES]
     findings = []
     records = []
     counts = Counter()
@@ -131,8 +142,10 @@ def main() -> int:
                "never_fired_oracles": never_fired,
                "unseen_designs": unseen_designs, "unseen_mutations": unseen_mutations,
                "seeds": [{k: r.get(k) for k in ("seed", "category", "test", "mutations",
-                                                "report_written", "oracles_fired",
-                                                "posthoc", "had_resolution")}
+                                                "report_written", "reports_written",
+                                                "oracles_fired", "posthoc",
+                                                "had_resolution", "datasets",
+                                                "report_stats")}
                          for r in records],
                "findings": findings}
     with open(args.report, "w") as fh:
@@ -141,7 +154,10 @@ def main() -> int:
     print("\n=== FUZZ SUMMARY ===")
     for cat, n in counts.most_common():
         print(f"  {cat:18} {n}")
-    print(f"  reports written    {coverage['reports_written']}/{args.count}")
+    print(f"  reports written    {coverage['reports_written']}/{args.count}"
+          f"  ({coverage['report_files']} files, {coverage['multi_dataset_runs']} multi-dataset runs)")
+    print(f"  of those, with an actual figure: {coverage['reports_with_a_figure']}"
+          f"  (empty-state blocks total: {coverage['empty_state_blocks']})")
 
     print("\n--- coverage ---")
     print("  designs:   " + ", ".join(f"{k}={v}" for k, v in

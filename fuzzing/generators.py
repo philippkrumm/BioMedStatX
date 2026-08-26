@@ -52,6 +52,7 @@ class FuzzCase:
     df: pd.DataFrame
     mutations: List[str]
     analyze_kwargs: Dict[str, Any] = field(default_factory=dict)
+    datasets: int = 1  # >1 drives the multi-dataset path and its combined report
 
 
 def _rng(seed: int) -> np.random.Generator:
@@ -309,6 +310,19 @@ def build_case(seed: int) -> FuzzCase:
     for m in muts:
         df = _apply_mutation(df, m, rng, dv_col=dv_col)
 
+    # Comparing several experiments at once is a real workflow and had no
+    # coverage at all: the generator only ever built mode="single", so the
+    # combined report, its own template and the across-dataset FDR correction
+    # were never rendered. Multi runs the same design once per dataset, which is
+    # what the pipeline does; the injected frame is shared, so the datasets carry
+    # the same numbers -- enough to exercise the path, not a test of differing
+    # inputs.
+    datasets = 1
+    if kwargs.get("group_col") and not kwargs.get("dependent"):
+        if int(rng.integers(0, 5)) == 0:
+            datasets = int(rng.integers(2, 4))
+            kwargs["selected_datasets"] = [f"DS{i + 1}" for i in range(datasets)]
+
     ctx["injected_df"] = df
     kwargs["analysis_context"] = ctx
     # The matplotlib figure export these two kwargs used to drive was removed
@@ -317,7 +331,7 @@ def build_case(seed: int) -> FuzzCase:
     # read back. Kept only because analyze() still accepts them.
     kwargs.setdefault("plot_type", "Bar")
     return FuzzCase(seed=seed, test_label=test_label, df=df, mutations=[str(m) for m in muts],
-                    analyze_kwargs=kwargs)
+                    analyze_kwargs=kwargs, datasets=datasets)
 
 
 def case_to_analyze_kwargs(case: FuzzCase, file_path: str, output_base: str) -> Dict[str, Any]:

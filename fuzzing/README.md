@@ -28,9 +28,11 @@ python -m fuzzing._worker 142
 3. `oracles.check_result` inspects the result dict for statistically impossible
    answers — non-positive degrees of freedom, p outside [0, 1], an effect size
    outside its own range, a huge F with a large p.
-4. `html_oracles.check_report` reads the **exported HTML** back off disk before
-   the working directory is removed, and checks the invariants that only exist
-   in the artefact.
+4. `html_oracles` reads the **exported HTML** back off disk before the working
+   directory is removed, and checks the invariants that only exist in the
+   artefact. Every file the run wrote is checked, not just the first: a
+   multi-dataset run writes one report per dataset plus a combined overview,
+   and the overview has its own template and its own oracles.
 
 Step 4 is the one that closes the loop. The report is the product; a result dict
 that is perfectly sound can still reach the reader as a chart claiming something
@@ -51,6 +53,15 @@ the test never found.
 | `paired_line_gate` | a subject-line verdict that drifted from the rule, a refusal without a reason, lines across the cells of a mixed design |
 | `axis_order_ranked` | an axis in label order rather than ranked order |
 | `one_plot_font` | a second font family in the figures |
+
+For the combined overview of a multi-dataset run:
+
+| Oracle | What it refuses to accept |
+| --- | --- |
+| `multi_lists_datasets` | an analysed dataset absent from the overview |
+| `multi_count_matches` | a headline count that disagrees with the cards behind it |
+| `multi_p_values_rendered` | a dataset p-value, raw or FDR-adjusted, that never reaches the reader |
+| `multi_failures_surfaced` | a dataset that failed and vanished from the report |
 
 `tests/test_fuzz_html_oracles.py` breaks each invariant in an otherwise valid
 report and demands the matching oracle says so. An oracle that cannot fail
@@ -79,6 +90,12 @@ that never fired contributed only the appearance of safety.
 `reports written` is low by design rather than by fault: most heavily mutated
 cases are stopped at the data-quality gate before any report exists, which is
 the correct behaviour and is why the count is reported next to the outcomes.
+
+`with an actual figure` is the line to read next to it. A blocked run still
+writes a report -- honestly, full of placeholders -- and almost every oracle
+then has nothing to say, so it passes without being tested. Counting figures and
+empty-state blocks separates "thin because it was rightly gated" from "thin
+because the checks did not apply", which the firing count on its own cannot.
 
 ## Findings
 

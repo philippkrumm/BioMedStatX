@@ -476,8 +476,122 @@ ORACLES = (
 )
 
 
-def check_report(path: str, result: Any) -> Tuple[List[str], List[str]]:
-    """Check the written report. Returns ``(violations, oracles_that_fired)``."""
+# Oracles that read only the file. A dataset whose analysis errored still leaves
+# a report behind, but never reaches ``results``, so there is no result dict to
+# compare it against -- skipping those files entirely would have silently
+# dropped substantial reports from the run. The ones listed here need nothing
+# but the report itself; the rest would recompute an expectation from an empty
+# result and invent violations.
+RESULT_FREE_ORACLES = ("payloads_parse", "sections_present", "letters_gate_complete",
+                       "letters_match_pairs", "brackets_have_no_letters",
+                       "axis_order_ranked", "one_plot_font")
+
+
+def check_report_without_result(path: str) -> Tuple[List[str], List[str]]:
+    """Check what a report asserts on its own, with no result to compare to."""
+    subset = tuple((name, fn) for name, fn in ORACLES if name in RESULT_FREE_ORACLES)
+    return _run(path, {}, subset, min_bytes=1000)
+
+
+# --- the combined report of a multi-dataset run ---------------------------------
+# A different artefact with a different template: no sections, no figure builder,
+# no significance layer -- a lean overview of one card per dataset. It had no
+# coverage at all, because the generator only ever built mode="single".
+
+
+def _oracle_multi_lists_every_dataset(report, result, violations) -> bool:
+    """Every analysed dataset must appear in the overview by name."""
+    names = [str(n) for n in (result.get("successful_datasets") or [])]
+    if not names:
+        return False
+    for name in names:
+        if name not in report.rendered:
+            violations.append(f"dataset {name!r} was analysed but is absent from the overview")
+    return True
+
+
+def _oracle_multi_count_matches(report, result, violations) -> bool:
+    """The headline count must be the number of cards behind it."""
+    names = result.get("successful_datasets") or []
+    if not names:
+        return False
+    match = re.search(r"(\d+)\s+datasets? summarized", report.rendered)
+    if not match:
+        violations.append("the overview does not state how many datasets it summarizes")
+        return True
+    if int(match.group(1)) != len(names):
+        violations.append(
+            f"the overview says {match.group(1)} datasets but {len(names)} were analysed"
+        )
+    return True
+
+
+def _oracle_multi_p_values_rendered(report, result, violations) -> bool:
+    """Each card must carry its dataset's p-value, raw and FDR-adjusted."""
+    from export.report_formatting import _FormattingMixin
+
+    per_dataset = result.get("results") or {}
+    if not isinstance(per_dataset, dict) or not per_dataset:
+        return False
+
+    fired = False
+    for name, sub in per_dataset.items():
+        if not isinstance(sub, dict):
+            continue
+        p = sub.get("p_value")
+        if _is_number(p) and math.isfinite(p) and sub.get("blocked") is not True:
+            fired = True
+            shown = _FormattingMixin._format_p_value(p, sub.get("p_value_resolution"))
+            if shown not in report.rendered:
+                violations.append(
+                    f"dataset {name!r} has p={p!r} but its rendering {shown!r} is "
+                    "absent from the overview"
+                )
+        adjusted = sub.get("p_value_fdr")
+        if _is_number(adjusted) and math.isfinite(adjusted):
+            fired = True
+            shown = _FormattingMixin._format_p_value(adjusted)
+            if shown not in report.rendered:
+                violations.append(
+                    f"dataset {name!r} carries an FDR-adjusted p but {shown!r} is "
+                    "absent from the overview"
+                )
+    return fired
+
+
+def _oracle_multi_failures_surfaced(report, result, violations) -> bool:
+    """A dataset that failed must not vanish from the report.
+
+    The run knows which datasets errored -- it returns them in
+    ``failed_datasets`` -- but the reader only ever receives the combined
+    report. A dataset that silently disappears from it reads as one the user
+    never selected.
+    """
+    failed = result.get("failed_datasets") or {}
+    if not isinstance(failed, dict) or not failed:
+        return False
+    for name in failed:
+        if str(name) not in report.rendered:
+            violations.append(
+                f"dataset {name!r} failed but is not mentioned in the overview at all"
+            )
+    return True
+
+
+MULTI_ORACLES = (
+    ("multi_lists_datasets", _oracle_multi_lists_every_dataset),
+    ("multi_count_matches", _oracle_multi_count_matches),
+    ("multi_p_values_rendered", _oracle_multi_p_values_rendered),
+    ("multi_failures_surfaced", _oracle_multi_failures_surfaced),
+)
+
+
+def check_multi_report(path: str, result: Any) -> Tuple[List[str], List[str]]:
+    """Check the combined overview of a multi-dataset run."""
+    return _run(path, result, MULTI_ORACLES, min_bytes=2000)
+
+
+def _run(path, result, oracles, min_bytes) -> Tuple[List[str], List[str]]:
     violations: List[str] = []
     if not isinstance(result, dict):
         return [f"result is not a dict: {type(result).__name__}"], []
@@ -487,14 +601,36 @@ def check_report(path: str, result: Any) -> Tuple[List[str], List[str]]:
     except Exception as exc:
         return [f"report at {path} could not be read: {type(exc).__name__}: {exc}"], []
 
-    if len(report.text) < 1000:
+    if len(report.text) < min_bytes:
         return [f"report at {path} is {len(report.text)} bytes -- effectively empty"], []
 
     fired: List[str] = []
-    for name, oracle in ORACLES:
+    for name, oracle in oracles:
         try:
             if oracle(report, result, violations):
                 fired.append(name)
         except Exception as exc:  # an oracle that throws is a finding about itself
             violations.append(f"oracle {name} raised {type(exc).__name__}: {exc}")
     return violations, fired
+
+
+def check_report(path: str, result: Any) -> Tuple[List[str], List[str]]:
+    """Check a single-analysis report. Returns ``(violations, oracles_that_fired)``."""
+    return _run(path, result, ORACLES, min_bytes=1000)
+
+
+def report_stats(path: str) -> dict:
+    """Cheap shape of a written report: how much of it is actually filled in.
+
+    A blocked run still writes a report -- honestly, with placeholders -- and
+    almost every oracle then has nothing to say. Counting bytes and empty-state
+    blocks separates "thin because it was rightly gated" from "thin because the
+    checks did not apply", which the firing count alone cannot.
+    """
+    try:
+        text = open(path, encoding="utf-8", errors="replace").read()
+    except Exception:
+        return {}
+    return {"bytes": len(text),
+            "empty_states": text.count("empty-state"),
+            "figures": text.count("Plotly.newPlot(")}

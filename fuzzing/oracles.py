@@ -88,6 +88,14 @@ def check_result(result: Any) -> List[str]:
     if not isinstance(result, dict):
         return [f"result is not a dict: {type(result).__name__}"]
 
+    # A multi-dataset run returns a summary, not a test: the analyses live one
+    # level down. Checking the summary itself flagged every multi run as a
+    # nameless result, and left the actual analyses unchecked.
+    if result.get("type") == "multi_dataset_analysis":
+        for name, sub in (result.get("results") or {}).items():
+            violations += [f"[{name}] {v}" for v in check_result(sub)]
+        return violations
+
     blocked = result.get("blocked") is True
     has_error = bool(result.get("error"))
     # A mid-analysis dialog the user backs out of returns a cancelled result with

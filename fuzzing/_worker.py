@@ -162,10 +162,61 @@ def _neutralize_dialogs(seed: int):
         pass
 
 
-def _locate_report(directory: str) -> str:
-    """The written HTML report, or "" if the run produced none."""
-    reports = sorted(glob.glob(os.path.join(directory, "*.html")))
-    return reports[0] if reports else ""
+def _locate_reports(directory: str) -> list:
+    """Every HTML report the run wrote.
+
+    A multi-dataset run writes one report per dataset plus the combined
+    overview. Checking only the first of the sorted list -- which is what this
+    did -- would have silently ignored the rest.
+    """
+    return sorted(glob.glob(os.path.join(directory, "*.html")))
+
+
+def _dataset_for(path: str, result: dict):
+    """Match a per-dataset report file back to the dataset it was rendered for.
+
+    Returns ``(dataset_name, sub_result_or_None)``, or ``None`` when the file
+    belongs to no dataset of this run at all. A dataset whose analysis errored
+    still leaves its own report behind, but never reaches ``results`` -- so a
+    missing sub-result means "failed", not "orphaned", and the two must not be
+    reported as the same thing.
+
+    The file name is built from the dataset name, but the suffix differs by
+    export branch (``_results.html`` for the clinical path, ``.html`` for the
+    standard one), so the name is looked for inside the basename rather than
+    matched against a fixed pattern. The longest match wins, so DS1 does not
+    claim a file belonging to DS10.
+    """
+    name = os.path.basename(path)
+    per_dataset = result.get("results") or {}
+    failed = result.get("failed_datasets") or {}
+    best = None
+    for dataset_name in list(per_dataset) + list(failed):
+        token = str(dataset_name)
+        if token and token in name and (best is None or len(token) > len(best[0])):
+            best = (token, per_dataset.get(dataset_name))
+    return best
+
+
+def _check_one(path: str, result: dict):
+    """Route one file to the checks that apply to it."""
+    from fuzzing.html_oracles import (check_multi_report, check_report,
+                                      check_report_without_result)
+
+    if result.get("type") == "multi_dataset_analysis":
+        if os.path.basename(path).endswith("_combined_results_report.html"):
+            return check_multi_report(path, result)
+        match = _dataset_for(path, result)
+        if match is None:
+            return ([f"report {os.path.basename(path)} belongs to no dataset in the result"], [])
+        _, sub = match
+        if sub is None:
+            # This dataset's analysis errored, so there is no result to compare
+            # against -- but the report it left behind is still a report, and
+            # what it asserts on its own can be checked.
+            return check_report_without_result(path)
+        return check_report(path, sub)
+    return check_report(path, result)
 
 
 def _report_was_expected(result) -> bool:
@@ -176,6 +227,10 @@ def _report_was_expected(result) -> bool:
     """
     if not isinstance(result, dict):
         return False
+    # A multi-dataset run reports per dataset: if none of them survived there is
+    # nothing to combine and no report is written, which is correct.
+    if result.get("type") == "multi_dataset_analysis":
+        return bool(result.get("successful_datasets"))
     return not (result.get("blocked") is True
                 or result.get("cancelled") is True
                 or result.get("error"))
@@ -183,7 +238,7 @@ def _report_was_expected(result) -> bool:
 
 def main(seed: int, keep_dir: str = "") -> int:
     from fuzzing.generators import build_case, case_to_analyze_kwargs
-    from fuzzing.html_oracles import check_report
+    from fuzzing.html_oracles import report_stats
     from fuzzing.oracles import check_result
 
     _neutralize_dialogs(seed)
@@ -210,16 +265,25 @@ def main(seed: int, keep_dir: str = "") -> int:
 
         violations = check_result(result)
 
-        # The report is still on disk here; the temp directory closes below.
-        report_path = _locate_report(tmp)
+        # The reports are still on disk here; the temp directory closes below.
+        reports = _locate_reports(tmp)
         fired = []
-        if report_path:
-            report_violations, fired = check_report(report_path, result)
+        stats = {"bytes": 0, "empty_states": 0, "figures": 0}
+        for report_path in reports:
+            report_violations, report_fired = _check_one(report_path, result)
             violations += report_violations
-        elif _report_was_expected(result):
+            for name in report_fired:
+                if name not in fired:
+                    fired.append(name)
+            for key, value in (report_stats(report_path) or {}).items():
+                stats[key] = stats.get(key, 0) + value
+        if not reports and _report_was_expected(result):
             violations.append("analysis produced a result but wrote no HTML report")
         verdict["oracles_fired"] = fired
-        verdict["report_written"] = bool(report_path)
+        verdict["report_written"] = bool(reports)
+        verdict["reports_written"] = len(reports)
+        verdict["report_stats"] = stats
+        verdict["datasets"] = case.datasets
         # Recorded so the coverage summary can say which branches a run actually
         # reached, rather than only how many seeds were green.
         if isinstance(result, dict):
@@ -229,12 +293,19 @@ def main(seed: int, keep_dir: str = "") -> int:
                 or any(isinstance(c, dict) and c.get("p_value_resolution")
                        for c in (result.get("pairwise_comparisons") or [])))
 
-        if violations and keep_dir and report_path:
+        # Keep every report of a failing seed, not the last one the loop happened
+        # to leave behind in its variable -- a multi-dataset run writes several,
+        # and which of them carries the finding is the question being asked.
+        if violations and keep_dir and reports:
             try:
                 os.makedirs(keep_dir, exist_ok=True)
-                kept = os.path.join(keep_dir, f"seed_{seed}.html")
-                shutil.copyfile(report_path, kept)
-                verdict["report_kept"] = kept
+                kept = []
+                for index, report_path in enumerate(reports):
+                    suffix = "" if len(reports) == 1 else f"_{index}"
+                    target = os.path.join(keep_dir, f"seed_{seed}{suffix}.html")
+                    shutil.copyfile(report_path, target)
+                    kept.append(target)
+                verdict["reports_kept"] = kept
             except Exception as exc:  # keeping the evidence must not mask the finding
                 verdict["report_keep_error"] = f"{type(exc).__name__}: {exc}"
 

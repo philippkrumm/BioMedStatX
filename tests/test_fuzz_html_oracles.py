@@ -381,3 +381,114 @@ def test_a_cancelled_analysis_is_a_self_identifying_result():
 
     nameless = {"analysis_log": "..."}
     assert any("test' label" in v for v in check_result(nameless))
+
+
+# --- the combined report of a multi-dataset run --------------------------------
+
+
+def _multi_html(*, names=("DS1", "DS2"), summarized=None, p_texts=(), extra=""):
+    summarized = len(names) if summarized is None else summarized
+    cards = "".join(f'<article class="dataset-card"><h3>{n}</h3></article>' for n in names)
+    ps = "".join(f'<div class="metric-value">{t.replace("<", "&lt;")}</div>' for t in p_texts)
+    return (
+        "<html><body><header class='hero'>"
+        f"<p class='hero-subtitle'>{summarized} datasets summarized, 1 significant "
+        "main results.</p></header>"
+        f'<div class="dataset-grid">{cards}</div>{ps}{extra}'
+        + "<p>" + "padding " * 400 + "</p></body></html>"
+    )
+
+
+def _multi_result(names=("DS1", "DS2"), failed=None, p_values=None, fdr=None):
+    p_values = p_values or {n: 0.02 for n in names}
+    results = {}
+    for n in names:
+        sub = {"test": "One-Way ANOVA", "p_value": p_values[n]}
+        if fdr and n in fdr:
+            sub["p_value_fdr"] = fdr[n]
+        results[n] = sub
+    return {"type": "multi_dataset_analysis",
+            "successful_datasets": list(names),
+            "failed_datasets": failed or {},
+            "results": results}
+
+
+def test_a_faithful_overview_passes(tmp_path):
+    from export.report_formatting import _FormattingMixin
+    from fuzzing.html_oracles import check_multi_report
+
+    result = _multi_result()
+    texts = [_FormattingMixin._format_p_value(0.02)]
+    path = _write(tmp_path, _multi_html(p_texts=texts), name="combined.html")
+    violations, fired = check_multi_report(path, result)
+    assert violations == []
+    assert set(fired) == {"multi_lists_datasets", "multi_count_matches",
+                          "multi_p_values_rendered"}
+
+
+def test_a_dataset_missing_from_the_overview_is_caught(tmp_path):
+    from export.report_formatting import _FormattingMixin
+    from fuzzing.html_oracles import check_multi_report
+
+    result = _multi_result()
+    texts = [_FormattingMixin._format_p_value(0.02)]
+    path = _write(tmp_path, _multi_html(names=("DS1",), summarized=2, p_texts=texts),
+                  name="combined.html")
+    violations, _ = check_multi_report(path, result)
+    assert any("DS2" in v and "absent from the overview" in v for v in violations)
+
+
+def test_a_headline_count_that_lies_is_caught(tmp_path):
+    from export.report_formatting import _FormattingMixin
+    from fuzzing.html_oracles import check_multi_report
+
+    result = _multi_result()
+    texts = [_FormattingMixin._format_p_value(0.02)]
+    path = _write(tmp_path, _multi_html(summarized=7, p_texts=texts), name="combined.html")
+    violations, _ = check_multi_report(path, result)
+    assert any("says 7 datasets but 2 were analysed" in v for v in violations)
+
+
+def test_an_fdr_adjusted_p_that_never_reaches_the_reader_is_caught(tmp_path):
+    from export.report_formatting import _FormattingMixin
+    from fuzzing.html_oracles import check_multi_report
+
+    result = _multi_result(fdr={"DS1": 0.043})
+    texts = [_FormattingMixin._format_p_value(0.02)]
+    path = _write(tmp_path, _multi_html(p_texts=texts), name="combined.html")
+    violations, fired = check_multi_report(path, result)
+    assert "multi_p_values_rendered" in fired
+    assert any("FDR-adjusted p" in v for v in violations)
+
+
+def test_a_failed_dataset_that_vanishes_is_caught(tmp_path):
+    """The run records the failure; the reader only ever gets the report.
+
+    `_prepare_multi_report_context` takes `all_results` alone, so a dataset that
+    errored has no channel into the overview at all -- it simply disappears, and
+    the headline counts the survivors. The sibling outlier export does carry its
+    failures through.
+    """
+    from export.report_formatting import _FormattingMixin
+    from fuzzing.html_oracles import check_multi_report
+
+    result = _multi_result(names=("DS1",), failed={"DS2": "engine blew up"})
+    texts = [_FormattingMixin._format_p_value(0.02)]
+    path = _write(tmp_path, _multi_html(names=("DS1",), summarized=1, p_texts=texts),
+                  name="combined.html")
+    violations, fired = check_multi_report(path, result)
+    assert "multi_failures_surfaced" in fired
+    assert any("DS2" in v and "not mentioned" in v for v in violations)
+
+
+def test_the_multi_summary_is_checked_one_level_down(tmp_path):
+    """A multi run returns a summary, not a test; the analyses live in `results`."""
+    from fuzzing.oracles import check_result
+
+    clean = _multi_result()
+    assert check_result(clean) == []
+
+    broken = _multi_result()
+    broken["results"]["DS2"]["p_value"] = 1.7
+    violations = check_result(broken)
+    assert any(v.startswith("[DS2]") and "outside [0, 1]" in v for v in violations)
