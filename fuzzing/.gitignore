@@ -1,3 +1,4 @@
 __pycache__/
 fuzz_report.json
 failures/
+import_fuzz_report.json

@@ -103,3 +103,121 @@ Reports belonging to a finding are copied to `fuzzing/failures/seed_<n>.html`
 (git-ignored) so the artefact can be opened, not only the seed re-run. The full
 record, including the per-seed design, mutations and which oracles fired, is
 written to `fuzzing/fuzz_report.json`.
+
+---
+
+# Fuzzing the import and mapping layers
+
+The fuzzer above starts from a clean DataFrame already in memory:
+`analysis_context["injected_df"]` short-circuits file reading, and the analysis
+context it hands over is one it built itself, which makes a wrong mapping
+impossible by construction. So it covers exactly one span — DataFrame in, HTML
+out — and says nothing about the two layers on either side of it.
+
+This second fuzzer covers the layer before: an actual `.csv` or `.xlsx` written
+to disk, opened by the actual window.
+
+```bash
+python -m fuzzing.run_import_fuzzer --count 200
+```
+
+```bash
+python -m fuzzing._import_worker 42
+```
+
+## What a run does
+
+1. `import_generators.build_case(seed, dir)` writes a real file and records the
+   ground truth of what it wrote — the values, the group label of every row, the
+   shape. Four mutations, drawn from what a lab actually sends: **German number
+   format** (`;` separated, comma decimal, dot thousands, and values large enough
+   that the thousands separator is exercised at all), **notes above the header**
+   (an export with an experiment title and an operator line before the table),
+   **merged group cells** (a genuinely merged range, so the rows beneath the
+   label are empty in the file), and **the wrong number format declared** — the
+   realistic mistake, since there is deliberately no autodetect and the
+   declaration is the user's.
+2. `_import_worker` builds the real `StatisticalAnalyzerApp` headless and calls
+   `load_file()` on it. Exactly two things are stubbed, and both are things a
+   *user* answers rather than things the app computes: the CSV number-format
+   dialog, whose fuzzed answer is the case's declared format, and the message
+   boxes — which are recorded rather than swallowed, because an app that gives
+   up on a file without telling anyone is the failure this layer hides best.
+3. `import_oracles.check_import` compares the window's state against the ground
+   truth. Each violation is tagged with the oracle that raised it.
+
+## The oracles
+
+The split that governs all of them is `expect_faithful_read`: header on the
+first row, and, for a CSV, the declared format is the one the file was written
+in. When it holds, the read must reproduce the file exactly. When it does not,
+the app is *allowed* to misread — what it may not do is present a finished
+mapping built on a misread.
+
+| oracle | precondition | asserts |
+|---|---|---|
+| `file_loaded` | faithful read expected | the file loaded and has rows |
+| `load_failure_is_announced` | nothing loaded | the user was actually told |
+| `shape_survives` | faithful, not pivoted | row and column counts match the file |
+| `dv_is_numeric` | faithful | a column of numbers arrived as numbers |
+| `values_survive` | faithful, numeric, not pivoted | the numbers are the numbers that were written |
+| `levels_survive` | faithful, not pivoted | the group labels are the labels that were written |
+| `no_phantom_levels` | loaded | a blank cell did not become a group |
+| `broken_import_fails_visibly` | faithful read **not** expected | a misread never reaches a ready-looking mapping |
+| `dv_reaches_bucket` | faithful, numeric | the measurement column is the one the mapping chose |
+| `factor_reaches_bucket` | faithful, ≥2 levels | the group column landed in Factor 1 |
+| `measurement_is_not_a_subject` | faithful | a column of measurements was not filed as a subject ID |
+
+`values_survive` is the one worth understanding. The failure it exists for is
+not a crash and not a warning: a thousands separator read as a decimal point
+divides every number by a thousand and leaves a column that is entirely
+plausible and entirely wrong.
+
+## Proving the oracles can fail
+
+`tests/test_import_oracles.py` breaks one invariant per test against synthetic
+state. That the state matches the real window was established by mutating real
+`src/` code and re-running affected seeds — six deliberate breaks, each caught
+by the oracle named for it:
+
+| break | caught by |
+|---|---|
+| `read_csv_localized` drops `thousands` | `dv_is_numeric` |
+| the loader quietly `dropna()`s the frame | `shape_survives`, `values_survive` |
+| `"id"` goes back to a substring match | `dv_reaches_bucket` |
+| a failed load no longer shows its message box | `load_failure_is_announced` |
+| the mapping goes live with nothing assigned | `broken_import_fails_visibly` |
+| blank labels stringified into the group `nan` | `levels_survive`, `no_phantom_levels` |
+
+The fifth of those found a hole in the oracle rather than in the product: an
+empty measurement bucket was being counted as a refusal, so an app claiming to
+be ready with nothing assigned walked straight past. `file_loaded`,
+`factor_reaches_bucket` and `measurement_is_not_a_subject` are covered by the
+unit tests but have not been put in front of a real mutation yet.
+
+## Reading the summary
+
+```
+=== IMPORT FUZZ SUMMARY ===
+  OK                 120
+  files the app must parse exactly : 64
+  files it may only refuse visibly : 56
+  loaded 109  |  measurement column numeric 64  |  mapping ready 64  |  wide-pivoted 0
+```
+
+The two middle lines are the ones that stop a green run from being mistaken for
+a tested one. The value-level checks live entirely on the first group; a run made
+only of files the app may legitimately refuse would be green without having
+verified a single number. Seeds that fired **no** oracle at all are counted and
+named — the first run had one, a file that failed to load so early that nothing
+else applied, and it counted as OK.
+
+`wide-pivoted 0` is an honest gap, not a result: the generator does not yet
+write wide-format files, so `_detect_wide_format` and the melt behind it are
+untested here.
+
+## Not covered
+
+The layer after export — what the rendered page actually looks like — is
+untouched by either fuzzer. No browser, no pixels. A clipped axis label or a
+broken plot layout is invisible to both.
