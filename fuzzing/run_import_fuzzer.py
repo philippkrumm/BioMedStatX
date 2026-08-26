@@ -93,6 +93,7 @@ def _coverage(records: list, oracle_names: list) -> dict:
 
 
 def main() -> int:
+    from fuzzing.html_oracles import MULTI_ORACLES, ORACLES as REPORT_ORACLES
     from fuzzing.import_generators import FILE_FORMATS, MUTATIONS
     from fuzzing.import_oracles import ORACLES
 
@@ -104,7 +105,12 @@ def main() -> int:
     args = ap.parse_args()
 
     env = dict(os.environ, QT_QPA_PLATFORM="offscreen", MPLBACKEND="Agg")
-    oracle_names = [name for name, _ in ORACLES]
+    # The chain runs on past the mapping now, so the report oracles are part
+    # of this run's coverage too -- they fire here without any change of their
+    # own, which is the whole point of joining the two spans.
+    oracle_names = ([name for name, _ in ORACLES]
+                    + [name for name, _ in REPORT_ORACLES]
+                    + [name for name, _ in MULTI_ORACLES])
     findings, records = [], []
     counts = Counter()
     t0 = time.time()

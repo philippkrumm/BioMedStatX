@@ -33,9 +33,17 @@ for _p in (_ROOT, os.path.join(_ROOT, "src")):
         sys.path.insert(0, _p)
 
 
-def _neutralize(declared_format):
-    """Answer the two dialogs a user would answer, and nothing else."""
-    from PyQt5.QtWidgets import QMessageBox
+def _neutralize(declared_format, seed, report_path):
+    """Answer the dialogs a user would answer, and nothing else.
+
+    Everything here is a *user decision*, never something the app computes. The
+    CSV number format is the case's declaration, right or wrong. The save
+    location is where the report goes. The post-hoc, transformation, control
+    group and pair dialogs behind the analysis are answered by the analysis
+    fuzzer's own neutralizer, reused verbatim rather than rebuilt -- a second
+    copy of that logic would drift from the first and test itself.
+    """
+    from PyQt5.QtWidgets import QFileDialog, QMessageBox
 
     # Recorded, not merely swallowed: an app that gives up on a file without
     # telling anyone is the failure this layer is most likely to hide.
@@ -48,10 +56,21 @@ def _neutralize(declared_format):
             return QMessageBox.Ok
         setattr(QMessageBox, name, staticmethod(_record))
 
+    # "Start Auto Analysis" opens a Save Analysis Report dialog before anything
+    # runs, and returns without analysing if it comes back empty. Headless it
+    # would simply block -- the first thing to hang, before any of the post-hoc
+    # dialogs are even reached.
+    QFileDialog.getSaveFileName = staticmethod(
+        lambda *a, _p=report_path, **k: (_p, "HTML Report (*.html)")
+    )
+
     from autopilot import statistical_analyzer_autopilot_pipeline as pipeline
     pipeline.AutopilotMixin._prompt_csv_format = (
         lambda self, _f=declared_format: dict(_f) if _f else None
     )
+
+    from fuzzing._worker import _neutralize_dialogs
+    _neutralize_dialogs(seed)
     return seen
 
 
@@ -91,6 +110,61 @@ def _snapshot(window, case, messages):
     return state
 
 
+def _run_the_analysis(window, report_dir):
+    """Press the button the worker used to only look at.
+
+    This is the seam: until now the import fuzzer stopped at the mapping and the
+    analysis fuzzer started from a DataFrame it had built itself, so the join --
+    a real mapping actually driving a real analysis -- ran nowhere, in neither
+    fuzzer and not in ``validation/test_all_paths.py`` either, which reads a real
+    file but hand-builds the context the UI would have produced.
+
+    ``determine_and_run_test`` is a plain synchronous slot: no QThread, no
+    QRunnable, no thread pool anywhere in the autopilot. It returns only once
+    the analysis is done and the report is written, so there is nothing to poll.
+    """
+    from fuzzing._worker import _check_one, _locate_reports, _report_was_expected
+
+    outcome = {"analysis_ran": True, "reports": [], "report_oracles": [],
+               "violations": []}
+    try:
+        window.determine_and_run_test()
+    except Exception as exc:
+        outcome["analysis_error"] = f"{type(exc).__name__}: {exc}"
+        outcome["violations"].append(
+            f"the mapping was accepted but the analysis raised {type(exc).__name__}: {exc}"
+        )
+        return outcome
+
+    result = getattr(window, "current_analysis_result", None)
+    outcome["result_test"] = (result or {}).get("test") if isinstance(result, dict) else None
+    outcome["blocked"] = bool((result or {}).get("blocked")) if isinstance(result, dict) else False
+
+    reports = _locate_reports(report_dir)
+    outcome["reports"] = [os.path.basename(p) for p in reports]
+
+    if not isinstance(result, dict):
+        # The button was enabled, so the app promised the design was runnable.
+        # Coming back with no result at all is that promise broken.
+        outcome["violations"].append(
+            "the mapping was presented as ready but the analysis produced no result")
+        return outcome
+
+    if not reports and _report_was_expected(result):
+        outcome["violations"].append(
+            "the analysis produced a result but wrote no report")
+        return outcome
+
+    fired = []
+    for path in reports:
+        violations, names = _check_one(path, result)
+        fired.extend(names)
+        outcome["violations"].extend(
+            f"[{os.path.basename(path)}] {v}" for v in violations)
+    outcome["report_oracles"] = sorted(set(fired))
+    return outcome
+
+
 def main(seed: int) -> int:
     from PyQt5.QtCore import QSettings
     from PyQt5.QtWidgets import QApplication
@@ -109,8 +183,12 @@ def main(seed: int) -> int:
             "bytes": os.path.getsize(case.file_path),
         })
 
+        report_dir = os.path.join(work_dir, "out")
+        os.makedirs(report_dir, exist_ok=True)
+
         app = QApplication.instance() or QApplication([])
-        messages = _neutralize(case.declared_format)
+        messages = _neutralize(case.declared_format, seed,
+                               os.path.join(report_dir, "report.html"))
 
         from autopilot.statistical_analyzer_autopilot_pipeline import _current_app_version
         QSettings("BioMedStatX", "BioMedStatX").setValue(
@@ -140,6 +218,18 @@ def main(seed: int) -> int:
                 "wide_pivoted": state["wide_pivoted"],
                 "messages": state["messages"],
             })
+            # Only when the app itself says the design is runnable. A file it
+            # correctly refused has nothing to analyse, and pressing the button
+            # anyway would test a path no user can reach.
+            if state["start_enabled"]:
+                outcome = _run_the_analysis(window, report_dir)
+                violations.extend(outcome.pop("violations"))
+                fired.extend(outcome.pop("report_oracles"))
+                verdict.update(outcome)
+                verdict["oracles_fired"] = sorted(set(fired))
+            else:
+                verdict["analysis_ran"] = False
+
             if violations:
                 verdict.update({"status": "violation", "violations": violations})
                 print("__IMPORT_FUZZ__" + json.dumps(verdict, default=str))
