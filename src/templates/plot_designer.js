@@ -2586,7 +2586,15 @@
       template: "plotly_white",
       title: { text: state.title, font: { family: resolvedFontFamily, size: state.titleSize } },
       font: { family: resolvedFontFamily, size: state.axisSize, color: "#16313a" },
-      margin: { l: 64, r: Math.max(legendOutsideRight ? 160 : 24, hasReferenceAnnotations ? 130 : 24), t: 58, b: legendBottom ? 120 : 68 },
+      // The top margin has to grow with the title, because the title is not an
+      // axis and the automargin loop at the end of this function only covers
+      // axes. With a fixed t the title was already clipped by the top edge at
+      // the largest size the control itself offers (42), and 58 is exactly the
+      // room a 16pt title needs -- so the formula reproduces today's default
+      // and only ever adds space above it. Plotly's own title.automargin is
+      // not the fix here: it reserves space inside the plotting area instead of
+      // growing the margin, which leaves the clipping and moves the default.
+      margin: { l: 64, r: Math.max(legendOutsideRight ? 160 : 24, hasReferenceAnnotations ? 130 : 24), t: Math.max(58, Math.round(state.titleSize * 2.2) + 22), b: legendBottom ? 120 : 68 },
       xaxis: xAxisConfig,
       yaxis: yAxis,
       showlegend: state.showLegend,

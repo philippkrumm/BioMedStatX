@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Plots and visualisation
+
+- The interactive figure builder's top margin grows with the title size. It was
+  fixed at 58 px while every axis had `automargin`, so a title was clipped by the
+  top edge of the figure at 42 pt — the largest size the control itself offers.
+  The default (16 pt) is unchanged. Found by the new visual fuzzer on its first
+  real batch, and pinned by a negative control that restores the old margin.
+
 ## [2.0] - 2026-08-17
 
 ### Reporting
