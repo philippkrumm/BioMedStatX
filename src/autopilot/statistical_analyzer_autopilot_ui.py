@@ -87,13 +87,30 @@ def _infer_column_kind(series):
     return "categorical"
 
 
+# Every keyword but one is long enough that no ordinary column name contains it
+# by accident, so those stay substring matches and keep working for run-together
+# spellings like "patientnummer". "id" is two characters and hides inside a long
+# list of perfectly normal measurement names -- lipid, peptid, humidity, acidity,
+# oxidation, rigidity, solid, fluid -- so it alone is matched as a word.
+_SUBJECT_STRONG_KEYWORDS = ("subject", "subjekt", "patient", "participant", "animal", "mouse")
+_SUBJECT_WEAK_KEYWORDS = ("sample",)
+_ID_WORD = re.compile(r"\bid\b")
+
+
+def _name_words(column_name):
+    """Lowercased name with camelCase humps and separators turned into word
+    breaks, so "PatientID", "Subject_Id" and "Tier-ID" all expose "id" as a word
+    while "Lipid" does not."""
+    spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", str(column_name).strip())
+    return re.sub(r"[^A-Za-z0-9]+", " ", spaced).lower()
+
+
 def _looks_like_subject(column_name, series=None):
     lowered = str(column_name).strip().lower()
-    strong_keywords = ("subject", "subjekt", "patient", "participant", "animal", "mouse", "id")
-    weak_keywords = ("sample",)
 
-    strong_hit = any(keyword in lowered for keyword in strong_keywords)
-    weak_hit = any(keyword in lowered for keyword in weak_keywords)
+    strong_hit = (any(keyword in lowered for keyword in _SUBJECT_STRONG_KEYWORDS)
+                  or bool(_ID_WORD.search(_name_words(column_name))))
+    weak_hit = any(keyword in lowered for keyword in _SUBJECT_WEAK_KEYWORDS)
     if not (strong_hit or weak_hit):
         return False
 
