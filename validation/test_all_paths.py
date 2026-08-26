@@ -432,19 +432,47 @@ def test_path(design, make_excel_fixture, tmp_path, monkeypatch):
 
     # ── 6b. Sphericity correction present when Mauchly expected to fail ─────
     if design.get("requires_sphericity_correction"):
-        corr = result.get("sphericity_correction") or result.get("epsilon_gg") or result.get("epsilon_hf")
-        if corr is None:
-            # Dig into nested keys some implementations use
-            for key in ("anova_table", "factors", "sphericity"):
-                sub = result.get(key)
-                if isinstance(sub, dict) and any(
-                    k in sub for k in ("epsilon_gg", "epsilon_hf", "sphericity_correction")
-                ):
-                    corr = True
-                    break
-        if corr is None:
-            print(f"  WARNING [{design['name']}]: Mauchly expected to fail but no sphericity "
-                  f"correction key found in result. Keys: {list(result.keys())}")
+        # This block used to read a top-level "sphericity_correction" -- singular,
+        # a key no code has ever written; the engine records
+        # "sphericity_corrections" -- and, having found nothing, only *printed* a
+        # warning. Both halves were dead: it looked in the wrong place, and it
+        # could not have failed even from the right one. It passed on every
+        # result for as long as it existed, while the engine was in fact
+        # correcting properly.
+        mauchly = result.get("sphericity_test") or {}
+        assert mauchly.get("sphericity_assumed") is False, (
+            f"[{design['name']}] this design exists so that Mauchly fails on it, but "
+            f"sphericity_test reports sphericity_assumed={mauchly.get('sphericity_assumed')!r}"
+        )
+
+        corrections = result.get("sphericity_corrections") or {}
+        assert corrections.get("needed") is True, (
+            f"[{design['name']}] Mauchly failed but no correction was flagged as needed: "
+            f"{corrections!r}"
+        )
+        applied = [k for k in ("greenhouse_geisser", "huynh_feldt") if k in corrections]
+        assert applied, (
+            f"[{design['name']}] a correction was needed but neither Greenhouse-Geisser "
+            f"nor Huynh-Feldt is recorded; keys present: {sorted(corrections)}"
+        )
+        for name in applied:
+            epsilon = (corrections[name] or {}).get("epsilon")
+            assert isinstance(epsilon, (int, float)) and 0 < epsilon <= 1 + 1e-9, (
+                f"[{design['name']}] {name} epsilon is {epsilon!r}, outside (0, 1]"
+            )
+
+        # The half a reader actually depends on: the corrected p is the one being
+        # reported, not merely filed away next to an uncorrected headline.
+        assert result.get("correction_used"), (
+            f"[{design['name']}] a correction was computed but the result names none"
+        )
+        corrected = result.get("corrected_p_value")
+        assert corrected is not None, f"[{design['name']}] no corrected p-value recorded"
+        assert result.get("p_value") == pytest.approx(corrected), (
+            f"[{design['name']}] the headline p={result.get('p_value')!r} is not the "
+            f"sphericity-corrected p={corrected!r} — the uncorrected value is what "
+            f"reaches the reader"
+        )
 
     # ── 7. R cross-validation ───────────────────────────────────────────────
     validate_against_r(result, design, excel_path, tmp_path)
