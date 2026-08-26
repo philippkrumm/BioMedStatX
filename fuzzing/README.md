@@ -216,8 +216,139 @@ else applied, and it counted as OK.
 write wide-format files, so `_detect_wide_format` and the melt behind it are
 untested here.
 
+---
+
+# Fuzzing the rendered figure
+
+Both fuzzers above stop where the HTML is written. Everything a reader then
+does happens in a browser: open the file, look at the chart, switch it to a
+violin, rename the axis, move the legend, press **Download**. None of that was
+checked by anything, and it is where two of the four symptoms this work started
+from live — "der Plot sieht komisch aus" and "die Formatierung vom Plot
+funktioniert nicht".
+
+Reading the file as text cannot close that gap. A report whose
+`plot_designer.js` fails to parse still contains a perfectly valid Plotly
+payload and a perfectly valid `<script>` tag; the figure builder is simply
+dead. That shipped once, in `HEAD` and in `dist/`, and was found by clicking.
+
+```bash
+python -m fuzzing.run_visual_fuzzer --count 60
+```
+
+```bash
+python -m fuzzing._visual_worker 42
+```
+
+Needs Playwright and its Chromium, which are **development-only** and
+deliberately absent from `requirements.txt` — that file feeds the PyInstaller
+build, and a browser toolchain has no business in a 294 MB app bundle:
+
+```bash
+pip install playwright && python -m playwright install chromium
+```
+
+## What a run does
+
+1. The seed builds a **real report** through the same case generator the
+   analysis fuzzer uses, so the figure under test is one the product actually
+   produced rather than a fixture.
+2. Headless Chromium opens it over `file://` — the Plotly bundle is inlined, so
+   nothing is fetched and the page behaves exactly as it does on a reader's
+   machine.
+3. `visual_generators.build_plan(seed, surface)` decides what this user does.
+   The control list is **discovered from the page**, not hardcoded: every input
+   and select inside the designer panel, with its type, its option list, its
+   bounds and the tab that owns it. A control added to `plot_designer.html` is
+   fuzzed the day it appears. What the generator owns is the choice — which
+   controls, and with what value: a label long enough to need a margin, an
+   empty one, `α-Synuclein (µg·mL⁻¹)`, `$\Delta$F/F$_0$`, a y-minimum above the
+   y-maximum, an out-of-range spin value.
+4. Each action is performed the way a user must perform it — the owning tab is
+   brought to the front first — and then waited on precisely: the worker counts
+   `plotly_afterplot` events rather than sleeping.
+5. After every stage the page is snapshotted and the oracles run. At the end
+   both **Download** buttons are pressed and the bytes that come back are
+   checked.
+
+## The oracles
+
+| Oracle | What it refuses to accept |
+| --- | --- |
+| `no_script_error` | any uncaught JS error or console error, at load or after any action |
+| `figures_render` | a chart that declares data but draws no trace, no SVG, or has zero size |
+| `designer_live_when_plottable` | a report with plot data whose figure builder is missing or empty |
+| `labels_not_clipped` | a tick label, axis title, legend entry or annotation sticking out of the plot container |
+| `significance_matches_mode` | brackets drawn while the control says letters, or either drawn while it says none |
+| `designer_keeps_report_order` | a builder that re-sorts the ranked group order it was handed |
+| `download_svg` / `download_png` | a download that fails, produces no file, is not really that format, or is an empty canvas |
+
+`designer_keeps_report_order` has one deliberate exception. The builder offers
+move-up / move-down per group, so once the user has pressed one, an axis that
+differs from the report *is* the feature working; from that point the oracle
+checks membership only — reordering must not lose a group. Without that
+exception the oracle would have been asserting that a button it just pressed
+should have had no effect, which is how it reported its first three findings.
+
+## Proving the oracles can fail
+
+```bash
+python -m fuzzing.visual_selfcheck
+```
+
+Each oracle gets a negative control: a deliberate break in a real report that
+it is supposed to catch. Two of them are only correct because a weaker version
+was tried first and turned out to be no mutation at all:
+
+* turning `automargin` off clips **nothing** — Plotly's own `autoexpand` still
+  fits the tick labels — so the mutation restores the bug that actually
+  shipped: a fixed pixel margin that cannot grow;
+* scrambling the `pd-data-order` payload changes nothing observable, because
+  the designer reads that payload. Both sides move together, which is the
+  chained-to-its-own-source class exactly. The honest mutation makes the
+  renderer re-sort while the payload stays ranked — and then the axis comes out
+  `Dose1, Dose10, Dose2, Vehicle`, which is the alphabetical bug this repo
+  fixed centrally a day earlier, now caught at the browser end too.
+
+A third was a dead mutation: relaxing the bracket builder's own gate proves
+nothing, because in letters mode the dispatcher returns before that builder is
+ever called. Both the dispatch and the gate have to move.
+
+## Reading the summary
+
+```
+=== VISUAL FUZZ SUMMARY ===
+  OK                 120
+  seeds that produced a report: 66/120   driven in the browser: 66   stages checked: 669
+--- coverage ---
+  plot types: Bar=13, Box=15, Estimation=13, Forest=14, Raincloud=19, Violin=15
+  oracles:    designer_keeps_report_order=44, figures_render=57, no_script_error=66, ...
+  significance on screen: brackets=10, brackets(empty)=29, letters=6, none=4
+  actions:    download:svg=44, download:png=44, preset_poster=19, group_down=13, ...
+  designer said:
+        19x  Reference lines are disabled for Raincloud layout.
+        19x  No plottable data found.
+         1x  ... Log scale ignored: log requires positive values.
+```
+
+`designer said` is worth reading next to the outcomes: those are the product's
+own refusals, counted. "No plottable data found." 19 times is a forest or
+estimation plot correctly declining a design that has no effect sizes -- and
+after the fix in this batch it also means the canvas was cleared rather than
+left showing the previous chart.
+
+`significance on screen` is the line that keeps a green run honest. Firing
+counts cannot answer it: the mode oracle fires just as happily on a figure that
+never left brackets, so "letters were never rendered" is precisely the kind of
+gap a passing run hides. Modes are recorded as what actually reached the
+canvas — `letters(empty)` when the select says letters and no letter was drawn.
+
 ## Not covered
 
-The layer after export — what the rendered page actually looks like — is
-untouched by either fuzzer. No browser, no pixels. A clipped axis label or a
-broken plot layout is invisible to both.
+Still nothing looks at **pixels**. Every check here reads the DOM and the Plotly
+layout, so it can say a label overflows its container but not that two labels
+overlap each other, that a colour is unreadable, or that a figure is ugly. No
+screenshot is taken and none is compared.
+
+The decision-tree viewer, the modal image viewer and the report's own toolbar
+are loaded and error-checked but never driven — only the figure builder is.

@@ -25,6 +25,17 @@ All notable changes to this project will be documented in this file.
   the wording the significance layer and the reference lines already use; an
   all-positive raincloud still plots on log as before.
 
+### Testing
+
+- A third fuzzer covers the layer after export: `fuzzing/run_visual_fuzzer.py`
+  opens each generated report in headless Chromium and uses the figure builder —
+  switching plot types, changing controls, pressing presets, exporting SVG and
+  PNG — with seven oracles on the rendered page plus the exported bytes. It
+  catches what reading the HTML as text cannot: a script that fails to parse, a
+  figure that draws no trace, a label outside its container, a Download that
+  yields an empty file. `fuzzing/visual_selfcheck.py` proves each oracle can
+  fail by breaking a real report in the way that oracle exists to catch.
+
 ## [2.0] - 2026-08-17
 
 ### Reporting
