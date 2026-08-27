@@ -24,6 +24,13 @@ All notable changes to this project will be documented in this file.
   off-canvas. Log is now skipped for that data with an explicit note, matching
   the wording the significance layer and the reference lines already use; an
   all-positive raincloud still plots on log as before.
+- Two-factor cells keep the control first. A two-factor design reaches the
+  ranking as one joined label per cell (`Genotype=WT, Time=D0`). The numeric half
+  survived that join — D7 still preceded D21 — but control-first did not, so
+  `Genotype=KO, …` sorted ahead of `Genotype=WT, …` and the reference cell
+  stopped leading the axis. Cells are now ranked by their components, which the
+  same code already records, so every rule the single-factor path has applies to
+  the major factor and then the minor one.
 
 ### Import and mapping
 

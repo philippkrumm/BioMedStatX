@@ -127,6 +127,58 @@ def test_a_timecourse_is_ordered_by_time_not_by_alphabet(window, tmp_path, monke
     assert order == ["D0", "D7", "D14", "D21"]
 
 
+def _two_factor_axis_order(window, tmp_path, monkeypatch, genotypes, times):
+    """Same journey, but a two-factor design, whose cells reach the ranking joined."""
+    from PyQt5.QtWidgets import QFileDialog
+    from fuzzing.html_oracles import load_report
+
+    rng = np.random.default_rng(11)
+    rows = []
+    for gi, genotype in enumerate(genotypes):
+        for ti, time in enumerate(times):
+            for _ in range(6):
+                rows.append({"Genotype": genotype, "Time": time,
+                             "Value": float(rng.normal(10 + gi * 2 + ti * 1.5, 1.0))})
+    book = tmp_path / "twofactor.xlsx"
+    with pd.ExcelWriter(book) as writer:
+        pd.DataFrame(rows).to_excel(writer, sheet_name="Sheet1", index=False)
+
+    report = tmp_path / "report_two.html"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (str(report), "")))
+
+    window.file_path = str(book)
+    window.load_file()
+    assert window.start_analysis_button.isEnabled(), window.mapping_feedback_label.text()
+    window.determine_and_run_test()
+
+    assert report.exists(), "the two-factor analysis wrote no report"
+    return load_report(str(report)).order
+
+
+def test_two_factor_cells_keep_the_control_first(window, tmp_path, monkeypatch,
+                                                 neutralized_dialogs):
+    """The join must not cost the ranking its rules.
+
+    A two-factor design arrives here as one label per cell -- "Genotype=WT,
+    Time=D0" -- and ranking those strings is not ranking the design. The numeric
+    half survives the join, because natural_order reads the digits inside the
+    string, so D7 still precedes D21. Control-first does not: "Genotype=KO, ..."
+    sorts before "Genotype=WT, ...", and the reference cell stops leading the
+    axis. Where that looks right -- Control before Treated -- it is alphabetical
+    luck rather than the rule, which is why the case here uses WT/KO.
+    """
+    order = _two_factor_axis_order(window, tmp_path, monkeypatch,
+                                   ["WT", "KO"], ["D0", "D7", "D14", "D21"])
+
+    assert order == [
+        "Genotype=WT, Time=D0", "Genotype=WT, Time=D7",
+        "Genotype=WT, Time=D14", "Genotype=WT, Time=D21",
+        "Genotype=KO, Time=D0", "Genotype=KO, Time=D7",
+        "Genotype=KO, Time=D14", "Genotype=KO, Time=D21",
+    ]
+
+
 def test_the_ranking_reorders_the_selection_without_widening_it():
     """`groups` is a selection as well as an order.
 

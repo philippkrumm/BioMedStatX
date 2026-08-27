@@ -244,7 +244,41 @@ class AnalysisManager:
         # because natural_order preserves membership -- `groups` is a selection
         # as well as an order, and a deselected group must not come back -- and
         # is idempotent, so a caller that already had it right is untouched.
-        groups_to_use = [str(g) for g in natural_order(groups_to_use)]
+        # A two-factor design joins its cells into one label -- "Genotype=WT,
+        # Time=D0" -- before reaching this point, and ranking those strings is
+        # not the same as ranking the design. The numeric half survives the join
+        # (D7 still precedes D21, because natural_order reads the digits inside
+        # the string), but control-first does not: "Genotype=KO, ..." simply
+        # sorts before "Genotype=WT, ...", so the reference cell stops leading
+        # the axis. Where it looks right -- Control before Treated -- that is
+        # alphabetical luck, not the rule.
+        #
+        # The components are still available: the same branch that builds the
+        # label records {"major", "minor"} per cell. Ranking each factor once
+        # and ordering the cells by that pair keeps every rule the single-factor
+        # path has, major factor first. Anything the map does not cover falls
+        # back to ranking the label, which is what happened before.
+        factor_map = analysis_context.get("group_factor_map") or {}
+        cell_parts = {}
+        for group in groups_to_use:
+            part = factor_map.get(group)
+            if not isinstance(part, dict) or "major" not in part or "minor" not in part:
+                cell_parts = {}
+                break
+            cell_parts[group] = (str(part["major"]), str(part["minor"]))
+
+        if cell_parts:
+            major_rank = {str(level): index for index, level in enumerate(
+                natural_order([major for major, _ in cell_parts.values()]))}
+            minor_rank = {str(level): index for index, level in enumerate(
+                natural_order([minor for _, minor in cell_parts.values()]))}
+            groups_to_use = sorted(
+                groups_to_use,
+                key=lambda g: (major_rank.get(cell_parts[g][0], 0),
+                               minor_rank.get(cell_parts[g][1], 0)))
+            groups_to_use = [str(g) for g in groups_to_use]
+        else:
+            groups_to_use = [str(g) for g in natural_order(groups_to_use)]
 
         # The group split below matches stringified labels, so the column has to
         # be compared as text. Casting it in place is what the categorical branch
