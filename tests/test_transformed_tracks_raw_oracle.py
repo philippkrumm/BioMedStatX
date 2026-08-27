@@ -193,6 +193,22 @@ def test_ties_and_unreadable_cells_carry_no_ordering_claim(tmp_path):
     assert fired and not violations, violations
 
 
+def test_transformed_values_that_print_alike_are_not_a_finding(tmp_path):
+    """A compressing transform collapses distinct values onto one printed cell.
+
+    Verbatim from a real Box-Cox report: 2.25381, 2.30519 and 27.2228 all print
+    as 30780, and the column is correctly ordered underneath. Reading a tie as
+    "the larger measurement carries the smaller transform" is a finding about
+    the number format, not the pairing -- so ties are skipped on the transformed
+    side exactly as they are on the raw side.
+    """
+    rows = [("2.253810", "30780"), ("27.222800", "30780"), ("2.305190", "30780"),
+            ("2649.000000", "30820"), ("22400.000000", "31170"),
+            ("203900.000000", "34320")]
+    fired, violations = _judge(_page(tmp_path, rows, declared="boxcox"))
+    assert fired and not violations, violations
+
+
 def test_a_report_with_no_transformed_column_does_not_fire(tmp_path):
     path = tmp_path / "plain.html"
     path.write_text(

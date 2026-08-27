@@ -545,11 +545,17 @@ def _oracle_transformed_column_tracks_the_raw_one(report, result, violations) ->
 
     for group in comparable:
         values = by_group[group]
-        # Ties on either side carry no ordering information, so compare only
-        # pairs that are strictly ordered in the raw column.
+        # Ties carry no ordering information on EITHER side. The raw side is
+        # obvious; the transformed side matters just as much, because the cells
+        # are printed to six digits and a compressing transform collapses
+        # distinct values onto one. A real Box-Cox report prints 2.25381,
+        # 2.30519 and 27.2228 all as 30780 -- correctly ordered underneath,
+        # indistinguishable once printed. Reading that as "the larger value
+        # carries the smaller transform" is a finding about the number format,
+        # not about the pairing.
         disagreements = [
             (a, b) for i, a in enumerate(values) for b in values[i + 1:]
-            if a[0] != b[0] and ((a[0] < b[0]) != (a[1] < b[1]))
+            if a[0] != b[0] and a[1] != b[1] and ((a[0] < b[0]) != (a[1] < b[1]))
         ]
         if disagreements:
             (r1, t1), (r2, t2) = disagreements[0]
