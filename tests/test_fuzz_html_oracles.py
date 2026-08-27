@@ -57,7 +57,7 @@ def _figure(letters):
 
 
 def _report_html(*, sections=SECTIONS, payloads=None, letters=None, sig_mode="letters",
-                 p_text="p = 0.002 **", extra=""):
+                 p_text="p = 0.002 **", extra="", transformation="None"):
     letters = LETTERS if letters is None else letters
     payloads = _payloads() if payloads is None else payloads
     blocks = "".join(
@@ -67,6 +67,11 @@ def _report_html(*, sections=SECTIONS, payloads=None, letters=None, sig_mode="le
     return (
         "<html><head><style>body{font-family:\"Segoe UI\",Arial,sans-serif}</style></head><body>"
         + heads
+        # Every real report carries this badge, transformed or not, and the
+        # transform check reads it. Leaving it out would make the fixture a
+        # report no export produces, and would quietly excuse that oracle from
+        # the "passes every oracle" claim below.
+        + f'<div class="badge is-info">Transformation: {transformation}</div>'
         + f'<div class="metric-value">{p_text.replace("<", "&lt;")}</div>'
         + blocks
         + f'<script>{_figure(letters)}</script>'
@@ -110,6 +115,23 @@ def test_a_faithful_report_passes_every_oracle(tmp_path):
     # and the bracket-mode guard, which is the other half of this report's mode.
     assert set(fired) == ({name for name, _ in ORACLES}
                           - {"p_precision_capped", "brackets_have_no_letters"})
+
+
+def test_transformed_values_in_a_report_that_transformed_nothing_are_caught(tmp_path):
+    """The whole report, not the builder: the page declares None and shows a column.
+
+    Checked here as well as in the oracle's own tests because this is the path a
+    fuzz run actually takes -- through check_report on a written file -- and a
+    check that works in isolation but is not wired into that path finds nothing.
+    """
+    column = ('<table id="raw-data-table"><thead><tr><th>Group</th>'
+              '<th>Raw value</th><th>Transformed value</th></tr></thead><tbody>'
+              '<tr><td data-csv="G1">G1</td><td data-csv="1.0">1.0</td>'
+              '<td data-csv="0.0">0.0</td></tr></tbody></table>')
+    violations, fired = _check(tmp_path, _report_html(extra=column))
+
+    assert "transform_display_earned" in fired
+    assert any("declares its transformation as" in v for v in violations), violations
 
 
 def test_an_unparseable_payload_is_caught(tmp_path):

@@ -44,6 +44,17 @@ All notable changes to this project will be documented in this file.
 
 ### Testing
 
+- A report may no longer show transformed values for a run that transformed
+  nothing. Three separate things on a page claim a transformation -- the
+  "Transformed value" column in the raw data vault, the transformed-scale means
+  note, and the after-transformation diagnostic charts -- and each is gated
+  differently, so a new check reads the finished page and requires all three to
+  agree with the transformation the report declares, and requires the column to
+  actually differ from the raw one. Built from a real defect that the existing
+  tests could not have caught: they check the builders, and this is a
+  disagreement between builders. Both spellings of "nothing was transformed"
+  are covered, since the standard and correlation paths render different ones.
+
 - The report checks can now run against your own exports, not only generated
   ones. With `BIOMEDSTATX_SELFCHECK=1` set before launch, each exported report is
   read back and verified — every section rendered, the headline number on the

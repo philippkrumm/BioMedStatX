@@ -425,11 +425,122 @@ def _oracle_one_plot_font(report, result, violations) -> bool:
 # The report/export checks, in the order a reader meets their subject: the file
 # parses, it has its sections, the numbers reach the page, the significance
 # layer is honest, and the axis and font are what they should be.
+# What the page uses to claim a transformation happened. Read from the rendered
+# markup rather than from the builder's own gate on purpose: the defect this
+# catches is a display gated on a label being present rather than on a value
+# having changed, and an oracle that asks the same gate the same question moves
+# whenever the gate moves -- an assertion chained to its own source.
+_BADGE_RE = re.compile(r'<div class="badge is-info">Transformation:\s*(.*?)</div>', re.S)
+_RAW_TABLE_RE = re.compile(r'<table id="raw-data-table">(.*?)</table>', re.S)
+_TH_RE = re.compile(r"<th[^>]*>(.*?)</th>", re.S)
+_TR_RE = re.compile(r"<tr[^>]*>(.*?)</tr>", re.S)
+_CSV_CELL_RE = re.compile(r'data-csv="([^"]*)"')
+_AFTER_CARD_RE = re.compile(r'section-kicker">[^<]*After\s+([^<]*)</div>')
+_TRANSFORMED_NOTE = "Transformed-scale means"
+_TRANSFORMED_COLUMN = "Transformed value"
+
+# Spellings that all mean "nothing was transformed". Three of these are live at
+# once: the standard path renders "None", the correlation path stores the
+# lowercase string "none", and a result that never set the key falls back to the
+# default. An oracle that knew only one of them would pass the other two by
+# accident.
+_NO_TRANSFORM = frozenset({"", "none", "keine", "skip", "no transform", "n/a"})
+
+
+def _declared_transformation(report) -> str | None:
+    """The transformation the assumptions header names, or None if there is no badge."""
+    match = _BADGE_RE.search(report.text)
+    return match.group(1).strip() if match else None
+
+
+def _raw_table_transformed_pairs(report):
+    """(raw, transformed) as the raw data vault prints them, or None if no column.
+
+    Located by header rather than by position: the subject column is conditional,
+    so counting from the left would read the wrong cell exactly on the designs
+    that carry subjects.
+    """
+    table = _RAW_TABLE_RE.search(report.text)
+    if not table:
+        return None
+    body = table.group(1)
+    headers = [h.strip() for h in _TH_RE.findall(body)]
+    if _TRANSFORMED_COLUMN not in headers or "Raw value" not in headers:
+        return None
+    raw_at = headers.index("Raw value")
+    tr_at = headers.index(_TRANSFORMED_COLUMN)
+
+    pairs = []
+    for row in _TR_RE.findall(body):
+        cells = _CSV_CELL_RE.findall(row)
+        if len(cells) > max(raw_at, tr_at):
+            pairs.append((cells[raw_at], cells[tr_at]))
+    return pairs
+
+
+def _oracle_transform_display_is_earned(report, result, violations) -> bool:
+    """Transformed values on the page mean a transformation actually happened.
+
+    Three things on a report claim one: the "Transformed value" column in the
+    raw data vault, the "Transformed-scale means" note under the group summary,
+    and the "After <name>" diagnostic charts. The badge in the assumptions
+    header names it. They have to agree with each other and with the numbers
+    actually printed, because each of the three is gated separately -- the
+    column on a printed-value comparison, the charts on grouped_samples_changed,
+    the note on a dict inequality -- and three gates on one claim is three
+    chances for the page to contradict itself.
+
+    The failure this is built from is a real one: a Transformed column standing
+    in a report for a run where nothing was transformed.
+    """
+    declared = _declared_transformation(report)
+    pairs = _raw_table_transformed_pairs(report)
+    has_note = _TRANSFORMED_NOTE in report.text
+    after_cards = _AFTER_CARD_RE.findall(report.text)
+
+    claims = []
+    if pairs is not None:
+        claims.append("a Transformed value column")
+    if has_note:
+        claims.append("a transformed-scale means note")
+    if after_cards:
+        claims.append(f"{len(after_cards)} after-transformation diagnostic chart(s)")
+
+    if declared is None and not claims:
+        return False
+
+    said_nothing = declared is None or declared.strip().lower() in _NO_TRANSFORM
+    if claims and said_nothing:
+        violations.append(
+            f"the report shows {', '.join(claims)} but declares its "
+            f"transformation as {declared!r}"
+        )
+
+    # A column that merely mirrors the raw column claims a change the reader
+    # cannot see. Compared as printed, because what is printed is the claim --
+    # a difference below the display resolution is correctly invisible.
+    if pairs is not None:
+        usable = [(raw, tr) for raw, tr in pairs if tr not in ("", "N/A")]
+        if usable and all(raw == tr for raw, tr in usable):
+            violations.append(
+                f"the Transformed value column repeats the raw column in all "
+                f"{len(usable)} of its rows, so it shows no transformation"
+            )
+        elif not usable and pairs:
+            violations.append(
+                f"the Transformed value column is present but all "
+                f"{len(pairs)} of its cells are empty"
+            )
+
+    return True
+
+
 REPORT_CHECKS = (
     ("payloads_parse", _oracle_payloads_parse),
     ("sections_present", _oracle_sections_present),
     ("result_number_rendered", _oracle_result_number_is_rendered),
     ("p_precision_capped", _oracle_p_precision_capped),
+    ("transform_display_earned", _oracle_transform_display_is_earned),
     ("letters_gate_complete", _oracle_letters_gate_is_complete),
     ("letters_match_pairs", _oracle_letters_match_the_pairwise_table),
     ("brackets_have_no_letters", _oracle_brackets_mode_has_no_letters),
@@ -445,6 +556,7 @@ CHECK_SUBJECTS = {
     "sections_present": "every report section rendered",
     "result_number_rendered": "the headline number reached the page",
     "p_precision_capped": "estimated p-values printed within their resolution",
+    "transform_display_earned": "transformed values shown only where one was applied",
     "letters_gate_complete": "compact letters drawn only from a complete comparison matrix",
     "letters_match_pairs": "compact letters agree with the pairwise table",
     "brackets_have_no_letters": "no letters left on a chart drawn in bracket mode",
