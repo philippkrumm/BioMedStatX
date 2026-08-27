@@ -862,6 +862,20 @@ class AnalysisManager:
                 # Attach health report to results (non-blocking)
                 test_results["data_health"] = _health_report
 
+                # A logistic fit whose own omnibus is not a number has produced
+                # no test, and its AUC, ROC curve and calibration plot come from
+                # that same unidentified model -- presenting them beside a "no
+                # result" note leaves a quotable 0.92 AUC on the page. Firth is
+                # why this blocks rather than warns: penalised likelihood exists
+                # to survive separation, so a Firth fit that still returns
+                # nothing is evidence about the design, not a numerical stumble.
+                if (clinical_test == 'logistic_regression'
+                        and not StatisticalTester._omnibus_is_usable(test_results)):
+                    _blocked = StatisticalTester.blocked_unidentified_logistic(test_results)
+                    _blocked["data_health"] = _health_report
+                    _blocked["analysis_log"] = analysis_log
+                    return _blocked
+
                 # Clinical models handle their own assumptions; skip normality/variance
                 test_info = None
                 test_recommendation = None

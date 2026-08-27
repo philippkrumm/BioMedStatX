@@ -375,6 +375,13 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
             if p_value < 0.05:
                 return f"{test_name} detected evidence against the null hypothesis."
             return f"{test_name} did not show evidence against the null hypothesis."
+        # A correct negation is still a dead end for the reader. Where the
+        # engine recorded why there is no number, say so and say what to look
+        # at -- "no result" without a cause leaves nothing to act on.
+        if results.get("converged") is False:
+            return (f"{test_name} produced no usable result: the model did not "
+                    f"converge. Check for near-complete separation or collinear "
+                    f"predictors.")
         return f"{test_name} completed without a numeric p-value."
 
     @staticmethod

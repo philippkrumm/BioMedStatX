@@ -46,6 +46,28 @@ def test_a_missing_p_value_makes_no_claim_about_the_null_hypothesis(p_value):
     assert "without a numeric p-value" in note, note
 
 
+def test_a_missing_p_value_says_why_when_the_engine_knows():
+    """"No result" without a cause leaves the reader nothing to act on.
+
+    The Firth fit that raised this recorded `converged = False` and a data-health
+    warning naming quasi-perfect separation; the reader saw only "completed
+    without a numeric p-value".
+    """
+    note = HTMLExporter._build_summary_note(
+        {"p_value": float("nan"), "converged": False}, "Logistic Regression",
+        float("nan"))
+    assert "did not converge" in note, note
+    assert "separation" in note, note
+    assert "did not show evidence" not in note, note
+
+
+def test_a_missing_p_value_invents_no_cause_when_none_was_recorded():
+    """Only the engine's own verdict is repeated; nothing is guessed."""
+    note = HTMLExporter._build_summary_note(
+        {"p_value": None}, "Some test", None)
+    assert note == "Some test completed without a numeric p-value.", note
+
+
 def test_a_real_null_result_still_reads_as_not_significant():
     """The three states have to stay three: this is the one that must not move."""
     hero = _hero(0.42)

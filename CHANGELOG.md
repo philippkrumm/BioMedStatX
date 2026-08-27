@@ -44,6 +44,21 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- A logistic fit that produced no test statistic is now stopped at the
+  data-quality gate instead of reported. The identification guard read the
+  coefficient standard errors, which can come back finite while the omnibus does
+  not: a Firth fit on quasi-separated data with a collinear predictor overflowed
+  in the link function and returned `statistic = nan`, `p = nan` — and
+  `converged` was hardcoded `True` on the Firth path, so it was reported as a
+  converged result. The guard now also reads the omnibus, and an unidentified
+  fit is blocked with a reason naming separation and collinear predictors, and
+  saying that Firth penalisation was already applied so it cannot be the remedy.
+  This matters beyond the p-value: the report carried AUC 0.9167, a ROC curve
+  and a calibration plot from that same model, all quotable. Both entry points
+  block through one shared helper.
+- The "No result" note says why when the engine knows. A correct negation is
+  still a dead end for the reader; where the fit recorded a failure to converge,
+  the sentence names it and says what to check.
 - A p-value that does not exist is no longer reported as a p-value above alpha.
   `isinstance(nan, float)` is True and `nan < 0.05` is False, so a model that
   produced no answer was filed under "produced a negative answer": a Firth
@@ -117,6 +132,14 @@ All notable changes to this project will be documented in this file.
   distinct values onto a single six-digit cell -- a real Box-Cox report prints
   2.25381, 2.30519 and 27.2228 all as 30780, correctly ordered underneath. Ties
   are now skipped on both sides.
+- The fuzzer draws every answer its dialogs offer, cancelling included. A sweep
+  of the remaining stand-ins, prompted by the transformation-answer fix below,
+  found four more: `mw_custom` (a real nonparametric post-hoc choice with its own
+  Mann-Whitney branch) was never drawn; and the post-hoc, control-group and
+  pair-selection dialogs could never be cancelled, so the guards behind them —
+  including one whose own comment says "return None, never a silent groups[0].
+  Every caller guards" — had nothing exercising them. Cancelling is drawn one
+  time in six, so the paths behind the dialogs stay well covered too.
 - The fuzzer answers the transformation dialog the way the dialog answers. It
   drew from `["log10", "sqrt", "box_cox", None]`, but the dialog offers `log10`,
   `boxcox` and `arcsin_sqrt` -- so two draws in four were values no user can

@@ -1560,9 +1560,61 @@ class StatisticalTester:
         try:
             model = LogisticRegressionModel()
             model.fit(df, dv=dv, predictors=between, covariates=covariates or [])
-            return StatisticalTester._standardize_results(model.as_results_dict())
+            fitted = model.as_results_dict()
+
+            # A fit whose omnibus is not a number has produced no test, and
+            # everything else it produced -- AUC, ROC curve, calibration plot --
+            # comes from the same unidentified model. Reporting those beside a
+            # "no result" note leaves a quotable 0.92 AUC on the page, so this
+            # stops at the data-quality gate the way the rest of the pipeline
+            # does rather than labelling the output at the end.
+            #
+            # Firth is the reason this is a block and not a warning: penalised
+            # likelihood exists to survive separation, so a Firth fit that still
+            # returns nothing is evidence about the design, not a numerical
+            # stumble. Only the omnibus decides -- converged=False on its own
+            # (non-finite standard errors, usable test) stays a warning.
+            if not StatisticalTester._omnibus_is_usable(fitted):
+                return StatisticalTester.blocked_unidentified_logistic(fitted)
+            return StatisticalTester._standardize_results(fitted)
         except Exception as e:
             return {"error": str(e), "test": "Logistic Regression"}
+
+    @staticmethod
+    def blocked_unidentified_logistic(fitted):
+        """The blocked result for a logistic fit that produced no test.
+
+        Shared by both entry points -- ``_run_logistic_regression`` and the
+        clinical branch in ``analysis_core`` -- so the reason and the block code
+        cannot drift apart, and so a fix here does not have to be made twice.
+        """
+        return StatisticalTester.make_blocked_result(
+            "The logistic model produced no usable test statistic. This usually "
+            "means near-complete separation or collinear predictors, and "
+            "penalised (Firth) estimation was already applied, so it cannot be "
+            "the remedy. Check the group sizes and whether a predictor separates "
+            "the outcome perfectly.",
+            code="LOGISTIC_UNIDENTIFIED",
+            details={"model_variant": fitted.get("model_variant"),
+                     "n_observations": fitted.get("n_observations")},
+            warnings=fitted.get("warnings") or [],
+        )
+
+    @staticmethod
+    def _omnibus_is_usable(result) -> bool:
+        """Whether the fit produced a statistic and a p-value that are numbers.
+
+        Not the same question as convergence: an optimizer can report success
+        and still hand back NaN, which is how a diverged Firth fit reached the
+        report as an ordinary result (fuzz seed 20).
+        """
+        for key in ("statistic", "p_value"):
+            value = result.get(key)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return False
+            if not np.isfinite(float(value)):
+                return False
+        return True
 
     @staticmethod
     def _sm_anova_df(anova_row):

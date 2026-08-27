@@ -1807,12 +1807,37 @@ class LogisticRegressionModel(BaseStatisticalModel):
         if not _identified:
             converged = False
 
+        # The check above reads the coefficient standard errors, which can come
+        # back finite while the omnibus itself does not: a Firth fit on
+        # quasi-separated data overflowed in the link function and returned
+        # statistic = nan, p = nan with finite standard errors, and was reported
+        # as a converged result. A test whose own statistic is not a number has
+        # not produced a weak answer, it has produced none.
+        _omnibus_usable = all(
+            isinstance(v, (int, float)) and not isinstance(v, bool)
+            and np.isfinite(float(v))
+            for v in (main_stat, main_p)
+        )
+        if not _omnibus_usable:
+            converged = False
+
         warnings_list = []
         if not converged:
             warnings_list.append(
                 "Logistic regression did not converge to an identified solution "
                 "(e.g. non-finite standard errors from collinear predictors). "
                 "Results may be unreliable."
+            )
+        if not _omnibus_usable:
+            warnings_list.append(
+                "The omnibus test produced no usable statistic. This usually "
+                "means near-complete separation or collinear predictors — check "
+                "the data quality notes, and note that Firth penalisation is "
+                "already applied here, so it cannot be the remedy."
+                if self._model_variant == "Firth Penalized Likelihood" else
+                "The omnibus test produced no usable statistic. This usually "
+                "means near-complete separation or collinear predictors — check "
+                "the data quality notes."
             )
 
         res = {
