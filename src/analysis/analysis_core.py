@@ -956,6 +956,14 @@ class AnalysisManager:
                     _blocked["analysis_log"] = analysis_log
                     return _blocked
 
+            # prepare_advanced_test extracts its own samples from the frame and
+            # derives transformed_samples from them, so those two pair by
+            # construction. The raw-data table needs that pairing, so the raw
+            # half travels alongside the transformed one from here on. Bound
+            # before the branch, not inside it, so no path can reach the write
+            # site without it.
+            _advanced_raw_samples = None
+
             # For advanced tests that use prepare_advanced_test, skip the normality check here
             # as it will be handled in the advanced test flow
             if kwargs.get('test') in ['mixed_anova', 'two_way_anova', 'repeated_measures_anova']:
@@ -1085,6 +1093,7 @@ class AnalysisManager:
                 test_info = prep["test_info"]
                 test_recommendation = prep["recommendation"]
                 transformed_samples = prep["transformed_samples"]
+                _advanced_raw_samples = prep["samples"]
             elif kwargs.get('test') == 'two_way_anova':
                 between_factors = kwargs.get('additional_factors', [])
                 # Step 3: Call prepare_advanced_test first
@@ -1124,6 +1133,7 @@ class AnalysisManager:
                 test_info = prep["test_info"]
                 test_recommendation = prep["recommendation"]
                 transformed_samples = prep["transformed_samples"]
+                _advanced_raw_samples = prep["samples"]
             elif kwargs.get('test') == 'repeated_measures_anova':
                 additional_factors = kwargs.get('additional_factors', [])
                 subject_column = kwargs.get('subject_column') or kwargs.get('analysis_context', {}).get('subject_column') or 'Subject'
@@ -1168,6 +1178,7 @@ class AnalysisManager:
                 test_info = prep["test_info"]
                 test_recommendation = prep["recommendation"]
                 transformed_samples = prep["transformed_samples"]
+                _advanced_raw_samples = prep["samples"]
             else:
                 # Standard path for simple tests
                 test_results = StatisticalTester.perform_statistical_test(
@@ -1572,7 +1583,30 @@ class AnalysisManager:
             results['groups'] = groups
             _safe_groups = [g for g in groups if g in filtered_samples]
             if not _safe_groups: _safe_groups = list(filtered_samples.keys())
-            results['raw_data'] = {g: filtered_samples[g][:] for g in _safe_groups}
+            # The raw and transformed dicts are printed side by side, one row
+            # per index, so a row only means anything if both halves came out
+            # of the same extraction. Advanced designs get their transformed
+            # samples from prepare_advanced_test, which extracts them from the
+            # frame itself; taking the raw half from this function's own,
+            # separately-extracted copy left the two holding the same values in
+            # a different order, and the report paired each measurement with
+            # another subject's transformed value (RM report bug 2026-08-27).
+            # Measured on one repeated-measures run: 24 of 28 printed rows.
+            #
+            # So pair the transformed dict with the raw dict it was actually
+            # derived from. Only when that dict describes exactly the same
+            # groups -- otherwise nothing downstream would recognise the keys,
+            # and a mismatched key set makes the table drop the transformed
+            # column rather than mispair it, which is already safe.
+            _pair_source = filtered_samples
+            if (isinstance(_advanced_raw_samples, dict)
+                    and isinstance(transformed_samples, dict)
+                    and set(_advanced_raw_samples) == set(_safe_groups)
+                    and set(_advanced_raw_samples) == set(transformed_samples)
+                    and all(len(_advanced_raw_samples[g]) == len(transformed_samples[g])
+                            for g in _advanced_raw_samples)):
+                _pair_source = _advanced_raw_samples
+            results['raw_data'] = {g: list(_pair_source[g]) for g in _safe_groups}
             # Only expose transformed raw data when the transformation actually
             # changed the values. The old `results.get('transformation','None')
             # != 'None'` guard was broken: with no transformation the value is

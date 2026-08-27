@@ -55,6 +55,21 @@ All notable changes to this project will be documented in this file.
   intact has altered nothing, which is the case the gate exists to suppress, and
   a real transformation still shows all three. Found by the new report check on
   its first run, not by hand.
+- The raw data table pairs each measurement with its own transformed value. It
+  prints `raw_data[g][i]` beside `raw_data_transformed[g][i]`, one row per
+  index, which is a claim about a single measurement -- and the two halves came
+  from two different extractions. Advanced designs get their transformed
+  samples from `prepare_advanced_test`, which reads the frame itself, while the
+  raw half was taken from `AnalysisManager`'s own separately-extracted copy;
+  same values, same length, same groups, different order. On one repeated-
+  measures run with a genuine log10, 24 of 28 printed rows showed one subject's
+  raw value next to another subject's transformed value, including raw values
+  below 1 printed beside positive base-10 logarithms. Every summary built from
+  the columns (means, SD, Q-Q plot, distribution charts) was unaffected, which
+  is why nothing caught it. The raw half is now taken from the dict the
+  transformed one was derived from, whenever that dict describes the same
+  groups; where it does not, the table drops the transformed column rather than
+  pairing across extractions, as it already did.
 
 ### Testing
 
