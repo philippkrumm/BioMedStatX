@@ -38,6 +38,22 @@ Step 4 is the one that closes the loop. The report is the product; a result dict
 that is perfectly sound can still reach the reader as a chart claiming something
 the test never found.
 
+## Where these checks live
+
+The report/export half of them moved to `src/export/report_selfcheck.py`, and
+`html_oracles` imports them from there. The export path runs the same checks on
+every report it writes and drops a `<report>_selfcheck.txt` beside it when one
+does not pass, so a second copy of a check would be two things drifting apart —
+the failure this repository has paid for more than once.
+
+What stayed here is what only a fuzz run needs: `designer_when_plottable` and
+`paired_line_gate` (both read the fuzzer's notion of a result), the
+multi-dataset overview, and the violation plumbing the orchestrator reports on.
+The other two fuzzers stay out of the export path entirely and on purpose — the
+visual one needs a browser, which is not a per-export cost a researcher's
+desktop app should carry, and the import one inspects live window state, which
+would mean reaching into the import path rather than reading its result.
+
 ## The report oracles
 
 | Oracle | What it refuses to accept |

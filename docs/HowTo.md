@@ -269,6 +269,24 @@ The report contains:
 
 ---
 
+
+### If a `_selfcheck.txt` appears next to your report
+
+After writing a report the app reads it back and checks properties it is
+supposed to have — that every section rendered, that the headline number reached
+the page, that significance letters were drawn only from a complete comparison
+matrix and agree with the pairwise table, that the group axis is in ranked
+order, and that one font family is used throughout.
+
+Nothing happens when all of that holds, which is the normal case. If something
+did not pass, a file named `<report>_selfcheck.txt` is written **beside** the
+report. It lists each check with pass / fail / n-a and a count — no values from
+your data, since the report itself is right next to it.
+
+The report is written normally either way: the check runs afterwards, changes
+nothing, and never blocks an export. The file is a pointer for a bug report, not
+a warning about your results.
+
 ## 13. Outlier Detection
 
 **Analysis → Detect Outliers** offers:

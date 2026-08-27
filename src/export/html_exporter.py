@@ -61,6 +61,15 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
             html = HTMLExporter._render_template(context, mode="single")
             with open(output_path, "w", encoding="utf-8") as handle:
                 handle.write(html)
+            # Read the file back and check the properties it is supposed to
+            # have. Informational only: it writes a sidecar beside the report
+            # when something did not pass, logs a warning, and otherwise leaves
+            # no trace. The report is already written and is never touched.
+            try:
+                from export.report_selfcheck import write_sidecar
+                write_sidecar(str(output_path), results)
+            except Exception:
+                logger.debug("report self-check unavailable", exc_info=True)
             return str(output_path)
         except Exception as exc:
             logger.error("failed to write single report to %r: %s", output_file, exc, exc_info=True)
