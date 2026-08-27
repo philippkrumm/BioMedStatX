@@ -90,20 +90,42 @@ def test_two_swapped_rows_are_caught(tmp_path):
     assert fired and violations
 
 
-def test_the_log10_sign_check_catches_an_impossible_row(tmp_path):
-    """A raw value below 1 cannot carry a positive base-10 logarithm.
+def _shifted_log_rows(values, shift):
+    return [(f"{v:.6f}", f"{math.log10(v + shift):.6f}") for v in values]
 
-    Stated in one group of two rows that are themselves correctly ordered, so
-    the monotonicity check stays silent and only the sign check can fire.
+
+def test_a_shifted_log10_is_not_a_finding(tmp_path):
+    """`log10` here means log10(v + shift), and the shift is not on the page.
+
+    Taken from a real report: values that reach below zero, one global shift of
+    2.42303, and rows like 0.771219 next to +0.504369. A check that assumed a
+    bare logarithm called that impossible and reported a correct report as
+    broken -- so this case is frozen.
     """
-    rows = [("0.500000", "0.100000"), ("2.000000", "0.301030")]
+    values = [0.771219, 1.150088, 0.735494, 1.447965, 0.003309, -1.423030]
+    fired, violations = _judge(_page(tmp_path, _shifted_log_rows(values, 2.423030)))
+    assert fired and not violations, violations
+
+
+def test_a_row_that_no_single_shift_explains_is_caught(tmp_path):
+    """One transformation means one shift; a row off that shift is a finding.
+
+    The rows stay in increasing order on both sides, so the monotonicity check
+    cannot fire and only the arithmetic can.
+    """
+    values = [1.0, 2.0, 3.0, 4.0]
+    rows = _shifted_log_rows(values, 2.423030)
+    # Nudge one row's transformed value: still ordered, no longer reproducible.
+    rows[2] = (rows[2][0], f"{float(rows[2][1]) + 0.02:.6f}")
+    ordered = [float(t) for _, t in rows]
+    assert ordered == sorted(ordered), "fixture must stay monotone"
     fired, violations = _judge(_page(tmp_path, rows))
     assert fired
-    assert any("log10" in v for v in violations), violations
+    assert any("cannot be reproduced from the shift" in v for v in violations), violations
 
 
-def test_the_sign_check_stays_quiet_when_no_log_is_declared(tmp_path):
-    """Only log10 has that sign property; sqrt and Box-Cox do not."""
+def test_the_arithmetic_check_stays_quiet_when_no_log_is_declared(tmp_path):
+    """Only a declared log10 can be reproduced; sqrt and Box-Cox cannot."""
     rows = [("0.500000", "0.100000"), ("2.000000", "0.301030")]
     fired, violations = _judge(_page(tmp_path, rows, declared="box_cox"))
     assert fired and not violations, violations

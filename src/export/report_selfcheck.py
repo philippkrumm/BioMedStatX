@@ -564,21 +564,59 @@ def _oracle_transformed_column_tracks_the_raw_one(report, result, violations) ->
             break
 
     if declared.startswith("log10") or declared.startswith("log 10"):
-        wrong_sign = [
-            (raw, transformed) for values in by_group.values()
-            for raw, transformed in values
-            if raw > 0 and abs(raw - 1.0) > 1e-9 and ((raw < 1.0) != (transformed < 0.0))
-        ]
-        if wrong_sign:
-            raw, transformed = wrong_sign[0]
-            violations.append(
-                f"the report declares a log10 transformation and prints "
-                f"{raw:g} next to {transformed:g}, but log10({raw:g}) is "
-                f"{'negative' if raw < 1 else 'positive'} "
-                f"({len(wrong_sign)} such rows)"
-            )
+        _check_log10_arithmetic(by_group, violations)
 
     return True
+
+
+def _check_log10_arithmetic(by_group, violations) -> None:
+    """Where the badge says log10, reproduce it -- shift included.
+
+    Not a sign test. ``log10`` here is ``log10(v + shift)`` with one shift
+    computed across every group, because the data may reach zero or below
+    (assumption_checks). A row of a genuinely shifted column pairs 0.771219 with
+    +0.504369, which a naive "a value below 1 has a negative logarithm" reading
+    calls impossible -- it fired on a correct report exactly that way.
+
+    So recover the shift instead of assuming one: each row implies
+    ``c = 10**t - raw``, and one transformation means one c. Rows that cannot be
+    reproduced from the shift the rest of the table agrees on are the finding.
+    Correctly paired, the implied shifts agree to within a rounding step (a real
+    report: 2.423027 to 2.423033 across twelve rows); mispaired, they scatter.
+    """
+    rows = [(raw, t) for values in by_group.values() for raw, t in values
+            if -300 < t < 300]
+    if len(rows) < 3:
+        return
+
+    implied = sorted(10.0 ** t - raw for raw, t in rows)
+    shift = implied[len(implied) // 2]
+
+    unreproducible = []
+    for raw, t in rows:
+        shifted = raw + shift
+        if shifted <= 0:
+            unreproducible.append((raw, t, None))
+            continue
+        got = math.log10(shifted)
+        # The cells carry six decimals, so anything past a rounding step is a
+        # disagreement about which raw value this transform belongs to, not
+        # about precision.
+        if abs(got - t) > 1e-4:
+            unreproducible.append((raw, t, got))
+
+    if not unreproducible:
+        return
+
+    raw, t, got = unreproducible[0]
+    detail = ("its shifted value is not positive" if got is None
+              else f"log10({raw:g} + {shift:g}) is {got:g}")
+    violations.append(
+        f"the report declares a log10 transformation, but {len(unreproducible)} "
+        f"of {len(rows)} rows cannot be reproduced from the shift the rest of "
+        f"the table agrees on ({shift:g}) -- {raw:g} is printed with {t:g} and "
+        f"{detail}"
+    )
 
 
 def _oracle_transform_display_is_earned(report, result, violations) -> bool:

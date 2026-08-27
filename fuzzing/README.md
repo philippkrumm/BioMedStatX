@@ -70,7 +70,7 @@ would mean reaching into the import path rather than reading its result.
 | `result_number_rendered` | a finite p-value that reaches the reader as a placeholder |
 | `p_precision_capped` | a simulated p-value printed with precision the method never had |
 | `transform_display_earned` | transformed values on a page whose run declares no transformation, or a transformed column that repeats the raw one |
-| `transformed_tracks_raw` | a printed row pairing a measurement with another row's transformed value -- every transformation offered is monotonic, so within a group the two columns must rank alike |
+| `transformed_tracks_raw` | a printed row pairing a measurement with another row's transformed value -- every transformation offered is monotonic, so within a group the two columns must rank alike; a declared log10 is additionally reproduced, shift and all |
 | `letters_gate_complete` | compact letters drawn from fewer than all k(k−1)/2 comparisons |
 | `letters_match_pairs` | groups that differ sharing a letter, or equal groups not sharing one |
 | `brackets_have_no_letters` | letters left on a chart whose mode says brackets |

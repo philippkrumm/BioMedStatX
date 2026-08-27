@@ -94,11 +94,13 @@ All notable changes to this project will be documented in this file.
   transformed value. It needs no knowledge of which transformation ran: log10,
   sqrt, Box-Cox at any lambda and arcsin-sqrt are all monotonically increasing,
   so within a group the ranking of the raw column must be the ranking of the
-  transformed one. Where the badge names log10 there is a second, tolerance-free
-  test -- a value below 1 has a negative base-10 logarithm. On its first run
-  against a real report it produced both findings at once, 44 out-of-order pairs
-  and 6 arithmetically impossible rows, on the repeated-measures pairing bug
-  above.
+  transformed one. Where the badge names log10 there is a second check that
+  reproduces the arithmetic: `log10` means `log10(v + shift)` with one shift
+  across every group, so each row implies `10**t - raw` and one transformation
+  means one implied shift. Rows that cannot be reproduced from the shift the
+  rest of the table agrees on are the finding. On a real repeated-measures
+  report carrying the pairing bug above, the two checks report 44 out-of-order
+  pairs and 26 of 28 unreproducible rows.
 
 - The report checks can now run against your own exports, not only generated
   ones. With `BIOMEDSTATX_SELFCHECK=1` set before launch, each exported report is
