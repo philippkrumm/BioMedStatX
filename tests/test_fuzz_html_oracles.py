@@ -56,8 +56,26 @@ def _figure(letters):
             f'{json.dumps(layout)}, {{"responsive": true}});')
 
 
+# A raw data vault with a correctly paired transformed column, so the check that
+# reads it fires on the faithful fixture instead of sitting out the "passes every
+# oracle" claim. log10 of each raw value, printed the way the template prints it.
+RAW_TABLE = (
+    '<table id="raw-data-table"><thead><tr><th>Group</th>'
+    '<th>Raw value</th><th>Transformed value</th></tr></thead><tbody>'
+    '<tr><td data-csv="G1">G1</td><td data-csv="2.000000">2.000000</td>'
+    '<td data-csv="0.301030">0.301030</td></tr>'
+    '<tr><td data-csv="G1">G1</td><td data-csv="20.000000">20.000000</td>'
+    '<td data-csv="1.301030">1.301030</td></tr>'
+    '<tr><td data-csv="G2">G2</td><td data-csv="5.000000">5.000000</td>'
+    '<td data-csv="0.698970">0.698970</td></tr>'
+    '<tr><td data-csv="G2">G2</td><td data-csv="50.000000">50.000000</td>'
+    '<td data-csv="1.698970">1.698970</td></tr>'
+    "</tbody></table>")
+
+
 def _report_html(*, sections=SECTIONS, payloads=None, letters=None, sig_mode="letters",
-                 p_text="p = 0.002 **", extra="", transformation="None"):
+                 p_text="p = 0.002 **", extra="", transformation="log10",
+                 raw_table=RAW_TABLE):
     letters = LETTERS if letters is None else letters
     payloads = _payloads() if payloads is None else payloads
     blocks = "".join(
@@ -76,6 +94,7 @@ def _report_html(*, sections=SECTIONS, payloads=None, letters=None, sig_mode="le
         + blocks
         + f'<script>{_figure(letters)}</script>'
         + f'<script>const SIG_MODE="{sig_mode}";</script>'
+        + raw_table
         + extra
         + "<p>" + "padding " * 200 + "</p></body></html>"
     )
@@ -128,10 +147,32 @@ def test_transformed_values_in_a_report_that_transformed_nothing_are_caught(tmp_
               '<th>Raw value</th><th>Transformed value</th></tr></thead><tbody>'
               '<tr><td data-csv="G1">G1</td><td data-csv="1.0">1.0</td>'
               '<td data-csv="0.0">0.0</td></tr></tbody></table>')
-    violations, fired = _check(tmp_path, _report_html(extra=column))
+    violations, fired = _check(tmp_path, _report_html(transformation="None",
+                                                      raw_table=column))
 
     assert "transform_display_earned" in fired
     assert any("declares its transformation as" in v for v in violations), violations
+
+
+def test_a_mispaired_transformed_column_is_caught(tmp_path):
+    """The defect's real shape: right values, wrong rows, through check_report.
+
+    Group G1's two rows carry each other's transformed value. Every number on
+    the page is one the transformation genuinely produced, the column's mean and
+    SD are untouched, and only the row-wise pairing is wrong -- which is what
+    made the original go unnoticed.
+    """
+    swapped = RAW_TABLE.replace(
+        '<td data-csv="0.301030">0.301030</td>', '<td data-csv="__A__">__A__</td>'
+    ).replace(
+        '<td data-csv="1.301030">1.301030</td>', '<td data-csv="0.301030">0.301030</td>'
+    ).replace(
+        '<td data-csv="__A__">__A__</td>', '<td data-csv="1.301030">1.301030</td>')
+    violations, fired = _check(tmp_path, _report_html(raw_table=swapped))
+
+    assert "transformed_tracks_raw" in fired
+    assert any("does not follow the raw one" in v for v in violations), violations
+    assert any("'G1'" in v for v in violations), violations
 
 
 def test_an_unparseable_payload_is_caught(tmp_path):

@@ -42,6 +42,7 @@ from export.report_selfcheck import (
     _oracle_result_number_is_rendered,
     _oracle_sections_present,
     _oracle_transform_display_is_earned,
+    _oracle_transformed_column_tracks_the_raw_one,
     _plottable_groups,
     load_report,
 )
@@ -114,6 +115,7 @@ ORACLES = (
     ("result_number_rendered", _oracle_result_number_is_rendered),
     ("p_precision_capped", _oracle_p_precision_capped),
     ("transform_display_earned", _oracle_transform_display_is_earned),
+    ("transformed_tracks_raw", _oracle_transformed_column_tracks_the_raw_one),
     ("letters_gate_complete", _oracle_letters_gate_is_complete),
     ("letters_match_pairs", _oracle_letters_match_the_pairwise_table),
     ("brackets_have_no_letters", _oracle_brackets_mode_has_no_letters),
@@ -132,7 +134,7 @@ ORACLES = (
 RESULT_FREE_ORACLES = ("payloads_parse", "sections_present", "letters_gate_complete",
                        "letters_match_pairs", "brackets_have_no_letters",
                        "axis_order_ranked", "one_plot_font",
-                       "transform_display_earned")
+                       "transform_display_earned", "transformed_tracks_raw")
 
 
 def check_report_without_result(path: str) -> Tuple[List[str], List[str]]:

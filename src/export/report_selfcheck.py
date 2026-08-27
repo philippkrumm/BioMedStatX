@@ -432,7 +432,10 @@ def _oracle_one_plot_font(report, result, violations) -> bool:
 # whenever the gate moves -- an assertion chained to its own source.
 _BADGE_RE = re.compile(r'<div class="badge is-info">Transformation:\s*(.*?)</div>', re.S)
 _RAW_TABLE_RE = re.compile(r'<table id="raw-data-table">(.*?)</table>', re.S)
-_TH_RE = re.compile(r"<th[^>]*>(.*?)</th>", re.S)
+# ``<th[^>]*>`` also matches ``<thead>`` -- "<th" plus "ead" plus ">" -- so
+# the first cell came back as "<tr><th>Group" and the Group column could
+# never be found by name. The attribute part has to start with whitespace.
+_TH_RE = re.compile(r"<th(?:\s[^>]*)?>(.*?)</th>", re.S)
 _TR_RE = re.compile(r"<tr[^>]*>(.*?)</tr>", re.S)
 _CSV_CELL_RE = re.compile(r'data-csv="([^"]*)"')
 _AFTER_CARD_RE = re.compile(r'section-kicker">[^<]*After\s+([^<]*)</div>')
@@ -453,12 +456,13 @@ def _declared_transformation(report) -> str | None:
     return match.group(1).strip() if match else None
 
 
-def _raw_table_transformed_pairs(report):
-    """(raw, transformed) as the raw data vault prints them, or None if no column.
+def _raw_table_rows(report):
+    """(group, raw, transformed) as the raw data vault prints them.
 
-    Located by header rather than by position: the subject column is conditional,
-    so counting from the left would read the wrong cell exactly on the designs
-    that carry subjects.
+    None when the table has no transformed column at all. Located by header
+    rather than by position: the subject column is conditional, so counting from
+    the left would read the wrong cell exactly on the designs that carry
+    subjects.
     """
     table = _RAW_TABLE_RE.search(report.text)
     if not table:
@@ -469,13 +473,112 @@ def _raw_table_transformed_pairs(report):
         return None
     raw_at = headers.index("Raw value")
     tr_at = headers.index(_TRANSFORMED_COLUMN)
+    group_at = headers.index("Group") if "Group" in headers else None
 
-    pairs = []
+    rows = []
     for row in _TR_RE.findall(body):
         cells = _CSV_CELL_RE.findall(row)
         if len(cells) > max(raw_at, tr_at):
-            pairs.append((cells[raw_at], cells[tr_at]))
-    return pairs
+            group = cells[group_at] if group_at is not None and len(cells) > group_at else ""
+            rows.append((group, cells[raw_at], cells[tr_at]))
+    return rows
+
+
+def _raw_table_transformed_pairs(report):
+    """(raw, transformed) as printed, or None if there is no transformed column."""
+    rows = _raw_table_rows(report)
+    return None if rows is None else [(raw, tr) for _, raw, tr in rows]
+
+
+def _numeric(text):
+    """The printed cell as a number, or None when it is not one."""
+    if text is None:
+        return None
+    text = text.strip()
+    if not text or text in ("N/A", "nan", "NaN", "inf", "-inf"):
+        return None
+    try:
+        value = float(text)
+    except ValueError:
+        return None
+    return None if value != value or value in (float("inf"), float("-inf")) else value
+
+
+def _oracle_transformed_column_tracks_the_raw_one(report, result, violations) -> bool:
+    """A printed row claims THIS measurement became THAT value. Check it.
+
+    The raw data vault prints raw and transformed side by side, one row per
+    measurement, and the two halves are assembled from two separate dicts. If
+    those dicts are ordered differently the page shows one subject's raw value
+    next to another subject's transformed value -- same column contents, same
+    means, same charts, only the rows wrong, which is the one thing no summary
+    can reveal. That is exactly what a repeated-measures run did.
+
+    Checked without knowing which transformation ran, because every one the app
+    offers -- log10, sqrt, Box-Cox at any lambda, arcsin-sqrt -- is monotonically
+    increasing. So within a group the ranking of the raw values must be the
+    ranking of the transformed ones. A permutation breaks that; a genuine
+    transformation cannot.
+
+    Where the badge names log10 there is a second, sharper check that needs no
+    tolerance at all: a value below 1 has a negative base-10 logarithm and a
+    value above 1 a positive one. A row pairing 0.354 with +0.033 is wrong on
+    arithmetic alone, whatever produced it.
+    """
+    rows = _raw_table_rows(report)
+    if not rows:
+        return False
+
+    by_group = {}
+    for group, raw_text, transformed_text in rows:
+        raw = _numeric(raw_text)
+        transformed = _numeric(transformed_text)
+        if raw is None or transformed is None:
+            continue
+        by_group.setdefault(group, []).append((raw, transformed))
+
+    comparable = [g for g, vals in by_group.items() if len(vals) >= 2]
+    if not comparable:
+        return False
+
+    declared = (_declared_transformation(report) or "").strip().lower()
+
+    for group in comparable:
+        values = by_group[group]
+        # Ties on either side carry no ordering information, so compare only
+        # pairs that are strictly ordered in the raw column.
+        disagreements = [
+            (a, b) for i, a in enumerate(values) for b in values[i + 1:]
+            if a[0] != b[0] and ((a[0] < b[0]) != (a[1] < b[1]))
+        ]
+        if disagreements:
+            (r1, t1), (r2, t2) = disagreements[0]
+            violations.append(
+                f"group {group!r}: the transformed column does not follow the "
+                f"raw one -- {r1:g} is printed with {t1:g} and {r2:g} with "
+                f"{t2:g}, so the larger measurement carries the smaller "
+                f"transformed value ({len(disagreements)} such pairs). Every "
+                f"transformation offered is monotonic, so the two columns are "
+                f"not aligned row by row"
+            )
+            break
+
+    if declared.startswith("log10") or declared.startswith("log 10"):
+        wrong_sign = [
+            (raw, transformed) for values in by_group.values()
+            for raw, transformed in values
+            if raw > 0 and abs(raw - 1.0) > 1e-9 and ((raw < 1.0) != (transformed < 0.0))
+        ]
+        if wrong_sign:
+            raw, transformed = wrong_sign[0]
+            violations.append(
+                f"the report declares a log10 transformation and prints "
+                f"{raw:g} next to {transformed:g}, but log10({raw:g}) is "
+                f"{'negative' if raw < 1 else 'positive'} "
+                f"({len(wrong_sign)} such rows)"
+            )
+
+    return True
 
 
 def _oracle_transform_display_is_earned(report, result, violations) -> bool:
@@ -541,6 +644,7 @@ REPORT_CHECKS = (
     ("result_number_rendered", _oracle_result_number_is_rendered),
     ("p_precision_capped", _oracle_p_precision_capped),
     ("transform_display_earned", _oracle_transform_display_is_earned),
+    ("transformed_tracks_raw", _oracle_transformed_column_tracks_the_raw_one),
     ("letters_gate_complete", _oracle_letters_gate_is_complete),
     ("letters_match_pairs", _oracle_letters_match_the_pairwise_table),
     ("brackets_have_no_letters", _oracle_brackets_mode_has_no_letters),
@@ -557,6 +661,7 @@ CHECK_SUBJECTS = {
     "result_number_rendered": "the headline number reached the page",
     "p_precision_capped": "estimated p-values printed within their resolution",
     "transform_display_earned": "transformed values shown only where one was applied",
+    "transformed_tracks_raw": "each printed row pairs a measurement with its own transform",
     "letters_gate_complete": "compact letters drawn only from a complete comparison matrix",
     "letters_match_pairs": "compact letters agree with the pairwise table",
     "brackets_have_no_letters": "no letters left on a chart drawn in bracket mode",

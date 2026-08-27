@@ -70,6 +70,12 @@ All notable changes to this project will be documented in this file.
   transformed one was derived from, whenever that dict describes the same
   groups; where it does not, the table drops the transformed column rather than
   pairing across extractions, as it already did.
+- The report self-check reads the raw data vault's header row correctly. Its
+  header pattern `<th[^>]*>` also matched `<thead>` -- "<th" plus "ead" plus
+  ">" -- so the first header came back as `<tr><th>Group` and the Group column
+  could never be found by name. The raw and transformed columns were located
+  correctly anyway, by accident: the mangled entry occupied exactly the one slot
+  "Group" would have.
 
 ### Testing
 
@@ -83,6 +89,16 @@ All notable changes to this project will be documented in this file.
   tests could not have caught: they check the builders, and this is a
   disagreement between builders. Both spellings of "nothing was transformed"
   are covered, since the standard and correlation paths render different ones.
+
+- A new check asks whether each printed row pairs a measurement with its own
+  transformed value. It needs no knowledge of which transformation ran: log10,
+  sqrt, Box-Cox at any lambda and arcsin-sqrt are all monotonically increasing,
+  so within a group the ranking of the raw column must be the ranking of the
+  transformed one. Where the badge names log10 there is a second, tolerance-free
+  test -- a value below 1 has a negative base-10 logarithm. On its first run
+  against a real report it produced both findings at once, 44 out-of-order pairs
+  and 6 arithmetically impossible rows, on the repeated-measures pairing bug
+  above.
 
 - The report checks can now run against your own exports, not only generated
   ones. With `BIOMEDSTATX_SELFCHECK=1` set before launch, each exported report is
