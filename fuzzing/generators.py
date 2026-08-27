@@ -29,7 +29,7 @@ MUTATIONS = [
     "none", "nan_scatter", "nan_group", "inf", "zero_variance_group",
     "huge_values", "outlier_10sigma", "unicode_labels", "control_chars",
     "comma_decimals", "tiny_groups", "high_cardinality", "collinear_covariate",
-    "heavy_skew", "heteroscedastic", "all_constant",
+    "heavy_skew", "mild_skew", "heteroscedastic", "all_constant",
     # rank-deficiency / structural mutations (target (X^T X)^-1 singularity)
     # rank-deficiency / structural mutations (target (X^T X)^-1 singularity)
     "empty_factor_cell", "cross_level_missing", "rank_ties",
@@ -214,7 +214,7 @@ def _base_design(rng: np.random.Generator, test_label: str):
 # string-producing mutation like comma_decimals must not break a later one).
 _NUMERIC_MUTS = {
     "nan_scatter", "nan_group", "inf", "zero_variance_group", "all_constant",
-    "huge_values", "outlier_10sigma", "heavy_skew", "heteroscedastic",
+    "huge_values", "outlier_10sigma", "heavy_skew", "mild_skew", "heteroscedastic",
 }
 
 
@@ -283,6 +283,15 @@ def _apply_mutation(df: pd.DataFrame, mut: str, rng: np.random.Generator,
         df = df.drop(index=drop).reset_index(drop=True)
     elif mut == "heavy_skew":
         df[val] = np.exp(pd.to_numeric(df[val], errors="coerce") * 3)
+    elif mut == "mild_skew":
+        # heavy_skew overshoots: exp(3v) stays non-normal even after log10, so
+        # the run gives up on transforming and falls to a rank test -- across
+        # 200 seeds not one heavy_skew case produced a transformed column, and
+        # the checks that read one had almost nothing to look at. exp(v) is
+        # skewed enough to fail the normality test and log-normal by
+        # construction, so the transformation branch is actually reached and
+        # its output can be judged. Strictly positive, so log10 needs no shift.
+        df[val] = np.exp(pd.to_numeric(df[val], errors="coerce"))
     elif mut == "heteroscedastic":
         col = pd.to_numeric(df[val], errors="coerce")
         for gi, g in enumerate(df[groups_col].unique()):
