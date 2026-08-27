@@ -61,10 +61,13 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
             html = HTMLExporter._render_template(context, mode="single")
             with open(output_path, "w", encoding="utf-8") as handle:
                 handle.write(html)
-            # Read the file back and check the properties it is supposed to
-            # have. Informational only: it writes a sidecar beside the report
-            # when something did not pass, logs a warning, and otherwise leaves
-            # no trace. The report is already written and is never touched.
+            # Developer instrument, and a no-op unless BIOMEDSTATX_SELFCHECK=1
+            # was set before launch -- an installed copy does nothing here and
+            # pays nothing for it. When it is on, the file is read back and
+            # checked against the properties it is supposed to have; a sidecar
+            # appears beside the report only when something did not pass. The
+            # report is already written and is never touched. The gate lives in
+            # write_sidecar, so it holds for any caller, not just this one.
             try:
                 from export.report_selfcheck import write_sidecar
                 write_sidecar(str(output_path), results)

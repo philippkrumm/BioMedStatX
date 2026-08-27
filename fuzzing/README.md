@@ -41,10 +41,16 @@ the test never found.
 ## Where these checks live
 
 The report/export half of them moved to `src/export/report_selfcheck.py`, and
-`html_oracles` imports them from there. The export path runs the same checks on
-every report it writes and drops a `<report>_selfcheck.txt` beside it when one
-does not pass, so a second copy of a check would be two things drifting apart —
-the failure this repository has paid for more than once.
+`html_oracles` imports them from there rather than keeping a copy — two
+implementations of one check drifting apart is the failure this repository has
+paid for more than once.
+
+The export path can run the same checks on the reports you export yourself:
+set `BIOMEDSTATX_SELFCHECK=1` before launching and a `<report>_selfcheck.txt`
+appears beside any report where one does not pass. It is off unless that
+variable is set, and an installed copy never runs it — see BUILD.md,
+"Developer switches". The point of switching it on is the data: the fuzzers only
+ever invent theirs.
 
 What stayed here is what only a fuzz run needs: `designer_when_plottable` and
 `paired_line_gate` (both read the fuzzer's notion of a result), the

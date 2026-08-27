@@ -18,9 +18,23 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import pytest  # noqa: E402
+
 from export.report_selfcheck import (CHECK_SUBJECTS, REPORT_CHECKS,  # noqa: E402
-                                     REQUIRED_SECTIONS, SIDECAR_SUFFIX,
-                                     run_report_checks, write_sidecar)
+                                     REQUIRED_SECTIONS, SELFCHECK_ENV_VAR,
+                                     SIDECAR_SUFFIX, run_report_checks,
+                                     write_sidecar)
+
+
+@pytest.fixture(autouse=True)
+def _selfcheck_on(monkeypatch):
+    """The self-check is off by default; these tests are about what it does when on.
+
+    Made explicit rather than left to the ambient environment, because a suite
+    that only passes on a developer's machine with the variable already exported
+    is a suite that proves nothing about anyone else's.
+    """
+    monkeypatch.setenv(SELFCHECK_ENV_VAR, "1")
 
 # A sound report has every section. Leaving them out would make the "clean"
 # fixture fail sections_present, and the test would then be asserting that a
@@ -127,31 +141,56 @@ def test_an_unreadable_report_is_not_an_export_failure(tmp_path):
     assert write_sidecar(str(tmp_path / "does_not_exist.html"), {}) is None
 
 
-def test_the_export_path_calls_the_self_check(tmp_path, monkeypatch):
-    """The hook is in the export path, not only in the checker.
-
-    Verified through ``HTMLExporter.export_results_to_html`` rather than by
-    calling ``write_sidecar`` directly, because the thing worth pinning is that
-    the export actually calls it -- and that a failing self-check still returns
-    the report path, so nothing upstream changes behaviour.
-    """
+@pytest.fixture
+def _real_exporter(monkeypatch):
     from export.html_exporter import HTMLExporter
 
-    seen = {}
-
-    def _fake_sidecar(report_path, results):
-        seen["called"] = report_path
-        return None
-
-    import export.report_selfcheck as selfcheck
-    monkeypatch.setattr(selfcheck, "write_sidecar", _fake_sidecar)
     monkeypatch.setattr(HTMLExporter, "_render_template",
                         staticmethod(lambda context, mode: "<html></html>"))
     monkeypatch.setattr(HTMLExporter, "_prepare_single_report_context",
                         staticmethod(lambda results, analysis_log=None: {}))
+    return HTMLExporter
 
-    out = str(tmp_path / "hooked.html")
-    returned = HTMLExporter.export_results_to_html({"test": "t"}, out)
+
+def test_the_export_path_runs_the_self_check_when_it_is_on(tmp_path, _real_exporter):
+    """The hook is in the export path, not only in the checker.
+
+    Verified through ``export_results_to_html`` with the real ``write_sidecar``
+    rather than a stand-in, because the thing worth pinning is that an export
+    end to end produces the file -- and that it still returns the report path,
+    so nothing upstream changes behaviour.
+    """
+    out = str(tmp_path / "on.html")
+    returned = _real_exporter.export_results_to_html({"test": "t"}, out)
 
     assert returned == os.path.abspath(out)
-    assert seen.get("called") == os.path.abspath(out)
+    assert sorted(os.listdir(tmp_path)) == ["on.html", "on_selfcheck.txt"]
+
+
+def test_the_export_path_leaves_no_trace_when_the_self_check_is_off(
+        tmp_path, monkeypatch, _real_exporter):
+    """The default, and the whole point of the gate.
+
+    Same report as the test above -- one that does fail a check -- so the only
+    difference between the two is the variable. An installed copy gets this
+    case: no sidecar, and the export otherwise identical.
+    """
+    monkeypatch.delenv(SELFCHECK_ENV_VAR, raising=False)
+
+    out = str(tmp_path / "off.html")
+    returned = _real_exporter.export_results_to_html({"test": "t"}, out)
+
+    assert returned == os.path.abspath(out)
+    assert os.listdir(tmp_path) == ["off.html"]
+
+
+def test_an_unset_variable_is_off_and_an_empty_one_too(tmp_path, monkeypatch):
+    """"Set but empty" is how a shell profile half-configures something."""
+    path = _report(tmp_path, '<script id="pd-data-plot">{not json}</script>')
+
+    for value in ("", "0", "no", "  "):
+        monkeypatch.setenv(SELFCHECK_ENV_VAR, value)
+        assert write_sidecar(path, {}) is None, f"{value!r} enabled the self-check"
+
+    monkeypatch.setenv(SELFCHECK_ENV_VAR, "1")
+    assert write_sidecar(path, {}) is not None

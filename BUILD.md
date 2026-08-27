@@ -204,6 +204,39 @@ you decide; not produced by PyInstaller).
 
 ---
 
+## Developer switches
+
+These are off unless the variable is set before the app starts. Nothing here
+reaches an installed copy: setting an environment variable before launch is a
+deliberate act, and double-clicking the app in the Finder is not one.
+
+### `BIOMEDSTATX_SELFCHECK=1` — check every report this session exports
+
+Every HTML export is read back and checked against the properties a report is
+supposed to have: that each section rendered, that the headline number reached
+the page, that compact letters were drawn from a complete comparison matrix and
+agree with the pairwise table, that the group axis is ranked, that estimated
+p-values are printed within their resolution, that one font is used throughout.
+
+Nothing appears when everything passes. When something does not, a
+`<report>_selfcheck.txt` lands beside the report naming the property, with a
+finding count — flags only, no values from the data. The report itself is
+written normally and never touched, and a failing check cannot fail an export.
+
+```bash
+export BIOMEDSTATX_SELFCHECK=1
+python src/analysis/statistical_analyzer.py
+```
+
+These are the same checks the fuzzers run (`src/export/report_selfcheck.py`, one
+implementation, imported by `fuzzing/html_oracles.py`). The reason to switch it
+on for your own session is the data: the fuzzers only ever invent theirs, and a
+real design has shapes no generator thinks of.
+
+Put the `export` line in your shell profile if you want it on for every
+development session — otherwise it is the kind of flag that gets rediscovered
+three months later.
+
 ## Publishing on GitHub
 
 ### Option A — `gh` CLI (recommended)

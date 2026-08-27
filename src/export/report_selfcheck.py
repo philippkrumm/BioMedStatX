@@ -7,6 +7,10 @@ That is why this lives in ``src`` rather than in ``fuzzing``: the same checks
 serve the fuzzer and the export path itself, and two copies of a check is the
 failure this repository keeps paying for.
 
+Living in ``src`` is not the same as running for everyone. The export path runs
+these only when ``BIOMEDSTATX_SELFCHECK=1`` is set before launch -- see
+``selfcheck_enabled`` below for why an installed copy is left alone.
+
 What is here is exactly the report/export layer: the structure of the file, the
 numbers it renders, the significance layer it draws, the axis order and the
 font. Nothing here opens a browser (the rendered figure is the visual fuzzer's
@@ -24,6 +28,7 @@ from __future__ import annotations
 import html as html_module
 import json
 import math
+import os
 import re
 from typing import Any, Dict, List
 
@@ -450,11 +455,34 @@ CHECK_SUBJECTS = {
 
 # --- the sidecar ----------------------------------------------------------------
 
+# The sidecar is a developer's instrument, and it is off unless asked for.
+#
+# There is no channel back from an installed copy. A sidecar written on a
+# researcher's disk describes a report to someone who did not write the checks,
+# does not know what "letters_gate_complete" means, and will never send the file
+# to anyone who does -- so the one thing it reliably produces is a file
+# appearing next to somebody's unpublished experimental data without their
+# having asked for it. No visible UI is not the same as asked for.
+#
+# Set BIOMEDSTATX_SELFCHECK=1 before launching to turn it on. An environment
+# variable set before start is a deliberate act; double-clicking the app in the
+# Finder can never be one. This is also what makes the checks usable against
+# real research data rather than only against generated cases -- the fuzzers
+# invent their data, and a real repeated-measures design has shapes no generator
+# thinks of.
+SELFCHECK_ENV_VAR = "BIOMEDSTATX_SELFCHECK"
+_ENABLED_VALUES = frozenset({"1", "true", "yes", "on"})
+
 # Written next to the report, and only when a check actually failed. A file
 # beside every export would be noise; a file that appears only when something is
 # off is a signal. It never touches the report, never blocks the export, and
 # never surfaces in the UI on its own.
 SIDECAR_SUFFIX = "_selfcheck.txt"
+
+
+def selfcheck_enabled() -> bool:
+    """Whether the export path should check the report it has just written."""
+    return os.environ.get(SELFCHECK_ENV_VAR, "").strip().lower() in _ENABLED_VALUES
 
 
 def run_report_checks(path: str, results: Any):
@@ -493,8 +521,6 @@ def _sidecar_text(report_path: str, outcome) -> str:
     and the name of the property is enough to know where to look; the report
     itself is right next to it.
     """
-    import os
-
     failed = [row for row in outcome if row[1] in ("fail", "error")]
     lines = [
         "BioMedStatX report self-check",
@@ -517,13 +543,20 @@ def _sidecar_text(report_path: str, outcome) -> str:
 def write_sidecar(report_path: str, results: Any):
     """Check a written report; write a sidecar only if something did not pass.
 
-    Returns the sidecar path, or None when everything passed or the check itself
-    could not run. Never raises: this runs after the export has already
-    succeeded, and a diagnostic that can break the thing it diagnoses is worse
-    than no diagnostic at all.
+    Returns the sidecar path, or None when the self-check is not enabled, when
+    everything passed, or when the check itself could not run. Never raises:
+    this runs after the export has already succeeded, and a diagnostic that can
+    break the thing it diagnoses is worse than no diagnostic at all.
+
+    The gate is checked here rather than at the call site so that it holds for
+    every caller, present and future -- a second call site added later would
+    otherwise be silently ungated. It is checked first so that "off" costs
+    nothing: not the read, not the parse.
     """
     import logging
-    import os
+
+    if not selfcheck_enabled():
+        return None
 
     log = logging.getLogger(__name__)
     try:

@@ -42,19 +42,19 @@ All notable changes to this project will be documented in this file.
   design (N conditions)"; naming the design rather than a test stays true when
   the assumption checks pick Wilcoxon or Friedman instead.
 
-### Reporting
-
-- Reports are checked after they are written. The export reads the file back and
-  verifies properties it is supposed to have — every section rendered, the
-  headline number on the page, compact letters drawn only from a complete
-  comparison matrix and agreeing with the pairwise table, the group axis in
-  ranked order, one font family throughout. Nothing happens when all of that
-  holds. If something did not pass, a `<report>_selfcheck.txt` is written
-  **beside** the report with pass/fail/n-a and a count per check, and a warning
-  is logged. It carries no values from the data, never touches the report, never
-  blocks an export, and does not surface in the UI on its own.
-
 ### Testing
+
+- The report checks can now run against your own exports, not only generated
+  ones. With `BIOMEDSTATX_SELFCHECK=1` set before launch, each exported report is
+  read back and verified — every section rendered, the headline number on the
+  page, compact letters drawn only from a complete comparison matrix and
+  agreeing with the pairwise table, the group axis in ranked order, estimated
+  p-values within their resolution, one font family throughout. Nothing appears
+  when all of that holds; otherwise a `<report>_selfcheck.txt` lands beside the
+  report with pass/fail/n-a and a count per check, carrying no values from the
+  data. Off unless the variable is set, so an installed copy never runs it and
+  pays nothing for it. One implementation
+  (`src/export/report_selfcheck.py`), shared with the fuzzers.
 
 - A third fuzzer covers the layer after export: `fuzzing/run_visual_fuzzer.py`
   opens each generated report in headless Chromium and uses the figure builder —
