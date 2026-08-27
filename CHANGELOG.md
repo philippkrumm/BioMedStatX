@@ -101,6 +101,25 @@ All notable changes to this project will be documented in this file.
   rest of the table agrees on are the finding. On a real repeated-measures
   report carrying the pairing bug above, the two checks report 44 out-of-order
   pairs and 26 of 28 unreproducible rows.
+- A printed tie is not a disagreement. The ordering check skipped ties on the
+  raw side but not on the transformed one, and a compressing transform collapses
+  distinct values onto a single six-digit cell -- a real Box-Cox report prints
+  2.25381, 2.30519 and 27.2228 all as 30780, correctly ordered underneath. Ties
+  are now skipped on both sides.
+- The fuzzer answers the transformation dialog the way the dialog answers. It
+  drew from `["log10", "sqrt", "box_cox", None]`, but the dialog offers `log10`,
+  `boxcox` and `arcsin_sqrt` -- so two draws in four were values no user can
+  produce, fell through every apply-branch and transformed nothing, and two of
+  the three real transformations had never been exercised at all. Correcting the
+  list immediately surfaced what had been hidden behind it: `arcsin_sqrt` opens
+  a domain-declaration dialog that no stand-in answered, so the run built a
+  QDialog with no QApplication and the process aborted -- six seeds in two
+  hundred, on a path that had never once been taken. Both fixed; that dialog's
+  three answers (proportion, percent, cancel) are now drawn per seed.
+- A new `mild_skew` mutation makes data the transformation branch can actually
+  repair. `heavy_skew` applies `exp(3v)`, which stays non-normal after log10, so
+  the run falls to a rank test -- across 200 seeds not one `heavy_skew` case
+  produced a transformed column. `exp(v)` is log-normal by construction.
 
 - The report checks can now run against your own exports, not only generated
   ones. With `BIOMEDSTATX_SELFCHECK=1` set before launch, each exported report is

@@ -35,7 +35,18 @@ for p in (_ROOT, os.path.join(_ROOT, "src")):
         sys.path.insert(0, p)
 
 
-_TRANSFORMS = ["log10", "sqrt", "box_cox", None]
+# What the transformation dialog actually returns. The list used to read
+# ["log10", "sqrt", "box_cox", None] -- but the dialog offers log10, boxcox and
+# arcsin_sqrt (stats_functions.py:805), so "sqrt" and "box_cox" were answers no
+# user can give. Both fall through every apply-branch and transform nothing, so
+# three draws in four produced an untransformed run and the whole branch was
+# fuzzed at a quarter of its apparent rate -- with boxcox and arcsin_sqrt, two
+# of the three real transformations, never exercised at all. Same mistake as
+# the "tukey" answer described in _posthoc_options below.
+#
+# "skip" is the explicit "continue without transforming" choice and None is
+# Cancel; both are real answers and are kept.
+_TRANSFORMS = ["log10", "boxcox", "arcsin_sqrt", "skip", None]
 _POSTHOC_NONPARAM = ["dunn", None]
 
 
@@ -114,6 +125,19 @@ def _neutralize_dialogs(seed: int):
         groups = list(groups or [])
         return groups[int(rng.integers(0, len(groups)))] if groups else None
     UIDialogManager.select_control_group_dialog = staticmethod(_control_group_dialog)
+
+    # Only the arcsin_sqrt answer reaches this dialog, and until that answer was
+    # a real option nothing here had to stand in for it -- so the run built a
+    # QDialog with no QApplication and the process aborted with "Must construct
+    # a QApplication before a QWidget", six seeds in two hundred. The real
+    # dialog offers "proportion" (0-1) and "percent" (0-100) and returns None on
+    # cancel; all three are answers a user gives, and all three matter, because
+    # out-of-domain values are hard-rejected downstream and the refusal is the
+    # path worth exercising.
+    _arcsin_domain = ["proportion", "percent", None][int(rng.integers(0, 3))]
+    UIDialogManager.select_arcsin_domain_type = staticmethod(
+        lambda *a, _d=_arcsin_domain, **k: _d
+    )
 
     def _custom_pairs_dialog(groups, parent=None):
         """A user who actually ticks boxes, rather than one who ticks none.
