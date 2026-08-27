@@ -28,9 +28,48 @@ import pandas as pd
 import pytest
 
 # Root conftest.py puts src/ on sys.path and forces headless Qt.
+import analysis.stats_functions as stats_functions_module
+import analysis.statisticaltester as statisticaltester_module
 from analysis.analysis_core import AnalysisManager
-from analysis.statisticaltester import UIDialogManager
 from export.report_summaries import _SummariesMixin
+
+
+class _Dialogs:
+    """Every dialog this run can reach, answered the way a user would.
+
+    Installed over the module attribute rather than onto the imported class,
+    because that is what the product looks up: statistical_testing.dialog_access
+    resolves the manager through ``analysis.statisticaltester.UIDialogManager``
+    at call time. validation/conftest.py replaces exactly that attribute with a
+    session-scoped mock answering "skip", so patching the class this module
+    imported would set attributes on an object nothing consults -- the run would
+    silently take the untransformed route and land on a Friedman test, and the
+    checks below would have no transformed column to judge.
+    """
+
+    @staticmethod
+    def select_transformation_dialog(*args, **kwargs):
+        return "log10"
+
+    @staticmethod
+    def select_posthoc_test_dialog(*args, **kwargs):
+        return "emm_mvt"
+
+    @staticmethod
+    def select_nonparametric_posthoc_dialog(*args, **kwargs):
+        return None
+
+    # A significant omnibus walks into the post-hoc branch, which builds real Qt
+    # dialogs. Without a QApplication that aborts the interpreter rather than
+    # raising, so every dialog reachable from here needs an answer, not just the
+    # ones this design is expected to use.
+    @staticmethod
+    def select_control_group_dialog(*args, **kwargs):
+        return None
+
+    @staticmethod
+    def select_custom_pairs_dialog(groups=None, parent=None):
+        return []
 
 
 def _lognormal_rm_frame(n_subjects: int = 16, levels: int = 2) -> pd.DataFrame:
@@ -56,22 +95,9 @@ def rm_result(tmp_path, monkeypatch):
     """One repeated-measures analysis with log10 actually applied."""
     mp = pytest.MonkeyPatch()
     try:
-        # Answer the dialogs the way a user would, without a display. Patched
-        # with undo rather than assigned, so nothing leaks into other tests.
-        mp.setattr(UIDialogManager, "select_transformation_dialog",
-                   staticmethod(lambda *a, **k: "log10"), raising=False)
-        mp.setattr(UIDialogManager, "select_posthoc_test_dialog",
-                   staticmethod(lambda *a, **k: "emm_mvt"), raising=False)
-        mp.setattr(UIDialogManager, "select_nonparametric_posthoc_dialog",
-                   staticmethod(lambda *a, **k: None), raising=False)
-        # A significant omnibus walks into the post-hoc branch, which builds
-        # real Qt dialogs. Without a QApplication that aborts the interpreter
-        # rather than raising, so every one it can reach needs an answer, not
-        # just the ones this design is expected to use.
-        mp.setattr(UIDialogManager, "select_control_group_dialog",
-                   staticmethod(lambda *a, **k: None), raising=False)
-        mp.setattr(UIDialogManager, "select_custom_pairs_dialog",
-                   staticmethod(lambda groups=None, parent=None: []), raising=False)
+        # Patched with undo rather than assigned, so nothing leaks onward.
+        mp.setattr(statisticaltester_module, "UIDialogManager", _Dialogs)
+        mp.setattr(stats_functions_module, "UIDialogManager", _Dialogs)
         from ui.dialogs import comparison_selection_dialog as csd
 
         class _AllPairs:
