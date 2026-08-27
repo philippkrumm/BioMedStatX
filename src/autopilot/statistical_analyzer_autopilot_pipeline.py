@@ -854,9 +854,20 @@ def _ap_on_mapping_changed(self):
     wide_info = getattr(self, '_wide_format_info', None)
     if wide_info:
         cond_labels = ', '.join(f'"{c}"' for c in wide_info['value_cols'])
+        # _detect_wide_format accepts two to eight condition columns, so this
+        # line has to say which design was actually built. It used to read
+        # "Mapped as paired t-test design" for all of them: with three or more
+        # conditions the user was told about a paired t-test and then handed a
+        # repeated-measures ANOVA. The wording names the DESIGN rather than a
+        # test, because which test runs is still the decision logic's call --
+        # a failed normality check turns the same design into Wilcoxon or
+        # Friedman, and neither makes this line wrong.
+        n_conditions = len(wide_info['value_cols'])
+        design = ("paired design (2 conditions)" if n_conditions == 2
+                  else f"repeated-measures design ({n_conditions} conditions)")
         self.mapping_feedback_label.setText(
             f"Wide format detected \u2192 pivoted to long format. "
-            f"Conditions: {cond_labels}. Mapped as paired t-test design."
+            f"Conditions: {cond_labels}. Mapped as {design}."
         )
         self.start_analysis_button.setEnabled(True)
         return

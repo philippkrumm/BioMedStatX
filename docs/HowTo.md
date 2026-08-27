@@ -58,7 +58,9 @@ Prepare your file with a single header row, unique column names, no merged cells
 
 ### Wide-format data
 
-Wide-format files (one column per condition, e.g. `Value_Pre`, `Value_Post`) are detected and pivoted to long format before analysis. A notice confirms the pivot and lists the detected condition columns.
+Wide-format files (one column per condition, e.g. `Value_Pre`, `Value_Post`) are detected and pivoted to long format before analysis. A notice confirms the pivot, lists the detected condition columns, and names the design it built — a **paired design** for two conditions, a **repeated-measures design** for three or more. Which test then runs is still decided by the assumption checks, so a repeated-measures design may end up as an RM-ANOVA or as Friedman.
+
+Every row needs a subject ID. If the subject column has a blank cell the file is refused with a message rather than loaded in part, because rows without an ID drop out of the checks that decide repeated-measures structure.
 
 ### Select Data Ranges
 

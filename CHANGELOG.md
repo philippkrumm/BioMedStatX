@@ -25,6 +25,16 @@ All notable changes to this project will be documented in this file.
   the wording the significance layer and the reference lines already use; an
   all-positive raincloud still plots on log as before.
 
+### Import and mapping
+
+- The wide-format notice names the design it built. `_detect_wide_format` accepts
+  two to eight condition columns, but the line explaining the pivot read "Mapped
+  as paired t-test design" for all of them — so a four-timepoint study was told
+  it had been mapped as a paired t-test and then handed a repeated-measures
+  ANOVA. It now reads "paired design (2 conditions)" or "repeated-measures
+  design (N conditions)"; naming the design rather than a test stays true when
+  the assumption checks pick Wilcoxon or Friedman instead.
+
 ### Testing
 
 - A third fuzzer covers the layer after export: `fuzzing/run_visual_fuzzer.py`
