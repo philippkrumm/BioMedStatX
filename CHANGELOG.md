@@ -42,6 +42,20 @@ All notable changes to this project will be documented in this file.
   design (N conditions)"; naming the design rather than a test stays true when
   the assumption checks pick Wilcoxon or Friedman instead.
 
+### Fixed
+
+- A repeated-measures analysis no longer reports a transformation it did not
+  perform. The gate deciding whether anything was transformed compared the two
+  sample sets position by position, and the RM path hands the same measurements
+  back in a different order -- so a permutation read as a change, and an
+  untransformed run produced a "Transformed value" column, a transformed-scale
+  means note and two "After transformation" diagnostic charts, all showing the
+  raw numbers, beside a badge correctly reading "Transformation: None". The
+  comparison is now between multisets: a transformation that leaves the values
+  intact has altered nothing, which is the case the gate exists to suppress, and
+  a real transformation still shows all three. Found by the new report check on
+  its first run, not by hand.
+
 ### Testing
 
 - A report may no longer show transformed values for a run that transformed

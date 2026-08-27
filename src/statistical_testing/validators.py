@@ -40,6 +40,20 @@ def grouped_samples_changed(
     numpy arrays raises the ambiguous-truth error) and treats a NaN in the same
     position on both sides as unchanged, so an identity copy of NaN-containing
     data is still recognised as a no-op.
+
+    Compared as multisets, not position by position. A repeated-measures run
+    hands back the same values in a different order, and an element-wise
+    comparison read that permutation as a transformation -- so an untransformed
+    RM analysis emitted a Transformed column, a transformed-scale means note and
+    two "After transformation" diagnostic charts, all of them showing the raw
+    numbers, beside a badge correctly reading "Transformation: None" (fuzz seed
+    116, 2026-08-27). "The values at these positions differ" is not what "a
+    value was altered" means, and it is the second time this gate has been wrong
+    about which question it is asking.
+
+    This cannot hide a real transformation. A transformation that leaves the
+    multiset intact has altered no value, which is precisely the case the gate
+    exists to suppress.
     """
     if not isinstance(raw, Mapping) or not isinstance(transformed, Mapping):
         return False
@@ -52,11 +66,22 @@ def grouped_samples_changed(
             a = np.asarray(raw[key], dtype=float).ravel()
             b = np.asarray(transformed[key], dtype=float).ravel()
         except (TypeError, ValueError):
-            # Non-numeric payload: fall back to a plain element comparison.
-            if list(raw[key]) != list(transformed[key]):
+            # Non-numeric payload: fall back to a plain element comparison,
+            # order-insensitively for the same reason. sorted() can still refuse
+            # a mixed-type sequence, in which case the element comparison is all
+            # that is available.
+            try:
+                changed = sorted(raw[key]) != sorted(transformed[key])
+            except TypeError:
+                changed = list(raw[key]) != list(transformed[key])
+            if changed:
                 return True
             continue
-        if a.shape != b.shape or not np.array_equal(a, b, equal_nan=True):
+        if a.shape != b.shape:
+            return True
+        # np.sort puts NaN last on both sides, so an identity copy of
+        # NaN-containing data still compares equal under equal_nan.
+        if not np.array_equal(np.sort(a), np.sort(b), equal_nan=True):
             return True
     return False
 
