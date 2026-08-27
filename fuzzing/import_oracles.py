@@ -32,6 +32,18 @@ _REFUSAL_MARKERS = (
 )
 
 
+def _is_long_ground_truth(case) -> bool:
+    """Do ``case.values`` / ``case.levels`` describe the frame the app holds?
+
+    Only for a long-format file. A wide case records its truth as subjects,
+    conditions and a value grid instead, and a wide file that failed to pivot
+    (itself a finding) leaves the app holding a frame that neither description
+    fits -- so the long checks must decline rather than compare against empty
+    lists and report a phantom mismatch.
+    """
+    return case.layout == "long"
+
+
 def _is_number(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
@@ -51,7 +63,11 @@ def _values_match(written: List[float], imported: List[float], tol=1e-6) -> bool
 
 
 def _oracle_file_loaded(state, case, violations) -> bool:
-    if not case.expect_faithful_read:
+    # A file the app is meant to decline is not a file it is meant to load.
+    # ``expect_faithful_read`` is about parsing -- header position and number
+    # format -- and says nothing about a blank subject ID, which is perfectly
+    # parseable and still has to be refused.
+    if not case.expect_faithful_read or case.expect_refusal:
         return False
     if not state.get("loaded"):
         violations.append(
@@ -64,6 +80,10 @@ def _oracle_file_loaded(state, case, violations) -> bool:
 
 
 def _oracle_shape_survives(state, case, violations) -> bool:
+    # n_rows/n_cols describe the file on disk in either layout, so this one
+    # stays useful for a wide file too -- and it is what says *how* a wide file
+    # that failed to pivot still looks, next to the pivot oracle saying that it
+    # did not.
     if not (case.expect_faithful_read and state.get("loaded")):
         return False
     if state.get("wide_pivoted"):
@@ -87,7 +107,8 @@ def _oracle_dv_is_numeric(state, case, violations) -> bool:
     the app as text is not merely mistyped, it is invisible to the mapping --
     ``is_numeric_dtype`` gates which columns can become the dependent variable.
     """
-    if not (case.expect_faithful_read and state.get("loaded")):
+    if not (_is_long_ground_truth(case) and case.expect_faithful_read
+            and state.get("loaded")):
         return False
     dtypes = state.get("dtypes") or {}
     if case.dv_name not in dtypes:
@@ -105,8 +126,9 @@ def _oracle_dv_is_numeric(state, case, violations) -> bool:
 
 
 def _oracle_values_survive(state, case, violations) -> bool:
-    if not (case.expect_faithful_read and state.get("loaded")
-            and state.get("dv_is_numeric") and not state.get("wide_pivoted")):
+    if not (_is_long_ground_truth(case) and case.expect_faithful_read
+            and state.get("loaded") and state.get("dv_is_numeric")
+            and not state.get("wide_pivoted")):
         return False
     imported = _finite(state.get("dv_values"))
     written = _finite(case.values)
@@ -129,8 +151,8 @@ def _oracle_values_survive(state, case, violations) -> bool:
 
 
 def _oracle_levels_survive(state, case, violations) -> bool:
-    if not (case.expect_faithful_read and state.get("loaded")
-            and not state.get("wide_pivoted")):
+    if not (_is_long_ground_truth(case) and case.expect_faithful_read
+            and state.get("loaded") and not state.get("wide_pivoted")):
         return False
     imported = [str(v) for v in (state.get("factor_levels") or []) if str(v).strip()]
     written = [v for v in case.levels if v]
@@ -173,6 +195,151 @@ def _oracle_no_phantom_levels(state, case, violations) -> bool:
 
 
 # --- the file could not be read faithfully, and the app must say so ---------------
+
+
+# --- the wide layout was recognised and melted -----------------------------------
+
+
+def _oracle_wide_is_pivoted(state, case, violations) -> bool:
+    """A wide file must be melted on load, and a long one must not be.
+
+    Both halves matter. A wide file left unpivoted reaches the mapping as one
+    column per condition, so the user is asked to pick a "measurement" from four
+    equally plausible ones; a long file wrongly pivoted invents a subject
+    structure the data never had. The detector's own preconditions are in
+    ``_detect_wide_format`` -- one subject-like column, two to eight numeric
+    columns, unique subjects -- and the generator only builds files that meet
+    them, so "not pivoted" here is a defect and not a taste.
+    """
+    if not state.get("loaded"):
+        return False
+    if case.layout == "long":
+        if state.get("wide_pivoted"):
+            violations.append(
+                f"a long-format file was pivoted as if it were wide "
+                f"(subject column '{state.get('pivot_subject_col')}')")
+        return True
+    if not case.expect_pivot:
+        return False
+    if not state.get("wide_pivoted"):
+        violations.append(
+            f"wide file with subject column '{case.subject_name}' and conditions "
+            f"{case.condition_names} was not pivoted; the frame still holds "
+            f"{state.get('columns')}")
+    return True
+
+
+def _oracle_pivot_keeps_every_value(state, case, violations) -> bool:
+    """Melting rearranges the numbers; it must not lose or change any."""
+    if not (case.expect_pivot and state.get("wide_pivoted")):
+        return False
+    imported = state.get("long_values")
+    if imported is None:
+        violations.append("the pivoted frame has no numeric Value column")
+        return True
+    written = _finite(case.melted_values)
+    got = _finite(imported)
+    if not _values_match(written, got):
+        violations.append(
+            f"the file holds {len(written)} measurements, the melted frame "
+            f"{len(got)}; first written {written[:3]} vs imported {got[:3]}")
+    return True
+
+
+def _oracle_pivot_keeps_every_subject(state, case, violations) -> bool:
+    """Every subject survives the melt, once per condition."""
+    if not (case.expect_pivot and state.get("wide_pivoted")):
+        return False
+    subjects = state.get("long_subjects")
+    if subjects is None:
+        violations.append("the pivoted frame has no subject column")
+        return True
+    expected = sorted(case.subject_ids)
+    seen = sorted(set(subjects))
+    if seen != sorted(set(expected)):
+        violations.append(
+            f"the file has subjects {expected[:5]}... but the melted frame has "
+            f"{seen[:5]}...")
+        return True
+    per_subject = {s: subjects.count(s) for s in set(subjects)}
+    wrong = {s: n for s, n in per_subject.items() if n != len(case.condition_names)}
+    if wrong:
+        violations.append(
+            f"every subject should appear once per condition "
+            f"({len(case.condition_names)}x); these do not: "
+            f"{dict(list(wrong.items())[:3])}")
+    return True
+
+
+def _oracle_conditions_are_the_columns(state, case, violations) -> bool:
+    """The Condition levels are the wide file's value-column headers.
+
+    This is where a BOM or an umlaut header shows up if it was mishandled: the
+    condition names come straight from the header row, so a mangled encoding
+    turns into a level the user never wrote.
+    """
+    if not (case.expect_pivot and state.get("wide_pivoted")):
+        return False
+    conditions = state.get("long_conditions")
+    if conditions is None:
+        return False
+    seen = sorted(set(conditions))
+    expected = sorted(case.condition_names)
+    if seen != expected:
+        violations.append(
+            f"the file's condition columns are {expected} but the melted frame "
+            f"has conditions {seen}")
+    return True
+
+
+def _oracle_wide_feedback_matches_design(state, case, violations) -> bool:
+    """What the user is told about the pivot must match what was built.
+
+    The line under the mapping is the only place the pivot is explained, and it
+    is read before the analysis runs. It used to name a paired t-test for every
+    wide file, so a four-timepoint study was told "paired t-test" and then given
+    a repeated-measures ANOVA. Two conditions really are a paired design; three
+    or more are not, whatever test the decision logic later picks.
+    """
+    if not (case.expect_pivot and state.get("wide_pivoted")):
+        return False
+    feedback = (state.get("mapping_feedback") or "").lower()
+    if not feedback:
+        violations.append("the frame was pivoted but the mapping said nothing about it")
+        return True
+    n_conditions = len(case.condition_names)
+    if n_conditions > 2 and "paired" in feedback and "repeated" not in feedback:
+        violations.append(
+            f"{n_conditions} conditions were pivoted but the user is told this is a "
+            f"paired design: {state.get('mapping_feedback')!r}")
+    if n_conditions == 2 and "repeated-measures" in feedback:
+        violations.append(
+            f"two conditions were pivoted but the user is told this is a "
+            f"repeated-measures design: {state.get('mapping_feedback')!r}")
+    return True
+
+
+def _oracle_missing_subject_is_refused(state, case, violations) -> bool:
+    """A blank subject cell must stop the load out loud.
+
+    The pivot refuses it on purpose: pandas drops NaN keys in the groupbys that
+    decide repeated-measures structure, so a subject with no ID would vanish
+    from the balance check without a word. What the oracle asks is that the
+    refusal reached the user -- a frame silently short a few rows is exactly
+    the failure the guard exists to prevent.
+    """
+    if not case.expect_refusal:
+        return False
+    if state.get("loaded") and state.get("wide_pivoted"):
+        violations.append(
+            "a wide file with a blank subject ID was pivoted anyway; rows "
+            "without an ID silently leave every subject-keyed groupby")
+        return True
+    if not state.get("messages"):
+        violations.append(
+            "a wide file with a blank subject ID was declined without telling "
+            "the user anything")
+    return True
 
 
 def _oracle_broken_import_fails_visibly(state, case, violations) -> bool:
@@ -221,8 +388,9 @@ def _oracle_broken_import_fails_visibly(state, case, violations) -> bool:
 
 
 def _oracle_dv_reaches_bucket(state, case, violations) -> bool:
-    if not (case.expect_faithful_read and state.get("loaded")
-            and state.get("dv_is_numeric") and not state.get("wide_pivoted")):
+    if not (_is_long_ground_truth(case) and case.expect_faithful_read
+            and state.get("loaded") and state.get("dv_is_numeric")
+            and not state.get("wide_pivoted")):
         return False
     if state.get("dv_bucket") != [case.dv_name]:
         violations.append(
@@ -233,8 +401,8 @@ def _oracle_dv_reaches_bucket(state, case, violations) -> bool:
 
 
 def _oracle_factor_reaches_bucket(state, case, violations) -> bool:
-    if not (case.expect_faithful_read and state.get("loaded")
-            and not state.get("wide_pivoted")):
+    if not (_is_long_ground_truth(case) and case.expect_faithful_read
+            and state.get("loaded") and not state.get("wide_pivoted")):
         return False
     if len(case.distinct_levels) < 2:
         return False
@@ -249,7 +417,8 @@ def _oracle_factor_reaches_bucket(state, case, violations) -> bool:
 
 def _oracle_measurement_is_not_a_subject(state, case, violations) -> bool:
     """A column of measurements must never be filed as the subject identifier."""
-    if not (case.expect_faithful_read and state.get("loaded")):
+    if not (_is_long_ground_truth(case) and case.expect_faithful_read
+            and state.get("loaded")):
         return False
     if case.dv_name in (state.get("subject_bucket") or []):
         violations.append(
@@ -280,6 +449,12 @@ def _oracle_load_failure_is_announced(state, case, violations) -> bool:
 ORACLES = (
     ("file_loaded", _oracle_file_loaded),
     ("load_failure_is_announced", _oracle_load_failure_is_announced),
+    ("wide_is_pivoted", _oracle_wide_is_pivoted),
+    ("pivot_keeps_every_value", _oracle_pivot_keeps_every_value),
+    ("pivot_keeps_every_subject", _oracle_pivot_keeps_every_subject),
+    ("conditions_are_the_columns", _oracle_conditions_are_the_columns),
+    ("missing_subject_is_refused", _oracle_missing_subject_is_refused),
+    ("wide_feedback_matches_design", _oracle_wide_feedback_matches_design),
     ("shape_survives", _oracle_shape_survives),
     ("dv_is_numeric", _oracle_dv_is_numeric),
     ("values_survive", _oracle_values_survive),

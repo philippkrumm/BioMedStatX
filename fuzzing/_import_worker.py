@@ -107,6 +107,25 @@ def _snapshot(window, case, messages):
         state["factor_levels"] = [
             "" if pd.isna(v) else str(v) for v in frame[case.factor_name]
         ]
+
+    # A pivoted frame is a different shape entirely -- [subject, Condition,
+    # Value] -- so the long-format ground truth does not describe it and the
+    # wide oracles need the melted columns to compare against instead.
+    info = getattr(window, "_wide_format_info", None) or {}
+    state["pivot_subject_col"] = info.get("subject_col")
+    state["pivot_value_cols"] = list(info.get("value_cols") or [])
+    condition_col = "_Condition" if "_Condition" in frame.columns else "Condition"
+    if state["wide_pivoted"] and condition_col in frame.columns:
+        state["long_conditions"] = ["" if pd.isna(v) else str(v)
+                                    for v in frame[condition_col]]
+    if state["wide_pivoted"] and "Value" in frame.columns:
+        values = frame["Value"]
+        state["long_values"] = ([None if pd.isna(v) else float(v) for v in values]
+                                if pd.api.types.is_numeric_dtype(values) else None)
+    subject_col = state["pivot_subject_col"]
+    if state["wide_pivoted"] and subject_col in frame.columns:
+        state["long_subjects"] = ["" if pd.isna(v) else str(v)
+                                  for v in frame[subject_col]]
     return state
 
 
@@ -180,6 +199,11 @@ def main(seed: int) -> int:
             "mutations": case.mutations,
             "header_row": case.header_row,
             "faithful_expected": case.expect_faithful_read,
+            # Recorded so a finding can be triaged without rebuilding the case:
+            # which layout it was, and whether the pivot or a refusal was owed.
+            "layout": case.layout,
+            "pivot_expected": case.expect_pivot,
+            "refusal_expected": case.expect_refusal,
             "bytes": os.path.getsize(case.file_path),
         })
 

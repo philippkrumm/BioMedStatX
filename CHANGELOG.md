@@ -52,6 +52,13 @@ All notable changes to this project will be documented in this file.
   figure that draws no trace, a label outside its container, a Download that
   yields an empty file. `fuzzing/visual_selfcheck.py` proves each oracle can
   fail by breaking a real report in the way that oracle exists to catch.
+- The import fuzzer writes wide-format files. Roughly one seed in three is now
+  one subject per row and one column per condition, so the pivot path — the
+  detection, the subject-name heuristic behind it and the melt — is exercised by
+  a real file rather than only by its unit tests; every previous run reported
+  `wide-pivoted 0`. Six oracles cover it, and three more mutations join the four:
+  a BOM (what Excel writes whenever it saves a CSV), umlaut headers, and a blank
+  subject cell, which has to be refused out loud.
 
 ## [2.0] - 2026-08-17
 

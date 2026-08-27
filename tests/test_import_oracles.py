@@ -234,8 +234,188 @@ def test_a_file_the_app_may_refuse_is_not_held_to_the_faithful_checks():
 
 @pytest.mark.parametrize("name", [name for name, _ in ORACLES])
 def test_every_oracle_is_reachable(name):
-    """A named oracle nobody can make fire is decoration."""
+    """A named oracle nobody can make fire is decoration.
+
+    Four states, because no single one reaches every oracle: a clean long read,
+    a file the app may only refuse, a successful pivot, and a pivot the app has
+    to decline. The wide half was added with the wide oracles -- without it the
+    five of them would have been unreachable here and this test would have said
+    so, which is what it is for.
+    """
     clean_fired = set(check_import(_state(), _case())[1])
     refuse_fired = set(check_import(_state(loaded=False), _unreadable_case())[1])
+    pivot_fired = set(check_import(_pivoted_state(), _wide_case())[1])
+    blank_id_fired = set(check_import(
+        _pivoted_state(loaded=False, wide_pivoted=False,
+                       messages=[{"kind": "critical", "text": "Subject ID column..."}]),
+        _wide_case(mutations=["missing_subject_id"]))[1])
 
-    assert name in (clean_fired | refuse_fired)
+    assert name in (clean_fired | refuse_fired | pivot_fired | blank_id_fired)
+
+
+# --- the wide layout ------------------------------------------------------------
+
+CONDITIONS = ["T0", "T24", "T48"]
+SUBJECTS = ["S01", "S02", "S03", "S04"]
+WIDE = [[10.0, 10.5, 11.0, 11.5],
+        [12.0, 12.5, 13.0, 13.5],
+        [14.0, 14.5, 15.0, 15.5]]
+
+
+def _wide_case(**overrides):
+    base = dict(
+        seed=2, file_path="/tmp/w.csv", file_format="csv", mutations=[],
+        dv_name="", factor_name="", levels=[], values=[],
+        n_rows=len(SUBJECTS), n_cols=1 + len(CONDITIONS),
+        declared_format={"sep": ",", "decimal": ".", "thousands": None},
+        written_format={"sep": ",", "decimal": ".", "thousands": None},
+        layout="wide", subject_name="Subject", subject_ids=list(SUBJECTS),
+        condition_names=list(CONDITIONS), wide_values=[list(c) for c in WIDE],
+        extra={"header_row": 0},
+    )
+    base.update(overrides)
+    return ImportCase(**base)
+
+
+def _pivoted_state(**overrides):
+    """What the window holds after a successful melt."""
+    conditions = [name for name, column in zip(CONDITIONS, WIDE) for _ in column]
+    values = [v for column in WIDE for v in column]
+    subjects = list(SUBJECTS) * len(CONDITIONS)
+    base = dict(
+        loaded=True,
+        columns=["Subject", "Condition", "Value"],
+        dtypes={"Subject": "object", "Condition": "object", "Value": "float64"},
+        n_rows=len(values),
+        dv_is_numeric=False, dv_values=None, factor_levels=None,
+        wide_pivoted=True,
+        pivot_subject_col="Subject", pivot_value_cols=list(CONDITIONS),
+        long_conditions=conditions, long_values=values, long_subjects=subjects,
+        dv_bucket=["Value"], factor1_bucket=["Condition"], factor2_bucket=[],
+        subject_bucket=["Subject"],
+        mapping_feedback=("Wide format detected -> pivoted to long format. "
+                          "Conditions: \"T0\", \"T24\", \"T48\". "
+                          "Mapped as repeated-measures design (3 conditions)."),
+        start_enabled=True, messages=[],
+    )
+    base.update(overrides)
+    return base
+
+
+def test_a_clean_pivot_violates_nothing_and_checks_the_wide_invariants():
+    violations, fired = check_import(_pivoted_state(), _wide_case())
+
+    assert violations == [], violations
+    assert set(fired) >= {"wide_is_pivoted", "pivot_keeps_every_value",
+                          "pivot_keeps_every_subject", "conditions_are_the_columns",
+                          "wide_feedback_matches_design"}
+
+
+def test_a_wide_file_left_unpivoted_is_reported():
+    violations, _ = check_import(
+        _pivoted_state(wide_pivoted=False, columns=["Subject"] + CONDITIONS,
+                       n_rows=len(SUBJECTS), long_conditions=None,
+                       long_values=None, long_subjects=None),
+        _wide_case())
+
+    assert "wide_is_pivoted" in _names(violations)
+
+
+def test_a_long_file_pivoted_as_if_wide_is_reported():
+    violations, _ = check_import(_state(wide_pivoted=True,
+                                        pivot_subject_col="Group"), _case())
+
+    assert "wide_is_pivoted" in _names(violations)
+
+
+def test_a_measurement_lost_in_the_melt_is_reported():
+    short = [v for column in WIDE for v in column][:-1]
+    violations, _ = check_import(_pivoted_state(long_values=short), _wide_case())
+
+    assert "pivot_keeps_every_value" in _names(violations)
+
+
+def test_a_value_changed_by_the_melt_is_reported():
+    changed = [v for column in WIDE for v in column]
+    changed[0] = changed[0] / 1000.0          # the thousands-separator failure mode
+    violations, _ = check_import(_pivoted_state(long_values=changed), _wide_case())
+
+    assert "pivot_keeps_every_value" in _names(violations)
+
+
+def test_a_subject_dropped_by_the_melt_is_reported():
+    subjects = [s for s in (list(SUBJECTS) * len(CONDITIONS)) if s != "S04"]
+    violations, _ = check_import(
+        _pivoted_state(long_subjects=subjects + ["S01"]), _wide_case())
+
+    assert "pivot_keeps_every_subject" in _names(violations)
+
+
+def test_a_subject_appearing_the_wrong_number_of_times_is_reported():
+    subjects = list(SUBJECTS) * len(CONDITIONS)
+    subjects[0] = "S02"                        # S01 now appears twice, S02 four times
+    violations, _ = check_import(_pivoted_state(long_subjects=subjects), _wide_case())
+
+    assert "pivot_keeps_every_subject" in _names(violations)
+
+
+def test_a_mangled_condition_header_is_reported():
+    """What a mishandled BOM looks like once it reaches the Condition column."""
+    conditions = [name for name, column in zip(CONDITIONS, WIDE) for _ in column]
+    conditions = ["\ufeffT0" if c == "T0" else c for c in conditions]
+    violations, _ = check_import(_pivoted_state(long_conditions=conditions),
+                                 _wide_case())
+
+    assert "conditions_are_the_columns" in _names(violations)
+
+
+def test_three_conditions_described_as_a_paired_design_are_reported():
+    violations, _ = check_import(
+        _pivoted_state(mapping_feedback="Wide format detected. "
+                                        "Mapped as paired t-test design."),
+        _wide_case())
+
+    assert "wide_feedback_matches_design" in _names(violations)
+
+
+def test_two_conditions_described_as_repeated_measures_are_reported():
+    two = _wide_case(condition_names=["Pre", "Post"], wide_values=WIDE[:2],
+                     n_cols=3)
+    conditions = [name for name, column in zip(["Pre", "Post"], WIDE[:2])
+                  for _ in column]
+    values = [v for column in WIDE[:2] for v in column]
+    violations, _ = check_import(
+        _pivoted_state(long_conditions=conditions, long_values=values,
+                       long_subjects=list(SUBJECTS) * 2,
+                       pivot_value_cols=["Pre", "Post"],
+                       mapping_feedback="Mapped as repeated-measures design (2 conditions)."),
+        two)
+
+    assert "wide_feedback_matches_design" in _names(violations)
+
+
+def test_a_silent_pivot_is_reported():
+    violations, _ = check_import(_pivoted_state(mapping_feedback=""), _wide_case())
+
+    assert "wide_feedback_matches_design" in _names(violations)
+
+
+def test_a_blank_subject_id_must_be_refused_out_loud():
+    case = _wide_case(mutations=["missing_subject_id"])
+
+    # Pivoted anyway: the rows without an ID would vanish from every groupby.
+    violations, _ = check_import(_pivoted_state(), case)
+    assert "missing_subject_is_refused" in _names(violations)
+
+    # Declined, but silently.
+    violations, _ = check_import(
+        _pivoted_state(loaded=False, wide_pivoted=False, messages=[]), case)
+    assert "missing_subject_is_refused" in _names(violations)
+
+    # Declined with a message: correct behaviour.
+    violations, fired = check_import(
+        _pivoted_state(loaded=False, wide_pivoted=False,
+                       messages=[{"kind": "critical", "text": "Subject ID column..."}]),
+        case)
+    assert violations == [], violations
+    assert "missing_subject_is_refused" in fired

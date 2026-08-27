@@ -129,14 +129,23 @@ python -m fuzzing._import_worker 42
 
 1. `import_generators.build_case(seed, dir)` writes a real file and records the
    ground truth of what it wrote — the values, the group label of every row, the
-   shape. Four mutations, drawn from what a lab actually sends: **German number
-   format** (`;` separated, comma decimal, dot thousands, and values large enough
+   shape. Roughly one seed in three is a **wide** file (one subject per row, one
+   column per condition) rather than long, because the pivot path had no
+   file-level coverage at all. Seven mutations, drawn from what a lab actually
+   sends: **German number format** (`;` separated, comma decimal, dot thousands, and values large enough
    that the thousands separator is exercised at all), **notes above the header**
    (an export with an experiment title and an operator line before the table),
    **merged group cells** (a genuinely merged range, so the rows beneath the
    label are empty in the file), and **the wrong number format declared** — the
    realistic mistake, since there is deliberately no autodetect and the
-   declaration is the user's.
+   declaration is the user's. Then the second wave: a **BOM** (what Excel writes
+   whenever it saves a CSV, landing on the first header cell), **umlaut
+   headers** (`Größe`, `Behandlung`, `Präparat ID` — what a German lab names its
+   columns), and, for wide files only, a **blank subject cell**. The first two
+   deliberately do *not* relax `expect_faithful_read`: the app is expected to
+   handle both, so a failure there is a finding rather than a legitimate
+   refusal. The third must be refused out loud, because rows without an ID drop
+   silently out of every groupby that decides repeated-measures structure.
 2. `_import_worker` builds the real `StatisticalAnalyzerApp` headless and calls
    `load_file()` on it. Exactly two things are stubbed, and both are things a
    *user* answers rather than things the app computes: the CSV number-format
@@ -168,6 +177,23 @@ mapping built on a misread.
 | `factor_reaches_bucket` | faithful, ≥2 levels | the group column landed in Factor 1 |
 | `measurement_is_not_a_subject` | faithful | a column of measurements was not filed as a subject ID |
 
+Wide files -- one subject per row, one column per condition -- get their own
+five, because the long ground truth does not describe the frame after a melt:
+
+| oracle | precondition | asserts |
+|---|---|---|
+| `wide_is_pivoted` | loaded | a wide file was melted, **and** a long one was not |
+| `pivot_keeps_every_value` | pivoted | the melt moved every measurement and changed none |
+| `pivot_keeps_every_subject` | pivoted | every subject survived, once per condition |
+| `conditions_are_the_columns` | pivoted | the Condition levels are the file's value-column headers |
+| `wide_feedback_matches_design` | pivoted | the line explaining the pivot names the design that was built |
+| `missing_subject_is_refused` | blank subject cell | the file was declined out loud, not read in part |
+
+`wide_is_pivoted` checks both directions on purpose. A wide file left unpivoted
+reaches the mapping as one column per condition, so the user is asked to pick a
+"measurement" from four equally plausible ones; a long file wrongly pivoted
+invents a subject structure the data never had.
+
 `values_survive` is the one worth understanding. The failure it exists for is
 not a crash and not a warning: a thousands separator read as a decimal point
 divides every number by a thousand and leaves a column that is entirely
@@ -188,6 +214,10 @@ by the oracle named for it:
 | a failed load no longer shows its message box | `load_failure_is_announced` |
 | the mapping goes live with nothing assigned | `broken_import_fails_visibly` |
 | blank labels stringified into the group `nan` | `levels_survive`, `no_phantom_levels` |
+| `_detect_wide_format` always declines | `wide_is_pivoted` |
+| the melt drops a row | `pivot_keeps_every_value` |
+| the missing-subject-ID guard removed | `missing_subject_is_refused` |
+| the pivot notice back to "paired t-test design" | `wide_feedback_matches_design` |
 
 The fifth of those found a hole in the oracle rather than in the product: an
 empty measurement bucket was being counted as a refusal, so an app claiming to
@@ -199,10 +229,10 @@ unit tests but have not been put in front of a real mutation yet.
 
 ```
 === IMPORT FUZZ SUMMARY ===
-  OK                 120
-  files the app must parse exactly : 64
-  files it may only refuse visibly : 56
-  loaded 109  |  measurement column numeric 64  |  mapping ready 64  |  wide-pivoted 0
+  OK                 250
+  files the app must parse exactly : 180
+  files it may only refuse visibly : 70
+  loaded 221  |  measurement column numeric 126  |  mapping ready 172  |  wide-pivoted 46
 ```
 
 The two middle lines are the ones that stop a green run from being mistaken for
@@ -212,9 +242,11 @@ verified a single number. Seeds that fired **no** oracle at all are counted and
 named — the first run had one, a file that failed to load so early that nothing
 else applied, and it counted as OK.
 
-`wide-pivoted 0` is an honest gap, not a result: the generator does not yet
-write wide-format files, so `_detect_wide_format` and the melt behind it are
-untested here.
+`wide-pivoted` is the line that used to read 0. The generator now writes wide
+files for roughly one seed in three, so the detector, the subject heuristic
+behind it and the melt are exercised by the file rather than only by their unit
+tests -- and a wide seed runs the whole chain, pivot included, into a real
+repeated-measures analysis and its report.
 
 ---
 
