@@ -47,7 +47,17 @@ for p in (_ROOT, os.path.join(_ROOT, "src")):
 # "skip" is the explicit "continue without transforming" choice and None is
 # Cancel; both are real answers and are kept.
 _TRANSFORMS = ["log10", "boxcox", "arcsin_sqrt", "skip", None]
-_POSTHOC_NONPARAM = ["dunn", None]
+# NONPARAMETRIC_POSTHOC_OPTIONS offers dunn AND mw_custom (stats_functions.py:467);
+# mw_custom reaches its own Mann-Whitney branch (posthoc_fallback.py:393) and was
+# never drawn, so that branch was never run. None is the dialog's cancel.
+_POSTHOC_NONPARAM = ["dunn", "mw_custom", None]
+
+# How often a stand-in cancels instead of choosing. Cancelling is a real answer
+# and each dialog guards it differently -- the control-group dialog documents
+# "return None, never a silent groups[0]", and mw_custom refuses with "No pairs
+# selected." -- but a coin flip would halve how often the productive paths behind
+# these dialogs are reached at all. One in six keeps both exercised.
+_CANCEL_ODDS = 6
 
 
 def _posthoc_options(progress_text):
@@ -103,6 +113,8 @@ def _neutralize_dialogs(seed: int):
     )
 
     def _posthoc_dialog(parent=None, progress_text=None, column_name=None, default_method=None):
+        if int(rng.integers(0, _CANCEL_ODDS)) == 0:
+            return None  # the real dialog returns None when the user cancels
         options = _posthoc_options(progress_text)
         return options[int(rng.integers(0, len(options)))]
 
@@ -123,7 +135,12 @@ def _neutralize_dialogs(seed: int):
         if groups is None and args:
             groups = args[0]
         groups = list(groups or [])
-        return groups[int(rng.integers(0, len(groups)))] if groups else None
+        if not groups or int(rng.integers(0, _CANCEL_ODDS)) == 0:
+            # Cancelled. The real dialog is explicit that this must never fall
+            # back to groups[0], and says every caller guards it -- which is
+            # only true if something ever takes the path.
+            return None
+        return groups[int(rng.integers(0, len(groups)))]
     UIDialogManager.select_control_group_dialog = staticmethod(_control_group_dialog)
 
     # Only the arcsin_sqrt answer reaches this dialog, and until that answer was
@@ -148,6 +165,8 @@ def _neutralize_dialogs(seed: int):
         """
         names = [g for g in (groups or [])]
         all_pairs = [(a, b) for i, a in enumerate(names) for b in names[i + 1:]]
+        if int(rng.integers(0, _CANCEL_ODDS)) == 0:
+            return []  # cancelled; the callers are supposed to refuse, not proceed
         if not all_pairs or takes_all_pairs:
             return all_pairs
         count = int(rng.integers(1, len(all_pairs) + 1))
@@ -172,6 +191,13 @@ def _neutralize_dialogs(seed: int):
                 self._all_pairs = list(all_pairs or [])
 
             def exec_(self):
+                # Rejecting is how a user backs out mid-analysis, and the
+                # pipeline has a documented path for it (AnalysisCancelledError
+                # -> a clean cancelled result, no report). It used to reject
+                # ALWAYS, by accident, which aborted every advanced run; never
+                # rejecting swapped that for the opposite blind spot.
+                if int(rng.integers(0, _CANCEL_ODDS)) == 0:
+                    return 0  # QDialog.Rejected
                 return self.Accepted
 
             def get_selected_comparisons(self):
