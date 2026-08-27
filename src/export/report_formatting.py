@@ -36,6 +36,30 @@ class _FormattingMixin:
     """Stateless formatting / numeric helpers mixed into ``HTMLExporter``."""
 
     @staticmethod
+    def _significant_at(value: Any, alpha: float = 0.05) -> bool:
+        """Whether a p-value is a real number below alpha.
+
+        ``isinstance(nan, float)`` is True and ``nan < 0.05`` is False, so the
+        usual ``isinstance(p, (int, float)) and p < 0.05`` reads a model that
+        produced no answer as one that produced a negative answer. A Firth
+        logistic fit that diverged on separated data returned p = nan and the
+        report badged it "Not significant" and wrote that the test "did not show
+        evidence against the null hypothesis" -- a claim about the data, made
+        from a number that does not exist.
+
+        Use ``_has_p_value`` to tell "not significant" apart from "no result";
+        this returns False for both.
+        """
+        return _FormattingMixin._has_p_value(value) and float(value) < alpha
+
+    @staticmethod
+    def _has_p_value(value: Any) -> bool:
+        """Whether there is a p-value at all -- a finite number, not NaN or inf."""
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return False
+        return math.isfinite(float(value))
+
+    @staticmethod
     def _esc(value: Any) -> str:
         """HTML-escape a value for safe interpolation into a raw f-string HTML
         block (i.e. anywhere NOT already covered by Jinja's autoescape=True -

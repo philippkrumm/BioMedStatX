@@ -24,7 +24,7 @@ class _AssociationMixin:
         rows_html = ""
         for row in or_table:
             p_val = row.get("p_value")
-            is_sig = isinstance(p_val, (int, float)) and p_val < 0.05
+            is_sig = _FormattingMixin._significant_at(p_val)
             or_display = _FormattingMixin._format_metric(row.get("odds_ratio"))
             if is_sig:
                 or_display = f"<strong>{or_display}</strong>"
@@ -81,7 +81,7 @@ class _AssociationMixin:
         rows_html = ""
         for row in coef_table:
             p_val = row.get("p_value")
-            is_sig = isinstance(p_val, (int, float)) and p_val < 0.05
+            is_sig = _FormattingMixin._significant_at(p_val)
             coef_display = _FormattingMixin._format_metric(row.get("coefficient"))
             if is_sig:
                 coef_display = f"<strong>{coef_display}</strong>"

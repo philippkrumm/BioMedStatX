@@ -44,6 +44,17 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- A p-value that does not exist is no longer reported as a p-value above alpha.
+  `isinstance(nan, float)` is True and `nan < 0.05` is False, so a model that
+  produced no answer was filed under "produced a negative answer": a Firth
+  logistic fit that overflowed on separated data with a collinear covariate
+  returned `p = nan` and the report badged it **Not significant** and wrote that
+  the test "did not show evidence against the null hypothesis" -- a claim about
+  the data, drawn from a number that does not exist, and indistinguishable to
+  the reader from a genuine null finding. The hero badge now has three states,
+  the third reading **No result**, and the summary sentence makes no claim at
+  all. The gate is a shared helper, so the four places that asked this question
+  ask it the same way. Found by the fuzzer.
 - A repeated-measures analysis no longer reports a transformation it did not
   perform. The gate deciding whether anything was transformed compared the two
   sample sets position by position, and the RM path hands the same measurements

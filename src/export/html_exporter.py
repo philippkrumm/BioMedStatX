@@ -335,7 +335,10 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
             or "Statistical analysis"
         )
         p_value = results.get("p_value")
-        is_significant = isinstance(p_value, (int, float)) and p_value < 0.05
+        is_significant = HTMLExporter._significant_at(p_value)
+        # Three states, not two. A model that produced no number has not found
+        # the absence of an effect, and must not be badged as if it had.
+        has_p_value = HTMLExporter._has_p_value(p_value)
         effect_size = results.get("effect_size")
         effect_label = str(results.get("effect_size_type") or "Effect size")
         title = f"Scientific Report: {dataset_name}" if dataset_name else "BioMedStatX Scientific Report"
@@ -347,8 +350,16 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
             "p_value_display": HTMLExporter._format_p_value(
                 p_value, results.get("p_value_resolution")),
             "is_significant": is_significant,
-            "significance_label": "Significant" if is_significant else "Not significant",
-            "significance_class": "is-significant" if is_significant else "is-neutral",
+            "significance_label": (
+                "Significant" if is_significant
+                else "Not significant" if has_p_value
+                else "No result"
+            ),
+            "significance_class": (
+                "is-significant" if is_significant
+                else "is-neutral" if has_p_value
+                else "is-danger"
+            ),
             "effect_size_display": HTMLExporter._format_metric(effect_size),
             "effect_label": effect_label,
             "effect_magnitude": HTMLExporter._effect_size_magnitude(effect_size, effect_label),
@@ -360,7 +371,7 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
     def _build_summary_note(results: dict, test_name: str, p_value: Any) -> str:
         if results.get("error"):
             return str(results["error"])
-        if isinstance(p_value, (int, float)):
+        if HTMLExporter._has_p_value(p_value):
             if p_value < 0.05:
                 return f"{test_name} detected evidence against the null hypothesis."
             return f"{test_name} did not show evidence against the null hypothesis."
