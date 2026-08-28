@@ -45,9 +45,14 @@ def test_each_value_is_labelled_with_the_subject_it_came_from():
 
 
 def test_the_label_follows_the_value_not_the_position():
-    """Row two of the second level is S1, not the second subject listed."""
+    """Row two of the second level is S1, not the second subject listed.
+
+    Keyed by the bare level: every other extraction of a repeated-measures
+    design uses it, and this extractor's "factor=level" was the lone outlier
+    that stopped the two halves of the table pairing at all.
+    """
     table = _table_for(SHUFFLED)
-    second_level = [r for r in table["rows"] if r["group"] == "Time=24h"]
+    second_level = [r for r in table["rows"] if r["group"] == "24h"]
     assert [r["subject"] for r in second_level] == ["S3", "S1", "S2"]
     assert [float(r["raw_value"]) for r in second_level] == [33.0, 11.0, 22.0]
 

@@ -25,6 +25,40 @@ from .validators import (
 logger = logging.getLogger(__name__)
 
 
+def _attach_raw_data(res, samples, subjects):
+    """The raw values and who they belong to are one fact, written in one place.
+
+    The logged test wrappers extract both for themselves, from the frame they
+    analyse -- which for a design with technical replicates has been averaged to
+    one row per subject and level. This function then replaces the values with
+    the untransformed originals. Replacing one half of the pair and leaving the
+    other behind is what produced a raw table naming one subject beside another
+    subject's value: measured at 24 printed rows out of 24 on a replicated
+    repeated-measures design, where 24 raw values per level were being labelled
+    from a list of 8.
+
+    So both halves come from the same extraction, or the subject labels are
+    dropped and the table shows no Subject column. An absent column says
+    nothing; a wrong one says something false.
+    """
+    res["raw_data"] = samples
+    aligned = (
+        isinstance(subjects, dict) and subjects
+        and set(subjects) == set(samples)
+        and all(len(subjects[group]) == len(samples[group]) for group in samples)
+    )
+    if aligned:
+        res["raw_data_subjects"] = subjects
+    else:
+        if subjects:
+            logger.warning(
+                "raw-data subject labels do not line up with the extracted values "
+                "(%d groups vs %d); the Subject column is dropped rather than guessed.",
+                len(subjects), len(samples),
+            )
+        res.pop("raw_data_subjects", None)
+
+
 def perform_advanced_test_pipeline(
     df,
     test,
@@ -64,6 +98,7 @@ def perform_advanced_test_pipeline(
                 "dv": dv,
                 "between": between,
                 "within": within,
+                "subject": subject,
             }
         )
         extraction_updates = dict(extraction_result.metadata or {})
@@ -77,6 +112,7 @@ def perform_advanced_test_pipeline(
         groups = list(extraction_updates.get("groups") or [])
         df_original = extraction_updates.get("df_original", df.copy())
         original_samples = dict(extraction_updates.get("original_samples") or {})
+        original_subjects = extraction_updates.get("subjects") or None
 
         if transformed_samples is None or recommendation is None:
             logger.debug("DEBUG: Using existing test results from prepare_advanced_test")
@@ -314,7 +350,7 @@ def perform_advanced_test_pipeline(
                     if advanced_posthoc_updates["error"] not in warnings_list:
                         warnings_list.append(advanced_posthoc_updates["error"])
 
-            res["raw_data"] = original_samples
+            _attach_raw_data(res, original_samples, original_subjects)
             # Store transformed raw data only when the transformation actually
             # changed the values — a truthy-but-no-op label (e.g. "No further",
             # or a name that maps to no transform branch) must not emit a
@@ -396,7 +432,7 @@ def perform_advanced_test_pipeline(
 
             res["test_info"] = test_info
             res["parametric_assumptions_violated"] = True
-            res["raw_data"] = original_samples
+            _attach_raw_data(res, original_samples, original_subjects)
 
             if transformation_type and transformation_type not in ["none", "None", "Keine"]:
                 res["transformation"] = transformation_type

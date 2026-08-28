@@ -24,6 +24,7 @@ class ExtractionEngine:
         dv = payload.get("dv")
         between = payload.get("between")
         within = payload.get("within")
+        subject = payload.get("subject")
 
         if df is None or dv is None or test is None:
             return StatisticalResult(
@@ -34,8 +35,22 @@ class ExtractionEngine:
             )
 
         samples: dict[str, list[float]] = {}
+        # Who each extracted value belongs to, in the same order, filled in the
+        # same loop. Kept here rather than derived later because a second
+        # extraction is a second chance to disagree: the raw table prints value
+        # and subject side by side, and the two used to come from different
+        # frames -- one of which had been replicate-averaged -- so every printed
+        # row named the wrong subject. Only within-subject designs have an
+        # answer; the rest leave this empty and the table shows no Subject
+        # column, which is correct for them.
+        subjects: dict[str, list[str]] = {}
         groups: list[str] = []
         df_original = df.copy()
+
+        def _labels(subset):
+            if not subject or subject not in subset.columns:
+                return None
+            return [str(value) for value in subset[subject].tolist()]
 
         try:
             if test == "mixed_anova":
@@ -45,12 +60,19 @@ class ExtractionEngine:
                         group_label = f"{b_factor}={b_val}, {w_factor}={w_val}"
                         subset = df[(df[b_factor] == b_val) & (df[w_factor] == w_val)]
                         samples[group_label] = subset[dv].tolist()
+                        labels = _labels(subset)
+                        if labels is not None:
+                            subjects[group_label] = labels
                 groups = list(samples.keys())
 
             elif test == "repeated_measures_anova":
                 w_factor = within[0]
                 for lvl in df[w_factor].unique():
-                    samples[lvl] = df[df[w_factor] == lvl][dv].tolist()
+                    subset = df[df[w_factor] == lvl]
+                    samples[lvl] = subset[dv].tolist()
+                    labels = _labels(subset)
+                    if labels is not None:
+                        subjects[lvl] = labels
                 groups = list(samples.keys())
                 ensure_equal_group_sizes(samples, groups, min_n=MIN_N_BLOCK)
 
@@ -123,5 +145,6 @@ class ExtractionEngine:
                 "groups": groups,
                 "df_original": df_original,
                 "original_samples": original_samples,
+                "subjects": subjects or None,
             },
         )

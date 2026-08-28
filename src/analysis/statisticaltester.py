@@ -1440,11 +1440,20 @@ class StatisticalTester:
     
     @staticmethod
     def _extract_raw_data_rm_anova(df, dv, between, within, subject):
+        # Keyed by the bare level, not "factor=level". Every other extraction of
+        # a repeated-measures design uses the bare level -- ExtractionEngine,
+        # prepare_advanced_test, and the group_names the post-hoc builds its
+        # comparisons from -- and the advanced pipeline overwrites raw_data with
+        # one of those while leaving these subjects behind. The two halves then
+        # described the same values under different names, so nothing could pair
+        # them: the raw table dropped its Subject column and the figure refused
+        # subject lines with "No subject was measured at more than one level",
+        # which was false about every subject in the design.
         raw, subjects = {}, {}
         w = within[0]
         for lvl in df[w].unique():
             block = df[df[w] == lvl]
-            key = f"{w}={lvl}"
+            key = lvl
             raw[key] = block[dv].tolist()
             if subject and subject in block.columns:
                 subjects[key] = [str(v) for v in block[subject].tolist()]
