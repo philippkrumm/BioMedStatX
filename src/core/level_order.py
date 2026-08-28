@@ -2,13 +2,18 @@
 
 The order depends ONLY on the set of labels, never on DataFrame row order:
 
-    key(label) = (hierarchy_rank(label), natural_key(label))
+    key(label) = (rank(level_1), natural_key(level_1),
+                  rank(level_2), natural_key(level_2), ...)
 
 - ``natural_key`` is numeric-aware, so ``6h < 24h < 48h`` sort by value no matter
   what text surrounds the number (fixes lexicographic ``24h, 48h, 6h``).
-- ``hierarchy_rank`` puts recognized reference/baseline/control terms first
-  (rank 0) and recognized treated/terminal terms last (rank 2); everything else
-  is rank 1 and ordered by ``natural_key``.
+- ``rank`` puts recognized reference/baseline/control terms first (rank 0) and
+  recognized treated/terminal terms last (rank 2); everything else is rank 1 and
+  ordered by ``natural_key``.
+- A two-factor cell ("Sex=M, Geno=WT") carries one level per factor, and each is
+  ranked on its own. The pair is interleaved rather than grouped, so the primary
+  factor still decides the grouping and each factor's reference terms order the
+  levels inside it.
 
 This is presentation only — the statistics are order-independent. When two or
 more middle-rank levels are non-numeric and unrecognized, their relative order
@@ -46,33 +51,45 @@ _NUMERIC_LEVEL_RE = re.compile(r"\s*-?\d+(?:\.\d+)?\s*[a-zA-Z%µ°]*\s*$")
 _COMPOSITE_SEGMENT_RE = re.compile(r"^\s*[^=,]+=(?P<value>.*)$")
 
 
-def _level_part(label):
-    """Strip the factor names out of a composite cell label.
+def _level_parts(label):
+    """The level values of a label, one per factor.
 
-    The raw-data keys for repeated-measures and mixed designs are built as
-    ``f"{factor}={level}"`` (and ``"a=1, b=2"`` for a cell), so the level itself
-    is buried behind a prefix that is identical for every category. Left in, the
-    prefix dominates both the reference-term lookup and the sort key: ranking
-    saw ``"Timepoint=Pre"`` as an unrecognized label rather than a baseline, and
-    ordered ``Post`` ahead of ``Pre``. Ordering on the values restores what the
-    bare labels always did, and leaves a label without ``=`` untouched.
+    The raw-data keys for repeated-measures, mixed and two-way designs are built
+    as ``f"{factor}={level}"`` (and ``"a=1, b=2"`` for a cell), so the level
+    itself is buried behind a prefix that is identical for every category. Left
+    in, the prefix dominates both the reference-term lookup and the sort key:
+    ranking saw ``"Timepoint=Pre"`` as an unrecognized label rather than a
+    baseline, and ordered ``Post`` ahead of ``Pre``.
+
+    Split per factor rather than rejoined into one string, because the
+    reference/terminal lookup is a lookup of a *level*, and a cell is not one
+    level. Joining left ``"M, WT"`` to be looked up whole, which matches
+    nothing, so ``Sex=F, Geno=KO`` sorted ahead of ``Sex=M, Geno=WT`` on the
+    alphabet while the single-factor form put WT first. Numbers hid this --
+    ``_natural_key`` finds digits anywhere in the string -- so a cell whose
+    levels were T0/T1 came out right and one whose levels were WT/KO did not.
     """
     text = str(label)
     if "=" not in text:
-        return text
+        return [text]
     parts = []
     for segment in text.split(","):
         match = _COMPOSITE_SEGMENT_RE.match(segment)
         parts.append(match.group("value").strip() if match else segment.strip())
-    return ", ".join(parts)
+    return parts
 
 
-def _norm(label):
-    return re.sub(r"[\s\-]+", "", _level_part(label).strip().lower())
+def _level_part(label):
+    """The level values as one string. Display and back-compatibility only."""
+    return ", ".join(_level_parts(label))
 
 
-def _hierarchy_rank(label):
-    n = _norm(label)
+def _norm(part):
+    return re.sub(r"[\s\-]+", "", str(part).strip().lower())
+
+
+def _rank_of(part):
+    n = _norm(part)
     if n in _REFERENCE_TERMS:
         return 0
     if n in _TERMINAL_TERMS:
@@ -80,17 +97,44 @@ def _hierarchy_rank(label):
     return 1
 
 
-def _natural_key(label):
+def _natkey_of(part):
     # Split into text/number chunks; wrap each in a (type, value) tuple so mixed
     # numeric/text keys stay comparable (numbers sort before text at a position).
-    parts = re.split(r"(\d+(?:\.\d+)?)", _level_part(label))
+    chunks = re.split(r"(\d+(?:\.\d+)?)", str(part))
     key = []
-    for i, part in enumerate(parts):
+    for i, chunk in enumerate(chunks):
         if i % 2 == 1:
-            key.append((0, float(part)))
+            key.append((0, float(chunk)))
         else:
-            key.append((1, part.lower()))
+            key.append((1, chunk.lower()))
     return tuple(key)
+
+
+def _hierarchy_rank(label):
+    """One rank per factor. A bare label still ranks as a single value."""
+    return tuple(_rank_of(part) for part in _level_parts(label))
+
+
+def _natural_key(label):
+    key = ()
+    for part in _level_parts(label):
+        key += _natkey_of(part)
+    return key
+
+
+def _sort_key(label):
+    """Rank and natural key interleaved, factor by factor.
+
+    Not ``(all ranks, all keys)``: that would gather every control cell of every
+    first-factor level together and break the grouping the chart is read by
+    (all of A's bars, then all of B's). Interleaving keeps the primary factor in
+    charge of the grouping and lets each factor's own reference terms order the
+    levels inside it.
+    """
+    key = ()
+    for part in _level_parts(label):
+        key += ((_rank_of(part),), _natkey_of(part))
+    return key
 
 
 def _is_numeric_level(label):
@@ -162,7 +206,7 @@ def order_is_defined(values):
     for value in values:
         by_label.setdefault(str(value), value)
     ambiguous = _ambiguous_labels(
-        sorted(by_label, key=lambda s: (_hierarchy_rank(s), _natural_key(s)))
+        sorted(by_label, key=_sort_key)
     )
     if not ambiguous:
         return True, ""
@@ -190,7 +234,7 @@ def natural_order(values, notes=None):
         by_label.setdefault(str(v), v)
 
     ordered_labels = sorted(
-        by_label, key=lambda s: (_hierarchy_rank(s), _natural_key(s))
+        by_label, key=_sort_key
     )
 
     if notes is not None:
