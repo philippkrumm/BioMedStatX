@@ -167,29 +167,42 @@ def _first_difference_is_numeric(key_a, key_b):
 def _ambiguous_labels(ordered_labels):
     """Labels whose position rests on nothing but alphabetical order.
 
-    A label is placed meaningfully if its rank did it (a recognized baseline or
-    terminal term sits first or last by definition) or if a number separated it
-    from its neighbour. Only a textual first difference between two neighbours
-    of the same rank is a guess, and then both of them are guesses.
+    Each adjacent pair is asked the same question at the factor that separates
+    them: did a rank place them (a recognized baseline or terminal term sits
+    first or last by definition), or did a number, or neither? Neither means
+    both labels are guesses.
 
-    This replaces an earlier test that asked whether each label was *entirely*
-    numeric. That version called "Week 4, Week 12" and "Timepoint 1, 2, 3"
-    alphabetical although their numbers had ordered them correctly, and it fired
-    on every composite interaction-cell label -- which is why the resulting
-    report note was muted as noise instead of the test being corrected.
+    Asked per factor rather than per label. The earlier version grouped the
+    labels into runs of equal rank and compared only inside a run, which worked
+    while a label carried one rank. Ranking each factor separately made those
+    runs fragment -- four cells over two factors can land in four runs of one --
+    and a run of one is never compared with anything, so an alphabetical
+    between-factor guess ("Site=Aachen" before "Site=Bonn") stopped being
+    declared at all. Comparing neighbours directly needs no runs and says the
+    same thing for a single-factor label, where there is one position to ask
+    about.
+
+    Both this and the ranking replace a still earlier test that asked whether a
+    label was *entirely* numeric. That version called "Week 4, Week 12"
+    alphabetical although their numbers had ordered them correctly, and fired on
+    every composite cell label -- which is why the report note was muted as
+    noise instead of the test being corrected.
     """
     ambiguous = set()
-    run = []
-    for label in list(ordered_labels) + [None]:
-        rank = _hierarchy_rank(label) if label is not None else None
-        if run and (label is None or rank != _hierarchy_rank(run[0])):
-            for left, right in zip(run, run[1:]):
-                decided = _first_difference_is_numeric(_natural_key(left), _natural_key(right))
-                if not decided:
-                    ambiguous.update((left, right))
-            run = []
-        if label is not None:
-            run.append(label)
+    for left, right in zip(ordered_labels, ordered_labels[1:]):
+        left_parts, right_parts = _level_parts(left), _level_parts(right)
+        decided = None
+        for part_a, part_b in zip(left_parts, right_parts):
+            if part_a == part_b:
+                continue
+            if _rank_of(part_a) != _rank_of(part_b):
+                decided = True
+            else:
+                decided = _first_difference_is_numeric(
+                    _natkey_of(part_a), _natkey_of(part_b))
+            break
+        if not decided:
+            ambiguous.update((left, right))
     return [label for label in ordered_labels if label in ambiguous]
 
 

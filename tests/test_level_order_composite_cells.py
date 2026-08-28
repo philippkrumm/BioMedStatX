@@ -87,3 +87,27 @@ def test_a_cell_ordered_by_the_alphabet_is_declared_as_such():
 
     defined, reason = order_is_defined(["Arm=A, Time=Pre", "Arm=A, Time=Post"])
     assert defined, reason
+
+
+def test_a_guess_in_one_factor_is_declared_even_when_the_other_is_ranked():
+    """The regression that ranking per factor introduced, and its guard.
+
+    The ambiguity test used to group labels into runs of equal rank and compare
+    only inside a run. One rank per label made that work; one rank per FACTOR
+    fragmented the runs -- four cells over two factors can land in four runs of
+    one -- and a run of one is never compared with anything. So the alphabetical
+    Aachen/Bonn decision below stopped being declared the moment the ranking
+    improved. The question is now asked of each adjacent pair, at the factor
+    that separates them.
+    """
+    cells = ["Site=Aachen, Time=T0", "Site=Aachen, Time=T1",
+             "Site=Bonn, Time=T0", "Site=Bonn, Time=T1"]
+    defined, reason = order_is_defined(cells)
+    assert not defined, "Aachen before Bonn is a guess and has to be declared"
+    assert "Site=Aachen, Time=T1" in reason and "Site=Bonn, Time=T0" in reason, reason
+
+    # And the same shape with a ranked first factor stays silent.
+    ranked = ["Geno=WT, Time=T0", "Geno=WT, Time=T1",
+              "Geno=KO, Time=T0", "Geno=KO, Time=T1"]
+    defined, reason = order_is_defined(ranked)
+    assert defined, reason
