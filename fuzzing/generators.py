@@ -113,9 +113,12 @@ def _base_design(rng: np.random.Generator, test_label: str):
             kwargs = {"group_col": "Time", "groups": within_levels, "value_cols": ["Val"],
                       "dependent": True, "subject_column": "Subject"}
         else:
-            ctx = {"factor_columns": ["Between"], "dv_columns": ["Val"],
-                   "group_labels": sorted(set(between)), "subject_column": "Subject", "mode": "single",
-                   "inferred_test": "mixed_anova", "between_factors": ["Between"], "within_factors": ["Time"]}
+            ctx = {"factor_columns": ["Between", "Time"], "dv_columns": ["Val"],
+                   "group_labels": sorted(set(between)), "subject_column": "Subject",
+                   "mode": "single",
+                   "selected_group_column": "Between", "selected_groups": [],
+                   "inferred_test": "mixed_anova", "between_factors": ["Between"],
+                   "within_factors": ["Time"], "_cell_factors": ["Between", "Time"]}
             kwargs = {"group_col": "Between", "groups": sorted(set(between)), "value_cols": ["Val"],
                       "dependent": True, "subject_column": "Subject"}
 
@@ -137,7 +140,9 @@ def _base_design(rng: np.random.Generator, test_label: str):
                                               + rng.normal(0, 1))})
         df = pd.DataFrame(rows)
         ctx = {"factor_columns": ["FacA", "FacB"], "dv_columns": ["Val"],
-               "group_labels": fa, "mode": "single", "inferred_test": "two_way_anova"}
+               "group_labels": fa, "mode": "single", "inferred_test": "two_way_anova",
+               "selected_group_column": "FacA", "selected_groups": [],
+               "_cell_factors": ["FacA", "FacB"]}
         kwargs = {"group_col": "FacA", "groups": fa, "value_cols": ["Val"],
                   "dependent": False}
 
@@ -331,6 +336,30 @@ def build_case(seed: int) -> FuzzCase:
         if int(rng.integers(0, 5)) == 0:
             datasets = int(rng.integers(2, 4))
             kwargs["selected_datasets"] = [f"DS{i + 1}" for i in range(datasets)]
+
+    # A two-factor design is addressed by its CELLS in the product. The window
+    # builds group_labels as "FacA=A0, FacB=B0" and hands analyze() a group_col
+    # of "__AUTO_GROUP__" (autopilot pipeline, the `len(factor_columns) == 2`
+    # branch). The generator used to send the first factor's levels and that
+    # factor as the group column -- a shape no window can produce, and one the
+    # pipeline refuses: every clean two-way seed came back blocked with
+    # "Group 'A0' has no usable numeric values after removing missing data",
+    # and the run counted it ok because a blocked result is a legitimate
+    # outcome for bad data. Two-way ANOVA therefore had no coverage at all, and
+    # mixed was being exercised over a partition the product never builds.
+    #
+    # Rebuilt after the mutations, not before: the mutations are what change
+    # the labels, and the window reads them off the frame it was given.
+    _cell_factors = ctx.pop("_cell_factors", None)
+    if _cell_factors and all(column in df.columns for column in _cell_factors):
+        factor_a, factor_b = _cell_factors
+        cells = sorted({f"{factor_a}={row[factor_a]}, {factor_b}={row[factor_b]}"
+                        for _, row in df[[factor_a, factor_b]].dropna().iterrows()}, key=str)
+        if len(cells) >= 2:
+            ctx["group_labels"] = cells
+            ctx["display_group_col"] = "__AUTO_GROUP__"
+            kwargs["group_col"] = "__AUTO_GROUP__"
+            kwargs["groups"] = cells
 
     ctx["injected_df"] = df
     kwargs["analysis_context"] = ctx
