@@ -266,10 +266,20 @@ def _apply_mutation(df: pd.DataFrame, mut: str, rng: np.random.Generator,
     elif mut == "comma_decimals":
         df[val] = df[val].apply(lambda x: str(x).replace(".", ",") if pd.notna(x) else x)
     elif mut == "tiny_groups":
-        # keep only 1-2 rows per group
-        keep = df.groupby(groups_col, group_keys=False).apply(
-            lambda s: s.head(int(rng.integers(1, 3))))
-        df = keep.reset_index(drop=True)
+        # Keep only 1-2 rows per group.
+        #
+        # Not via groupby().apply(): pandas consumes the grouping key into the
+        # index there, and reset_index(drop=True) then throws the column away.
+        # So on a two-factor design this mutation deleted FacA outright --
+        # measured, ['FacA','FacB','Val'] came back as ['FacB','Val'] -- and
+        # what ran was not a tiny-group design but one whose context named a
+        # column the frame no longer had. Four seeds died in make_auto_group
+        # with KeyError: 'FacA', which is not a shape any window can produce:
+        # the factor list is built from self.df.columns and guarded again
+        # before use. The mutation was testing the harness, not the product.
+        pieces = [block.head(int(rng.integers(1, 3)))
+                  for _, block in df.groupby(groups_col, sort=False)]
+        df = pd.concat(pieces).reset_index(drop=True)
     elif mut == "high_cardinality":
         df[groups_col] = [f"u{i}" for i in range(len(df))]
     elif mut == "collinear_covariate" and "Cov" in df.columns:
