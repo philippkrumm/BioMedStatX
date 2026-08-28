@@ -24,7 +24,7 @@ Dependency-free by design: the interactive figure builder mirrors this logic in
 JavaScript, and keeping the Python side small keeps the two comparable.
 """
 
-from core.level_order import order_is_defined
+from core.level_order import _level_parts, order_is_defined
 
 # Weissgerber et al. (2015) put the practical ceiling for readable spaghetti
 # overlays at roughly this many series. Nothing about the number is sacred --
@@ -58,6 +58,14 @@ def paired_lines_supported(group_order, subjects, max_subjects=PAIRED_LINE_MAX_S
         return False, (
             "No subject identity in this result, so there is nothing to connect. "
             "Independent designs measure different individuals per group."
+        )
+
+    if any(len(_level_parts(level)) > 1 for level in levels):
+        return False, (
+            "The axis here is a combination of two factors rather than one "
+            "ordered sequence, so a line along it would join points that are "
+            "not consecutive steps of the same path. Subject lines are drawn "
+            "where the axis is a single factor."
         )
 
     spanning = _subjects_spanning_levels(levels, subjects)

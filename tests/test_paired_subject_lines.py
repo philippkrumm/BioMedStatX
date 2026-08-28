@@ -74,6 +74,29 @@ def test_an_independent_design_is_refused():
     assert "subject" in reason.lower()
 
 
+def test_a_two_factor_axis_is_refused():
+    """A mixed design's axis is combinations, not one ordered sequence.
+
+    This became reachable the moment mixed designs started carrying usable
+    subject labels; before that the refusal happened by accident, because the
+    labels never matched the values and the "no subject identity" branch caught
+    it first. Accidental refusals stop being refusals as soon as the accident is
+    fixed, so the rule is stated here rather than left to the fuzzer's oracle.
+    """
+    cells = ["Arm=A, Time=T0", "Arm=A, Time=T1", "Arm=B, Time=T0", "Arm=B, Time=T1"]
+    subjects = {cells[0]: ["S1", "S2"], cells[1]: ["S1", "S2"],
+                cells[2]: ["S3", "S4"], cells[3]: ["S3", "S4"]}
+    supported, reason = paired_lines_supported(cells, subjects)
+    assert not supported
+    assert "two factors" in reason
+    # A single-factor design written the same way is still fine: one level per
+    # label, so there is a sequence to follow.
+    prefixed = ["Time=T0", "Time=T1"]
+    supported, reason = paired_lines_supported(
+        prefixed, {"Time=T0": ["S1", "S2"], "Time=T1": ["S1", "S2"]})
+    assert supported, reason
+
+
 def test_an_alphabetical_level_order_is_refused():
     """A line asserts a path; between Drug A and Drug B there is none."""
     subjects = {"Drug A": ["S1", "S2"], "Drug B": ["S1", "S2"]}
