@@ -420,17 +420,69 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
         return MixedAnovaPostHocAnalyzer._between_subject_test(group1_data, group2_data, dv, alpha)
     
     @staticmethod
+    def _between_level_of(control_group, df, between_col):
+        """The between-factor level a chosen control refers to.
+
+        The control-group dialog offers the mixed design's *cells*
+        ("Between=B0, Time=T0"), because that is the label vocabulary the rest
+        of the pipeline speaks. The EMM/mvt contrast family is defined the other
+        way round -- treatment vs control *at each within level* -- so only the
+        between half of that choice carries information; the within half is
+        supplied by the method, once per level. Reading the between level out of
+        the label is therefore not discarding a decision, it is reading the only
+        part of it the method has a use for.
+
+        A control that is already a bare level passes through. Anything that
+        resolves to nothing is returned unchanged, so the caller still fails
+        with ``UnsupportedDesignError("control group ... not present")`` rather
+        than silently contrasting against something else.
+        """
+        if control_group is None or between_col not in getattr(df, "columns", []):
+            return control_group
+        levels = list(pd.unique(df[between_col].dropna()))
+        if control_group in levels or str(control_group) in [str(v) for v in levels]:
+            return control_group
+        for segment in str(control_group).split(","):
+            name, sep, value = segment.partition("=")
+            if sep and name.strip() == str(between_col):
+                wanted = value.strip()
+                for level in levels:
+                    if str(level) == wanted:
+                        return level
+        return control_group
+
+    @staticmethod
     def perform_test(df, between, within, dv, subject, alpha=0.05, selected_comparisons=None, method='tukey', control_group=None):
         """
         UPDATED: Enhanced Mixed ANOVA post-hoc tests with proper between/within factor distinction
         """
+        # Built before the try, not inside it. The handler at the bottom writes
+        # the failure into `result`, so an exception raised above the old
+        # assignment point -- anywhere in the EMM/mvt branch -- made the handler
+        # itself raise UnboundLocalError. The pipeline then recorded "cannot
+        # access local variable 'result'" as the post-hoc's error and the real
+        # cause was gone.
+        result = PostHocAnalyzer.create_result_template("Mixed ANOVA Post-hoc Tests")
+
+        # The factor arguments arrive as lists from the advanced pipeline and as
+        # bare column names from direct callers. Normalized once, here, ahead of
+        # every branch: the effect-driven path below did this for itself while
+        # the EMM/mvt branch above it passed the list straight through to pandas
+        # (df[[subject, ['Between'], ...]] -> "unhashable type: 'list'"), which
+        # is why that branch could never run from the pipeline.
+        bcol = between[0] if isinstance(between, (list, tuple)) else between
+        wcol = within[0] if isinstance(within, (list, tuple)) else within
+
         try:
             if method and method.lower() == "emm_mvt":
                 from analysis.emm_posthoc import mixed_dunnett_emm_mvt, UnsupportedDesignError
                 try:
                     contrasts = mixed_dunnett_emm_mvt(
-                        df, dv=dv, subject=subject, between=between,
-                        within=within, control_group=control_group, alpha=alpha,
+                        df, dv=dv, subject=subject, between=bcol,
+                        within=wcol,
+                        control_group=MixedAnovaPostHocAnalyzer._between_level_of(
+                            control_group, df, bcol),
+                        alpha=alpha,
                     )
                 except UnsupportedDesignError as exc:
                     logger.warning("EMM/mvt unavailable (%s); falling back to isolated t-tests", exc)
@@ -440,8 +492,13 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
                     for c in contrasts:
                         PostHocAnalyzer.add_comparison(
                             emm_result,
-                            group1=f"{c['control']}:{c['within_level']}",
-                            group2=f"{c['treatment']}:{c['within_level']}",
+                            # Same spelling the rest of the pipeline uses for a
+                            # mixed cell ("b=B0, w=T0"). The old "B0:T0" was a
+                            # vocabulary of its own, so the report could not
+                            # match these comparisons to any group on the chart
+                            # and drew no brackets for them.
+                            group1=f"{bcol}={c['control']}, {wcol}={c['within_level']}",
+                            group2=f"{bcol}={c['treatment']}, {wcol}={c['within_level']}",
                             test="EMM + multivariate-t",
                             p_value=c["p_value"],
                             statistic=c["t"],
@@ -451,17 +508,12 @@ class MixedAnovaPostHocAnalyzer(PostHocAnalyzer):
                         )
                     return emm_result
 
-            result = PostHocAnalyzer.create_result_template("Mixed ANOVA Post-hoc Tests")
-
             # Effect-driven post-hoc (feature B): after a significant Mixed ANOVA
             # the follow-up is gated on which omnibus effects are significant.
             # Interaction sig -> simple main effects (within-per-group +
             # between-per-within-level, NO cross-cells); else the significant main
             # effect's marginal-mean contrasts. Holm-Sidak per effect family.
             from analysis.mixed_simple_effects import mixed_effect_driven_posthoc
-
-            bcol = between[0] if isinstance(between, (list, tuple)) else between
-            wcol = within[0] if isinstance(within, (list, tuple)) else within
 
             interaction_p = within_p = between_p = None
             _gating_fallback = None
