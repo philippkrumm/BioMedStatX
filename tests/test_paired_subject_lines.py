@@ -74,23 +74,68 @@ def test_an_independent_design_is_refused():
     assert "subject" in reason.lower()
 
 
-def test_a_two_factor_axis_is_refused():
-    """A mixed design's axis is combinations, not one ordered sequence.
+CELLS = ["Arm=A, Time=T0", "Arm=A, Time=T1", "Arm=B, Time=T0", "Arm=B, Time=T1"]
+CELL_SUBJECTS = {CELLS[0]: ["S1", "S2"], CELLS[1]: ["S1", "S2"],
+                 CELLS[2]: ["S3", "S4"], CELLS[3]: ["S3", "S4"]}
 
-    This became reachable the moment mixed designs started carrying usable
-    subject labels; before that the refusal happened by accident, because the
-    labels never matched the values and the "no subject identity" branch caught
-    it first. Accidental refusals stop being refusals as soon as the accident is
-    fixed, so the rule is stated here rather than left to the fuzzer's oracle.
+
+def test_a_mixed_design_draws_lines_inside_each_between_group():
+    """A subject never changes its between group, so no line can cross one.
+
+    Each between group's cells are a block, and inside a block the only thing
+    that moves is the within factor -- structurally the repeated-measures case,
+    drawn once per block. The earlier blanket refusal of two-factor axes was
+    more conservative than the risk it was guarding against.
     """
-    cells = ["Arm=A, Time=T0", "Arm=A, Time=T1", "Arm=B, Time=T0", "Arm=B, Time=T1"]
-    subjects = {cells[0]: ["S1", "S2"], cells[1]: ["S1", "S2"],
-                cells[2]: ["S3", "S4"], cells[3]: ["S3", "S4"]}
+    supported, reason = paired_lines_supported(CELLS, CELL_SUBJECTS)
+    assert supported, reason
+
+    trajectories = build_paired_trajectories(
+        CELLS, {level: [1.0, 2.0] for level in CELLS}, CELL_SUBJECTS)
+    assert len(trajectories) == 4
+    for trajectory in trajectories:
+        groups = [point["group"] for point in trajectory["points"]]
+        arms = {group.split(",")[0] for group in groups}
+        assert len(arms) == 1, f"{trajectory['subject']} crossed between groups: {groups}"
+        assert len(groups) == 2
+
+
+def test_the_between_factors_own_order_does_not_gate_the_lines():
+    """Aachen before Bonn is a question about the axis, not about the path."""
+    cells = ["Site=Aachen, Time=T0", "Site=Aachen, Time=T1",
+             "Site=Bonn, Time=T0", "Site=Bonn, Time=T1"]
+    subjects = {cells[0]: ["S1"], cells[1]: ["S1"],
+                cells[2]: ["S2"], cells[3]: ["S2"]}
+    # The full labels are an alphabetical guess ...
+    assert not order_is_defined(cells)[0]
+    # ... and the lines are still fine, because no line runs along that axis.
+    supported, reason = paired_lines_supported(cells, subjects)
+    assert supported, reason
+
+
+def test_an_unordered_within_factor_still_refuses():
+    """The gate that does apply inside a block has to keep applying."""
+    cells = ["Arm=A, Drug=DrugX", "Arm=A, Drug=DrugA",
+             "Arm=B, Drug=DrugX", "Arm=B, Drug=DrugA"]
+    subjects = {cells[0]: ["S1"], cells[1]: ["S1"],
+                cells[2]: ["S2"], cells[3]: ["S2"]}
     supported, reason = paired_lines_supported(cells, subjects)
     assert not supported
-    assert "two factors" in reason
-    # A single-factor design written the same way is still fine: one level per
-    # label, so there is a sequence to follow.
+    assert "alphabetical" in reason
+
+
+def test_a_block_split_across_the_axis_is_refused():
+    """A line may not reach across another group's bars to close itself."""
+    interleaved = ["Arm=A, Time=T0", "Arm=B, Time=T0",
+                   "Arm=A, Time=T1", "Arm=B, Time=T1"]
+    subjects = {interleaved[0]: ["S1"], interleaved[2]: ["S1"],
+                interleaved[1]: ["S2"], interleaved[3]: ["S2"]}
+    supported, reason = paired_lines_supported(interleaved, subjects)
+    assert not supported
+    assert "next to each other" in reason
+
+
+def test_a_single_factor_design_is_unaffected():
     prefixed = ["Time=T0", "Time=T1"]
     supported, reason = paired_lines_supported(
         prefixed, {"Time=T0": ["S1", "S2"], "Time=T1": ["S1", "S2"]})

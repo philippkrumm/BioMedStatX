@@ -304,24 +304,50 @@ def test_a_refusal_without_a_reason_is_caught(tmp_path):
     assert any("trajectories were emitted anyway" in v for v in violations)
 
 
-def test_lines_across_the_cells_of_a_mixed_design_are_caught(tmp_path):
-    """Mixed cells are combinations, so a line across them asserts no real path."""
-    order = ["Between=B0, Time=T0", "Between=B0, Time=T1"]
-    subjects = {g: ["S1", "S2"] for g in order}
+def _mixed_line_report(tmp_path, order, subjects, trajectories):
     payloads = _payloads()
     payloads["pd-data-order"] = json.dumps(order)
     payloads["pd-data-paired-lines"] = json.dumps(
         {"supported": True, "reason": "", "max_subjects": 30,
-         "trajectories": [{"subject": "S1", "points": []}]})
+         "trajectories": trajectories})
     result = dict(RESULT, design_type="mixed", raw_data_subjects=subjects,
                   raw_data={g: [1.0, 2.0] for g in order},
                   pairwise_comparisons=[])
-    violations, _ = check_report(
+    return check_report(
         _write(tmp_path, _report_html(payloads=payloads,
                                       sections=tuple(s for s in SECTIONS if s != "hd-pairwise"),
                                       sig_mode="brackets", letters={})),
         result)
-    assert any("mixed design" in v for v in violations)
+
+
+MIXED_ORDER = ["Between=B0, Time=T0", "Between=B0, Time=T1",
+               "Between=B1, Time=T0", "Between=B1, Time=T1"]
+MIXED_SUBJECTS = {MIXED_ORDER[0]: ["S1"], MIXED_ORDER[1]: ["S1"],
+                  MIXED_ORDER[2]: ["S2"], MIXED_ORDER[3]: ["S2"]}
+
+
+def test_a_line_that_leaves_its_between_group_is_caught(tmp_path):
+    """A subject belongs to one between group, so a line cannot leave it.
+
+    Asked as the stronger question the rule exists to guarantee -- was this
+    subject ever measured where the line touches down? -- so any way of drawing
+    a point where nobody stood is caught, not only the between-group case.
+    """
+    crossing = [{"subject": "S1", "points": [
+        {"level_index": 0, "group": MIXED_ORDER[0], "value": 1.0},
+        {"level_index": 2, "group": MIXED_ORDER[2], "value": 2.0}]}]
+    violations, _ = _mixed_line_report(tmp_path, MIXED_ORDER, MIXED_SUBJECTS, crossing)
+    assert any("never measured" in v for v in violations), violations
+
+
+def test_a_line_inside_one_between_group_is_allowed(tmp_path):
+    """The refusal used to be blanket; a within-group path is the real design."""
+    inside = [{"subject": "S1", "points": [
+        {"level_index": 0, "group": MIXED_ORDER[0], "value": 1.0},
+        {"level_index": 1, "group": MIXED_ORDER[1], "value": 2.0}]}]
+    violations, fired = _mixed_line_report(tmp_path, MIXED_ORDER, MIXED_SUBJECTS, inside)
+    assert "paired_line_gate" in fired
+    assert not any("never measured" in v for v in violations), violations
 
 
 def test_an_alphabetically_sorted_axis_is_caught(tmp_path):

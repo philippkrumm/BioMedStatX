@@ -16,6 +16,16 @@ matter of taste:
   path is an artefact of the labels, so the question is delegated to
   :func:`core.level_order.order_is_defined` -- the same computation whose note
   in the report explains the refusal.
+* **Levels a subject can actually move between.** A mixed design's axis is a
+  grid of cells, and a line across the whole of it would be nonsense -- but a
+  subject never changes its between group, so no line can cross one. Each
+  between group's cells therefore form a block, the lines run inside a block
+  along the within factor, and the structure is exactly the repeated-measures
+  case drawn once per block. The blocks are read off the subjects rather than
+  the labels, so nothing depends on which factor was written first, and the
+  ordering question is asked of the part that varies inside a block: whether
+  ``Site=Aachen`` precedes ``Site=Bonn`` says nothing about the path a line
+  asserts.
 * **A readable number of subjects.** Past a few dozen the lines stop being
   readable and become a wash. Above the limit the plot is left as it is; the
   right answer there is a difference-based display, which is its own job.
@@ -44,6 +54,75 @@ def _subjects_spanning_levels(group_order, subjects):
     return {subject for subject, groups in seen.items() if len(groups) >= 2}
 
 
+def _blocks(levels, subjects):
+    """The levels split into the sets a single subject can move within.
+
+    Derived from the subjects, not from the label: two levels belong together
+    exactly when some subject appears in both. In a purely within-subject design
+    that is one block containing everything. In a mixed design a subject belongs
+    to one between group for the whole study, so each between group's cells form
+    their own block and no line can leave it -- which is the reason lines are
+    defensible here at all.
+
+    Reading it off the data rather than the label also means nothing depends on
+    which factor was written first, and a design with an unexpected structure
+    produces blocks that describe what it actually is.
+    """
+    parent = {level: level for level in levels}
+
+    def find(level):
+        while parent[level] != level:
+            parent[level] = parent[parent[level]]
+            level = parent[level]
+        return level
+
+    by_subject = {}
+    for level in levels:
+        for subject in subjects.get(level) or []:
+            by_subject.setdefault(str(subject), []).append(level)
+    for seen in by_subject.values():
+        for other in seen[1:]:
+            root_a, root_b = find(seen[0]), find(other)
+            if root_a != root_b:
+                parent[root_a] = root_b
+
+    grouped = {}
+    for level in levels:
+        grouped.setdefault(find(level), []).append(level)
+    return [grouped[root] for root in dict.fromkeys(find(level) for level in levels)]
+
+
+def _varying_part(block):
+    """What actually changes from one level of a block to the next.
+
+    Inside a block the between levels are constant by construction, so only the
+    within factor moves. Ordering has to be judged on that part alone: whether
+    ``Site=Aachen`` precedes ``Site=Bonn`` is a question about the axis, not
+    about the path a line asserts, and letting it decide would refuse lines for
+    a reason that has nothing to do with them.
+    """
+    parts = [_level_parts(level) for level in block]
+    if len({len(part) for part in parts}) != 1:
+        return list(block)
+    varying = [index for index in range(len(parts[0]))
+               if len({part[index] for part in parts}) > 1]
+    if not varying:
+        return list(block)
+    return [", ".join(part[index] for index in varying) for part in parts]
+
+
+def _is_contiguous(block, levels):
+    """Are this block's levels drawn side by side?
+
+    A trajectory is plotted at the level's position on the axis, so a block
+    split by another block's bars would be drawn as a line reaching across
+    them. The cell ordering keeps each block together; this is the check that
+    says so rather than assuming it.
+    """
+    positions = sorted(levels.index(level) for level in block)
+    return positions == list(range(positions[0], positions[0] + len(positions)))
+
+
 def paired_lines_supported(group_order, subjects, max_subjects=PAIRED_LINE_MAX_SUBJECTS):
     """Report whether subject lines are defensible here.
 
@@ -60,14 +139,6 @@ def paired_lines_supported(group_order, subjects, max_subjects=PAIRED_LINE_MAX_S
             "Independent designs measure different individuals per group."
         )
 
-    if any(len(_level_parts(level)) > 1 for level in levels):
-        return False, (
-            "The axis here is a combination of two factors rather than one "
-            "ordered sequence, so a line along it would join points that are "
-            "not consecutive steps of the same path. Subject lines are drawn "
-            "where the axis is a single factor."
-        )
-
     spanning = _subjects_spanning_levels(levels, subjects)
     if not spanning:
         return False, (
@@ -75,12 +146,26 @@ def paired_lines_supported(group_order, subjects, max_subjects=PAIRED_LINE_MAX_S
             "span anything."
         )
 
-    ordered, order_reason = order_is_defined(levels)
-    if not ordered:
-        return False, (
-            "A line between levels asserts a path, and this order is "
-            "alphabetical rather than given by the data. " + order_reason
-        )
+    # Lines run inside a block and never between blocks. In a single-factor
+    # design there is one block and this is the ordering rule as it always was;
+    # in a mixed design each between group is its own block, and the ordering
+    # question is asked of the within factor, which is the only thing a line
+    # moves along.
+    for block in _blocks(levels, subjects):
+        if len(block) < 2:
+            continue
+        if not _is_contiguous(block, levels):
+            return False, (
+                "The levels a subject was measured at are not drawn next to "
+                "each other, so a line would have to reach across other groups "
+                "to join them."
+            )
+        ordered, order_reason = order_is_defined(_varying_part(block))
+        if not ordered:
+            return False, (
+                "A line between levels asserts a path, and this order is "
+                "alphabetical rather than given by the data. " + order_reason
+            )
 
     if len(spanning) > max_subjects:
         return False, (

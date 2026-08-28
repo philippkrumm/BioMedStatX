@@ -100,10 +100,34 @@ def _oracle_paired_line_gate(report, result, violations) -> bool:
         if payload.get("trajectories"):
             violations.append("paired lines refused but trajectories were emitted anyway")
 
-    # A mixed design has no single ordered axis -- its cells are combinations,
-    # so a line across them would assert a path that does not exist.
-    if shown and str(result.get("design_type", "")).lower().startswith("mixed"):
-        violations.append("paired lines drawn across the cells of a mixed design")
+    # A line in a mixed design runs inside one between group and never across
+    # one -- that is what makes it defensible at all, since a subject belongs to
+    # one between group for the whole study. Rather than restate that as a rule
+    # about blocks, ask the stronger and simpler question the rule exists to
+    # guarantee: was this subject ever measured at the level the line touches?
+    # A line that crosses a between group necessarily fails it, and so does any
+    # other way of drawing a point where nobody stood.
+    #
+    # Deliberately NOT computed with the product's own _blocks: an oracle that
+    # imports the function it is checking moves with it, and this repository has
+    # paid for that shape before. The expectation is built straight from the
+    # subject labels in the result.
+    if shown:
+        measured_at = {}
+        for level, labels in (result.get("raw_data_subjects") or {}).items():
+            for label in labels or []:
+                measured_at.setdefault(str(label), set()).add(str(level))
+        for trajectory in payload.get("trajectories") or []:
+            subject = str(trajectory.get("subject"))
+            visited = {str(point.get("group")) for point in trajectory["points"]}
+            stray = visited - measured_at.get(subject, set())
+            if stray:
+                violations.append(
+                    f"subject {subject!r} was drawn at {sorted(stray)}, where it "
+                    f"was never measured (it appears at "
+                    f"{sorted(measured_at.get(subject, set()))})"
+                )
+                break
     return True
 
 
