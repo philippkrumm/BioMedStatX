@@ -94,8 +94,18 @@ fallback when the Conover-Iman routine is unavailable.
 3. Compute observed F from the increase in residual SS:
    `F_obs = ((RSS_reduced − RSS_full) / df_effect) / (RSS_full / df_residual)`
 4. Extract fitted values and residuals of the reduced model
-5. Permute the reduced-model residuals 5000 times, reconstruct pseudo-outcomes
-   (`y_perm = y_hat_reduced + permuted_residuals`), refit full model, record F
+5. Permute the reduced-model residuals 5000 times and reconstruct pseudo-outcomes
+   (`y_perm = y_hat_reduced + permuted_residuals`), recording F for each
+
+   Because Freedman-Lane permutes the **residuals**, both design matrices are
+   identical on every permutation and only `y` changes. The residual sums of
+   squares therefore come from a projection onto an orthonormal basis `U` of
+   each design's column space, `RSS = y'y - ||U'y||^2`, computed once per effect
+   instead of refitting from the formula string 5000 times. The basis is taken
+   from an **SVD** rather than a QR decomposition: these designs are exactly the
+   ones that lose rank, and `Q` spans the column space only at full column rank.
+   The permutations themselves are unchanged -- same seeded generator, same
+   order -- so the F and p values are identical to the refitting version.
 6. `p_perm = (#{F_perm ≥ F_obs} + 1) / (n_permutations + 1)`
 
 **Note on reduced models:** Each reduced model retains all effects *except* the one

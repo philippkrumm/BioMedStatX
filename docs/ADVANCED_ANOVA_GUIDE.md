@@ -131,7 +131,34 @@ Same subjects measured more than once?
 | RM-ANOVA with Factor 2 assigned | Switches to Mixed ANOVA (intended?) | Remove Factor 2 if a pure within design was planned |
 | Two-Way ANOVA with Subject ID | Switches to Mixed ANOVA | Remove Subject ID if all measurements are independent |
 | Within-subject factor assigned to Factor 2 instead of Factor 1 | Between/within labels reversed in output | Verify which factor is repeated; assign it to Factor 1 |
-| Imbalanced design (missing cells) | Subject excluded from analysis | Impute or verify data completeness before importing |
+| Imbalanced design (unequal cell sizes) | Type III sums of squares are used; power differs between cells | Verify data completeness before importing |
+| Factorial design with an **empty** cell | Analysis is blocked, see below | Model the design with a mixed model, or analyse the cells that are present |
+
+### Empty cells in a factorial design
+
+A cell of a two-factor layout that was never run -- no untreated arm at the late
+timepoint, no knockout arm on the drug -- leaves the interaction **unestimable**.
+The design has no observations from which to separate the interaction from the
+main effects, and the sums of squares behind it are not identified.
+
+Such a run is stopped at the data-quality gate rather than reported. The
+alternative is worse than no answer: an unestimable interaction can return a
+negative sum of squares, which produces a *negative* $F$ and a *negative*
+partial $\eta^2$ -- quantities that cannot occur, since $F$ is a ratio of
+non-negative mean squares and partial $\eta^2$ lies in $[0, 1]$ -- printed
+beside a $p$-value that reads like an ordinary null result.
+
+What to do instead:
+
+- **Fit a model that can express the layout.** A linear mixed model does not
+  require every combination to be present. The app already recommends this when
+  it detects the missing combination.
+- **Analyse the cells that are present.** A one-way comparison across the cells
+  that were actually run answers a smaller question, honestly.
+
+The block quotes the impossible quantities it saw, so the reason is visible
+rather than implied. The count of missing combinations comes from the design
+check that runs earlier and appears among the report's warnings.
 
 ---
 
