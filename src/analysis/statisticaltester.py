@@ -80,18 +80,93 @@ class StatisticalTester:
             return (isinstance(p, (int, float)) and not isinstance(p, bool)
                     and (p < 0 or p > 1 or not bool(np.isfinite(p))))
 
-        if not (_nonfinite(results.get("statistic")) or _invalid_p(results.get("p_value"))):
-            return None
+        if _nonfinite(results.get("statistic")) or _invalid_p(results.get("p_value")):
+            reason = (
+                f"{results.get('test') or 'The test'} produced a non-finite result "
+                "(infinite or undefined). This indicates a degenerate design — e.g. "
+                "zero variance, perfectly collinear covariates, or a rank-deficient "
+                "model — for which the test is not defined."
+            )
+            return StatisticalTester.make_blocked_result(
+                reason, code="NON_FINITE_RESULT", details={"test": results.get("test")},
+            )
 
-        reason = (
-            f"{results.get('test') or 'The test'} produced a non-finite result "
-            "(infinite or undefined). This indicates a degenerate design — e.g. "
-            "zero variance, perfectly collinear covariates, or a rank-deficient "
-            "model — for which the test is not defined."
-        )
-        return StatisticalTester.make_blocked_result(
-            reason, code="NON_FINITE_RESULT", details={"test": results.get("test")},
-        )
+        impossible = StatisticalTester._impossible_quantities(results)
+        if impossible:
+            reason = (
+                f"{results.get('test') or 'The test'} reported "
+                + "; ".join(impossible)
+                + ". These quantities cannot take those values, so the term they "
+                "describe is not estimable from this design — most often an "
+                "empty cell in a factorial layout, where the interaction has no "
+                "data to be estimated from. Fit a model that can express the "
+                "design (a linear mixed model handles incomplete layouts), or "
+                "analyse the cells that are present."
+            )
+            return StatisticalTester.make_blocked_result(
+                reason, code="NOT_ESTIMABLE",
+                details={"test": results.get("test"), "quantities": impossible},
+                warnings=results.get("warnings") or [],
+            )
+        return None
+
+    # Effect sizes that are a ratio of sums of squares, so bounded in [0, 1] by
+    # construction. Deliberately narrow: Cohen's d, Hedges' g, r and the rank
+    # biserial are SIGNED, and omega squared is a bias-corrected estimator that
+    # is legitimately negative in small samples, so none of them belong here.
+    _BOUNDED_EFFECT_SIZES = frozenset({
+        "partial_eta_squared", "partial η²", "eta_squared", "epsilon_squared",
+    })
+
+    @staticmethod
+    def _impossible_quantities(results):
+        """Reported values that no correct computation can produce.
+
+        F is a ratio of mean squares and both are non-negative, so F < 0 cannot
+        happen; partial eta squared is a ratio of sums of squares and lies in
+        [0, 1]. A factorial design with an empty cell leaves the interaction
+        unestimable, and pingouin returns a NEGATIVE sum of squares for it --
+        measured at F = -3.07 with partial eta squared = -0.28 on a 2x2 layout
+        missing one cell, reported with p = 1.0 beside it.
+
+        Both values are finite, which is exactly why the non-finite net above let
+        them through: "not a number" and "a number that cannot be" are different
+        failures, and only the first was being caught.
+
+        The headline ``statistic`` is deliberately NOT tested on its own sign --
+        t, r and z are signed and negative values are the ordinary case. Only
+        quantities whose own name fixes their range are judged.
+        """
+        found = []
+
+        def _number(value):
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return None
+            value = float(value)
+            return value if np.isfinite(value) else None
+
+        def _check(label, term):
+            f_value = _number(term.get("F"))
+            if f_value is not None and f_value < 0:
+                found.append(f"a negative F statistic ({f_value:.4g}) for {label}")
+            size = _number(term.get("effect_size"))
+            kind = str(term.get("effect_size_type") or "").strip()
+            if (size is not None and kind in StatisticalTester._BOUNDED_EFFECT_SIZES
+                    and not 0.0 <= size <= 1.0):
+                found.append(f"{kind} = {size:.4g} for {label}, outside [0, 1]")
+
+        terms = list(results.get("factors") or []) + list(results.get("interactions") or [])
+        for term in results.get("factors") or []:
+            _check(str(term.get("factor") or "a main effect"), term)
+        for term in results.get("interactions") or []:
+            factors = term.get("factors") or []
+            _check(" x ".join(str(f) for f in factors) or "the interaction", term)
+        # The headline is copied from one of the rows above wherever rows exist,
+        # so checking it as well would report the same defect twice under two
+        # names. Engines that report no per-term breakdown are still covered.
+        if not terms:
+            _check("the reported result", results)
+        return found
 
     @staticmethod
     def _standardize_results(results):
