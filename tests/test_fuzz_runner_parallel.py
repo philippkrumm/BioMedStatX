@@ -58,7 +58,7 @@ def test_the_same_seeds_give_the_same_records_at_any_job_count(tmp_path):
         subprocess.run(
             [sys.executable, "-m", "fuzzing.run_fuzzer", "--count", "4",
              "--start", "61000", "--jobs", str(jobs),
-             "--designs", "rm_anova,mixed_anova,two_way_anova",
+             "--designs", "rm_anova,mixed_anova,two_way_anova", "--no-history",
              "--report", str(report), "--keep-dir", str(tmp_path / "keep")],
             cwd=os.path.join(os.path.dirname(__file__), ".."),
             env=dict(os.environ, QT_QPA_PLATFORM="offscreen", MPLBACKEND="Agg"),

@@ -349,6 +349,10 @@ def main() -> int:
     ap.add_argument("--report", default=os.path.join(_HERE, "fuzz_report.json"))
     ap.add_argument("--keep-dir", default=os.path.join(_HERE, "failures"),
                     help="where reports belonging to a finding are copied")
+    ap.add_argument("--no-history", action="store_true",
+                    help="do not append this run to the history. For test runs: "
+                         "a four-seed run in the trend is not a data point, it "
+                         "is noise in the one measurement the fuzzer is judged by.")
     ap.add_argument("--history", action="store_true",
                     help="print the recorded runs and their finding rate, then exit")
     ap.add_argument("--designs", default="",
@@ -409,7 +413,8 @@ def main() -> int:
     summary = _summary(records, findings, counts, oracle_names, args,
                        only_designs, last_seed, elapsed, complete=True)
     _write_report(summary, args.report)
-    _record_run(summary, oracle_names)
+    if not args.no_history:
+        _record_run(summary, oracle_names)
     coverage = summary["coverage"]
     never_fired = summary["never_fired_oracles"]
     unseen_designs = summary["unseen_designs"]
