@@ -217,6 +217,21 @@ All notable changes to this project will be documented in this file.
   `B0 (FacA=A0)` against `B1 (FacA=A0)`; main-effect rows, which are conditioned
   on nothing, are unchanged.
 
+- The Transformed column is paired with the raw values that were kept. An
+  earlier fix this cycle guarded the standard path's writer; there are four --
+  the standard path, the tester's own, and both branches of the advanced
+  pipeline -- and the raw half is chosen between two extractions after all of
+  them have run. So the pairing was not broken by any write: every writer paired
+  correctly at the time, and the choice then replaced the raw dict and left the
+  transformed one from the first. A two-way design with an empty cell and
+  scattered NaNs printed a Box-Cox column of 10 values against raw columns of 9,
+  6 and 8, while the log reported the column dropped -- that was the guarded
+  writer declining, after the unguarded one had already written. There is now
+  one pairing rule in one place, used by all four writers, and the result is
+  re-checked after the raw values are chosen, so a mismatch created downstream
+  of every writer is caught too. Both keys are dropped rather than only the
+  first, since the report falls back to the second when the first is absent.
+
 ### Testing
 
 - A report may no longer show transformed values for a run that transformed
