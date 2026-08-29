@@ -54,7 +54,36 @@ CANARIES = [
         "expect": "transformed column does not follow the raw one",
         "start": 50000, "count": 400, "designs": "two_way_anova,rm_anova,mixed_anova",
     },
+    {
+        "name": "posthoc-name",
+        "what": "the page said Tukey HSD over comparisons that were Holm-corrected t-tests",
+        # a58a320 does not come out on its own -- 4fbd531 reworked the same
+        # lines afterwards -- so the pair is reverted together, newest first.
+        "fix": ["4fbd531", "a58a320"],
+        "expect": "but its comparisons were produced by",
+        "start": 70000, "count": 300, "designs": "two_way_anova",
+    },
 ]
+
+# Defects that were put back and NOT found again. Recorded here rather than
+# added above, because a canary that always fails teaches nothing and gets
+# muted; the honest form is a named gap.
+#
+# Both were found by reading a report, never by an oracle, so nothing here
+# guards them today:
+#
+#   ea181d4  the mixed EMM/multivariate-t post-hoc could not be reached at all.
+#            Reverted, 500 mixed seeds, zero findings. The run degrades to
+#            isolated t-tests and then NAMES them honestly, so there is no
+#            contradiction on the page to catch. Seeing it needs an oracle that
+#            compares what the decision logic says should run against what ran.
+#
+#   b639cae  an unidentified logistic fit reported as a result. Reverted, 600
+#            firth_logistic seeds, zero findings. Here the gap may instead be
+#            reach: separation with a collinear predictor is a narrow corner and
+#            600 seeds may simply not have built one. The two readings are
+#            different problems and are not yet told apart.
+UNGUARDED = ["ea181d4", "b639cae"]
 
 
 def _run(cmd, cwd, **kw):
@@ -82,12 +111,19 @@ def _check_one(canary, timeout, jobs):
         if add.returncode != 0:
             return {"status": "SETUP FAILED", "detail": add.stderr.strip()[-300:]}
         try:
-            revert = _run(["git", "revert", "--no-commit", canary["fix"]], tree)
-            if revert.returncode != 0:
-                # Worth saying plainly: a conflict means the canary needs
-                # rewriting, not that the fuzzer failed.
-                return {"status": "REVERT FAILED",
-                        "detail": (revert.stderr or revert.stdout).strip()[-300:]}
+            # A list where one fix cannot be undone alone: a later commit
+            # reworked the same lines, so the pair comes out together, newest
+            # first. Reverting more than the defect asks for would test more
+            # than the defect, which is why this is a list and not a range.
+            fixes = canary["fix"]
+            fixes = [fixes] if isinstance(fixes, str) else list(fixes)
+            for one in fixes:
+                revert = _run(["git", "revert", "--no-commit", one], tree)
+                if revert.returncode != 0:
+                    # Worth saying plainly: a conflict means the canary needs
+                    # rewriting, not that the fuzzer failed.
+                    return {"status": "REVERT FAILED",
+                            "detail": "%s: %s" % (one, (revert.stderr or revert.stdout).strip()[-260:])}
 
             report = os.path.join(tmp, "canary.json")
             cmd = [sys.executable, "-m", "fuzzing.run_fuzzer",
@@ -131,8 +167,10 @@ def main() -> int:
     results = []
     for canary in wanted:
         print("--- %s: %s" % (canary["name"], canary["what"]))
+        fixes = canary["fix"]
         print("    reverting %s, %d seeds from %d"
-              % (canary["fix"], canary["count"], canary["start"]))
+              % (fixes if isinstance(fixes, str) else " + ".join(fixes),
+                 canary["count"], canary["start"]))
         t0 = time.time()
         outcome = _check_one(canary, args.timeout, args.jobs)
         outcome["name"] = canary["name"]
