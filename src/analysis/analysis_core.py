@@ -1643,16 +1643,15 @@ class AnalysisManager:
             # labels are: guessing which value belongs to which is what produced
             # the defect. An absent column says nothing; a misaligned one says
             # something false.
-            from statistical_testing.validators import grouped_samples_changed
+            from statistical_testing.validators import (
+                drop_unpaired_transformed, grouped_samples_changed,
+                transformed_pairs_up)
             if (isinstance(transformed_samples, dict)
                     and grouped_samples_changed(filtered_samples, transformed_samples, groups)):
                 _safe_ts_groups = [g for g in groups if g in transformed_samples]
                 if not _safe_ts_groups: _safe_ts_groups = list(transformed_samples.keys())
-                _pairs_up = all(
-                    g in results['raw_data']
-                    and len(results['raw_data'][g]) == len(transformed_samples[g])
-                    for g in _safe_ts_groups
-                )
+                _pairs_up = transformed_pairs_up(
+                    results['raw_data'], transformed_samples, _safe_ts_groups)
                 if _pairs_up:
                     results['raw_data_transformed'] = {
                         g: transformed_samples[g][:] for g in _safe_ts_groups}
@@ -1664,6 +1663,20 @@ class AnalysisManager:
                         {g: (len(results['raw_data'].get(g, [])),
                              len(transformed_samples[g])) for g in _safe_ts_groups},
                     )
+
+            # And whatever wrote it -- this branch, the tester, either branch of
+            # the advanced pipeline -- the column is printable only against the
+            # raw dict that ENDED UP in the result. raw_data is chosen just
+            # above, from one of two extractions, so an upstream write that
+            # paired with the other one has to be re-checked here rather than
+            # trusted: guarding the writers alone left seed 51307 printing a
+            # Box-Cox column against a raw column of a different length, because
+            # the pairing was broken by the choice rather than by the write.
+            for _dropped in drop_unpaired_transformed(results):
+                logger.warning(
+                    "%s does not line up with the raw values that were kept; "
+                    "the Transformed column is dropped rather than printed "
+                    "against the wrong measurements.", _dropped)
             analysis_context = kwargs.get('analysis_context', {})
             results['selected_groups'] = analysis_context.get('selected_groups') or groups
             results['group_column'] = analysis_context.get('selected_group_column') or analysis_context.get('factor_columns', [None])[0] or group_col

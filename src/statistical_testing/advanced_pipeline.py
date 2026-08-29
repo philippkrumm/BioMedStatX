@@ -25,6 +25,29 @@ from .validators import (
 logger = logging.getLogger(__name__)
 
 
+def _attach_transformed(res, original_samples, transformed_samples):
+    """Write the transformed values only where they pair with the raw ones.
+
+    Both branches of this pipeline wrote them unconditionally, so a guard added
+    to the standard path alone left the misaligned column reaching the page
+    through here -- which is how fuzz seed 51307 printed a Box-Cox column
+    against a raw column of a different length.
+    """
+    from statistical_testing.validators import transformed_pairs_up
+
+    raw = res.get("raw_data") or original_samples
+    if transformed_pairs_up(raw, transformed_samples):
+        res["raw_data_transformed"] = transformed_samples
+        return
+    logger.warning(
+        "transformed values do not line up with the raw ones (%s); the "
+        "Transformed column is dropped rather than printed against the wrong "
+        "measurements.",
+        {g: (len(raw.get(g, [])), len(transformed_samples.get(g, [])))
+         for g in raw},
+    )
+
+
 def _attach_raw_data(res, samples, subjects):
     """The raw values and who they belong to are one fact, written in one place.
 
@@ -357,7 +380,7 @@ def perform_advanced_test_pipeline(
             # Transformed column identical to Raw (report bug 2026-08).
             if (transformation_type and transformation_type not in ["none", "None", "Keine"]
                     and grouped_samples_changed(original_samples, transformed_samples)):
-                res["raw_data_transformed"] = transformed_samples
+                _attach_transformed(res, original_samples, transformed_samples)
 
             if test == "repeated_measures_anova" and subject and within:
                 res["plot_subject_trajectories"] = StatisticalTester._build_subject_trajectories_from_long_df(
@@ -439,7 +462,7 @@ def perform_advanced_test_pipeline(
                 # Gate the transformed dict on an actual value change (see the
                 # parametric branch above; report bug 2026-08).
                 if grouped_samples_changed(original_samples, transformed_samples):
-                    res["raw_data_transformed"] = transformed_samples
+                    _attach_transformed(res, original_samples, transformed_samples)
 
             if test == "repeated_measures_anova" and subject and within:
                 res["plot_subject_trajectories"] = StatisticalTester._build_subject_trajectories_from_long_df(

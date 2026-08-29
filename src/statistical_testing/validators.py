@@ -19,6 +19,75 @@ VAR_ATOL = 1e-08
 IMBALANCE_RATIO = 10.0
 
 
+def transformed_pairs_up(
+    raw: Mapping[str, Sequence[float]],
+    transformed: Mapping[str, Sequence[float]],
+    keys: Iterable[str] | None = None,
+) -> bool:
+    """Whether the transformed values can be printed BESIDE the raw ones.
+
+    The raw-data table prints ``raw[g][i]`` next to ``transformed[g][i]``, one
+    row per index, which is a claim about a single measurement. The two dicts
+    come from different extractions and disagree about missing values -- one
+    drops a NaN row, the other keeps it -- so a group can hold nine raw values
+    against ten transformed ones, and every row after the first gap then names
+    the wrong measurement.
+
+    True only when every group named on the raw side is present on the
+    transformed side with the same length. A caller that gets False must DROP
+    the transformed column rather than realign it: guessing which value belongs
+    to which is exactly what produced the defect, and an absent column says
+    nothing while a misaligned one says something false.
+
+    Kept here, next to ``grouped_samples_changed``, because four separate
+    writers populate ``raw_data_transformed`` -- the standard path, both
+    branches of the advanced pipeline, and the tester's own -- and guarding one
+    of them leaves the column reaching the page through the others. That is not
+    hypothetical: it is how fuzz seed 51307 printed a Box-Cox column against a
+    raw column of a different length after the standard path had already been
+    guarded.
+    """
+    if not isinstance(raw, Mapping) or not isinstance(transformed, Mapping):
+        return False
+    if keys is None:
+        keys = list(raw)
+    keys = [k for k in keys]
+    if not keys:
+        return False
+    for key in keys:
+        if key not in raw or key not in transformed:
+            return False
+        try:
+            if len(raw[key]) != len(transformed[key]):
+                return False
+        except TypeError:
+            return False
+    return True
+
+
+def drop_unpaired_transformed(results: Dict[str, Any]) -> List[str]:
+    """Remove a transformed column that does not pair with the raw one kept.
+
+    Four writers populate these keys and the raw half is CHOSEN between two
+    extractions after they have run, so a write that paired correctly at the
+    time can be left unpaired by that choice. Guarding the writers alone is
+    therefore not enough -- fuzz seed 51307 printed a Box-Cox column against a
+    raw column of a different length with every writer already guarded.
+
+    Returns the keys that were dropped, so the caller can say so in the log.
+    """
+    raw = results.get("raw_data")
+    if not isinstance(raw, Mapping) or not raw:
+        return []
+    dropped = []
+    for key in ("raw_data_transformed", "transformed_data"):
+        existing = results.get(key)
+        if isinstance(existing, Mapping) and not transformed_pairs_up(raw, existing):
+            results.pop(key, None)
+            dropped.append(key)
+    return dropped
+
+
 def grouped_samples_changed(
     raw: Mapping[str, Sequence[float]],
     transformed: Mapping[str, Sequence[float]],

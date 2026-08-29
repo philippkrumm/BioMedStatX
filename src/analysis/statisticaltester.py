@@ -344,7 +344,20 @@ class StatisticalTester:
         # Store raw data for both original and transformed values
         results["raw_data"] = {g: original_samples[g].copy() for g in valid_groups}
         if any(not np.array_equal(original_samples[g], transformed_samples[g]) for g in valid_groups):
-            results["raw_data_transformed"] = {g: transformed_samples[g].copy() for g in valid_groups}
+            # Only where the two columns pair row by row. The table prints one
+            # against the other as a claim about a single measurement, and a
+            # transformation that drops a NaN row leaves them different lengths.
+            from statistical_testing.validators import transformed_pairs_up
+            if transformed_pairs_up(results["raw_data"], transformed_samples, valid_groups):
+                results["raw_data_transformed"] = {g: transformed_samples[g].copy() for g in valid_groups}
+            else:
+                logger.warning(
+                    "transformed values do not line up with the raw ones (%s); "
+                    "the Transformed column is dropped rather than printed "
+                    "against the wrong measurements.",
+                    {g: (len(results["raw_data"].get(g, [])),
+                         len(transformed_samples.get(g, []))) for g in valid_groups},
+                )
 
         if len(valid_groups) == 0:
             return StatisticalTester._stat_test_no_valid_groups(results)
