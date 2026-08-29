@@ -151,3 +151,42 @@ def test_count_still_means_seeds_run_when_a_filter_is_on():
 def test_no_filter_leaves_the_seed_range_exactly_as_it_was():
     from fuzzing.run_fuzzer import _seeds_to_run
     assert list(_seeds_to_run(7, 4, set())) == [7, 8, 9, 10]
+
+
+def _summary(**over):
+    base = {"start": 0, "count": 100, "last_seed": 99, "designs_filter": [],
+            "elapsed_sec": 12.0, "findings": [], "categories": {"OK": 100},
+            "coverage": {"oracles_fired": {"a": 3, "b": 0}},
+            "calibration": _calibration([])}
+    base.update(over)
+    return base
+
+
+def test_a_run_is_recorded_so_the_rate_can_be_read_across_runs(tmp_path):
+    """The only question the fuzzer is finally judged by is a trend."""
+    from fuzzing.run_fuzzer import _record_run
+
+    path = tmp_path / "history.jsonl"
+    _record_run(_summary(findings=[{"seed": 1}, {"seed": 2}]), ["a", "b"], path=str(path))
+    _record_run(_summary(findings=[]), ["a", "b"], path=str(path))
+
+    import json
+    lines = [json.loads(l) for l in path.read_text().splitlines()]
+    assert [e["findings"] for e in lines] == [2, 0]
+    assert lines[0]["count"] == 100
+
+
+def test_the_record_keeps_what_makes_a_falling_rate_readable(tmp_path):
+    """Fewer findings from fewer questions is not progress.
+
+    The oracle count and the design filter are kept beside the rate precisely so
+    a run that asked less cannot be read as a product that improved.
+    """
+    from fuzzing.run_fuzzer import _record_run
+
+    path = tmp_path / "history.jsonl"
+    entry = _record_run(_summary(designs_filter=["rm_anova"]), ["a", "b", "c"],
+                        path=str(path))
+    assert entry["oracles"] == 3
+    assert entry["oracles_that_fired"] == 1
+    assert entry["designs"] == ["rm_anova"]

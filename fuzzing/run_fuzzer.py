@@ -198,6 +198,61 @@ def _seeds_to_run(start, count, designs):
         seed += 1
 
 
+_HISTORY = os.path.join(_HERE, "history.jsonl")
+
+
+def _record_run(summary, oracle_names, path=_HISTORY):
+    """One line per run, so "is the discovery rate falling?" can be measured.
+
+    The question the fuzzer is ultimately judged by is whether a week of running
+    it still turns up findings, and that is a trend across runs -- not something
+    any single run can answer and not something worth trusting to memory.
+
+    The number of oracles is recorded beside the rate, because the easiest way
+    to make a discovery rate fall is to stop looking. A rate that drops while
+    the oracle count drops with it says nothing about the product. So does one
+    compared across different design filters, which is why the filter is kept
+    too.
+    """
+    entry = {
+        "when": time.strftime("%Y-%m-%d %H:%M"),
+        "start": summary["start"], "count": summary["count"],
+        "last_seed": summary["last_seed"], "designs": summary["designs_filter"],
+        "elapsed_sec": summary["elapsed_sec"],
+        "findings": len(summary["findings"]),
+        "categories": summary["categories"],
+        "oracles": len(oracle_names),
+        "oracles_that_fired": sum(1 for v in summary["coverage"]["oracles_fired"].values() if v),
+        "calibration": {k: summary["calibration"][k]
+                        for k in ("null_terms", "null_rejected", "null_rate",
+                                  "effect_terms", "effect_found", "power")},
+    }
+    with open(path, "a") as fh:
+        fh.write(json.dumps(entry) + "\n")
+    return entry
+
+
+def _print_history(path=_HISTORY):
+    if not os.path.exists(path):
+        print("no runs recorded yet (%s)" % path)
+        return 0
+    print("  when              seeds  findings  per 100  oracles  designs")
+    for line in open(path):
+        try:
+            e = json.loads(line)
+        except Exception:
+            continue
+        rate = 100.0 * e["findings"] / e["count"] if e["count"] else 0.0
+        print("  %-16s  %5d  %8d  %7.1f  %3d/%-3d  %s"
+              % (e["when"], e["count"], e["findings"], rate,
+                 e["oracles_that_fired"], e["oracles"],
+                 ",".join(e["designs"]) or "all"))
+    print("\n  A falling rate is only evidence while the oracle count holds and the")
+    print("  design filter matches -- fewer findings from fewer questions is not")
+    print("  progress.")
+    return 0
+
+
 def main() -> int:
     from fuzzing.generators import MUTATIONS, TEST_TYPES
     from fuzzing.html_oracles import MULTI_ORACLES, ORACLES
@@ -209,11 +264,15 @@ def main() -> int:
     ap.add_argument("--report", default=os.path.join(_HERE, "fuzz_report.json"))
     ap.add_argument("--keep-dir", default=os.path.join(_HERE, "failures"),
                     help="where reports belonging to a finding are copied")
+    ap.add_argument("--history", action="store_true",
+                    help="print the recorded runs and their finding rate, then exit")
     ap.add_argument("--designs", default="",
                     help="comma-separated designs to run; other seeds are "
                          "skipped without being spawned. --count still means "
                          "seeds run, so the run walks further up the seed space.")
     args = ap.parse_args()
+    if args.history:
+        return _print_history()
 
     env = dict(os.environ, QT_QPA_PLATFORM="offscreen", MPLBACKEND="Agg")
     oracle_names = [name for name, _ in ORACLES] + [name for name, _ in MULTI_ORACLES]
@@ -269,6 +328,7 @@ def main() -> int:
                "findings": findings}
     with open(args.report, "w") as fh:
         json.dump(summary, fh, indent=2, default=str)
+    _record_run(summary, oracle_names)
 
     print("\n=== FUZZ SUMMARY ===")
     for cat, n in counts.most_common():
