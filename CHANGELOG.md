@@ -32,6 +32,30 @@ All notable changes to this project will be documented in this file.
   same code already records, so every rule the single-factor path has applies to
   the major factor and then the minor one.
 
+- Subject lines are drawn in a mixed design, inside each between group. They
+  were refused there, but by accident rather than by rule: the subject labels
+  were keyed differently from the values, so the "no subject identity" branch
+  fired before anything considered the axis. A subject belongs to one between
+  group for the whole study, so a line can never cross one; what remains is the
+  path along the ordered within factor, which is the repeated-measures case
+  drawn once per between group. The blocks are read off the subjects rather than
+  the labels, so nothing depends on which factor was written first; the ordering
+  requirement is asked of the part that varies inside a block, since whether
+  `Site=Aachen` precedes `Site=Bonn` says nothing about the path a line asserts;
+  and a block whose levels are not drawn side by side is still refused, because
+  a line would then reach across another group's bars.
+- Every factor of a cell label is ranked on its own. Stripping the `factor=`
+  prefixes and rejoining what was left meant looking up `"M, WT"` as if it were
+  a level, which matches no reference-term table, so the pair fell to the
+  alphabet: `Sex=F, Geno=KO` sorted ahead of `Sex=M, Geno=WT` while the same two
+  levels alone put WT first. Numbers hid it, since digits are found anywhere in
+  a string, so a cell whose levels were T0/T1 came out right and looked like
+  proof. The sort key is now rank and name per factor, interleaved, so the
+  primary factor keeps deciding the grouping. The transparency note follows the
+  same split: each adjacent pair is judged at the factor that separates them,
+  which is what keeps an alphabetical guess in one factor declared even when the
+  other is ranked.
+
 ### Import and mapping
 
 - The wide-format notice names the design it built. `_detect_wide_format` accepts
@@ -102,6 +126,32 @@ All notable changes to this project will be documented in this file.
   could never be found by name. The raw and transformed columns were located
   correctly anyway, by accident: the mangled entry occupied exactly the one slot
   "Group" would have.
+
+- The mixed EMM/multivariate-t post-hoc could not be reached from the product at
+  all. The engine matches its R reference and has its own tests, which call it
+  the way it documents itself; the pipeline calls it across a seam, and all
+  three things that crossed were wrong. `between`/`within` arrived as lists and
+  went straight into a pandas column selection, which raises `unhashable type:
+  'list'`. The control group arrived as a cell label where a between-factor
+  level was wanted, so the engine refused it as "not present" and the run
+  degraded to isolated t-tests with only a log line to say so. And the
+  comparisons came back in a label vocabulary nothing else uses, so even a
+  successful run drew no brackets. None of it was visible because the function's
+  own error handler wrote into a variable assigned below the branch that raised:
+  the handler itself failed, and "cannot access local variable 'result'" was
+  recorded as the post-hoc's error.
+- A value and the subject printed beside it now come from the same extraction.
+  They were filled by two, and both ways of disagreeing were live. Without
+  technical replicates the keys disagreed (`T0` against `Time=T0`), so the
+  Subject column was absent from every repeated-measures report and the figure
+  refused subject lines with "No subject was measured at more than one level" --
+  false about every subject in the design. With replicates the keys agreed and
+  the lengths did not, because the analysis averages replicates and the raw
+  values do not: 24 values per level were labelled from a list of 8, and every
+  printed row named the wrong subject. Both halves are now filled in one loop,
+  and where they do not line up the labels are dropped rather than printed, on
+  the ground that an absent column says nothing while a wrong one says something
+  false.
 
 ### Testing
 
@@ -182,6 +232,22 @@ All notable changes to this project will be documented in this file.
   `wide-pivoted 0`. Six oracles cover it, and three more mutations join the four:
   a BOM (what Excel writes whenever it saves a CSV), umlaut headers, and a blank
   subject cell, which has to be refused out loud.
+
+- Two-factor designs are addressed by their cells, the way the window addresses
+  them. The window builds the group labels as `FacA=A0, FacB=B0` and hands the
+  analysis a group column of `__AUTO_GROUP__`; the fuzzer sent the first
+  factor's levels and that factor as the group column, a shape no window can
+  produce. The pipeline refuses it, and the refusal counted as success: every
+  clean two-way seed came back blocked with "Group 'A0' has no usable numeric
+  values", because a blocked result is a legitimate outcome for bad data. Two-way
+  ANOVA therefore had no effective coverage for the whole life of this fuzzer
+  while appearing in the coverage table as a design that ran, and mixed was
+  covered over a partition the product never builds.
+- The tiny-groups mutation deleted the column it grouped by. Grouping with
+  `.apply` lets pandas consume the key into the index, and dropping the index
+  then discards it, so on a two-factor design the mutation removed the first
+  factor instead of shrinking the groups -- and what ran was a design whose
+  context named a column the frame no longer had.
 
 ## [2.0] - 2026-08-17
 
