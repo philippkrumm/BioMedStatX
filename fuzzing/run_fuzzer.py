@@ -253,8 +253,49 @@ def _print_history(path=_HISTORY):
     return 0
 
 
-def main() -> int:
+_SEED_FIELDS = ("seed", "category", "test", "mutations", "report_written",
+                "reports_written", "oracles_fired", "posthoc", "had_resolution",
+                "datasets", "report_stats", "truth", "p_value", "term_p_values",
+                "effect_size", "effect_size_type")
+
+
+def _summary(records, findings, counts, oracle_names, args, only_designs,
+             last_seed, elapsed, complete):
     from fuzzing.generators import MUTATIONS, TEST_TYPES
+
+    coverage = _coverage(records, oracle_names)
+    return {"count": args.count, "seeds_run": len(records), "complete": complete,
+            "start": args.start, "elapsed_sec": round(elapsed, 1),
+            "designs_filter": sorted(only_designs), "last_seed": last_seed,
+            "categories": dict(counts), "coverage": coverage,
+            "never_fired_oracles": [n for n in oracle_names
+                                    if not coverage["oracles_fired"].get(n)],
+            "unseen_designs": [d for d in TEST_TYPES if d not in coverage["designs"]],
+            "unseen_mutations": [m for m in MUTATIONS if m not in coverage["mutations"]],
+            "seeds": [{k: r.get(k) for k in _SEED_FIELDS} for r in records],
+            "calibration": _calibration(records),
+            "findings": findings}
+
+
+def _write_report(summary, path):
+    """Written to a temporary file and moved into place.
+
+    A long run is otherwise all-or-nothing: a 2000-seed run killed near the end
+    left nothing at all behind, having spent forty minutes. It is now written
+    every _FLUSH_EVERY seeds, and a reader can tell a partial report from a
+    finished one by its "complete" flag rather than by guessing from the count.
+    """
+    tmp = path + ".partial"
+    with open(tmp, "w") as fh:
+        json.dump(summary, fh, indent=2, default=str)
+    os.replace(tmp, path)
+
+
+_FLUSH_EVERY = 100
+
+
+def main() -> int:
+    from fuzzing.generators import TEST_TYPES
     from fuzzing.html_oracles import MULTI_ORACLES, ORACLES
 
     ap = argparse.ArgumentParser()
@@ -305,30 +346,21 @@ def main() -> int:
             print(f"[{seed}] {cat} :: test={record.get('test')} muts={record.get('mutations')}")
             for violation in (record.get("violations") or [])[:4]:
                 print(f"         {violation}")
+        if len(records) % _FLUSH_EVERY == 0:
+            _write_report(_summary(records, findings, counts, oracle_names, args,
+                                   only_designs, last_seed, time.time() - t0,
+                                   complete=False), args.report)
 
     elapsed = time.time() - t0
-    coverage = _coverage(records, oracle_names)
-    never_fired = [n for n in oracle_names if not coverage["oracles_fired"].get(n)]
-    unseen_designs = [d for d in TEST_TYPES if d not in coverage["designs"]]
-    unseen_mutations = [m for m in MUTATIONS if m not in coverage["mutations"]]
 
-    summary = {"count": args.count, "start": args.start, "elapsed_sec": round(elapsed, 1),
-               "designs_filter": sorted(only_designs), "last_seed": last_seed,
-               "categories": dict(counts), "coverage": coverage,
-               "never_fired_oracles": never_fired,
-               "unseen_designs": unseen_designs, "unseen_mutations": unseen_mutations,
-               "seeds": [{k: r.get(k) for k in ("seed", "category", "test", "mutations",
-                                                "report_written", "reports_written",
-                                                "oracles_fired", "posthoc",
-                                                "had_resolution", "datasets",
-                                                "report_stats", "truth", "p_value", "term_p_values",
-                                                "effect_size", "effect_size_type")}
-                         for r in records],
-               "calibration": _calibration(records),
-               "findings": findings}
-    with open(args.report, "w") as fh:
-        json.dump(summary, fh, indent=2, default=str)
+    summary = _summary(records, findings, counts, oracle_names, args,
+                       only_designs, last_seed, elapsed, complete=True)
+    _write_report(summary, args.report)
     _record_run(summary, oracle_names)
+    coverage = summary["coverage"]
+    never_fired = summary["never_fired_oracles"]
+    unseen_designs = summary["unseen_designs"]
+    unseen_mutations = summary["unseen_mutations"]
 
     print("\n=== FUZZ SUMMARY ===")
     for cat, n in counts.most_common():

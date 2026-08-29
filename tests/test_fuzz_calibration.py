@@ -190,3 +190,25 @@ def test_the_record_keeps_what_makes_a_falling_rate_readable(tmp_path):
     assert entry["oracles"] == 3
     assert entry["oracles_that_fired"] == 1
     assert entry["designs"] == ["rm_anova"]
+
+
+def test_a_partial_report_says_it_is_partial(tmp_path):
+    """A long run must not be all-or-nothing.
+
+    A 2000-seed run killed near the end left nothing behind, having spent forty
+    minutes. The report is now written as the run goes, and a reader can tell a
+    partial one from a finished one by the flag rather than by guessing from the
+    seed count.
+    """
+    import json
+    from fuzzing.run_fuzzer import _write_report
+
+    path = tmp_path / "r.json"
+    _write_report({"complete": False, "seeds_run": 100}, str(path))
+    assert json.loads(path.read_text())["complete"] is False
+    _write_report({"complete": True, "seeds_run": 250}, str(path))
+    written = json.loads(path.read_text())
+    assert written["complete"] is True and written["seeds_run"] == 250
+    # Nothing half-written is left where a reader would look.
+    assert not (tmp_path / "r.json.partial").exists()
+
