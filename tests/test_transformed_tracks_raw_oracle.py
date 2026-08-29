@@ -226,3 +226,66 @@ def test_a_single_row_group_does_not_fire(tmp_path):
     """One value has no ordering, so there is nothing to judge."""
     fired, violations = _judge(_page(tmp_path, _log_rows([7.0])))
     assert not fired and not violations
+
+
+def _coarse(value):
+    """As the report prints a large or small magnitude: four significant digits."""
+    return f"{value:.4g}" if (abs(value) >= 1e4 or 0 < abs(value) < 1e-3) else f"{value:.6f}"
+
+
+_COARSE_VALUES = [8.30129109721e-05, 1612.4477, 1.0601e+09,
+                  0.063981, 6.198073, 40.056641]
+
+
+def test_coarsely_printed_cells_are_not_a_finding(tmp_path):
+    """The page loses digits; the check must not read its own loss as a defect.
+
+    The report switches to four significant digits for large and small
+    magnitudes, so a cell reading 8.301e-05 stands for 8.30129109721e-05. The
+    arithmetic behind those rows was exact to full double precision -- measured,
+    largest error over every row was 0 -- and the check flagged them anyway, on
+    five reports out of two thousand.
+
+    Reconstructing the shift from such cells is the sharper half of the problem:
+    a shift that nearly cancels a measurement leaves a difference far below the
+    printed resolution, so the check was measuring its own reading error.
+    """
+    rows = [(_coarse(v), f"{math.log10(v):.6f}") for v in _COARSE_VALUES]
+    fired, violations = _judge(_page(tmp_path, rows))
+    assert fired
+    assert not violations, violations
+
+
+def test_a_real_mispairing_survives_the_coarse_format(tmp_path):
+    """Losing digits must not lose the defect the check exists for.
+
+    The pairing bug this check was built from put one measurement beside another
+    subject's transformed value -- a disagreement of whole orders of magnitude,
+    not of a rounding step. Printed coarsely it is still unmistakable, and this
+    is the test that says the tolerance was widened rather than removed.
+    """
+    transformed = [math.log10(v) for v in _COARSE_VALUES]
+    transformed[0], transformed[3] = transformed[3], transformed[0]
+    rows = [(_coarse(v), f"{t:.6f}") for v, t in zip(_COARSE_VALUES, transformed)]
+    fired, violations = _judge(_page(tmp_path, rows))
+    assert fired
+    assert violations, "a swapped pair went unnoticed once the cells got coarse"
+
+
+def test_a_near_cancelling_shift_is_declared_undecidable_not_wrong(tmp_path):
+    """Where the shift nearly cancels the value, the page cannot settle it.
+
+    A measurement of -1.448495e+12 under a shift of the same magnitude leaves a
+    residue the printed four digits cannot resolve at all. Reporting that as a
+    defect asserts more than the evidence holds.
+    """
+    shift = 1.44849499831e+12
+    # The last one leaves a residue of exactly 1 after the shift, so its
+    # logarithm is 0 -- the row the real report printed as "-1.448e+12" beside
+    # "0.000000". Derived from the shift rather than typed, so the fixture
+    # cannot drift into a negative argument.
+    values = [-0.220270, 49.669094, -2157.21, 1.0 - shift]
+    rows = [(_coarse(v), f"{math.log10(v + shift):.6f}") for v in values]
+    fired, violations = _judge(_page(tmp_path, rows))
+    assert fired
+    assert not violations, violations

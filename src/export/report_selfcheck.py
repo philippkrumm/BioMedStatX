@@ -535,7 +535,11 @@ def _oracle_transformed_column_tracks_the_raw_one(report, result, violations) ->
         transformed = _numeric(transformed_text)
         if raw is None or transformed is None:
             continue
-        by_group.setdefault(group, []).append((raw, transformed))
+        # The printed text is carried alongside the parsed number: the log10
+        # check needs to know how many digits the cell actually holds, and
+        # re-formatting the float cannot recover that.
+        by_group.setdefault(group, []).append(
+            (raw, transformed, raw_text, transformed_text))
 
     comparable = [g for g, vals in by_group.items() if len(vals) >= 2]
     if not comparable:
@@ -558,7 +562,7 @@ def _oracle_transformed_column_tracks_the_raw_one(report, result, violations) ->
             if a[0] != b[0] and a[1] != b[1] and ((a[0] < b[0]) != (a[1] < b[1]))
         ]
         if disagreements:
-            (r1, t1), (r2, t2) = disagreements[0]
+            (r1, t1, _, _), (r2, t2, _, _) = disagreements[0]
             violations.append(
                 f"group {group!r}: the transformed column does not follow the "
                 f"raw one -- {r1:g} is printed with {t1:g} and {r2:g} with "
@@ -590,39 +594,77 @@ def _check_log10_arithmetic(by_group, violations) -> None:
     Correctly paired, the implied shifts agree to within a rounding step (a real
     report: 2.423027 to 2.423033 across twelve rows); mispaired, they scatter.
     """
-    rows = [(raw, t) for values in by_group.values() for raw, t in values
+    rows = [(raw, t, raw_text, t_text)
+            for values in by_group.values() for raw, t, raw_text, t_text in values
             if -300 < t < 300]
     if len(rows) < 3:
         return
 
-    implied = sorted(10.0 ** t - raw for raw, t in rows)
+    implied = sorted(10.0 ** t - raw for raw, t, _, _ in rows)
     shift = implied[len(implied) // 2]
+    # How well the printed table pins that shift. Each row implies
+    # ``10**t - raw``, so its uncertainty is the printed uncertainty of ``t``
+    # carried through the exponential plus that of ``raw``. The median is used
+    # rather than the minimum: one well-printed row does not make the estimate
+    # sharp when the median that produced it came from coarse ones.
+    shift_slack = sorted(
+        math.log(10) * (10.0 ** t) * _printed_slack(t_text) + _printed_slack(raw_text)
+        for _, t, raw_text, t_text in rows
+    )[len(rows) // 2]
 
     unreproducible = []
-    for raw, t in rows:
+    undecidable = 0
+    for raw, t, raw_text, t_text in rows:
         shifted = raw + shift
-        if shifted <= 0:
-            unreproducible.append((raw, t, None))
+        # The tolerance is what the printed page can actually support, not a
+        # fixed number. A cell reads 8.301e-05 while the value behind it is
+        # 8.30129109721e-05, and the report switches to four significant digits
+        # for large and small magnitudes, so ``raw`` is known far less precisely
+        # than the six decimals a plain cell suggests. Propagated through the
+        # logarithm the error is divided by the shifted value, which means it
+        # explodes exactly where the shift nearly cancels the measurement.
+        slack = _printed_slack(t_text) + (
+            (_printed_slack(raw_text) + shift_slack) / (math.log(10) * abs(shifted))
+            if shifted else float("inf"))
+        if shifted <= 0 or slack > 0.05:
+            # Not a finding: the page does not carry enough digits to say. A
+            # reconstructed shift that nearly cancels a measurement leaves the
+            # difference below the printed resolution, and asserting a violation
+            # there would be asserting more than the evidence holds. Five such
+            # rows were reported as defects on reports whose arithmetic was
+            # exact to full double precision.
+            undecidable += 1
             continue
         got = math.log10(shifted)
-        # The cells carry six decimals, so anything past a rounding step is a
-        # disagreement about which raw value this transform belongs to, not
-        # about precision.
-        if abs(got - t) > 1e-4:
-            unreproducible.append((raw, t, got))
+        if abs(got - t) > slack:
+            unreproducible.append((raw, t, got, slack))
 
     if not unreproducible:
         return
 
-    raw, t, got = unreproducible[0]
-    detail = ("its shifted value is not positive" if got is None
-              else f"log10({raw:g} + {shift:g}) is {got:g}")
+    raw, t, got, slack = unreproducible[0]
     violations.append(
         f"the report declares a log10 transformation, but {len(unreproducible)} "
-        f"of {len(rows)} rows cannot be reproduced from the shift the rest of "
-        f"the table agrees on ({shift:g}) -- {raw:g} is printed with {t:g} and "
-        f"{detail}"
+        f"of {len(rows) - undecidable} decidable rows cannot be reproduced from "
+        f"the shift the rest of the table agrees on ({shift:g}) -- {raw:g} is "
+        f"printed with {t:g} and log10({raw:g} + {shift:g}) is {got:g}, past "
+        f"the {slack:.3g} the printed digits allow"
     )
+
+
+def _printed_slack(text):
+    """Half a unit in the last place the cell actually printed.
+
+    ``0.063981`` is known to +/- 5e-7, but ``8.301e-05`` only to +/- 5e-9 and
+    ``-1.448e+12`` only to +/- 5e+8 -- the report switches to four significant
+    digits for large and small magnitudes, and a check that assumes six decimals
+    everywhere is measuring its own reading error.
+    """
+    text = (text or "").strip().replace(",", "")
+    mantissa, _, exponent = text.lower().partition("e")
+    decimals = len(mantissa.partition(".")[2])
+    scale = 10.0 ** int(exponent) if exponent.strip(" +-").isdigit() else 1.0
+    return 0.5 * (10.0 ** -decimals) * scale
 
 
 def _oracle_transform_display_is_earned(report, result, violations) -> bool:
