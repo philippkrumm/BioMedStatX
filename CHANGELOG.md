@@ -153,6 +153,47 @@ All notable changes to this project will be documented in this file.
   the ground that an absent column says nothing while a wrong one says something
   false.
 
+- An impossible number is no longer reported as a weak result. A 2x2 design with
+  one cell never run -- a factorial experiment where a combination was not
+  performed, which is routine -- reported `F(1, 14) = -3.07`, partial eta squared
+  `-0.28` and `p = 1.0`. F is a ratio of mean squares and both are non-negative;
+  partial eta squared lies in [0, 1]; neither value can occur. An empty cell
+  leaves the interaction unestimable and the negative sum of squares behind it
+  was read straight through. The app had already warned that the design has
+  empty cells and recommended a mixed model -- and then printed the number
+  anyway, beside a p-value that reads as an ordinary null result. The existing
+  safety net tested only for non-finite values, so "not a number" was caught and
+  "a number that cannot be" was not; it now also rejects a negative F and an
+  effect size outside the range its own name fixes, and the block names the
+  incomplete layout as the cause. Deliberately narrow: signed statistics and
+  signed effect sizes are the ordinary case, and omega squared is legitimately
+  negative in small samples.
+- The Transformed column is printed only where it pairs with the raw one. The
+  two columns come from different extractions that disagree about missing
+  values: one drops a NaN row, the other keeps it. On a 2x2 layout with
+  scattered NaNs a cell held 5 raw values against 8 transformed ones, so every
+  row after the first gap named the wrong measurement. The same difference
+  fooled the gate deciding whether to show the column at all -- the two dicts
+  differed, by NaN handling rather than by any transformation -- so a report
+  declaring "Transformation: None" printed a transformed value for every row.
+  The column is dropped rather than realigned, for the reason the defect exists:
+  guessing which value belongs to which is what produced it. Both writers are
+  guarded, since the table falls back to a second source and closing one door
+  alone would have left the misaligned column reaching the page through it.
+- A two-way analysis that falls back to permutation no longer freezes the
+  window. Two designs took 91 seconds on 28 rows, all of it in the
+  Freedman-Lane loop, which rebuilt both design matrices from their formula
+  strings on every permutation -- a patsy parse and a categorical re-encode of
+  the whole frame, twice, 5000 times, for each of three effects: 30000 model
+  fits to answer a question about 28 numbers. Freedman-Lane permutes the
+  residuals, so the designs are constant and only y changes; the residual sum of
+  squares now comes from a projection onto an orthonormal basis of each design's
+  column space, from an SVD rather than a QR because a rank-deficient layout is
+  exactly the case this fallback exists to survive. Measured against the old
+  implementation on the same fixture: 36.20 s to 0.07 s, with F and p identical
+  to every digit. The analysis runs on the UI thread, so this was a minute and a
+  half of frozen window on a design a user can build by accident.
+
 ### Testing
 
 - A report may no longer show transformed values for a run that transformed
@@ -248,6 +289,55 @@ All notable changes to this project will be documented in this file.
   then discards it, so on a two-factor design the mutation removed the first
   factor instead of shrinking the groups -- and what ran was a design whose
   context named a column the frame no longer had.
+- The report self-check measures the log10 arithmetic against the digits the
+  page actually printed. Five of eleven findings in a 2000-seed run were the
+  check's own, not the product's: the tolerance was a fixed 1e-4 on the
+  logarithm, as if every cell carried six decimals, but the report switches to
+  four significant digits at large and small magnitudes -- so recomputing log10
+  from `8.301e-05` and demanding agreement to 1e-4 measures the format rather
+  than the arithmetic. The reconstructed shift carries the same error, divided
+  by the shifted value, which is how a row whose shift nearly cancels its
+  measurement produced a reported discrepancy of 8.69 that was entirely the
+  truncated tail of the input. The tolerance is now derived per row from half a
+  unit in the last printed place, propagated through the logarithm; a row whose
+  tolerance exceeds 0.05 is counted undecidable rather than reported, because
+  the page does not carry enough digits to say. Widened, not removed: the defect
+  it exists for is a disagreement of whole orders of magnitude, and a test swaps
+  two rows in the same coarse format and requires the check to still fire.
+- A new check asks whether the post-hoc a report names is the one that ran.
+  Every family the comparisons come from must appear in the name the page
+  prints, and a control-referenced name may not sit on a complete all-pairs
+  family -- Dunnett over k-1 comparisons and Tukey over k(k-1)/2 carry different
+  corrections, so the name is a claim about which was applied. The heading is
+  read from the finished page and the comparisons from the result, so the report
+  is not compared with itself, and rows carrying no method of their own are not
+  counted as evidence. It fires on 26 of 400 seeds. It immediately found two
+  existing fixtures that built EMM/multivariate-t comparisons and rendered a
+  Tukey heading over them -- self-contradictory, and never checked.
+- The fuzzer grades a run against the effects it built the data with. The
+  generator draws each design's effect size, zero included, and threw it away
+  the moment the frame was built -- so the one dimension the fuzzer could have
+  graded itself against was varied for its whole life and nothing looked. Two
+  rates are now reported per run: how often a term built with no effect is
+  called significant, which should be about alpha, and how often a real one is
+  found. Counted per term and each term against the p-value for that same term:
+  holding a built main effect against the headline measures the interaction for
+  a mixed design, which those data are built without, and the first version of
+  this reported 7% "power" that was really the interaction's type-I error.
+  Mutated seeds, multi-dataset runs, blocked runs and designs that draw no
+  effect are excluded rather than averaged in, and below 60 null terms the
+  summary says the run is too small to tell rather than printing a number. One
+  finding fell out of building it, recorded rather than acted on: LMM draws no
+  effect at all, so every LMM seed is a pure null and that design's power has
+  never been exercised.
+- A run can skip the seeds it cannot learn from. The calibration only counts
+  designs that draw an effect, so seven designs in ten were built, analysed,
+  rendered and oracled before contributing nothing to it. `--designs` reads the
+  design from the generator's first draw, without building anything, and never
+  spawns a seed that cannot speak to the question. The peek and the build go
+  through one draw, so the filter cannot end up selecting on a rule the
+  generator has stopped following, and `--count` still counts seeds actually
+  run, so every denominator in the summary keeps meaning what it says.
 
 ## [2.0] - 2026-08-17
 
