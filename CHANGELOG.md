@@ -397,6 +397,22 @@ All notable changes to this project will be documented in this file.
   for exactly this reason: the repeated-measures and mixed designs are built
   from one branch, so both carried a between-factor effect, and a
   repeated-measures analysis never sees it.
+- The fuzz runner runs seeds side by side. Each seed already ran in its own
+  process with its own generator, temporary directory and report, and shared
+  nothing with the others -- the runner simply waited for each before starting
+  the next, which measured out as one worker at 98% of a single core on a
+  14-core machine, or 7% of it. `--jobs` defaults to cores minus two, capped at
+  eight so every worker keeps a core of its own: the per-seed budget is wall
+  clock, and oversubscribing would turn a queued seed into a TIMEOUT finding
+  that says nothing about the product. A/B'd on the same twelve seeds rather
+  than assumed -- 19.3 s to 4.2 s, with every field of every record identical.
+- A main effect is not judged against alpha when the design carries an
+  interaction. The generator records the coefficient it built with; the ANOVA
+  tests the marginal means, which an interaction moves even where the
+  coefficient is zero. Over 2500 seeds those terms were called significant 37%
+  of the time against 6.8% on a purely null design, and that difference was the
+  whole of what looked like an inflated two-way error rate. They are skipped in
+  both directions, and the count is printed so the narrowing stays visible.
 
 ## [2.0] - 2026-08-17
 
