@@ -90,3 +90,22 @@ def test_the_heading_names_the_procedure_that_ran():
     assert _comparisons(results), "no post-hoc ran, so the name proves nothing"
     assert "Tukey" not in name
     assert "t-test" in name.lower() and "holm" in name.lower()
+
+
+def test_a_simple_effect_row_says_which_level_it_was_measured_at():
+    """Two rows compared different things and printed the same two labels.
+
+    A simple-effect row compares two levels of one factor AT one level of the
+    other. Dropping the conditioning level printed "B0 vs B1" once per level of
+    FacA, with different p-values and nothing to tell the reader which
+    comparison each row was.
+    """
+    results = StatisticalTester._run_two_way_anova(_two_by_two(), "Val", ["FacA", "FacB"])
+    pairs = [(row["group1"], row["group2"]) for row in _comparisons(results)]
+    assert pairs, "no post-hoc ran, so this test proves nothing"
+    assert len(pairs) == len(set(pairs)), f"two rows claim the same comparison: {pairs}"
+
+    conditioned = [p for p in pairs if "FacA=" in p[0]]
+    assert len(conditioned) == 2, f"expected one simple effect per FacA level, got {pairs}"
+    # The level is on both sides, because it is a property of the comparison.
+    assert all("FacA=" in a and "FacA=" in b for a, b in conditioned)

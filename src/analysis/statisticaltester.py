@@ -2509,6 +2509,22 @@ class StatisticalTester:
                                     if len(parts) == 2:
                                         g1_label = parts[0].strip()
                                         g2_label = parts[1].strip()
+                                # A simple-effect row compares two levels of
+                                # one factor AT one level of the other, and
+                                # pingouin reports that level in a column named
+                                # after the conditioning factor. Dropping it
+                                # printed every simple effect under the same two
+                                # labels: a 2x2 table showed "B0 vs B1" twice,
+                                # with different p-values and nothing to tell
+                                # the reader which comparison each row was.
+                                contrast = str(ph_row.get('Contrast', ''))
+                                if '*' in contrast:
+                                    stratum_col = between[0]
+                                    stratum = ph_row.get(stratum_col)
+                                    if stratum is not None and str(stratum) != '-':
+                                        at = f" ({stratum_col}={stratum})"
+                                        g1_label += at
+                                        g2_label += at
                                 # p_corr is a COLUMN of the frame, so it is
                                 # present on every row -- and pingouin leaves it
                                 # NaN for a family with only one comparison,
