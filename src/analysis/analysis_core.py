@@ -1628,12 +1628,42 @@ class AnalysisManager:
             # True and a Transformed column identical to Raw was emitted on every
             # untransformed analysis (report bug 2026-08). Keeps the _safe_ts_groups
             # robustness added upstream.
+            #
+            # And only when it lines up with the raw column it is printed beside.
+            # The two come from different extractions, and they disagree about
+            # missing values: one drops a NaN row, the other keeps it. On a frame
+            # with scattered NaNs a cell held 5 raw values against 8 transformed
+            # ones, so every printed row after the first gap named the wrong
+            # measurement and three had no partner at all. The same difference
+            # also fooled the change-gate above -- the two dicts differ, but by
+            # NaN handling rather than by a transformation, so a Transformed
+            # column was emitted for a run that transformed nothing.
+            #
+            # Dropped rather than realigned, for the same reason the subject
+            # labels are: guessing which value belongs to which is what produced
+            # the defect. An absent column says nothing; a misaligned one says
+            # something false.
             from statistical_testing.validators import grouped_samples_changed
             if (isinstance(transformed_samples, dict)
                     and grouped_samples_changed(filtered_samples, transformed_samples, groups)):
                 _safe_ts_groups = [g for g in groups if g in transformed_samples]
                 if not _safe_ts_groups: _safe_ts_groups = list(transformed_samples.keys())
-                results['raw_data_transformed'] = {g: transformed_samples[g][:] for g in _safe_ts_groups}
+                _pairs_up = all(
+                    g in results['raw_data']
+                    and len(results['raw_data'][g]) == len(transformed_samples[g])
+                    for g in _safe_ts_groups
+                )
+                if _pairs_up:
+                    results['raw_data_transformed'] = {
+                        g: transformed_samples[g][:] for g in _safe_ts_groups}
+                else:
+                    logger.warning(
+                        "transformed values do not line up with the raw ones "
+                        "(%s); the Transformed column is dropped rather than "
+                        "printed against the wrong measurements.",
+                        {g: (len(results['raw_data'].get(g, [])),
+                             len(transformed_samples[g])) for g in _safe_ts_groups},
+                    )
             analysis_context = kwargs.get('analysis_context', {})
             results['selected_groups'] = analysis_context.get('selected_groups') or groups
             results['group_column'] = analysis_context.get('selected_group_column') or analysis_context.get('factor_columns', [None])[0] or group_col
@@ -1685,12 +1715,16 @@ class AnalysisManager:
                 "report": os.path.abspath(report_file)
             }
 
-            # Same fix as raw_data_transformed above: gate on an actual value
-            # change, not on the (broken) None-vs-'None' name comparison
-            # (report bug 2026-08).
+            # Same two gates as raw_data_transformed above: an actual value
+            # change, not the (broken) None-vs-'None' name comparison (report bug
+            # 2026-08), and a column that lines up with the raw one. The report
+            # falls back to this key when raw_data_transformed is absent, so
+            # guarding only the first would have left the misaligned column
+            # reaching the page by the other door.
             from statistical_testing.validators import grouped_samples_changed
             if (isinstance(transformed_samples, dict)
-                    and grouped_samples_changed(filtered_samples, transformed_samples, groups)):
+                    and grouped_samples_changed(filtered_samples, transformed_samples, groups)
+                    and 'raw_data_transformed' in results):
                 results['transformed_data'] = {
                     g: list(transformed_samples[g]) for g in groups if g in transformed_samples
                 }
