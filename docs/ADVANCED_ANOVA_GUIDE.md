@@ -242,6 +242,22 @@ Cohen's benchmarks: $\eta^2_p = 0.01$ small, $0.06$ medium, $0.14$ large.
 
 Post-hoc tests are only run when the corresponding main effect or interaction is significant.
 
+**Two-Way ANOVA.** The post-hoc that follows a significant interaction is a set
+of pairwise $t$-tests with a Holm–Bonferroni adjustment, applied within each
+family separately: the levels of each factor, and the simple effects of one
+factor at each level of the other. This is **not** Tukey HSD — Tukey uses the
+studentized range distribution and gives different $p$-values — and the report
+names it accordingly.
+
+A family containing a single comparison, which is what a two-level factor gives,
+carries no adjustment: there is no multiplicity to correct. Each row of the
+table says whether it was adjusted, so the two cases are distinguishable rather
+than assumed from the heading.
+
+Simple-effect rows name the level they were measured at, as
+`B0 (FacA=A0)` against `B1 (FacA=A0)`. Without it the two simple effects of the
+same factor print identical labels with different $p$-values.
+
 ### Precision of reported $p$-values
 
 Two of the reported $p$-values are estimated by simulation rather than from a

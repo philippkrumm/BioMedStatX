@@ -194,6 +194,29 @@ All notable changes to this project will be documented in this file.
   to every digit. The analysis runs on the UI thread, so this was a minute and a
   half of frozen window on a design a user can build by accident.
 
+- A two-way main effect at `p = 0.0002` was reported as not significant. The
+  post-hoc after a significant interaction runs `pairwise_tests(padjust='holm')`,
+  whose corrected-p column is present on every row and left empty for a family
+  with only one comparison -- there is nothing to correct there. The code asked
+  whether the column existed, which is always true, and took the empty value: on
+  a 2x2 design that is both main effects, so a factor separating its groups at
+  `p = 3.8e-16` was filed as `p = NaN`, "not significant", indistinguishable
+  from a genuine negative result. The corrected value is used where one exists
+  and the uncorrected one where no correction applied, and each row now says
+  which, since both occur in the same table.
+- That post-hoc is no longer called Tukey HSD. It is a set of pairwise
+  t-tests with a Holm-Bonferroni adjustment; Tukey uses the studentized
+  range and gives different p-values. The comparison rows had always
+  recorded "Pairwise t-test" -- only the heading claimed otherwise, and a
+  methods section is written from the heading. Found by the new post-hoc-name
+  check on the first two-way seed it reached.
+- A simple-effect row names the level it was measured at. Such a row compares
+  two levels of one factor at one level of the other, and the conditioning level
+  was dropped, so a 2x2 table printed "B0 vs B1" twice with different
+  p-values and no way to tell the two comparisons apart. They now read
+  `B0 (FacA=A0)` against `B1 (FacA=A0)`; main-effect rows, which are conditioned
+  on nothing, are unchanged.
+
 ### Testing
 
 - A report may no longer show transformed values for a run that transformed
@@ -338,6 +361,27 @@ All notable changes to this project will be documented in this file.
   through one draw, so the filter cannot end up selecting on a rule the
   generator has stopped following, and `--count` still counts seeds actually
   run, so every denominator in the summary keeps meaning what it says.
+- The fuzz runner writes its report as the run goes and records every run. A
+  2000-seed run killed near its end left nothing behind, having spent forty
+  minutes on a report written only after the last seed; it is now flushed every
+  hundred seeds through a temporary file, and carries a "complete" flag so a
+  partial report cannot be read as a finished one. Each run also appends a line
+  to a history file, with the finding rate beside the number of oracles and the
+  design filter -- the easiest way to make a discovery rate fall is to stop
+  looking, and a rate that drops while the oracle count drops with it says
+  nothing about the product.
+- A run can skip the designs it cannot learn from. The calibration only counts
+  designs that draw an effect, so seven designs in ten were built, analysed,
+  rendered and oracled before contributing nothing to it. `--designs` reads the
+  design from the generator's first draw, without building anything, and never
+  spawns a seed that cannot answer the question; the peek and the build go
+  through one draw, so the filter cannot select on a rule the generator has
+  stopped following.
+- A repeated-measures case claims only the term it is analysed on. Surfaced by
+  the calibration's own list of built-but-never-reported terms, which is printed
+  for exactly this reason: the repeated-measures and mixed designs are built
+  from one branch, so both carried a between-factor effect, and a
+  repeated-measures analysis never sees it.
 
 ## [2.0] - 2026-08-17
 
