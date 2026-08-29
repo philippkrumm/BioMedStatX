@@ -67,6 +67,22 @@ def _rng(seed: int) -> np.random.Generator:
     return np.random.default_rng(seed)
 
 
+def _draw_design(rng: np.random.Generator) -> str:
+    """The generator's first draw: which design this seed gets."""
+    return TEST_TYPES[int(rng.integers(0, len(TEST_TYPES)))]
+
+
+def design_for_seed(seed: int) -> str:
+    """Which design a seed selects, without building anything.
+
+    A run that can only learn from some designs uses this to skip the rest
+    before paying for a subprocess. It goes through the same _draw_design as
+    build_case does, so the two cannot drift apart -- a second copy of the
+    selection rule would filter on a rule the generator had stopped following.
+    """
+    return _draw_design(_rng(seed))
+
+
 def _base_design(rng: np.random.Generator, test_label: str):
     """Return (df, context, kwargs, truth) for a clean design of the chosen type.
 
@@ -348,7 +364,7 @@ def _apply_mutation(df: pd.DataFrame, mut: str, rng: np.random.Generator,
 
 def build_case(seed: int) -> FuzzCase:
     rng = _rng(seed)
-    test_label = TEST_TYPES[int(rng.integers(0, len(TEST_TYPES)))]
+    test_label = _draw_design(rng)
     df, ctx, kwargs, truth = _base_design(rng, test_label)
 
     n_mut = int(rng.integers(0, 4))

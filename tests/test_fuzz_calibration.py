@@ -121,3 +121,33 @@ def test_the_breakdown_keeps_the_designs_apart():
     per_design = _calibration(records)["per_design"]
     assert per_design["two_way_anova"]["null"] == [1, 1]
     assert per_design["mixed_anova"]["effect"] == [1, 1]
+
+
+def test_the_design_filter_reads_the_same_draw_the_generator_makes():
+    """The filter skips seeds before spawning them, so it must not guess.
+
+    A second copy of the selection rule would keep filtering on a rule the
+    generator had stopped following, and the run would quietly measure a
+    different sample than the one it names. Both go through the same draw.
+    """
+    from fuzzing.generators import build_case, design_for_seed
+    for seed in range(25):
+        assert build_case(seed).test_label == design_for_seed(seed)
+
+
+def test_count_still_means_seeds_run_when_a_filter_is_on():
+    """Otherwise every denominator in the summary silently means something else."""
+    from fuzzing.generators import design_for_seed
+    from fuzzing.run_fuzzer import _seeds_to_run
+
+    wanted = {"rm_anova", "mixed_anova", "two_way_anova"}
+    seeds = list(_seeds_to_run(0, 12, wanted))
+    assert len(seeds) == 12
+    assert all(design_for_seed(s) in wanted for s in seeds)
+    # It walked past the seeds it skipped rather than renumbering them.
+    assert seeds == sorted(seeds) and seeds[-1] > 12
+
+
+def test_no_filter_leaves_the_seed_range_exactly_as_it_was():
+    from fuzzing.run_fuzzer import _seeds_to_run
+    assert list(_seeds_to_run(7, 4, set())) == [7, 8, 9, 10]

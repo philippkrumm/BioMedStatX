@@ -176,6 +176,28 @@ def _calibration_verdict(calibration, min_terms=60):
     return "consistent with alpha (%.1f%% of %d null terms)" % (100 * rate, total)
 
 
+def _seeds_to_run(start, count, designs):
+    """The seeds this run actually spawns a worker for.
+
+    Without a filter, simply start..start+count. With one, seeds whose design
+    the run cannot learn from are skipped BEFORE the subprocess -- the design is
+    the generator's first draw, so it can be read for a seed without building
+    anything. `count` still counts seeds actually run, so every denominator in
+    the summary keeps meaning what it says; the span scanned is reported
+    separately.
+    """
+    from fuzzing.generators import design_for_seed
+    if not designs:
+        yield from range(start, start + count)
+        return
+    seed = start
+    while count > 0:
+        if design_for_seed(seed) in designs:
+            yield seed
+            count -= 1
+        seed += 1
+
+
 def main() -> int:
     from fuzzing.generators import MUTATIONS, TEST_TYPES
     from fuzzing.html_oracles import MULTI_ORACLES, ORACLES
@@ -187,6 +209,10 @@ def main() -> int:
     ap.add_argument("--report", default=os.path.join(_HERE, "fuzz_report.json"))
     ap.add_argument("--keep-dir", default=os.path.join(_HERE, "failures"),
                     help="where reports belonging to a finding are copied")
+    ap.add_argument("--designs", default="",
+                    help="comma-separated designs to run; other seeds are "
+                         "skipped without being spawned. --count still means "
+                         "seeds run, so the run walks further up the seed space.")
     args = ap.parse_args()
 
     env = dict(os.environ, QT_QPA_PLATFORM="offscreen", MPLBACKEND="Agg")
@@ -196,8 +222,13 @@ def main() -> int:
     counts = Counter()
     t0 = time.time()
 
-    for i in range(args.count):
-        seed = args.start + i
+    only_designs = {d.strip() for d in args.designs.split(",") if d.strip()}
+    if only_designs - set(TEST_TYPES):
+        print("unknown design(s): %s" % ", ".join(sorted(only_designs - set(TEST_TYPES))))
+        return 2
+    last_seed = args.start
+    for seed in _seeds_to_run(args.start, args.count, only_designs):
+        last_seed = seed
         try:
             proc = subprocess.run(
                 [sys.executable, "-m", "fuzzing._worker", str(seed), args.keep_dir],
@@ -223,6 +254,7 @@ def main() -> int:
     unseen_mutations = [m for m in MUTATIONS if m not in coverage["mutations"]]
 
     summary = {"count": args.count, "start": args.start, "elapsed_sec": round(elapsed, 1),
+               "designs_filter": sorted(only_designs), "last_seed": last_seed,
                "categories": dict(counts), "coverage": coverage,
                "never_fired_oracles": never_fired,
                "unseen_designs": unseen_designs, "unseen_mutations": unseen_mutations,
