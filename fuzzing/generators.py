@@ -53,6 +53,14 @@ class FuzzCase:
     mutations: List[str]
     analyze_kwargs: Dict[str, Any] = field(default_factory=dict)
     datasets: int = 1  # >1 drives the multi-dataset path and its combined report
+    # The effects the data were BUILT with, in units of the residual SD. Drawn
+    # per seed and, until now, thrown away -- so the fuzzer varied the one thing
+    # it could have graded itself against and never looked. A design whose true
+    # effect is zero should be called significant about as often as alpha says,
+    # and one built with a large effect should usually be found; neither is a
+    # statement about a single seed, which is why it is carried here and judged
+    # over a whole run.
+    truth: Dict[str, float] = field(default_factory=dict)
 
 
 def _rng(seed: int) -> np.random.Generator:
@@ -60,7 +68,13 @@ def _rng(seed: int) -> np.random.Generator:
 
 
 def _base_design(rng: np.random.Generator, test_label: str):
-    """Return (df, context, kwargs) for a clean design of the chosen type."""
+    """Return (df, context, kwargs, truth) for a clean design of the chosen type.
+
+    ``truth`` names the effects the data were built with. Empty means the design
+    carries no drawn effect -- correlation and regression are always built with
+    one, LMM never is.
+    """
+    truth: Dict[str, float] = {}
     n_groups = int(rng.integers(2, 5)) if test_label != "ttest" else 2
     n_per = int(rng.integers(3, 12))
     group_names = [f"G{i+1}" for i in range(n_groups)]
@@ -93,6 +107,14 @@ def _base_design(rng: np.random.Generator, test_label: str):
         # the repeated-measures model no within-subject variance to work with.
         within_effect = float(rng.choice(EFFECT_SIZES))
         between_effect = float(rng.choice(EFFECT_SIZES))
+        # Keyed by the FACTOR the effect was built into, so a run can hold each
+        # effect against the p-value for that same term. Keying it "within" /
+        # "between" invited comparing it against whatever the headline
+        # happened to be -- and for a mixed design the headline is the
+        # INTERACTION, which these data are built without. Measured that way
+        # the run reported 7% "power" and was really reporting the
+        # interaction's type-I error.
+        truth = {"Time": within_effect, "Between": between_effect}
         subject_sd = float(rng.choice([0.5, 1.0, 2.0]))
         subject_offsets = rng.normal(0, subject_sd, size=n_subj)
         for s in range(n_subj):
@@ -131,6 +153,7 @@ def _base_design(rng: np.random.Generator, test_label: str):
         effect_a = float(rng.choice(EFFECT_SIZES))
         effect_b = float(rng.choice(EFFECT_SIZES))
         interaction = float(rng.choice([0.0, 0.0, 1.5]))
+        truth = {"FacA": effect_a, "FacB": effect_b, "FacA:FacB": interaction}
         for ai, a in enumerate(fa):
             for bi, b in enumerate(fb):
                 for _ in range(n_per):
@@ -211,7 +234,7 @@ def _base_design(rng: np.random.Generator, test_label: str):
         kwargs = {"group_col": "Between", "groups": list(dict.fromkeys(between_grps)),
                   "value_cols": ["Val"], "dependent": True, "subject_column": "Subject"}
 
-    return df, ctx, kwargs
+    return df, ctx, kwargs, truth
 
 
 # Mutations that write numeric values into the DV column. Before any of them we
@@ -326,7 +349,7 @@ def _apply_mutation(df: pd.DataFrame, mut: str, rng: np.random.Generator,
 def build_case(seed: int) -> FuzzCase:
     rng = _rng(seed)
     test_label = TEST_TYPES[int(rng.integers(0, len(TEST_TYPES)))]
-    df, ctx, kwargs = _base_design(rng, test_label)
+    df, ctx, kwargs, truth = _base_design(rng, test_label)
 
     n_mut = int(rng.integers(0, 4))
     muts = list(rng.choice(MUTATIONS, size=n_mut, replace=False)) if n_mut else ["none"]
@@ -379,7 +402,7 @@ def build_case(seed: int) -> FuzzCase:
     # read back. Kept only because analyze() still accepts them.
     kwargs.setdefault("plot_type", "Bar")
     return FuzzCase(seed=seed, test_label=test_label, df=df, mutations=[str(m) for m in muts],
-                    analyze_kwargs=kwargs, datasets=datasets)
+                    analyze_kwargs=kwargs, datasets=datasets, truth=truth)
 
 
 def case_to_analyze_kwargs(case: FuzzCase, file_path: str, output_base: str) -> Dict[str, Any]:

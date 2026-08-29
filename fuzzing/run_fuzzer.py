@@ -91,6 +91,91 @@ def _coverage(records: list, oracle_names: list) -> dict:
                                       for r in written)}
 
 
+def _calibration(records, alpha=0.05):
+    """Do the answers track the effects the data were built with?
+
+    A statement about a RUN, never about a seed. One null term coming back
+    significant is exactly what alpha promises; one strong effect being missed is
+    what finite power means. Only the rates are evidence.
+
+    Counted per TERM, not per seed, and each term is held against the p-value for
+    that same term. Holding a built main effect against the headline measures the
+    wrong thing: for a mixed design the headline is the INTERACTION, and these
+    designs carry no interaction at all, so the first version of this reported 7%
+    "power" while actually reporting the interaction's type-I error.
+
+    Restricted to unmutated, single-dataset seeds. A mutation exists to break an
+    assumption -- NaNs, outliers, unequal variances -- so a rejection rate over
+    mutated data says nothing about calibration, and a blocked run has no
+    p-values to judge. Designs that draw no effect contribute nothing rather than
+    counting as null: correlation and regression are always built with one and
+    LMM never is, so including them would measure the generator.
+    """
+    buckets = {"null": [0, 0], "effect": [0, 0]}
+    per_design = {}
+    unmatched = set()
+    for record in records:
+        if record.get("category") != "OK" or record.get("blocked"):
+            continue
+        if record.get("mutations") != ["none"] or record.get("datasets", 1) != 1:
+            continue
+        truth = record.get("truth") or {}
+        reported = record.get("term_p_values") or {}
+        if not truth or not reported:
+            continue
+        design = per_design.setdefault(
+            record.get("test"), {"null": [0, 0], "effect": [0, 0]})
+        for term, size in truth.items():
+            p_value = reported.get(term)
+            if not isinstance(p_value, (int, float)):
+                unmatched.add(f"{record.get('test')}:{term}")
+                continue
+            kind = "null" if float(size) == 0.0 else "effect"
+            for target in (buckets[kind], design[kind]):
+                target[0] += 1
+                target[1] += int(p_value < alpha)
+
+    def _rate(bucket):
+        return (bucket[1] / bucket[0]) if bucket[0] else None
+
+    return {
+        "alpha": alpha,
+        "null_terms": buckets["null"][0],
+        "null_rejected": buckets["null"][1],
+        "null_rate": _rate(buckets["null"]),
+        "effect_terms": buckets["effect"][0],
+        "effect_found": buckets["effect"][1],
+        "power": _rate(buckets["effect"]),
+        "per_design": per_design,
+        # Terms the generator built but the result never reported under that
+        # name. Surfaced rather than dropped: silently skipping them is how a
+        # calibration ends up measuring three terms and calling it a run.
+        "unmatched_terms": sorted(unmatched),
+    }
+
+
+def _calibration_verdict(calibration, min_terms=60):
+    """What the rates say, and whether they say anything yet.
+
+    The bound is deliberately loose. A few hundred null terms estimate a 5% rate
+    to about a percentage point either way, several designs share the bucket, and
+    the terms within a seed are not independent, so only a gross departure is
+    evidence. Below min_terms the honest answer is that the run is too small --
+    reporting a rate from twenty terms would repeat the mistake of judging one.
+    """
+    total = calibration["null_terms"]
+    rate = calibration["null_rate"]
+    if total < min_terms or rate is None:
+        return "too few null terms to judge (%d)" % total
+    if rate > 0.15:
+        return ("REJECTS THE NULL TOO OFTEN: %.1f%% of %d null terms at alpha=%.2f"
+                % (100 * rate, total, calibration["alpha"]))
+    if rate < 0.005:
+        return ("rejects the null implausibly rarely: %.1f%% of %d null terms"
+                % (100 * rate, total))
+    return "consistent with alpha (%.1f%% of %d null terms)" % (100 * rate, total)
+
+
 def main() -> int:
     from fuzzing.generators import MUTATIONS, TEST_TYPES
     from fuzzing.html_oracles import MULTI_ORACLES, ORACLES
@@ -145,8 +230,10 @@ def main() -> int:
                                                 "report_written", "reports_written",
                                                 "oracles_fired", "posthoc",
                                                 "had_resolution", "datasets",
-                                                "report_stats")}
+                                                "report_stats", "truth", "p_value", "term_p_values",
+                                                "effect_size", "effect_size_type")}
                          for r in records],
+               "calibration": _calibration(records),
                "findings": findings}
     with open(args.report, "w") as fh:
         json.dump(summary, fh, indent=2, default=str)
@@ -169,6 +256,25 @@ def main() -> int:
     print("  post-hoc:  " + (", ".join(f"{k}={v}" for k, v in
                                        sorted(coverage["posthoc_tests"].items())) or "none reached"))
     print(f"  results with an estimated p-value: {coverage['estimated_p_values']}")
+
+    calibration = _calibration(records)
+    verdict = _calibration_verdict(calibration)
+    print("\n--- calibration (clean single-dataset seeds, one row per term) ---")
+    print("  null terms  : %d of %d called significant at alpha=%.2f -> %s"
+          % (calibration["null_rejected"], calibration["null_terms"],
+             calibration["alpha"], verdict))
+    if calibration["power"] is not None:
+        print("  real effects: %d of %d found (%.0f%%)"
+              % (calibration["effect_found"], calibration["effect_terms"],
+                 100 * calibration["power"]))
+    for design, both in sorted(calibration["per_design"].items()):
+        print("    %-16s null %d/%-4d effect %d/%d"
+              % (design, both["null"][1], both["null"][0],
+                 both["effect"][1], both["effect"][0]))
+    if calibration["unmatched_terms"]:
+        print("    terms built but never reported under that name: %s"
+              % ", ".join(calibration["unmatched_terms"]))
+
     for label, missing in (("designs", unseen_designs), ("mutations", unseen_mutations),
                            ("oracles NEVER FIRED", never_fired)):
         if missing:

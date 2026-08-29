@@ -294,7 +294,12 @@ def main(seed: int, keep_dir: str = "") -> int:
     _neutralize_dialogs(seed)
 
     case = build_case(seed)
-    verdict = {"seed": seed, "test": case.test_label, "mutations": case.mutations}
+    verdict = {"seed": seed, "test": case.test_label, "mutations": case.mutations,
+               # The effects the data were built with, so the run can ask whether
+               # the answers track them. Judged as a rate over many seeds, never
+               # per seed: one null design coming back significant is what alpha
+               # promises, and one large effect being missed is what power is.
+               "truth": case.truth}
 
     with tempfile.TemporaryDirectory() as tmp:
         import pandas as pd
@@ -368,6 +373,30 @@ def main(seed: int, keep_dir: str = "") -> int:
 
     verdict["status"] = "ok"
     verdict["blocked"] = bool(result.get("blocked")) if isinstance(result, dict) else None
+    if isinstance(result, dict) and result.get("type") != "multi_dataset_analysis":
+        p_value = result.get("p_value")
+        if isinstance(p_value, (int, float)) and not isinstance(p_value, bool):
+            verdict["p_value"] = float(p_value)
+        effect = result.get("effect_size")
+        if isinstance(effect, (int, float)) and not isinstance(effect, bool):
+            verdict["effect_size"] = float(effect)
+            verdict["effect_size_type"] = result.get("effect_size_type")
+        # One p-value per TERM, keyed the way the generator keys the effect it
+        # built. The headline alone is not enough: for a mixed design it is the
+        # interaction, and these designs carry only main effects, so holding the
+        # built effect against the headline measures the wrong thing entirely.
+        per_term = {}
+        for factor in result.get("factors") or []:
+            name, p_term = factor.get("factor"), factor.get("p_value")
+            if name and isinstance(p_term, (int, float)) and not isinstance(p_term, bool):
+                per_term[str(name)] = float(p_term)
+        for interaction in result.get("interactions") or []:
+            names = interaction.get("factors") or []
+            p_term = interaction.get("p_value")
+            if names and isinstance(p_term, (int, float)) and not isinstance(p_term, bool):
+                per_term[":".join(str(n) for n in names)] = float(p_term)
+        if per_term:
+            verdict["term_p_values"] = per_term
     print("__FUZZ__" + json.dumps(verdict))
     return 0
 
