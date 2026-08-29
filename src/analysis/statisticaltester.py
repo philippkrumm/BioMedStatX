@@ -2509,7 +2509,25 @@ class StatisticalTester:
                                     if len(parts) == 2:
                                         g1_label = parts[0].strip()
                                         g2_label = parts[1].strip()
-                                pval_col = 'p_corr' if 'p_corr' in ph_row else ('p_unc' if 'p_unc' in ph_row else 'p-unc')
+                                # p_corr is a COLUMN of the frame, so it is
+                                # present on every row -- and pingouin leaves it
+                                # NaN for a family with only one comparison,
+                                # where there is nothing to correct. Asking
+                                # whether the key exists therefore always said
+                                # yes, and a 2x2 design took NaN for both main
+                                # effects: a main effect at p_unc = 0.000175 was
+                                # reported as p = NaN and "not significant".
+                                # Ask for the VALUE, and fall back to the
+                                # uncorrected p only where no correction was
+                                # applied.
+                                p_corr = ph_row.get('p_corr')
+                                was_corrected = (isinstance(p_corr, (int, float))
+                                                 and not pd.isna(p_corr))
+                                if was_corrected:
+                                    p_value_row = float(p_corr)
+                                else:
+                                    p_unc = ph_row.get('p_unc', ph_row.get('p-unc'))
+                                    p_value_row = float(p_unc) if p_unc is not None else float('nan')
                                 confidence_interval = (None, None)
                                 if 'CI95%' in ph_row and isinstance(ph_row['CI95%'], (list, np.ndarray)) and len(ph_row['CI95%']) == 2:
                                     confidence_interval = tuple(ph_row['CI95%'])
@@ -2523,16 +2541,25 @@ class StatisticalTester:
                                     "group1": g1_label,
                                     "group2": g2_label,
                                     "test": "Pairwise t-test",
-                                    "p_value": float(ph_row[pval_col]),
+                                    "p_value": p_value_row,
                                     "statistic": float(ph_row["T"]) if "T" in ph_row else None,
-                                    "significant": float(ph_row[pval_col]) < alpha,
-                                    "corrected": "Holm-Bonferroni",
+                                    "significant": p_value_row < alpha,
+                                    "corrected": "Holm-Bonferroni" if was_corrected else None,
                                     "confidence_interval": confidence_interval
                                 })
                             
                             # Only set posthoc_test and add comparisons if we successfully processed all rows
                             if temp_comparisons:
-                                results["posthoc_test"] = "Tukey HSD Test (Pingouin)"
+                                # Name the procedure that RAN. pairwise_tests
+                                # with padjust='holm' is a set of pairwise
+                                # t-tests with a Holm-Bonferroni adjustment,
+                                # not Tukey HSD: Tukey uses the studentized
+                                # range and would give different p-values. The
+                                # rows have always recorded "Pairwise t-test";
+                                # only the heading claimed otherwise, and a
+                                # reader quoting the method from it would have
+                                # misreported it.
+                                results["posthoc_test"] = "Pairwise t-tests (Holm-Bonferroni)"
                                 results["pairwise_comparisons"].extend(temp_comparisons)
                         else:
                             results.setdefault("warnings", []).append("Pingouin pairwise_tests for interaction returned empty.")
