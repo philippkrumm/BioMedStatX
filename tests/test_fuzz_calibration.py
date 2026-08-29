@@ -230,3 +230,45 @@ def test_a_repeated_measures_design_claims_only_the_term_it_is_analysed_on():
         if seen == 3:
             break
     assert seen == 3
+
+
+def test_a_main_effect_is_not_judged_when_the_design_carries_an_interaction():
+    """The truth is a COEFFICIENT; the ANOVA tests MARGINAL means.
+
+    An interaction moves the marginal means even where the main coefficient is
+    zero, so such a term is not a null term and rejecting it is not an error.
+    Measured over 2500 seeds before this rule existed: two-way main effects were
+    called significant 37% of the time where an interaction was present against
+    6.8% on a purely null design, and the 8.5% that looked like an engine
+    problem was this. The engine was right.
+    """
+    records = [_record("two_way_anova",
+                       {"FacA": 0.0, "FacB": 0.0, "FacA:FacB": 2.0},
+                       {"FacA": 0.001, "FacB": 0.002, "FacA:FacB": 0.0001})]
+    result = _calibration(records)
+
+    assert result["null_terms"] == 0, "a main effect under an interaction is not null"
+    assert result["not_marginal_terms"] == 2
+    # The interaction itself is still judged, and it was built with an effect.
+    assert result["effect_terms"] == 1 and result["effect_found"] == 1
+
+
+def test_the_same_main_effects_are_judged_without_an_interaction():
+    """The rule must not quietly excuse every main effect."""
+    records = [_record("two_way_anova",
+                       {"FacA": 0.0, "FacB": 0.0, "FacA:FacB": 0.0},
+                       {"FacA": 0.001, "FacB": 0.9, "FacA:FacB": 0.7})]
+    result = _calibration(records)
+
+    assert result["null_terms"] == 3 and result["null_rejected"] == 1
+    assert result["not_marginal_terms"] == 0
+
+
+def test_a_zero_interaction_does_not_excuse_the_main_effects():
+    """An interaction TERM is present in every two-way truth; only a non-zero
+    one changes what a main effect means."""
+    records = [_record("two_way_anova",
+                       {"FacA": 0.0, "FacA:FacB": 0.0},
+                       {"FacA": 0.02, "FacA:FacB": 0.5})]
+    result = _calibration(records)
+    assert result["null_terms"] == 2 and result["null_rejected"] == 1

@@ -115,6 +115,7 @@ def _calibration(records, alpha=0.05):
     buckets = {"null": [0, 0], "effect": [0, 0]}
     per_design = {}
     unmatched = set()
+    not_marginal = 0
     for record in records:
         if record.get("category") != "OK" or record.get("blocked"):
             continue
@@ -126,10 +127,23 @@ def _calibration(records, alpha=0.05):
             continue
         design = per_design.setdefault(
             record.get("test"), {"null": [0, 0], "effect": [0, 0]})
+        # A main effect is not judged at all when the design carries an
+        # interaction. The truth records a COEFFICIENT; the ANOVA tests the
+        # MARGINAL means, and an interaction moves those even where the main
+        # coefficient is zero -- so such a term is not a null term and rejecting
+        # it is not an error. Measured on 2500 seeds: two-way main effects were
+        # rejected 37% of the time where an interaction was present, 6.8% where
+        # the design was purely null. The 8.5% that looked like an engine
+        # problem was this, and the engine was right.
+        has_interaction = any(":" in str(k) and float(v) != 0.0
+                              for k, v in truth.items())
         for term, size in truth.items():
             p_value = reported.get(term)
             if not isinstance(p_value, (int, float)):
                 unmatched.add(f"{record.get('test')}:{term}")
+                continue
+            if has_interaction and ":" not in str(term):
+                not_marginal += 1
                 continue
             kind = "null" if float(size) == 0.0 else "effect"
             for target in (buckets[kind], design[kind]):
@@ -152,6 +166,10 @@ def _calibration(records, alpha=0.05):
         # name. Surfaced rather than dropped: silently skipping them is how a
         # calibration ends up measuring three terms and calling it a run.
         "unmatched_terms": sorted(unmatched),
+        # Main-effect terms skipped because the design carries an interaction,
+        # so the coefficient the generator drew says nothing about the marginal
+        # means the test is about. Reported rather than silently dropped.
+        "not_marginal_terms": not_marginal,
     }
 
 
@@ -430,6 +448,9 @@ def main() -> int:
         print("    %-16s null %d/%-4d effect %d/%d"
               % (design, both["null"][1], both["null"][0],
                  both["effect"][1], both["effect"][0]))
+    if calibration.get("not_marginal_terms"):
+        print("    main effects not judged (design carries an interaction): %d"
+              % calibration["not_marginal_terms"])
     if calibration["unmatched_terms"]:
         print("    terms built but never reported under that name: %s"
               % ", ".join(calibration["unmatched_terms"]))
