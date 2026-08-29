@@ -328,6 +328,27 @@ def perform_friedman_test(data, dv, within_factor, subject_col, alpha=0.05):
         }
 
 
+def _column_space(design):
+    """An orthonormal basis for a design matrix's column space.
+
+    Used to get a residual sum of squares without refitting: for a basis ``U``,
+    ``RSS = y'y - ||U'y||^2``, which is what OLS computes and costs one
+    matrix-vector product instead of a formula parse and a fit.
+
+    SVD rather than QR on purpose. ``numpy.linalg.qr`` returns a ``Q`` that spans
+    the column space only at full column rank, and these designs are exactly the
+    ones that lose rank -- an empty cell in a factorial layout is the case this
+    fallback exists to survive. The singular values give the rank as well as the
+    basis, at the same cost.
+    """
+    left, singular, _ = np.linalg.svd(np.asarray(design, dtype=float),
+                                      full_matrices=False)
+    if singular.size == 0:
+        return left[:, :0]
+    tolerance = max(np.shape(design)) * np.finfo(float).eps * float(singular[0])
+    return left[:, singular > tolerance]
+
+
 def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05,
                                n_permutations=5000, seed=PERMUTATION_RANDOM_STATE):
     """
@@ -415,15 +436,29 @@ def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05,
             y_hat_red = red_eff.fittedvalues.values
             e_red     = red_eff.resid.values
 
+            # Freedman-Lane permutes the RESIDUALS, so the two design matrices
+            # are the same on every permutation and only y changes. The loop used
+            # to rebuild both from their formula strings each time -- a patsy
+            # parse and a categorical re-encode of the whole frame, twice, 5000
+            # times, for each of three effects: 30000 fits, and a measured 91
+            # seconds on a 28-row two-way. That is a hang in a desktop app whose
+            # analysis runs on the UI thread, and it was invisible until two-way
+            # designs started reaching this fallback at all.
+            #
+            # Projecting onto a basis built once gives the same residual sum of
+            # squares for one matrix-vector product per permutation. The rng is
+            # called in exactly the same order, so the permutations -- and the
+            # p-value -- are unchanged, not merely equivalent in distribution.
+            basis_full = _column_space(full_eff.model.exog)
+            basis_red  = _column_space(red_eff.model.exog)
+
             F_perm_arr = np.empty(n_permutations)
-            df_perm = df.copy()
             for i in range(n_permutations):
                 e_perm  = rng.permutation(e_red)
                 y_perm  = y_hat_red + e_perm
-                df_perm[safe_dv] = y_perm
-                fm = smf.ols(formula_full_eff, data=df_perm).fit()
-                rm = smf.ols(formula_reduced,  data=df_perm).fit()
-                rss_f = fm.ssr; rss_r = rm.ssr
+                total   = float(y_perm @ y_perm)
+                rss_f = max(total - float(np.square(basis_full.T @ y_perm).sum()), 0.0)
+                rss_r = max(total - float(np.square(basis_red.T @ y_perm).sum()), 0.0)
                 F_p = ((rss_r - rss_f) / df1) / (rss_f / df2) if rss_f > 0 else 0.0
                 F_perm_arr[i] = max(F_p, 0.0)
 
