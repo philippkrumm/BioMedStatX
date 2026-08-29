@@ -24,6 +24,7 @@ import subprocess
 import sys
 import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)
@@ -259,6 +260,29 @@ _SEED_FIELDS = ("seed", "category", "test", "mutations", "report_written",
                 "effect_size", "effect_size_type")
 
 
+def _run_one(seed, args, env):
+    """One seed in its own process. No shared state, so seeds are independent."""
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "fuzzing._worker", str(seed), args.keep_dir],
+            cwd=_ROOT, env=env, capture_output=True, text=True, timeout=args.timeout,
+        )
+        return _classify(seed, proc)
+    except subprocess.TimeoutExpired:
+        return {"seed": seed, "category": "TIMEOUT"}
+
+
+def _default_jobs():
+    """Workers to run at once, leaving the machine usable.
+
+    Capped so every worker still gets a core of its own: the per-seed timeout is
+    wall-clock, so oversubscribing would turn slow-because-queued into a TIMEOUT
+    finding that says nothing about the product.
+    """
+    cores = os.cpu_count() or 2
+    return max(1, min(8, cores - 2))
+
+
 def _summary(records, findings, counts, oracle_names, args, only_designs,
              last_seed, elapsed, complete):
     from fuzzing.generators import MUTATIONS, TEST_TYPES
@@ -302,6 +326,8 @@ def main() -> int:
     ap.add_argument("--count", type=int, default=200)
     ap.add_argument("--start", type=int, default=0)
     ap.add_argument("--timeout", type=int, default=90)
+    ap.add_argument("--jobs", type=int, default=0,
+                    help="seeds to run at once (default: cores - 2, capped at 8)")
     ap.add_argument("--report", default=os.path.join(_HERE, "fuzz_report.json"))
     ap.add_argument("--keep-dir", default=os.path.join(_HERE, "failures"),
                     help="where reports belonging to a finding are copied")
@@ -314,6 +340,8 @@ def main() -> int:
     args = ap.parse_args()
     if args.history:
         return _print_history()
+    if args.jobs < 1:
+        args.jobs = _default_jobs()
 
     env = dict(os.environ, QT_QPA_PLATFORM="offscreen", MPLBACKEND="Agg")
     oracle_names = [name for name, _ in ORACLES] + [name for name, _ in MULTI_ORACLES]
@@ -327,29 +355,36 @@ def main() -> int:
         print("unknown design(s): %s" % ", ".join(sorted(only_designs - set(TEST_TYPES))))
         return 2
     last_seed = args.start
-    for seed in _seeds_to_run(args.start, args.count, only_designs):
-        last_seed = seed
-        try:
-            proc = subprocess.run(
-                [sys.executable, "-m", "fuzzing._worker", str(seed), args.keep_dir],
-                cwd=_ROOT, env=env, capture_output=True, text=True, timeout=args.timeout,
-            )
-            record = _classify(seed, proc)
-        except subprocess.TimeoutExpired:
-            record = {"seed": seed, "category": "TIMEOUT"}
+    seeds = list(_seeds_to_run(args.start, args.count, only_designs))
+    print("running %d seeds%s on %d worker%s"
+          % (len(seeds),
+             " (%s)" % ",".join(sorted(only_designs)) if only_designs else "",
+             args.jobs, "" if args.jobs == 1 else "s"))
 
-        cat = record["category"]
-        counts[cat] += 1
-        records.append(record)
-        if cat not in ("OK",):
-            findings.append(record)
-            print(f"[{seed}] {cat} :: test={record.get('test')} muts={record.get('mutations')}")
-            for violation in (record.get("violations") or [])[:4]:
-                print(f"         {violation}")
-        if len(records) % _FLUSH_EVERY == 0:
-            _write_report(_summary(records, findings, counts, oracle_names, args,
-                                   only_designs, last_seed, time.time() - t0,
-                                   complete=False), args.report)
+    # Every seed already ran in its own process and shared nothing with the
+    # others, so this was one core of fourteen for no reason: 2500 seeds at
+    # 1.5 s each took an hour of wall clock while the machine idled. Results are
+    # unchanged -- a seed is deterministic and independent of every other -- and
+    # pool.map yields in seed order, so findings still print in the order a
+    # reader would reproduce them in.
+    with ThreadPoolExecutor(max_workers=args.jobs) as pool:
+        for record in pool.map(lambda s: _run_one(s, args, env), seeds):
+            seed = record["seed"]
+            last_seed = max(last_seed, seed)
+            cat = record["category"]
+            counts[cat] += 1
+            records.append(record)
+            if cat not in ("OK",):
+                findings.append(record)
+                print(f"[{seed}] {cat} :: test={record.get('test')} "
+                      f"muts={record.get('mutations')}")
+                for violation in (record.get("violations") or [])[:4]:
+                    print(f"         {violation}")
+            if len(records) % _FLUSH_EVERY == 0:
+                _write_report(_summary(records, findings, counts, oracle_names,
+                                       args, only_designs, last_seed,
+                                       time.time() - t0, complete=False),
+                              args.report)
 
     elapsed = time.time() - t0
 
