@@ -667,6 +667,109 @@ def _printed_slack(text):
     return 0.5 * (10.0 ** -decimals) * scale
 
 
+_POSTHOC_ROW_RE = re.compile(
+    r"<td[^>]*>\s*Post-hoc test\s*(?:<button[^>]*>.*?</button>)?\s*</td>\s*"
+    r"<td[^>]*>(.*?)</td>", re.S)
+
+# Distinctive tokens, longest first so "games-howell" is not read as something
+# shorter. Each maps to the contrast family the label belongs to.
+_POSTHOC_FAMILIES = (
+    ("multivariate-t", "emm_mvt"),
+    ("games-howell", "games_howell"),
+    ("mann-whitney", "mannwhitney"),
+    ("conover", "conover"),
+    ("wilcoxon", "wilcoxon"),
+    ("tukey", "tukey"),
+    ("dunnett", "dunnett"),
+    ("dunn", "dunn"),
+    ("t-test", "ttest"),
+)
+
+# A label that references a control implies a contrast family of size k-1, not
+# the complete k(k-1)/2 matrix. The multiplicity correction differs, so naming
+# one while running the other is a claim about the analysis.
+_CONTROL_TOKENS = ("dunnett", "vs control", "vs baseline", "level-vs-baseline",
+                   "against control")
+
+
+def _posthoc_families(label):
+    """Every contrast family a label names -- a set, because labels name several.
+
+    A mixed design compares paired within-levels and independent between-groups
+    in one post-hoc, and says so: "Pairwise Wilcoxon / Mann-Whitney U (within /
+    between simple effects, Holm-corrected)". Reading one family per label
+    reported that as a mismatch on its first run, which is a defect in the
+    reading and not in the report.
+    """
+    text = str(label or "").lower()
+    families = {family for token, family in _POSTHOC_FAMILIES if token in text}
+    if "dunnett" in families:
+        # "dunn" is a substring of "dunnett"; they are different tests.
+        families.discard("dunn")
+    return families
+
+
+def _oracle_posthoc_name_matches_what_ran(report, result, violations) -> bool:
+    """The procedure the page names must be the one the comparisons came from.
+
+    Two facts already live in one result and were never compared: the headline
+    ``posthoc_test``, printed in the main results table, and the ``test`` each
+    comparison carries, written by whichever engine actually produced it. A
+    fallback that forgets to rename the headline leaves the report naming a
+    method that did not run -- which is what the mixed EMM/multivariate-t branch
+    did when it refused its control group and quietly reverted to isolated
+    t-tests.
+
+    The headline is read off the PAGE and the comparisons out of the result, so
+    this crosses the seam. It is deliberately not read from the rendered
+    pairwise table: that column renders ``comp.get("test") or posthoc_test``, so
+    a comparison carrying no procedure of its own inherits the headline and
+    agrees with it by construction. Comparisons without their own ``test`` are
+    skipped here for the same reason.
+
+    Conservative on purpose. It speaks only when both sides carry a family it
+    recognises and the two differ; an oracle that fires on labels it does not
+    know is noise, and noise gets muted rather than fixed.
+    """
+    comparisons = result.get("pairwise_comparisons") or []
+    match = _POSTHOC_ROW_RE.search(report.text)
+    if not comparisons or not match:
+        return False
+    headline = re.sub(r"<[^>]+>", "", match.group(1)).strip()
+    if not headline:
+        return False
+
+    named = _posthoc_families(headline)
+    ran = set()
+    for comparison in comparisons:
+        if comparison.get("test"):
+            ran |= _posthoc_families(comparison.get("test"))
+    # Subset, not equality: a headline may legitimately name more families than a
+    # given run happened to use (a mixed design names both its paired and its
+    # independent test, and a run with only within-comparisons uses one). What it
+    # may not do is stay silent about one that ran.
+    unnamed = ran - named
+    if named and unnamed:
+        violations.append(
+            f"the report names the post-hoc as {headline!r}, but its comparisons "
+            f"were produced by {sorted(unnamed)}, which the name does not mention"
+        )
+
+    if any(token in headline.lower() for token in _CONTROL_TOKENS):
+        groups = [str(g) for g in (result.get("raw_data") or {})]
+        pairs = {frozenset((str(c.get("group1")), str(c.get("group2"))))
+                 for c in comparisons}
+        count = len(groups)
+        if count >= 3 and len(pairs) == count * (count - 1) // 2:
+            violations.append(
+                f"the report names the post-hoc as {headline!r} -- a family of "
+                f"contrasts against one control, {count - 1} of them -- but all "
+                f"{len(pairs)} pairs were compared, which carries a different "
+                f"multiplicity correction"
+            )
+    return True
+
+
 def _oracle_transform_display_is_earned(report, result, violations) -> bool:
     """Transformed values on the page mean a transformation actually happened.
 
@@ -731,6 +834,7 @@ REPORT_CHECKS = (
     ("p_precision_capped", _oracle_p_precision_capped),
     ("transform_display_earned", _oracle_transform_display_is_earned),
     ("transformed_tracks_raw", _oracle_transformed_column_tracks_the_raw_one),
+    ("posthoc_name_matches", _oracle_posthoc_name_matches_what_ran),
     ("letters_gate_complete", _oracle_letters_gate_is_complete),
     ("letters_match_pairs", _oracle_letters_match_the_pairwise_table),
     ("brackets_have_no_letters", _oracle_brackets_mode_has_no_letters),
@@ -748,6 +852,7 @@ CHECK_SUBJECTS = {
     "p_precision_capped": "estimated p-values printed within their resolution",
     "transform_display_earned": "transformed values shown only where one was applied",
     "transformed_tracks_raw": "each printed row pairs a measurement with its own transform",
+    "posthoc_name_matches": "the named post-hoc is the one the comparisons came from",
     "letters_gate_complete": "compact letters drawn only from a complete comparison matrix",
     "letters_match_pairs": "compact letters agree with the pairwise table",
     "brackets_have_no_letters": "no letters left on a chart drawn in bracket mode",

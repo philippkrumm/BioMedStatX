@@ -21,13 +21,15 @@ from visualization import style_tokens
 GROUPS = ["G1", "G2", "G3", "G4"]
 
 # A~B and B~C but A#C: letters must keep A and C apart.
+# Each comparison names the procedure it came from, as the engines write it.
+# Without that the name-matching check has only one side to read.
 PAIRS = [
-    {"pair_id": 0, "group1": "G1", "group2": "G2", "p_value": 0.4, "stars": "", "significant": False},
-    {"pair_id": 1, "group1": "G1", "group2": "G3", "p_value": 0.01, "stars": "*", "significant": True},
-    {"pair_id": 2, "group1": "G1", "group2": "G4", "p_value": 0.001, "stars": "**", "significant": True},
-    {"pair_id": 3, "group1": "G2", "group2": "G3", "p_value": 0.3, "stars": "", "significant": False},
-    {"pair_id": 4, "group1": "G2", "group2": "G4", "p_value": 0.002, "stars": "**", "significant": True},
-    {"pair_id": 5, "group1": "G3", "group2": "G4", "p_value": 0.02, "stars": "*", "significant": True},
+    {"pair_id": 0, "group1": "G1", "group2": "G2", "p_value": 0.4, "stars": "", "significant": False, "test": "Tukey HSD"},
+    {"pair_id": 1, "group1": "G1", "group2": "G3", "p_value": 0.01, "stars": "*", "significant": True, "test": "Tukey HSD"},
+    {"pair_id": 2, "group1": "G1", "group2": "G4", "p_value": 0.001, "stars": "**", "significant": True, "test": "Tukey HSD"},
+    {"pair_id": 3, "group1": "G2", "group2": "G3", "p_value": 0.3, "stars": "", "significant": False, "test": "Tukey HSD"},
+    {"pair_id": 4, "group1": "G2", "group2": "G4", "p_value": 0.002, "stars": "**", "significant": True, "test": "Tukey HSD"},
+    {"pair_id": 5, "group1": "G3", "group2": "G4", "p_value": 0.02, "stars": "*", "significant": True, "test": "Tukey HSD"},
 ]
 
 LETTERS = {0: "c", 1: "bc", 2: "b", 3: "a"}
@@ -75,7 +77,7 @@ RAW_TABLE = (
 
 def _report_html(*, sections=SECTIONS, payloads=None, letters=None, sig_mode="letters",
                  p_text="p = 0.002 **", extra="", transformation="log10",
-                 raw_table=RAW_TABLE):
+                 raw_table=RAW_TABLE, posthoc="Tukey HSD Test (Pingouin)"):
     letters = LETTERS if letters is None else letters
     payloads = _payloads() if payloads is None else payloads
     blocks = "".join(
@@ -90,6 +92,14 @@ def _report_html(*, sections=SECTIONS, payloads=None, letters=None, sig_mode="le
         # report no export produces, and would quietly excuse that oracle from
         # the "passes every oracle" claim below.
         + f'<div class="badge is-info">Transformation: {transformation}</div>'
+        # The main results table names the procedure, and the check that the
+        # name matches what ran reads it from here. Without the row the fixture
+        # would be a report no export produces, and that oracle would be quietly
+        # excused from the "passes every oracle" claim below -- the same reason
+        # the transformation badge is here.
+        + ('<table><tbody><tr><td>Post-hoc test</td>'
+           f'<td class="num-cell">{posthoc}</td></tr></tbody></table>'
+           if posthoc else '')
         + f'<div class="metric-value">{p_text.replace("<", "&lt;")}</div>'
         + blocks
         + f'<script>{_figure(letters)}</script>'
@@ -403,7 +413,13 @@ def test_a_contrast_row_that_lost_its_resolution_is_caught(tmp_path):
 
     bound = _FormattingMixin._format_p_value(p, resolution)
     violations, fired = _check(
-        tmp_path, _report_html(extra=f"<td>{bound}</td>"), result=payload)
+        tmp_path,
+        # The comparisons are EMM/multivariate-t, so the page has to name that
+        # procedure. The fixture used to say Tukey while carrying EMM rows --
+        # incoherent, and nothing looked until the name-matching check did.
+        _report_html(extra=f"<td>{bound}</td>",
+                     posthoc="Dunnett-type (EMM + multivariate-t, Mixed)"),
+        result=payload)
     assert "p_precision_capped" in fired
     assert violations == [], violations
 
@@ -436,7 +452,8 @@ def test_an_analytic_twin_of_the_same_number_is_not_a_violation(tmp_path):
     bound = _FormattingMixin._format_p_value(p, resolution)
     analytic = _FormattingMixin._format_p_value(omnibus_p)
     assert analytic != bound
-    html = _report_html(p_text=analytic, extra=f"<span>{bound}</span>")
+    html = _report_html(p_text=analytic, extra=f"<span>{bound}</span>",
+                        posthoc="Dunnett-type (EMM + multivariate-t, Mixed)")
     violations, fired = _check(tmp_path, html, result=payload)
     assert "p_precision_capped" in fired
     assert violations == [], violations
