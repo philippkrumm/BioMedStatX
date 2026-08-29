@@ -145,6 +145,12 @@ def _base_design(rng: np.random.Generator, test_label: str):
                 })
         df = pd.DataFrame(rows)
         if test_label == "rm_anova":
+            # The between column is built for both designs, but a repeated-
+            # measures analysis never sees it -- it enters as a constant offset
+            # per subject and is absorbed into the subject effect. Claiming it
+            # as a built term would have the run looking for a p-value that
+            # nothing reports.
+            truth = {"Time": within_effect}
             ctx = {"factor_columns": ["Time"], "dv_columns": ["Val"],
                    "group_labels": within_levels, "subject_column": "Subject", "mode": "single",
                    "inferred_test": "repeated_measures_anova", "within_factors": ["Time"]}

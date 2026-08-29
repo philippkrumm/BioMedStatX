@@ -212,3 +212,21 @@ def test_a_partial_report_says_it_is_partial(tmp_path):
     # Nothing half-written is left where a reader would look.
     assert not (tmp_path / "r.json.partial").exists()
 
+def test_a_repeated_measures_design_claims_only_the_term_it_is_analysed_on():
+    """The between column is built for it and never analysed.
+
+    It enters as one constant offset per subject and is absorbed into the
+    subject effect, so claiming it as a built term would have the run looking
+    for a p-value nothing reports.
+    """
+    from fuzzing.generators import build_case, design_for_seed
+
+    seen = 0
+    for seed in range(400):
+        if design_for_seed(seed) != "rm_anova":
+            continue
+        seen += 1
+        assert set(build_case(seed).truth) == {"Time"}
+        if seen == 3:
+            break
+    assert seen == 3
