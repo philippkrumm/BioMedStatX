@@ -255,14 +255,18 @@ def _print_history(path=_HISTORY):
     if not os.path.exists(path):
         print("no runs recorded yet (%s)" % path)
         return 0
-    print("  when              seeds  findings  per 100  oracles  designs")
+    # Per TEN THOUSAND, not per hundred. A 20000-seed run with two findings is
+    # 0.01 per 100, which "%.1f" prints as 0.0 -- so the column that exists to
+    # show the rate falling showed every real rate as zero, and a genuinely
+    # clean run looked identical to one with findings.
+    print("  when              seeds  findings  per 10k  oracles  designs")
     for line in open(path):
         try:
             e = json.loads(line)
         except Exception:
             continue
-        rate = 100.0 * e["findings"] / e["count"] if e["count"] else 0.0
-        print("  %-16s  %5d  %8d  %7.1f  %3d/%-3d  %s"
+        rate = 10000.0 * e["findings"] / e["count"] if e["count"] else 0.0
+        print("  %-16s  %5d  %8d  %7.2f  %3d/%-3d  %s"
               % (e["when"], e["count"], e["findings"], rate,
                  e["oracles_that_fired"], e["oracles"],
                  ",".join(e["designs"]) or "all"))
