@@ -63,6 +63,28 @@ CANARIES = [
         "expect": "but its comparisons were produced by",
         "start": 70000, "count": 300, "designs": "two_way_anova",
     },
+    {
+        "name": "axis-size-past-max",
+        "what": "an axis font of 65 applied to a control that declares max 32",
+        # Both plot fixes come out together, and that is not belt-and-braces:
+        # 3d3003c does not revert alone because a221c26 reworked the same file
+        # afterwards, and reverting a221c26 ALONE leaves this seed clean --
+        # measured, it comes back MISSED. So the two fixes cover different
+        # seeds rather than the same one twice, and only the pair puts this
+        # particular defect back.
+        "fix": ["a221c26", "3d3003c"],
+        "expect": "overflows the plot container",
+        "start": 600043, "count": 1,
+        "runner": "fuzzing.run_visual_fuzzer",
+    },
+    {
+        "name": "legend-out-of-frame",
+        "what": "forty legend entries drew past the bottom of a fixed 680px container",
+        "fix": "a221c26",
+        "expect": "overflows the plot container",
+        "start": 600140, "count": 8,
+        "runner": "fuzzing.run_visual_fuzzer",
+    },
 ]
 
 # Defects that were put back and NOT found again. Recorded here rather than
@@ -126,14 +148,20 @@ def _check_one(canary, timeout, jobs):
                             "detail": "%s: %s" % (one, (revert.stderr or revert.stdout).strip()[-260:])}
 
             report = os.path.join(tmp, "canary.json")
-            cmd = [sys.executable, "-m", "fuzzing.run_fuzzer",
+            # The visual fuzzer is a different runner with a smaller flag set,
+            # so the flags are added only where the runner has them rather than
+            # kept in one list that would fail for half the canaries.
+            runner = canary.get("runner", "fuzzing.run_fuzzer")
+            cmd = [sys.executable, "-m", runner,
                    "--count", str(canary["count"]), "--start", str(canary["start"]),
-                   "--timeout", str(timeout), "--no-history",
+                   "--timeout", str(timeout),
                    "--report", report, "--keep-dir", os.path.join(tmp, "keep")]
-            if canary.get("designs"):
-                cmd += ["--designs", canary["designs"]]
-            if jobs:
-                cmd += ["--jobs", str(jobs)]
+            if runner == "fuzzing.run_fuzzer":
+                cmd += ["--no-history"]
+                if canary.get("designs"):
+                    cmd += ["--designs", canary["designs"]]
+                if jobs:
+                    cmd += ["--jobs", str(jobs)]
             env = dict(os.environ, QT_QPA_PLATFORM="offscreen", MPLBACKEND="Agg")
             run = _run(cmd, tree, env=env)
             if not os.path.exists(report):
@@ -141,8 +169,13 @@ def _check_one(canary, timeout, jobs):
                         "detail": (run.stderr or run.stdout).strip()[-400:]}
 
             hits, full = _findings_with(report, canary["expect"])
+            # The visual runner reports "count"; the analysis runner also
+            # reports how many it actually ran after filtering.
+            ran = full.get("seeds_run")
+            if ran is None:
+                ran = full.get("count") or 0
             return {"status": "caught" if hits else "MISSED",
-                    "hits": len(hits), "seeds_run": full.get("seeds_run"),
+                    "hits": len(hits), "seeds_run": ran,
                     "all_findings": len(full.get("findings") or []),
                     "example": hits[0][1][:160] if hits else None}
         finally:
