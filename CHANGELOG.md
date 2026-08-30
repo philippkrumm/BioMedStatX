@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-## [2.1] - 2026-08-30
+## [2.0] - 2026-08-30
 
 ### Plots and visualisation
 
@@ -415,8 +415,6 @@ All notable changes to this project will be documented in this file.
   of the time against 6.8% on a purely null design, and that difference was the
   whole of what looked like an inflated two-way error rate. They are skipped in
   both directions, and the count is printed so the narrowing stays visible.
-
-## [2.0] - 2026-08-17
 
 ### Reporting
 
