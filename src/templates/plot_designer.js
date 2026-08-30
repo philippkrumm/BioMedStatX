@@ -846,6 +846,61 @@
     updateFontPreviewStatus();
   }
 
+  // The container is a fixed 680px and Plotly clips nothing: a vertical legend
+  // with more rows than the box is tall gets drawn straight past its bottom
+  // edge. A forty-group two-factor design exported with nineteen of its forty
+  // entries outside the frame -- found by the visual fuzzer, not by eye.
+  //
+  // Measured after the render rather than predicted from the entry count. Row
+  // height depends on the font, the label text and the wrapping, and a formula
+  // for it would be exactly the hand-tuned constant this file has already had
+  // to remove from the axis margins and the legend margin.
+  //
+  // Grows the box instead of drawing outside it, up to a cap -- past the cap a
+  // figure is no longer a figure, so the legend is dropped and the warning line
+  // says so, which is the contract the designer already uses everywhere it
+  // cannot honour a setting.
+  var _PD_PLOT_BASE_H = 680;
+  var _PD_PLOT_MAX_H = 1600;
+
+  function _pdFitLegend(node, warningNode) {
+    if (!node || !node.querySelector) return;
+    var legend = node.querySelector(".infolayer .legend");
+    if (!legend) { _pdSetPlotHeight(node, _PD_PLOT_BASE_H); return; }
+
+    // From the legend's OWN height plus the vertical margins, not from how far
+    // it currently sticks out. An overflow-driven number only ever grows, so a
+    // box that grew for forty groups would stay tall after switching to a plot
+    // with three, and it would creep towards the right size over several
+    // renders instead of landing on it in one.
+    var margin = (node._fullLayout || {}).margin || {};
+    var needed = Math.round((margin.t || 58)
+                            + legend.getBoundingClientRect().height
+                            + (margin.b || 68) + 16);
+    needed = Math.max(_PD_PLOT_BASE_H, needed);
+
+    if (needed <= _PD_PLOT_MAX_H) {
+      _pdSetPlotHeight(node, needed);
+      return;
+    }
+    // Too tall to be a figure any more. Say what was dropped rather than
+    // shipping a frame with the legend hanging out of it.
+    _pdSetPlotHeight(node, _PD_PLOT_MAX_H);
+    Plotly.relayout(node, { showlegend: false });
+    if (warningNode) {
+      var note = "Legend hidden: too many groups to fit the figure.";
+      if (warningNode.textContent.indexOf(note) === -1) {
+        warningNode.textContent = (warningNode.textContent + " " + note).trim();
+      }
+    }
+  }
+
+  function _pdSetPlotHeight(node, px) {
+    if (Math.round(node.getBoundingClientRect().height) === px) return;
+    node.style.height = px + "px";
+    Plotly.Plots.resize(node);
+  }
+
   // Hold a numeric control to the bounds the control itself declares.
   //
   // Every one of these inputs carries min/max in the HTML, and none of them was
@@ -2818,6 +2873,7 @@
       if (typeof window.BioMedStatXTypesetMath === "function") {
         window.BioMedStatXTypesetMath(plotNode);
       }
+      _pdFitLegend(plotNode, warningNode);
     });
   }
 
