@@ -133,6 +133,11 @@ _SNAPSHOT_JS = """() => {
       traces: (d.data || []).length,
       w: Math.round(box.width), h: Math.round(box.height),
       overflow: overflow,
+      // Carried alongside the overflow so a finding says WHY, not only that.
+      // "overflows by 29px" on its own sends the reader back to the browser to
+      // ask what the margins were at the time.
+      margin: JSON.parse(JSON.stringify(layout.margin || {})),
+      legend_pos: JSON.parse(JSON.stringify(layout.legend || {})),
       // Only the significance brackets are drawn in data coordinates in this
       // colour; reference lines and the forest zero line use "paper" and a
       // lighter alpha, so a user's reference line is never counted as a bracket.

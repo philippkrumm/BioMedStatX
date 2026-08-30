@@ -57,7 +57,11 @@ class VisualPlan:
     def labels(self) -> list:
         """Names for coverage reporting -- what this seed actually exercised."""
         names = [f"type:{t}" for t in self.plot_types]
-        names += [s.get("control") or s.get("action") for s in self.steps]
+        # The VALUE, not only the control. A finding that says pd-axis-size was
+        # touched sends the reader back to the browser to guess which of its
+        # settings produced the state; "pd-axis-size=34" replays by hand.
+        names += [(f"{s['control']}={s['value']}" if s.get("control") else s.get("action"))
+                  for s in self.steps]
         names += [f"download:{f}" for f in self.downloads]
         return [n for n in names if n]
 

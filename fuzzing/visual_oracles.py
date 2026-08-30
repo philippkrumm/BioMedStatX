@@ -98,10 +98,18 @@ def _oracle_labels_not_clipped(snap, violations) -> bool:
     if not pd.get("traces"):
         return False
     overflow = pd.get("overflow") or []
+    margin = pd.get("margin") or {}
+    legend = pd.get("legend_pos") or {}
+    # The margins and the legend anchor travel with the finding. Without them
+    # "overflows by 29px" only says that it happened, and reproducing the state
+    # by hand is a guess at which of a dozen controls put the figure there.
+    where = (f" [margin b={margin.get('b')} r={margin.get('r')}, "
+             f"legend {legend.get('orientation')} x={legend.get('x')} y={legend.get('y')}, "
+             f"box {pd.get('w')}x{pd.get('h')}]")
     for item in overflow[:4]:
         violations.append(
             f"[{snap['stage']}] '{item.get('text')}' ({item.get('cls')}) overflows the plot "
-            f"container by {item.get('over')}px")
+            f"container by {item.get('over')}px" + where)
     return True
 
 
