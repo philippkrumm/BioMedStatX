@@ -129,6 +129,26 @@ def _snapshot(window, case, messages):
     return state
 
 
+def _cancellation_notice(window):
+    """What the window says about a run that ended without a result.
+
+    Read off the widgets a user actually looks at -- the mapping feedback line
+    and the workflow chip -- rather than an internal flag, since the point is
+    whether the person in front of the app was told.
+    """
+    texts = []
+    label = getattr(window, "mapping_feedback_label", None)
+    if label is not None and hasattr(label, "text"):
+        texts.append(str(label.text()))
+    badge = getattr(window, "analysis_status_badge", None)
+    if badge is not None and hasattr(badge, "text"):
+        texts.append(str(badge.text()))
+    for text in texts:
+        if "cancel" in text.lower():
+            return text.strip()[:160]
+    return ""
+
+
 def _run_the_analysis(window, report_dir):
     """Press the button the worker used to only look at.
 
@@ -163,10 +183,25 @@ def _run_the_analysis(window, report_dir):
     outcome["reports"] = [os.path.basename(p) for p in reports]
 
     if not isinstance(result, dict):
-        # The button was enabled, so the app promised the design was runnable.
-        # Coming back with no result at all is that promise broken.
+        # Three states, not two. A run can end with a result, with a block, or
+        # because the user backed out of a mid-analysis dialog -- and the fuzzer
+        # answers those dialogs, cancelling one time in six, so a cancelled run
+        # is something it CAUSES. The app clears current_analysis_result on a
+        # cancel by design, so reading only that attribute filed 65 correct
+        # cancellations in 1500 seeds as "the analysis produced no result".
+        #
+        # The check gets stronger rather than weaker: a cancel is accepted only
+        # where the app SAYS it cancelled. Silence after backing out is still a
+        # finding, because the user is then looking at a mapping screen with no
+        # explanation of why nothing happened.
+        said = _cancellation_notice(window)
+        if said:
+            outcome["cancelled"] = True
+            outcome["cancel_notice"] = said
+            return outcome
         outcome["violations"].append(
-            "the mapping was presented as ready but the analysis produced no result")
+            "the mapping was presented as ready but the analysis produced no "
+            "result, and nothing on screen says why")
         return outcome
 
     if not reports and _report_was_expected(result):
