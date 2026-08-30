@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.1] - 2026-08-30
+
 ### Plots and visualisation
 
 - The interactive figure builder's top margin grows with the title size. It was

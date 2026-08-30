@@ -4,8 +4,8 @@
 
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(2, 0, 0, 0),
-    prodvers=(2, 0, 0, 0),
+    filevers=(2, 1, 0, 0),
+    prodvers=(2, 1, 0, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -20,12 +20,12 @@ VSVersionInfo(
         [
           StringStruct(u'CompanyName',      u'Uniklinik RWTH Aachen'),
           StringStruct(u'FileDescription',  u'BioMedStatX — Statistical Analysis Tool'),
-          StringStruct(u'FileVersion',      u'2.0.0.0'),
+          StringStruct(u'FileVersion',      u'2.1.0.0'),
           StringStruct(u'InternalName',     u'BioMedStatX'),
           StringStruct(u'LegalCopyright',   u'© 2024 Philipp Krumm, Uniklinik RWTH Aachen'),
           StringStruct(u'OriginalFilename', u'BioMedStatX.exe'),
           StringStruct(u'ProductName',      u'BioMedStatX'),
-          StringStruct(u'ProductVersion',   u'2.0.0.0'),
+          StringStruct(u'ProductVersion',   u'2.1.0.0'),
         ]
       )
     ]),
