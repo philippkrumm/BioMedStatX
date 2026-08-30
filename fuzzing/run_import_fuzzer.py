@@ -87,6 +87,11 @@ def _coverage(records: list, oracle_names: list) -> dict:
         "dv_numeric": sum(1 for r in handled if r.get("dv_numeric")),
         "mapping_ready": sum(1 for r in handled if r.get("start_enabled")),
         "wide_pivoted": sum(1 for r in handled if r.get("wide_pivoted")),
+        # Runs the fuzzer cancelled itself, by answering a mid-analysis dialog
+        # with cancel. Counted because a run that ends this way exercises the
+        # abort path and NOT the analysis, so a rise here is coverage quietly
+        # draining away rather than the app getting better.
+        "cancelled_by_the_fuzzer": sum(1 for r in handled if r.get("cancelled")),
         "seeds_firing_nothing": [r["seed"] for r in handled
                                  if not (r.get("oracles_fired") or [])],
     }
@@ -150,7 +155,7 @@ def main() -> int:
                "seeds": [{k: r.get(k) for k in
                           ("seed", "category", "file_format", "mutations", "header_row",
                            "faithful_expected", "loaded", "dv_numeric", "start_enabled",
-                           "wide_pivoted", "oracles_fired")}
+                           "wide_pivoted", "cancelled", "oracles_fired")}
                          for r in records],
                "findings": findings}
     with open(args.report, "w") as fh:
@@ -163,7 +168,8 @@ def main() -> int:
     print(f"  files it may only refuse visibly : {coverage['files_only_expected_to_refuse']}")
     print(f"  loaded {coverage['loaded']}  |  measurement column numeric "
           f"{coverage['dv_numeric']}  |  mapping ready {coverage['mapping_ready']}"
-          f"  |  wide-pivoted {coverage['wide_pivoted']}")
+          f"  |  wide-pivoted {coverage['wide_pivoted']}"
+          f"  |  cancelled by the fuzzer {coverage['cancelled_by_the_fuzzer']}")
 
     print("\n--- coverage ---")
     print("  formats:   " + ", ".join(f"{k}={v}" for k, v in sorted(coverage["file_formats"].items())))
