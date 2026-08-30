@@ -881,6 +881,23 @@ class AnalysisManager:
                 test_recommendation = None
                 transformed_samples = filtered_samples
                 results.update(test_results)
+
+                # The same safety net the standard path applies, on the branch
+                # its own docstring already claims to cover: it names "LMM,
+                # RM/Mixed/Two-Way ANOVA, ANCOVA", and LMM and ANCOVA return
+                # from HERE, before the line that consults it. The gate above is
+                # on the INPUT -- a constant or Inf outcome never reaches a fit;
+                # nothing looked at what the fit gave back. A mixed model whose
+                # likelihood overflows returns statistic nan, p_value nan and no
+                # exception, and five fuzz seeds turned that into a 4.8 MB report
+                # with five figures drawn from a number that does not exist.
+                _cm_nf_block = StatisticalTester.nonfinite_block(results)
+                if _cm_nf_block is not None:
+                    analysis_log += ("\nAnalysis blocked (non-finite result): "
+                                     f"{_cm_nf_block['block_reason']}\n")
+                    _cm_nf_block["analysis_log"] = analysis_log
+                    return _cm_nf_block
+
                 # Import-time data loss (dropped non-numeric cells, missing group
                 # labels) applies to clinical models too -- they share the same
                 # sample chokepoint. Merge alongside the DataHealthScanner warnings.
