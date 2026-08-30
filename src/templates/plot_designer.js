@@ -846,15 +846,36 @@
     updateFontPreviewStatus();
   }
 
+  // Hold a numeric control to the bounds the control itself declares.
+  //
+  // Every one of these inputs carries min/max in the HTML, and none of them was
+  // enforced: only the spinner arrows respect max, while typing a number past
+  // it -- or a script setting .value -- passes straight through. pd-axis-size
+  // declares max 32; the figure builder applied 65 without complaint, and at 65
+  // the horizontal legend wraps to a second row and leaves the plot container.
+  //
+  // The bounds are read off the element rather than repeated here, because a
+  // bound duplicated in JS is a bound that drifts away from the one the user
+  // is shown. NaN is passed through so each caller's own `|| fallback` keeps
+  // behaving exactly as it did.
+  function _pdNum(id, value) {
+    var el = document.getElementById(id);
+    if (!el || !isFinite(value)) return value;
+    var lo = parseFloat(el.min), hi = parseFloat(el.max);
+    if (isFinite(lo) && value < lo) value = lo;
+    if (isFinite(hi) && value > hi) value = hi;
+    return value;
+  }
+
   function readStateFromControls() {
     state.plotType = document.getElementById("pd-plot-type").value;
     state.title = document.getElementById("pd-title").value || "";
     state.xLabel = document.getElementById("pd-x-label").value || "";
     state.yLabel = document.getElementById("pd-y-label").value || "";
     state.fontFamily = document.getElementById("pd-font-family").value || "Arial";
-    state.titleSize = parseInt(document.getElementById("pd-title-size").value, 10) || 16;
-    state.axisSize = parseInt(document.getElementById("pd-axis-size").value, 10) || 12;
-    state.alpha = parseFloat(document.getElementById("pd-alpha").value) || 0.85;
+    state.titleSize = _pdNum("pd-title-size", parseInt(document.getElementById("pd-title-size").value, 10)) || 16;
+    state.axisSize = _pdNum("pd-axis-size", parseInt(document.getElementById("pd-axis-size").value, 10)) || 12;
+    state.alpha = _pdNum("pd-alpha", parseFloat(document.getElementById("pd-alpha").value)) || 0.85;
     state.showPoints = document.getElementById("pd-show-points").checked;
     
     var pointLayoutEl = document.getElementById("pd-point-layout");
@@ -884,14 +905,14 @@
     state.logY = document.getElementById("pd-log-y").checked;
     state.minorTicks = document.getElementById("pd-minor-ticks").checked;
     state.gridStyle = document.getElementById("pd-grid-style").value || "none";
-    state.gridAlpha = parseFloat(document.getElementById("pd-grid-alpha").value);
+    state.gridAlpha = _pdNum("pd-grid-alpha", parseFloat(document.getElementById("pd-grid-alpha").value));
     if (!Number.isFinite(state.gridAlpha)) state.gridAlpha = 0.3;
     state.gridAlpha = Math.min(1, Math.max(0.05, state.gridAlpha));
-    state.axisThickness = parseFloat(document.getElementById("pd-axis-thickness").value);
+    state.axisThickness = _pdNum("pd-axis-thickness", parseFloat(document.getElementById("pd-axis-thickness").value));
     if (!Number.isFinite(state.axisThickness)) state.axisThickness = 0.7;
     state.axisThickness = Math.min(4, Math.max(0.3, state.axisThickness));
     state.tickDirection = document.getElementById("pd-tick-direction").value || "out";
-    state.xTickAngle = parseInt(document.getElementById("pd-x-tick-angle").value, 10);
+    state.xTickAngle = _pdNum("pd-x-tick-angle", parseInt(document.getElementById("pd-x-tick-angle").value, 10));
     if (!Number.isFinite(state.xTickAngle)) state.xTickAngle = 0;
     state.xTickAngle = Math.min(90, Math.max(-90, state.xTickAngle));
     state.yAxisFormat = document.getElementById("pd-y-axis-format").value || "auto";
@@ -908,36 +929,36 @@
     if (["solid", "dash", "dot", "dashdot"].indexOf(state.referenceLineDash) === -1) {
       state.referenceLineDash = "dash";
     }
-    state.referenceLineWidth = parseFloat(document.getElementById("pd-ref-width").value);
+    state.referenceLineWidth = _pdNum("pd-ref-width", parseFloat(document.getElementById("pd-ref-width").value));
     if (!Number.isFinite(state.referenceLineWidth)) state.referenceLineWidth = 1.5;
     state.referenceLineWidth = Math.min(4, Math.max(0.6, state.referenceLineWidth));
     state.showLegend = document.getElementById("pd-show-legend").checked;
     state.legendOrientation = document.getElementById("pd-legend-orientation").value || "h";
-    state.legendX = parseFloat(document.getElementById("pd-legend-x").value);
+    state.legendX = _pdNum("pd-legend-x", parseFloat(document.getElementById("pd-legend-x").value));
     if (!Number.isFinite(state.legendX)) state.legendX = 0;
-    state.legendY = parseFloat(document.getElementById("pd-legend-y").value);
+    state.legendY = _pdNum("pd-legend-y", parseFloat(document.getElementById("pd-legend-y").value));
     if (!Number.isFinite(state.legendY)) state.legendY = 1.1;
     state.legendXAnchor = document.getElementById("pd-legend-xanchor").value || "left";
     state.legendYAnchor = document.getElementById("pd-legend-yanchor").value || "bottom";
     state.significanceMode = document.getElementById("pd-significance-mode").value || "brackets";
     var pairedToggle = document.getElementById("pd-show-paired-lines");
     state.showPairedLines = !!(pairedToggle && pairedToggle.checked);
-    state.significanceLineWidth = parseFloat(document.getElementById("pd-significance-line-width").value);
+    state.significanceLineWidth = _pdNum("pd-significance-line-width", parseFloat(document.getElementById("pd-significance-line-width").value));
     if (!Number.isFinite(state.significanceLineWidth)) state.significanceLineWidth = 1.7;
     state.significanceLineWidth = Math.min(4, Math.max(0.8, state.significanceLineWidth));
-    state.significanceSpacingScale = parseFloat(document.getElementById("pd-significance-spacing").value);
+    state.significanceSpacingScale = _pdNum("pd-significance-spacing", parseFloat(document.getElementById("pd-significance-spacing").value));
     if (!Number.isFinite(state.significanceSpacingScale)) state.significanceSpacingScale = 1.0;
     state.significanceSpacingScale = Math.min(2.2, Math.max(0.7, state.significanceSpacingScale));
-    state.significanceStarSize = parseFloat(document.getElementById("pd-significance-size").value);
+    state.significanceStarSize = _pdNum("pd-significance-size", parseFloat(document.getElementById("pd-significance-size").value));
     if (!Number.isFinite(state.significanceStarSize)) state.significanceStarSize = 14;
     state.significanceStarSize = Math.min(36, Math.max(10, state.significanceStarSize));
-    state.significanceStarOffset = parseInt(document.getElementById("pd-significance-star-offset").value, 10);
+    state.significanceStarOffset = _pdNum("pd-significance-star-offset", parseInt(document.getElementById("pd-significance-star-offset").value, 10));
     if (!Number.isFinite(state.significanceStarOffset)) state.significanceStarOffset = 2;
     state.significanceStarOffset = Math.min(30, Math.max(0, state.significanceStarOffset));
     state.autoPatternsEnabled = document.getElementById("pd-auto-pattern").checked;
-    state.exportWidth = parseFloat(document.getElementById("pd-export-width").value) || 8;
-    state.exportHeight = parseFloat(document.getElementById("pd-export-height").value) || 6;
-    state.pngScale = parseFloat(document.getElementById("pd-png-scale").value) || 3;
+    state.exportWidth = _pdNum("pd-export-width", parseFloat(document.getElementById("pd-export-width").value)) || 8;
+    state.exportHeight = _pdNum("pd-export-height", parseFloat(document.getElementById("pd-export-height").value)) || 6;
+    state.pngScale = _pdNum("pd-png-scale", parseFloat(document.getElementById("pd-png-scale").value)) || 3;
     updateFontPreviewStatus();
 
     Array.from(document.querySelectorAll(".pd-node-label-input")).forEach(function (node) {
