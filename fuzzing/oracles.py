@@ -74,6 +74,17 @@ def _check_effect_size_bounds(result: dict, violations: List[str]) -> None:
         if not (0.0 <= es <= 1.0):
             violations.append(f"effect_size ({es_type}) = {es:.4f} outside [0, 1]")
     elif "cohen" in es_type or es_type == "d":
+        # Only for INDEPENDENT groups. A paired design reports d_z, which
+        # divides by the SD of the DIFFERENCES, so tightly tracking pairs make
+        # it arbitrarily large without anything being wrong: a real seed paired
+        # three values against three that were 13.1 higher, with the difference
+        # varying by 0.23, and d_z = -55.93 was exactly right. The bound is a
+        # smell for a scaling bug in the independent case, never an
+        # impossibility -- d has no upper bound at all -- so applying it where
+        # a huge value is ordinary only produces false findings.
+        label = str(result.get("test", "")).lower()
+        if "paired" in label or "wilcoxon" in label or "within" in label:
+            return
         if abs(es) > 50:
             violations.append(f"Cohen's d = {es:.2f} is implausibly large (|d| > 50)")
     elif "r" == es_type or "pearson" in es_type or "spearman" in es_type:
