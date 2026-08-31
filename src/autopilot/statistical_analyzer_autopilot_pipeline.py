@@ -1471,10 +1471,20 @@ def _ap_build_analysis_context(self):
 
 
 def _ap_detected_test_label(self, context):
+    """What the DESIGN is, read off the shape of the data.
+
+    Not what will be run. The test comes from the assumption checks afterwards,
+    and for independent groups the router picks Welch unconditionally -- a
+    classic one-way ANOVA and a Student t-test are never the outcome. Naming
+    those two entries after tests therefore announced analyses this program does
+    not perform, in the cockpit card and in "Structure inferred as ...". They
+    name the layout instead; the rest are read as designs and run under exactly
+    these names.
+    """
     labels = {
-        "independent_ttest": "Independent t-test",
+        "independent_ttest": "Two independent groups",
         "paired_ttest": "Paired t-test",
-        "one_way_anova": "One-Way ANOVA",
+        "one_way_anova": "One-way design (independent groups)",
         "repeated_measures_anova": "Repeated Measures ANOVA",
         "two_way_anova": "Two-Way ANOVA",
         "mixed_anova": "Mixed ANOVA",

@@ -14,6 +14,17 @@ All notable changes to this project will be documented in this file.
   the two cards beside it and the post-hoc line one row down all do. A run that
   produced no test still shows the planned design, since a placeholder is worse
   than a plan.
+- A design label no longer names a test this program does not run. The router
+  picks Welch unconditionally for independent groups -- `select_comparison_test`
+  does not even read the variance check on that branch -- so a classic one-way
+  ANOVA and a Student t-test are never the outcome, and the decision tree, the
+  report and the post-hoc all say Welch. Two labels still did not: the inferred
+  design was announced as "One-Way ANOVA" and "Independent t-test", in the
+  cockpit and in "Structure inferred as ...". They now name the layout ("One-way
+  design (independent groups)", "Two independent groups"), so the design is
+  described by the shape of the data and the test name comes only from what ran.
+  The rename is narrow: two-way, repeated-measures, mixed, ANCOVA and LMM really
+  are what runs under those names, and keep them.
 
 ## [2.0] - 2026-08-30
 
