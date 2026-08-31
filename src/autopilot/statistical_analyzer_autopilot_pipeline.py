@@ -1681,11 +1681,24 @@ def _ap_extract_variance_metric(self, results):
     return "Not available"
 
 
+def _is_real_number(value):
+    """A number the reader can act on: finite, and not a bool dressed as one."""
+    import math
+    return (isinstance(value, (int, float)) and not isinstance(value, bool)
+            and math.isfinite(value))
+
+
 def _ap_format_main_test_metric(self, results):
     tested_against = results.get("tested_against") or results.get("final_test_label") or results.get("test") or "Not available"
     p_value = results.get("p_value")
     if p_value is None:
         return f"{tested_against}; p = N/A"
+    # `p_value is None` is not the only way to have no p-value. NaN is not None,
+    # and `nan < 0.0001` is False, so a fit that produced nothing printed
+    # "p = nan" as though it were a number the reader could act on. The report
+    # grew a third state for this ("No result"); the cockpit kept printing it.
+    if not _is_real_number(p_value):
+        return f"{tested_against}; no p-value (the test produced none)"
     if p_value < 0.0001:
         p_text = "< 0.0001"
     else:
@@ -1706,7 +1719,7 @@ def _ap_format_effect_size_metric(self, results):
             return f"OR = {primary['odds_ratio']:.2f} [{primary['ci_lower']:.2f}-{primary['ci_upper']:.2f}]"
         return "OR: N/A"
 
-    if effect_size is None:
+    if effect_size is None or not _is_real_number(effect_size):
         return "Not available"
 
     labels = {

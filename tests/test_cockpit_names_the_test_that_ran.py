@@ -89,3 +89,52 @@ def test_designs_that_do_run_under_their_own_name_keep_it(key):
     """The rename is narrow on purpose -- these really are what runs."""
     from autopilot.statistical_analyzer_autopilot_pipeline import _ap_detected_test_label
     assert "ANOVA" in _ap_detected_test_label(_Window(), {"inferred_test": key})
+
+
+# --- a number that is not a number must not be printed as one -----------------
+#
+# `p_value is None` was the only guard, and NaN is not None: the metric line
+# rendered "Welch's ANOVA; p = nan" and the effect size "Eta-squared = nan".
+# The report itself already grew a third badge state for exactly this ("No
+# result"), because a p-value that does not exist is not a p-value above alpha.
+# The cockpit kept printing it as a value.
+#
+# A NaN should be blocked upstream now -- but that guard was found sitting off a
+# whole code path this morning, and the multi-dataset render site checks
+# `blocked` on the lead result only. Two lines here cost nothing and do not
+# depend on being right about which paths are covered.
+
+_NAN = float("nan")
+
+
+def _main_test(results):
+    from autopilot.statistical_analyzer_autopilot_pipeline import _ap_format_main_test_metric
+    return _ap_format_main_test_metric(_Window(), results)
+
+
+def _effect(results):
+    from autopilot.statistical_analyzer_autopilot_pipeline import _ap_format_effect_size_metric
+    return _ap_format_effect_size_metric(_Window(), results)
+
+
+@pytest.mark.parametrize("p", [_NAN, float("inf"), float("-inf")])
+def test_a_p_value_that_is_not_a_number_is_not_printed_as_one(p):
+    text = _main_test({"test": "Welch's ANOVA", "p_value": p})
+    assert "nan" not in text.lower() and "inf" not in text.lower(), text
+    assert "Welch's ANOVA" in text
+
+
+@pytest.mark.parametrize("value", [_NAN, float("inf")])
+def test_an_effect_size_that_is_not_a_number_is_not_printed_as_one(value):
+    text = _effect({"effect_size": value, "effect_size_type": "eta_squared"})
+    assert "nan" not in text.lower() and "inf" not in text.lower(), text
+
+
+def test_real_numbers_are_still_printed():
+    assert "0.0031" in _main_test({"test": "Welch's ANOVA", "p_value": 0.0031})
+    assert "< 0.0001" in _main_test({"test": "Welch's ANOVA", "p_value": 1e-9})
+    assert "0.4200" in _effect({"effect_size": 0.42, "effect_size_type": "eta_squared"})
+
+
+def test_a_missing_p_value_still_reads_as_missing():
+    assert "N/A" in _main_test({"test": "Welch's ANOVA", "p_value": None})

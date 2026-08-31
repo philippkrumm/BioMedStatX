@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- The cockpit no longer prints a number that is not one. `p_value is None` was
+  the only guard on the metric line, and NaN is not None -- `nan < 0.0001` is
+  False -- so a fit that produced nothing rendered "Welch's ANOVA; p = nan", and
+  the effect size read "Eta-squared = nan". The report already grew a third
+  state for exactly this; the cockpit had not. It now says the test produced no
+  p-value, and an effect size that is not finite reads as not available.
+
 
 ## [2.0] - 2026-08-30
 
