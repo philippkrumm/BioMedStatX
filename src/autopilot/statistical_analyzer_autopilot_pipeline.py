@@ -1781,8 +1781,23 @@ def _ap_format_posthoc_status(self, context, results):
     return "No post-hoc performed."
 
 
+# Placeholders the result carries where nothing was actually fitted. Printing
+# one of these as the model would be worse than printing the plan.
+_NOT_A_MODEL_NAME = frozenset({"", "not performed", "none", "n/a"})
+
+
 def _ap_format_context_design(self, context, results):
-    model_label = self._detected_test_label(context)
+    # What RAN, not what was planned. `inferred_test` is chosen from the shape
+    # of the data, before the assumption checks look at the numbers -- so where
+    # those checks switch the analysis (equal variances failing turns One-Way
+    # ANOVA into Welch's, normality failing turns it into Kruskal-Wallis) the
+    # card kept announcing a model that never ran, beside a results section and
+    # a post-hoc that named the real one. The post-hoc line of this same panel
+    # already reads the result; this one did not.
+    performed = (results or {}).get("test")
+    performed = performed.strip() if isinstance(performed, str) else ""
+    model_label = (performed if performed.lower() not in _NOT_A_MODEL_NAME
+                   else self._detected_test_label(context))
     factor_columns = context.get("factor_columns") or []
     factor_text = ", ".join(map(str, factor_columns)) if factor_columns else "Not specified"
     subject_column = context.get("subject_column") or "None"

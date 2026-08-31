@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- The cockpit's design card names the model that ran. `inferred_test` is chosen
+  from the shape of the data, before the assumption checks look at the numbers,
+  so on three groups with unequal spread the card said "Model: One-Way ANOVA"
+  while the results, the post-hoc and the methodology trace all said Welch's
+  ANOVA. The formatter was already handed the result and did not read it, while
+  the two cards beside it and the post-hoc line one row down all do. A run that
+  produced no test still shows the planned design, since a placeholder is worse
+  than a plan.
+
 ## [2.0] - 2026-08-30
 
 ### Plots and visualisation
