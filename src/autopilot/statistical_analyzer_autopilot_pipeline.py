@@ -1836,13 +1836,25 @@ def _ap_format_context_sample_overview(self, context, results):
     selected_groups = [str(group) for group in selected_groups]
     group_column = results.get("group_column") or context.get("display_group_col") or "Not specified"
 
+    # Four keys, because the model paths use none of the first three: a linear
+    # or a logistic regression records its count as `n_observations` and carries
+    # no raw_data at all. Both printed "Sample size (N): 0" for runs on real
+    # data -- 23, 8, 20 and 19 observations on the four seeds it was measured
+    # on, every one of them shown as zero.
     n_total = results.get("n_total")
     if n_total is None:
         n_total = results.get("n")
     if n_total is None:
-        raw_data = results.get("raw_data") or {}
-        if isinstance(raw_data, dict):
-            n_total = sum(len(values) for values in raw_data.values() if hasattr(values, "__len__"))
+        n_total = results.get("n_observations")
+    if n_total is None:
+        raw_data = results.get("raw_data")
+        # Only where there IS raw data. `or {}` summed an absent frame to 0 and
+        # printed that as the sample size, so "not recorded" and "no
+        # observations" reached the reader identically -- the same missing third
+        # state that let the main-test line print `p = nan`.
+        if isinstance(raw_data, dict) and raw_data:
+            n_total = sum(len(values) for values in raw_data.values()
+                          if hasattr(values, "__len__"))
 
     if selected_groups:
         if len(selected_groups) > 6:

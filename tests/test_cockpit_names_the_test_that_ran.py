@@ -138,3 +138,51 @@ def test_real_numbers_are_still_printed():
 
 def test_a_missing_p_value_still_reads_as_missing():
     assert "N/A" in _main_test({"test": "Welch's ANOVA", "p_value": None})
+
+
+# --- the sample size on the card must be the sample -----------------------------
+#
+# The card read three keys -- n_total, n, then the summed lengths of raw_data --
+# and the two regression designs use a fourth. `results.get("raw_data") or {}`
+# then summed an absent frame to 0 and printed it, so a linear regression on 23
+# observations and a logistic regression on 20 both announced
+#
+#     Sample size (N): 0
+#
+# Measured on every seed of those two designs, not inferred: 23, 8, 20 and 19
+# observations, each shown as zero. Same missing third state as the p-value
+# line -- "not recorded" is not "none".
+
+
+def _sample_card(results):
+    from autopilot.statistical_analyzer_autopilot_pipeline import (
+        _ap_format_context_sample_overview)
+    context = {"inferred_test": "linear_regression", "factor_columns": ["Grp"],
+               "display_group_col": "Grp"}
+    return _ap_format_context_sample_overview(_Window(), context, results)
+
+
+@pytest.mark.parametrize("test_name,count", [
+    ("Linear Regression (OLS)", 23),
+    ("Logistic Regression", 20),
+])
+def test_a_model_that_records_n_observations_shows_it(test_name, count):
+    text = _sample_card({"test": test_name, "n_observations": count})
+    assert f"Sample size (N): {count}" in text, text
+
+
+def test_a_run_with_no_count_at_all_does_not_claim_zero():
+    text = _sample_card({"test": "Linear Regression (OLS)"})
+    assert "Sample size (N): N/A" in text, text
+    assert "Sample size (N): 0" not in text
+
+
+@pytest.mark.parametrize("results,expected", [
+    ({"n_total": 24}, 24),
+    ({"n": 16}, 16),
+    ({"raw_data": {"A": [1, 2, 3], "B": [4, 5]}}, 5),
+    # The keys are read in order: an explicit total wins over a derived one.
+    ({"n_total": 24, "n_observations": 99}, 24),
+])
+def test_the_counts_that_already_worked_still_do(results, expected):
+    assert f"Sample size (N): {expected}" in _sample_card(results)

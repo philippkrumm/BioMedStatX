@@ -23,6 +23,16 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- The cockpit shows the sample size of a regression. The card read three keys --
+  `n_total`, then `n`, then the summed lengths of `raw_data` -- and the two
+  regression designs use a fourth, `n_observations`, and carry no raw data at
+  all. `results.get("raw_data") or {}` then summed an absent frame to 0 and
+  printed that, so a linear regression on 23 observations and a logistic
+  regression on 20 both announced "Sample size (N): 0". Both the missing key and
+  the absent-frame fallback are fixed: a run with no recorded count now reads
+  N/A rather than zero, because "not recorded" is not "none" -- the same third
+  state the p-value line was missing. Found by the new cockpit oracles on their
+  first run, on every seed of both designs.
 - The cockpit no longer prints a number that is not one. `p_value is None` was
   the only guard on the metric line, and NaN is not None -- `nan < 0.0001` is
   False -- so a fit that produced nothing rendered "Welch's ANOVA; p = nan", and
