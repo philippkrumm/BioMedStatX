@@ -91,6 +91,40 @@ For the combined overview of a multi-dataset run:
 report and demands the matching oracle says so. An oracle that cannot fail
 reports coverage it does not have.
 
+## The cockpit oracles
+
+The Result Cockpit is the panel on the main window, and the reader sees it
+before the report. Three defects were found in it by eye, in the shipped 2.0
+build, in a single sitting -- and none of the three fuzzers could have found
+any of them, because all three read the exported HTML and the cockpit is not
+in the HTML.
+
+These run inside the analysis worker, not as a fourth fuzzer: the run that
+produced the result already knows what the panel should claim. They read the
+summary dict the widget is handed -- built by the product's own
+`_build_result_summary` -- rather than re-assembling the panel, which would be
+a second copy free to drift from the real one.
+
+| Oracle | What it refuses to accept |
+| --- | --- |
+| `cockpit_no_non_number` | `nan` or `inf` printed where the reader expects a number |
+| `cockpit_design_names_what_ran` | a model named on the card that is not the model that ran |
+| `cockpit_p_round_trips` | a printed p-value that does not parse back to the result's, or a card naming a different test than the result |
+| `cockpit_effect_round_trips` | an effect size that does not match the result, or one whose kind was dropped |
+| `cockpit_n_round_trips` | a sample size that is not the result's -- and, for independent designs, not the data's |
+| `cockpit_groups_round_trip` | a group listed that was never analysed, or a hidden-group count that does not add up |
+| `cockpit_posthoc_line_true` | a three-group run told it has two, a significant result called not significant, a post-hoc named that the result does not carry |
+| `cockpit_assumptions_agree` | "OK" where every normality test failed, or a transformation credited that was never applied |
+| `cockpit_agrees_with_report` | a model named on the panel that appears nowhere in the report |
+
+`tests/test_cockpit_oracle.py` hands each check a panel carrying its defect and
+demands it says so. Every one of the nine was also neutered in turn against the
+whole file: the suite goes red for each.
+
+Not covered here: a blocked or cancelled run never reaches these cards. Both
+handlers return before the panel is built and the widget blanks it itself, so
+those two states are widget behaviour and nothing here sees them.
+
 ## Reading the summary
 
 The run prints outcomes **and** coverage:

@@ -78,6 +78,22 @@ CANARIES = [
         "runner": "fuzzing.run_visual_fuzzer",
     },
     {
+        "name": "cockpit-names-the-plan",
+        "what": "the panel announced One-Way ANOVA while Welch's ANOVA ran",
+        "fix": "59be500",
+        "expect": "but the analysis that ran was",
+        "start": 900000, "count": 20, "designs": "oneway",
+        "paths": ["src/autopilot/statistical_analyzer_autopilot_pipeline.py"],
+    },
+    {
+        "name": "cockpit-regression-n-zero",
+        "what": "a regression on 20 observations announced a sample size of 0",
+        "fix": "4743d70",
+        "expect": "card shows N",
+        "start": 910000, "count": 60, "designs": "regression,firth_logistic",
+        "paths": ["src/autopilot/statistical_analyzer_autopilot_pipeline.py"],
+    },
+    {
         "name": "legend-out-of-frame",
         "what": "forty legend entries drew past the bottom of a fixed 680px container",
         "fix": "a221c26",
@@ -105,7 +121,26 @@ CANARIES = [
 #            reach: separation with a collinear predictor is a narrow corner and
 #            600 seeds may simply not have built one. The two readings are
 #            different problems and are not yet told apart.
-UNGUARDED = ["ea181d4", "b639cae"]
+#   0018ea7  the cockpit printed `p = nan` and `Eta-squared = nan`. Reverted,
+#            400 seeds, zero findings. Nothing reaches the panel with a
+#            non-finite number: a non-finite p is refused upstream (and would
+#            be reported as its own violation long before the panel), and no
+#            seed produced a non-finite effect size. The fix is not therefore
+#            unnecessary -- the multi-dataset render site checks `blocked` on
+#            the lead result only -- but the fuzzer does not reach the state.
+#
+#   8f13175  two design labels named tests this program never runs. Reverted,
+#            400 seeds, zero findings, and here the reason is that the labels
+#            have no live reader at all: `_ap_detected_test_label` is called
+#            from the design card's FALLBACK, taken only when nothing was
+#            fitted -- and a run where nothing was fitted is blocked or
+#            cancelled, which returns before the cards are built. Measured:
+#            204 rendered panels over 400 seeds, 204 of them naming a real
+#            performed test, zero fallbacks. Its other caller,
+#            `_ap_format_rationale`, is bound to the mixin and called by
+#            nothing. A static property with no runtime path is a unit test's
+#            job, and tests/test_cockpit_names_the_test_that_ran.py has it.
+UNGUARDED = ["ea181d4", "b639cae", "0018ea7", "8f13175"]
 
 
 def _run(cmd, cwd, **kw):
@@ -139,8 +174,24 @@ def _check_one(canary, timeout, jobs):
             # than the defect, which is why this is a list and not a range.
             fixes = canary["fix"]
             fixes = [fixes] if isinstance(fixes, str) else list(fixes)
+            # A fix that ships with its own regression test cannot be reverted
+            # whole: the test file was CREATED by it and edited since, so
+            # ``git revert`` stops on a modify/delete conflict before the
+            # product code is touched at all. Naming the source paths reverses
+            # the patch for those alone -- the defect goes back, and the tests
+            # that would now fail do not matter here because the canary runs the
+            # fuzzer and never the suite. Still a real revert of the real
+            # commit, not a string edit standing in for one.
+            paths = canary.get("paths")
             for one in fixes:
-                revert = _run(["git", "revert", "--no-commit", one], tree)
+                if paths:
+                    reverse = _run(["git", "diff", one, one + "^", "--"] + list(paths), tree)
+                    if reverse.returncode != 0 or not reverse.stdout.strip():
+                        return {"status": "REVERT FAILED",
+                                "detail": "%s: no reverse patch for %s" % (one, paths)}
+                    revert = _run(["git", "apply", "-"], tree, input=reverse.stdout)
+                else:
+                    revert = _run(["git", "revert", "--no-commit", one], tree)
                 if revert.returncode != 0:
                     # Worth saying plainly: a conflict means the canary needs
                     # rewriting, not that the fuzzer failed.
