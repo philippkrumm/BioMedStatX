@@ -269,6 +269,42 @@ def _check_one(path: str, result: dict):
     return check_report(path, result)
 
 
+def _check_cockpit(result, context, reports, violations) -> list:
+    """Check the panel the window would have shown for this run.
+
+    The cockpit is rendered from the same result as the report, by different
+    code, and nothing read it until now: the three defects found in it came from
+    a person looking at a shipped build. It is checked HERE rather than in a
+    fourth fuzzer because the run that produced the result is the run that knows
+    what the panel should say, and re-running the analysis to look at a second
+    surface would double the cost of every seed for nothing.
+
+    The report text is handed over where there is exactly one, so the seam
+    between the two surfaces can be asked about at all. A multi-dataset run
+    writes several and the panel shows the lead; matching them up again here
+    would repeat the work ``_dataset_for`` already does for the report oracles,
+    so that seam stays unchecked rather than checked approximately.
+    """
+    from fuzzing.cockpit_oracles import check_cockpit, cockpit_target
+
+    target = cockpit_target(result, context)
+    if target is None:
+        return []
+    cockpit_context, cockpit_result = target
+
+    report_text = ""
+    if len(reports) == 1:
+        try:
+            from fuzzing.html_oracles import load_report
+            report_text = load_report(reports[0]).rendered
+        except Exception:
+            report_text = ""
+
+    cockpit_violations, fired = check_cockpit(cockpit_context, cockpit_result, report_text)
+    violations += cockpit_violations
+    return fired
+
+
 def _report_was_expected(result) -> bool:
     """A run that got as far as a result should have written its report.
 
@@ -322,6 +358,8 @@ def main(seed: int, keep_dir: str = "") -> int:
 
         # The reports are still on disk here; the temp directory closes below.
         reports = _locate_reports(tmp)
+        cockpit_fired = _check_cockpit(result, kwargs.get("analysis_context"),
+                                       reports, violations)
         fired = []
         stats = {"bytes": 0, "empty_states": 0, "figures": 0}
         for report_path in reports:
@@ -334,6 +372,9 @@ def main(seed: int, keep_dir: str = "") -> int:
                 stats[key] = stats.get(key, 0) + value
         if not reports and _report_was_expected(result):
             violations.append("analysis produced a result but wrote no HTML report")
+        for name in cockpit_fired:
+            if name not in fired:
+                fired.append(name)
         verdict["oracles_fired"] = fired
         verdict["report_written"] = bool(reports)
         verdict["reports_written"] = len(reports)

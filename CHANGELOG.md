@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Testing
+
+- The fuzzer reads the Result Cockpit. Three defects were found in that panel by
+  eye, in the shipped 2.0 build, in a single sitting -- and none of the three
+  fuzzers could have found any of them, because all three read the exported HTML
+  and the cockpit is not in the HTML. Nine oracles now hold every claim the panel
+  makes against the result it was built from: that each number on it is a number,
+  that the model named is the model that ran, that the printed p-value, effect
+  size, N and groups survive a round trip back to the result, that the post-hoc
+  sentence is true rather than merely present, and that the two validity cards
+  agree with the assumption tests behind them. A tenth asks the seam that started
+  all of this -- whether the panel and the report name the same analysis.
+  `_build_result_summary` was split out of the renderer so the checks read what
+  the widget is handed rather than a second copy free to drift from it; a
+  structural test fails if the renderer stops going through it. Every oracle was
+  neutered in turn and the suite goes red for each.
+
 ### Fixed
 
 - The cockpit no longer prints a number that is not one. `p_value is None` was

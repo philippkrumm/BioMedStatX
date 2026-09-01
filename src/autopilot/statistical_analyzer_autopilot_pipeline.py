@@ -1871,8 +1871,20 @@ def _ap_format_context_analysis_scope(self, context, results):
     )
 
 
-def _ap_render_result_summary(self, context, results, output_dir, subtitle):
-    summary = {
+def _ap_build_result_summary(self, context, results, subtitle=""):
+    """Every line the cockpit is about to claim, built in one place.
+
+    Split out of ``_ap_render_result_summary`` so something other than a live
+    QWidget can read it. The cockpit is the panel a user looks at before the
+    report, and it was the one surface of this program no fuzzer saw: three
+    defects in it were found by eye in the shipped build, in a single sitting.
+    An oracle needs the claims without the window, and re-assembling them
+    somewhere else would be a second copy free to drift from this one.
+
+    Keep the widget hand-off below reading THIS dict. A renderer that builds
+    its own goes unchecked again, which is what the structural test guards.
+    """
+    return {
         "subtitle": subtitle,
         "metric_normality": self._extract_normality_metric(results),
         "metric_variance": self._extract_variance_metric(results),
@@ -1882,6 +1894,10 @@ def _ap_render_result_summary(self, context, results, output_dir, subtitle):
         "context_sample_overview": self._format_context_sample_overview(context, results),
         "context_analysis_scope": self._format_context_analysis_scope(context, results),
     }
+
+
+def _ap_render_result_summary(self, context, results, output_dir, subtitle):
+    summary = self._build_result_summary(context, results, subtitle)
     self.result_cockpit.set_summary(summary, enable_output=bool(output_dir))
     from PyQt5.QtCore import QSettings, QTimer
     if QSettings("BioMedStatX", "BioMedStatX").value("ui/confetti_enabled", True, type=bool):
@@ -2520,6 +2536,7 @@ class AutopilotMixin:
     _format_context_design = _ap_format_context_design
     _format_context_sample_overview = _ap_format_context_sample_overview
     _format_context_analysis_scope = _ap_format_context_analysis_scope
+    _build_result_summary = _ap_build_result_summary
     _render_result_summary = _ap_render_result_summary
     _handle_cancelled_result = _ap_handle_cancelled_result
     _handle_blocked_result = _ap_handle_blocked_result
