@@ -1332,21 +1332,16 @@ class ResultCockpitWidget(QFrame):
         self.subtitle.setText(summary.get("subtitle", "Analysis complete."))
         for key, card in self.metric_cards.items():
             card.set_value(summary.get(key, "N/A"))
-        self.inference_cards["inference_main_test"].set_value(
-            summary.get("inference_main_test", summary.get("metric_main_test", "N/A"))
-        )
-        self.inference_cards["inference_effect_size"].set_value(
-            summary.get("inference_effect_size", summary.get("metric_effect_size", "N/A"))
-        )
-        self.context_cards["context_design"].set_value(
-            summary.get("context_design", summary.get("detected_test", "N/A"))
-        )
-        self.context_cards["context_sample_overview"].set_value(
-            summary.get("context_sample_overview", summary.get("rationale", "N/A"))
-        )
-        self.context_cards["context_analysis_scope"].set_value(
-            summary.get("context_analysis_scope", summary.get("posthoc", "N/A"))
-        )
+        # One key per card. Each of these used to carry a second, older key as a
+        # fallback -- "metric_main_test", "detected_test", "rationale",
+        # "posthoc" -- and `_build_result_summary` is the only thing that ever
+        # calls this, producing none of them. A fallback nothing can reach still
+        # reads as a supported input: the "rationale" one named a formatter that
+        # was still being maintained for a card it could never fill.
+        for key, card in self.inference_cards.items():
+            card.set_value(summary.get(key, "N/A"))
+        for key, card in self.context_cards.items():
+            card.set_value(summary.get(key, "N/A"))
 
         self.open_output_button.setEnabled(enable_output)
         self._animate_cards()

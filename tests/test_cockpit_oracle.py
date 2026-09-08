@@ -339,3 +339,40 @@ def test_a_phantom_cell_is_still_caught(groups):
     summary["context_sample_overview"] = card.replace(groups[-1], "FacA=A9, FacB=B9")
     violations, _ = _check(summary, results, context)
     assert any("did not run on" in v or "omits the group" in v for v in violations), violations
+
+def test_the_widget_accepts_exactly_the_keys_the_builder_sends():
+    """No card offers a key nothing produces.
+
+    Every card used to fall back to an older key -- "metric_main_test",
+    "detected_test", "rationale", "posthoc" -- that `_build_result_summary` does
+    not produce and no other caller sends. A fallback nothing can reach still
+    reads as a supported input: the "rationale" one kept a whole formatter alive
+    for a card it could never fill, and that formatter was being read as
+    user-facing text a year after its last reader went away.
+    """
+    import inspect
+
+    from autopilot.statistical_analyzer_autopilot_pipeline import _ap_build_result_summary
+    from autopilot.statistical_analyzer_autopilot_ui import ResultCockpitWidget
+
+    reader = inspect.getsource(ResultCockpitWidget.set_summary)
+    for retired in ("metric_main_test", "metric_effect_size", "detected_test",
+                    "rationale", "posthoc"):
+        # The CALL, not the word: the comment above those lines names the keys
+        # it retired, and a bare substring search reported the explanation as
+        # the defect.
+        assert 'summary.get("%s"' % retired not in reader, (
+            "set_summary reads %r, which nothing sends" % retired)
+
+    built = inspect.getsource(_ap_build_result_summary)
+    for key in ("inference_main_test", "inference_effect_size", "context_design",
+                "context_sample_overview", "context_analysis_scope"):
+        assert '"%s"' % key in built
+
+
+def test_the_pipeline_keeps_no_formatter_without_a_reader():
+    """`_format_rationale` had no caller at all -- not one, anywhere."""
+    from autopilot import statistical_analyzer_autopilot_pipeline as pipeline
+
+    assert not hasattr(pipeline, "_ap_format_rationale")
+    assert not hasattr(pipeline.AutopilotMixin, "_format_rationale")

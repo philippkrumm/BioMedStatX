@@ -1476,10 +1476,17 @@ def _ap_detected_test_label(self, context):
     Not what will be run. The test comes from the assumption checks afterwards,
     and for independent groups the router picks Welch unconditionally -- a
     classic one-way ANOVA and a Student t-test are never the outcome. Naming
-    those two entries after tests therefore announced analyses this program does
-    not perform, in the cockpit card and in "Structure inferred as ...". They
-    name the layout instead; the rest are read as designs and run under exactly
-    these names.
+    those two entries after tests would announce analyses this program does not
+    perform; they name the layout instead, and the rest are read as designs and
+    run under exactly these names.
+
+    How far this reaches, measured rather than assumed: the one live caller is
+    the design card's fallback, taken only when the result carries no model name
+    -- and over 400 seeds, 204 rendered panels all carried one. So these labels
+    are a guard for a result shape that does not occur today, not text a user is
+    reading. Kept because a result without a test name is a real possibility and
+    printing nothing there would be worse; not kept as something to maintain as
+    though it were on screen.
     """
     labels = {
         "independent_ttest": "Two independent groups",
@@ -1761,34 +1768,6 @@ def _ap_is_ttest_result(self, context, results):
         if "t-test" in lowered or "ttest" in lowered:
             return True
     return False
-
-
-def _ap_format_rationale(self, context, results):
-    reasons = [f"Structure inferred as {self._detected_test_label(context)}."]
-    if context.get("subject_column"):
-        reasons.append(f"Subject ID detected via '{context['subject_column']}'.")
-    if context.get("covariates"):
-        reasons.append(f"Covariates: {', '.join(context['covariates'])}.")
-
-    model_type = results.get("model_type")
-    if model_type == "ANCOVA":
-        reasons.append("Treatment effects are adjusted for covariates (Type II SS).")
-    elif model_type == "LMM":
-        reasons.append("Linear Mixed Model uses all available data (ML estimation) — missing visits do not cause patient dropout.")
-    elif model_type == "LogisticRegression":
-        reasons.append("Binary outcome detected. Logistic regression provides odds ratios and AUC.")
-    elif results.get("transformation"):
-        reasons.append(f"Transformation chosen by user: {results['transformation']}.")
-
-    if results.get("analysis_note"):
-        reasons.append(results["analysis_note"])
-    elif results.get("note"):
-        reasons.append(results["note"])
-    elif results.get("recommendation") == "non_parametric":
-        reasons.append("Parametric assumptions failed, so a robust fallback model path was used.")
-    elif model_type not in ("ANCOVA", "LMM", "LogisticRegression"):
-        reasons.append("Auto-pilot stayed on the default supported path for this design.")
-    return " ".join(reasons)
 
 
 def _ap_format_posthoc_status(self, context, results):
@@ -2552,7 +2531,6 @@ class AutopilotMixin:
     _format_main_test_metric = _ap_format_main_test_metric
     _format_effect_size_metric = _ap_format_effect_size_metric
     _is_ttest_result = _ap_is_ttest_result
-    _format_rationale = _ap_format_rationale
     _format_posthoc_status = _ap_format_posthoc_status
     _format_context_design = _ap_format_context_design
     _format_context_sample_overview = _ap_format_context_sample_overview
