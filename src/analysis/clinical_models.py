@@ -2104,8 +2104,9 @@ class DataHealthScanner:
             self.checks["group_sizes"] = counts.to_dict()
             if small_groups:
                 self.warnings.append(
-                    f"Kleine Gruppenbesetzung: {', '.join(small_groups)}. "
-                    "Logistische Regression instabil bei n < 10 pro Outcome-Kategorie."
+                    f"Small group sizes: {', '.join(small_groups)}. "
+                    "Logistic regression is unstable below n = 10 per outcome "
+                    "category."
                 )
         except Exception as exc:
             self.checks["group_sizes"] = {"error": str(exc)}

@@ -502,9 +502,9 @@ def _install_global_excepthook():
             if QApplication.instance():
                 QMessageBox.critical(
                     None,
-                    "Unerwarteter Fehler",
-                    f"Ein Fehler ist aufgetreten:\n\n{exc_type.__name__}: {exc_value}\n\n"
-                    f"Details wurden in crash_log.txt gespeichert.",
+                    "Unexpected error",
+                    f"An error occurred:\n\n{exc_type.__name__}: {exc_value}\n\n"
+                    f"Details were saved to crash_log.txt.",
                 )
         except Exception:
             pass

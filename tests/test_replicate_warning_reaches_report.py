@@ -25,7 +25,7 @@ from analysis.statisticaltester import StatisticalTester
 from analysis.emm_posthoc import UnsupportedDesignError
 from export.report_summaries import _SummariesMixin
 
-REPLICATE_MARK = "Technische Replikate"
+REPLICATE_MARK = "Technical replicates detected"
 
 
 def _rm_df_with_replicates():

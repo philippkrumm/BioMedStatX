@@ -40,6 +40,17 @@ NORMALITY_THRESHOLD = 0.05
 CI_LEVEL = 0.95
 MIN_GROUP_SIZE = 2
 
+# Written by both the mixed and the repeated-measures wrapper, and read back out
+# of ``data_health`` by the report. It lived as the same literal in two places:
+# a rename of the KEY these two writers use once left the reader looking at a
+# field nobody wrote, and two copies of the TEXT are the same shape of trap one
+# level down.
+REPLICATE_AVERAGING_WARNING = (
+    "Technical replicates detected (several measurements per subject x "
+    "timepoint). The data were averaged to subject level before the analysis."
+)
+
+
 class StatisticalTester:
     @staticmethod
     def make_blocked_result(reason, *, code, details=None, warnings=None):
@@ -1463,7 +1474,7 @@ class StatisticalTester:
                 results["data_health"] = {}
             if "warnings" not in results["data_health"]:
                 results["data_health"]["warnings"] = []
-            results["data_health"]["warnings"].append("Technische Replikate (mehrere Messungen pro Proband x Messzeitpunkt) erkannt. Die Daten wurden vor der Analyse auf Probandenebene gemittelt.")
+            results["data_health"]["warnings"].append(REPLICATE_AVERAGING_WARNING)
             
         return results
     
@@ -1518,7 +1529,7 @@ class StatisticalTester:
                 results["data_health"] = {}
             if "warnings" not in results["data_health"]:
                 results["data_health"]["warnings"] = []
-            results["data_health"]["warnings"].append("Technische Replikate (mehrere Messungen pro Proband x Messzeitpunkt) erkannt. Die Daten wurden vor der Analyse auf Probandenebene gemittelt.")
+            results["data_health"]["warnings"].append(REPLICATE_AVERAGING_WARNING)
             
         # Ensure test_info is added to results
         if test_info is not None and "test_info" not in results:
