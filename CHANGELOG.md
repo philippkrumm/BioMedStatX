@@ -13,11 +13,16 @@ All notable changes to this project will be documented in this file.
   The crash dialog said "Unerwarteter Fehler". All are English now, and the
   replicate sentence -- which was the same literal in two writers -- is one
   constant.
-- A cancelled dataset is no longer counted as a successful one. A multi-dataset
-  run classified each dataset by asking only about its error, and a cancelled
-  result carries none, so it was listed under `successful_datasets`, entered the
-  FDR family, and had a combined report written over an analysis that never ran.
-  A cancel now stops the batch, which is what the window's own multi path does.
+- A cancelled dataset is no longer counted as a successful one. This is the
+  multi-SHEET path (`analyze(selected_datasets=...)`), which is not the
+  "Multi-Dataset Analysis" mode in the window -- that one loops over measurement
+  COLUMNS and already returns on the first cancelled column. The sheet path
+  classified each dataset by asking only about its error, and a cancelled result
+  carries none, so it was listed under `successful_datasets`, entered the FDR
+  family, and had a combined report written over an analysis that never ran. A
+  cancel now stops the batch there too. No user reaches this path today: it has
+  no caller in `src/` at all, which is a separate open question about a feature
+  that appears to have lost its button.
 - The cockpit's group list can be taken apart again. A two-factor design names
   its groups by cell ("FacA=A0, FacB=B0"), and the card joined those names with
   ", " -- so three cells read as six groups with nothing marking where one
