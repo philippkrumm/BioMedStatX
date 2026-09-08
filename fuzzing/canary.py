@@ -201,7 +201,14 @@ def _check_one(canary, timeout, jobs):
                     if reverse.returncode != 0 or not reverse.stdout.strip():
                         return {"status": "REVERT FAILED",
                                 "detail": "%s: no reverse patch for %s" % (one, paths)}
-                    revert = _run(["git", "apply", "-"], tree, input=reverse.stdout)
+                    # --3way, because a later commit editing the LINES AROUND
+                    # the hunk is enough to make a clean reverse patch fail on
+                    # context alone: the N-of-zero canary broke the day a fix
+                    # landed next to it, and read REVERT FAILED for a defect
+                    # that comes out perfectly well. Falling back to the blobs
+                    # is still the real patch from the real commit.
+                    revert = _run(["git", "apply", "--3way", "-"], tree,
+                                  input=reverse.stdout)
                 else:
                     revert = _run(["git", "revert", "--no-commit", one], tree)
                 if revert.returncode != 0:
