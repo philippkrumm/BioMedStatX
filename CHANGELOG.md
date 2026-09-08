@@ -6,6 +6,23 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Multi-dataset runs now correct across the datasets they compare. Analysing
+  several measurement columns at once is a multiple-testing family, and both the
+  report and `docs/HowTo.md` have said so since 2026-05-26 -- the HowTo states
+  "Benjamini-Hochberg FDR correction applied across all m p-values", and the
+  overview template renders an FDR badge per card and a note naming the family
+  size. None of it ever happened on the path behind the button: the correction
+  existed only inside a sheet-loop with no caller. Measured on three columns at
+  p = 0.00013 / 0.0012 / 0.014, the overview reported all three uncorrected and
+  mentioned no correction at all. The documentation was right and the program
+  was wrong.
+- A measurement column whose analysis fails no longer appears in the combined
+  overview as an ordinary card with nothing in it. The multi loop asked only
+  whether a column had been CANCELLED, so an errored one was exported as a
+  success, and the exporter's failure map -- which it has taken since it was
+  written, and which the HowTo describes as a **Not Analysed** section -- stayed
+  empty.
+
 - The English report stops speaking German. A logistic regression on small
   groups printed "Kleine Gruppenbesetzung ... Logistische Regression instabil"
   into an otherwise entirely English report, and the replicate warning printed
@@ -30,6 +47,12 @@ All notable changes to this project will be documented in this file.
 
 ### Removed
 
+- `analyze(selected_datasets=...)` and the 142-line sheet-loop behind it. It
+  walked the SHEETS of a workbook and had no caller anywhere in the program --
+  a different feature from the "Multi-Dataset Analysis" button, which walks
+  measurement COLUMNS and is a loop over the ordinary analysis path. The two
+  things it held that the live loop needed (the FDR correction and the failure
+  separation) were moved out first.
 - `_format_rationale`, a cockpit formatter with no caller anywhere, and the five
   fallback keys in the panel's reader that nothing sends. The dead fallback made
   the dead formatter look reachable; a report on the cockpit this week quoted a
