@@ -379,18 +379,41 @@ def build_case(seed: int) -> FuzzCase:
     for m in muts:
         df = _apply_mutation(df, m, rng, dv_col=dv_col)
 
-    # Comparing several experiments at once is a real workflow and had no
-    # coverage at all: the generator only ever built mode="single", so the
-    # combined report, its own template and the across-dataset FDR correction
-    # were never rendered. Multi runs the same design once per dataset, which is
-    # what the pipeline does; the injected frame is shared, so the datasets carry
-    # the same numbers -- enough to exercise the path, not a test of differing
-    # inputs.
+    # Comparing several measurements at once is a real workflow, and this is the
+    # shape the WINDOW has for it: "Multi-Dataset Analysis" takes several
+    # measurement COLUMNS -- several genes, several markers -- under one factor
+    # mapping, analyses each in turn and writes a combined overview across them.
+    #
+    # It used to be driven through `analyze(selected_datasets=[...])` instead,
+    # which loops over SHEETS of a workbook and has no button anywhere in the
+    # program. Same name, different feature: the fuzzer was pushing on a door the
+    # product does not have, and the live loop -- the one users reach -- had no
+    # coverage at all. The extra columns are the base measurement plus
+    # independent noise, so the datasets differ instead of being one frame
+    # counted several times, and they are built AFTER the mutations so they
+    # inherit whatever the mutation did to the base.
+    #
+    # Gated the way the window gates it (autopilot pipeline, `_build_analysis_
+    # context`): two columns minimum, and never for a design it refuses in multi
+    # mode.
     datasets = 1
-    if kwargs.get("group_col") and not kwargs.get("dependent"):
+    _multi_refuses = {"independent_ttest", "paired_ttest", "logistic_regression"}
+    if (kwargs.get("group_col") and not kwargs.get("dependent")
+            and ctx.get("inferred_test") not in _multi_refuses):
         if int(rng.integers(0, 5)) == 0:
             datasets = int(rng.integers(2, 4))
-            kwargs["selected_datasets"] = [f"DS{i + 1}" for i in range(datasets)]
+            base = (ctx.get("dv_columns") or ["Val"])[0]
+            spread = float(np.nanstd(pd.to_numeric(df[base], errors="coerce"))) if base in df else 0.0
+            if not np.isfinite(spread) or spread == 0.0:
+                spread = 1.0
+            extra = []
+            for index in range(1, datasets):
+                name = f"{base}_m{index + 1}"
+                df[name] = pd.to_numeric(df[base], errors="coerce") + rng.normal(
+                    0.0, spread * 0.5, len(df))
+                extra.append(name)
+            ctx["dv_columns"] = [base] + extra
+            ctx["mode"] = "multi"
 
     # A two-factor design is addressed by its CELLS in the product. The window
     # builds group_labels as "FacA=A0, FacB=B0" and hands analyze() a group_col

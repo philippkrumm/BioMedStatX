@@ -269,6 +269,70 @@ def _check_one(path: str, result: dict):
     return check_report(path, result)
 
 
+def _run_multi_like_the_window(kwargs, dv_columns, tmp):
+    """Several measurement columns, analysed the way the window analyses them.
+
+    "Multi-Dataset Analysis" in the product is a loop, not a function: the
+    window walks the mapped measurement columns, calls the ordinary
+    single-analysis path once per column with that column as the dependent
+    variable, aborts the whole batch on the first cancelled one, and then hands
+    the collected results to ``ExportDispatcher.export_multi_dataset_results``
+    for the combined overview. There is no multi-dataset entry point behind it.
+
+    The fuzzer used to reach the combined report through
+    ``analyze(selected_datasets=[...])`` instead, which loops over SHEETS of a
+    workbook -- a different feature, with no button anywhere in the program. So
+    the overview was being checked through a door the product does not have,
+    while the loop users actually run had no coverage at all.
+
+    The summary returned at the end is the harness's own bookkeeping, in the
+    shape the existing oracles read. It is not a product contract: the window
+    keeps the same information in local variables and never assembles it into a
+    dict.
+    """
+    from analysis.analysis_core import AnalysisManager
+    from export.export_dispatcher import ExportDispatcher
+
+    base_context = kwargs.get("analysis_context") or {}
+    all_results = {}
+    for dv_column in dv_columns:
+        per_dv_context = dict(base_context)
+        per_dv_context["dv_columns"] = [dv_column]
+        per_dv_context["current_dv"] = dv_column
+        per_dv_kwargs = dict(kwargs)
+        per_dv_kwargs["analysis_context"] = per_dv_context
+        per_dv_kwargs["value_cols"] = [dv_column]
+        per_dv_kwargs["y_label"] = dv_column
+        per_dv_kwargs["title"] = dv_column
+        # The dataset name has to survive into the file name: the report checks
+        # match a written file back to its dataset by looking for the name
+        # inside the basename. These names come from the generator and are
+        # filesystem-safe by construction.
+        per_dv_kwargs["file_name"] = os.path.join(tmp, "out_%s" % dv_column)
+
+        result = AnalysisManager.analyze(**per_dv_kwargs)
+        if isinstance(result, dict) and result.get("cancelled"):
+            # The window returns here and renders nothing: a consent withdrawn
+            # for one column is not consent to analyse the rest.
+            return result
+        all_results[dv_column] = result
+
+    # The window's own splitter, not a copy of it.
+    from autopilot.statistical_analyzer_autopilot_pipeline import _ap_split_multi_results
+
+    analysed, failed = _ap_split_multi_results(all_results)
+    AnalysisManager.apply_across_dataset_fdr(analysed)
+
+    # Named so the combined file keeps the suffix the report router looks for.
+    combined = os.path.join(tmp, "out_combined_results")
+    ExportDispatcher.export_multi_dataset_results(analysed, combined, failed)
+    return {"type": "multi_dataset_analysis",
+            "results": analysed,
+            "successful_datasets": list(analysed),
+            "failed_datasets": failed,
+            "combined_report": combined}
+
+
 def _check_cockpit(result, context, reports, violations) -> list:
     """Check the panel the window would have shown for this run.
 
@@ -345,7 +409,13 @@ def main(seed: int, keep_dir: str = "") -> int:
 
         from analysis.analysis_core import AnalysisManager
         try:
-            result = AnalysisManager.analyze(**kwargs)
+            # Several mapped measurement columns is the window's multi mode, and
+            # it is a loop over the ordinary path rather than a call of its own.
+            _dv_columns = (kwargs.get("analysis_context") or {}).get("dv_columns") or []
+            if len(_dv_columns) > 1:
+                result = _run_multi_like_the_window(kwargs, _dv_columns, tmp)
+            else:
+                result = AnalysisManager.analyze(**kwargs)
         except Exception as exc:  # pragma: no cover - this is a finding
             import traceback
             verdict["status"] = "exception"
