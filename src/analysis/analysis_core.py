@@ -437,6 +437,64 @@ class AnalysisManager:
         results["data_health"] = _dh
 
     @staticmethod
+    def apply_across_dataset_fdr(all_results):
+        """Benjamini-Hochberg across the primary p-value of every dataset.
+
+        Analysing several measurement columns at once IS a multiple-testing
+        problem, and the combined report is built to show the answer: it renders
+        an "Adjusted p-value" per card and a note naming the family size, both
+        conditional on the results carrying ``p_value_fdr``.
+
+        Nothing filled that on the path users take. This correction lived inside
+        the sheet-loop reached by ``analyze(selected_datasets=...)``, which has
+        no caller in the program at all -- so a run of three measurement columns
+        reported three uncorrected p-values, measured. Its own trace text gives
+        the intent away: it says "across N simultaneously tested DEPENDENT
+        VARIABLES", which is the column loop, not the sheets it was sitting in.
+
+        Mutates the results in place, the way the caller's loop holds them, and
+        returns how many entries entered the family. Fewer than two valid
+        p-values is not a family and is left alone.
+        """
+        import math
+
+        if not isinstance(all_results, dict) or len(all_results) < 2:
+            return 0
+        try:
+            multipletests = get_statsmodels_multitest()
+            dataset_names_ordered = list(all_results.keys())
+            raw_ps = [(all_results[n] or {}).get("p_value") for n in dataset_names_ordered]
+            valid_indices = [i for i, p in enumerate(raw_ps)
+                             if isinstance(p, (float, int)) and not isinstance(p, bool)
+                             and math.isfinite(p)]
+            if len(valid_indices) < 2:
+                return 0
+            valid_ps = [raw_ps[i] for i in valid_indices]
+            _, p_adj, _, _ = multipletests(valid_ps, method='fdr_bh')
+            for rank, ds_idx in enumerate(valid_indices):
+                all_results[dataset_names_ordered[ds_idx]]["p_value_fdr"] = float(p_adj[rank])
+            logger.info(f"FDR correction applied across {len(valid_indices)} datasets.")
+            try:
+                from core.methodology_trace import MethodologyTrace as _MT
+                _first_ds = dataset_names_ordered[valid_indices[0]]
+                _fdr_trace = all_results[_first_ds].get("methodology_trace") or _MT()
+                _m = len(valid_indices)
+                _fdr_trace.add(5, "Multiple Testing Correction",
+                               f"Benjamini-Hochberg FDR correction applied (m = {_m} tests).",
+                               detail=(f"To control the false discovery rate across {_m} simultaneously "
+                                       "tested dependent variables, Benjamini-Hochberg (BH) correction "
+                                       "was applied to all raw p-values. Adjusted p-values (q-values) "
+                                       "are reported alongside uncorrected values. The FDR family "
+                                       f"included all {_m} successfully analysed outcome variables."))
+                all_results[_first_ds]["methodology_trace"] = _fdr_trace
+            except Exception:
+                pass  # FDR trace is non-critical
+            return len(valid_indices)
+        except Exception as exc:
+            logger.info(f"Warning: FDR correction failed: {exc}")
+            return 0
+
+    @staticmethod
     def _analyze_multiple_datasets(file_path, group_col, groups, selected_datasets, value_cols,
                                   combine_columns, width, height, dependent, compare, colors, hatches,
                                   title, x_label, y_label, file_name, save_plot, skip_plots,

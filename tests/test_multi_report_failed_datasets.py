@@ -1,9 +1,8 @@
 """A dataset whose analysis fails must not vanish from the combined report.
 
-The run knows exactly which datasets errored -- ``_analyze_multiple_datasets``
-collects them in ``failed_datasets`` and reports a success rate. The reader,
-however, only ever receives the HTML overview, and that overview was built from
-``all_results`` alone. A dataset the user explicitly selected therefore
+The run knows exactly which columns errored -- the multi loop holds each
+result as it comes back. The reader, however, only ever receives the HTML
+overview, and that overview was built from the successes alone. A dataset the user explicitly selected therefore
 disappeared without a trace, and the headline counted only the survivors: with
 two datasets selected and one failing, the report said "1 datasets summarized"
 and never mentioned the other.
@@ -82,39 +81,40 @@ def test_a_report_is_still_written_when_every_dataset_failed(tmp_path):
     assert re.search(r"2\s+failed", text)
 
 
-def test_the_analysis_run_hands_its_failures_to_the_exporter(tmp_path, monkeypatch):
+def test_the_multi_run_hands_its_failures_to_the_exporter(tmp_path):
     """The wiring, not the rendering: the seam where the failures were dropped.
 
-    ``_analyze_multiple_datasets`` knew about the failures all along and simply
-    never passed them on. Only the per-dataset analysis is stubbed here; the
-    loop, the export call, the dispatcher, the exporter and the template are the
-    real ones.
+    The window analyses one measurement column at a time and combines the
+    results afterwards. That loop only ever asked whether a column had been
+    CANCELLED, so a column whose analysis came back with an error went into the
+    overview as an ordinary card with nothing in it -- and the exporter's
+    failure map, which has existed since it was written, stayed empty.
+
+    ``_ap_split_multi_results`` is the rule the loop uses, and the fuzzer uses
+    the same function rather than a copy. Everything downstream of it here --
+    the dispatcher, the exporter, the template -- is real.
     """
-    from analysis.analysis_core import AnalysisManager
+    from autopilot.statistical_analyzer_autopilot_pipeline import _ap_split_multi_results
 
-    def fake_single(**kwargs):
-        name = kwargs["dataset_name"]
-        if name == "DS2":
-            return {"error": "engine blew up"}
-        return _result(name)
+    all_results = {"DS1": _result("DS1"), "DS2": {"error": "engine blew up"}}
+    analysed, failed = _ap_split_multi_results(all_results)
 
-    monkeypatch.setattr(AnalysisManager, "_analyze_single_dataset",
-                        staticmethod(fake_single))
+    assert list(analysed) == ["DS1"], "an errored column was counted as analysed"
+    assert failed == {"DS2": "engine blew up"}
 
-    summary = AnalysisManager._analyze_multiple_datasets(
-        file_path="unused.xlsx", group_col="Group", groups=["A", "B"],
-        selected_datasets=["DS1", "DS2"], value_cols=["Value"],
-        combine_columns=False, width=8, height=6, dependent=False, compare=None,
-        colors=None, hatches=None, title=None, x_label=None, y_label=None,
-        file_name=str(tmp_path / "run"), save_plot=False, skip_plots=True,
-        error_type="sd", additional_factors=None, show_individual_lines=False,
-    )
-
-    assert summary["failed_datasets"] == {"DS2": "engine blew up"}
-    combined = Path(summary["combined_report"])
-    report = combined.with_name(combined.stem + "_report.html")
-    assert report.exists(), f"no combined report at {report}"
-
-    text = report.read_text(encoding="utf-8")
+    text = _render(tmp_path, analysed, failed)
     assert "DS2" in text, "the failed dataset never reached the report"
     assert "engine blew up" in text
+    assert re.search(r"1\s+datasets? summarized", text), text
+
+
+def test_a_column_with_no_error_is_not_called_a_failure():
+    from autopilot.statistical_analyzer_autopilot_pipeline import _ap_split_multi_results
+
+    # `_standardize_results` gives every result it returns "error": None, so a
+    # membership test marks every success a failure -- the mistake this rule has
+    # already been fixed for once.
+    analysed, failed = _ap_split_multi_results(
+        {"DS1": dict(_result("DS1"), error=None), "DS2": _result("DS2")})
+    assert list(analysed) == ["DS1", "DS2"]
+    assert failed == {}

@@ -1916,6 +1916,28 @@ def _ap_render_result_summary(self, context, results, output_dir, subtitle):
     self.available_groups = list((self.samples or {}).keys())
 
 
+def _ap_split_multi_results(all_results):
+    """Which of the analysed columns actually produced an analysis.
+
+    A column whose result carries an error is not a dataset that was analysed.
+    The multi loop only ever checked for a CANCEL, so an errored column went
+    into the combined overview as an ordinary card with nothing in it -- to the
+    reader, indistinguishable from a real analysis of bad data. The exporter has
+    taken a failure map since it was written; nothing on this path filled it.
+
+    A function rather than four lines inline because the fuzzer runs the same
+    loop and would otherwise hold a second copy of this rule, free to drift from
+    the one the window uses -- and telling success from failure on this exact
+    dict has already been got wrong twice.
+    """
+    results = all_results or {}
+    analysed = {name: result for name, result in results.items()
+                if not (result or {}).get("error")}
+    failed = {name: (result or {}).get("error") for name, result in results.items()
+              if (result or {}).get("error")}
+    return analysed, failed
+
+
 def _ap_determine_and_run_test(self):
     if self.df is None:
         QMessageBox.warning(self, "Error", "Please load a dataset first.")
@@ -1989,8 +2011,25 @@ def _ap_determine_and_run_test(self):
                     self._handle_cancelled_result(all_results[dv_column])
                     return
 
+            # A column whose analysis came back with an error is not a dataset
+            # that was analysed. This loop only ever checked for a CANCEL, so an
+            # errored column went into the overview as an ordinary card with
+            # nothing in it -- to the reader, indistinguishable from a real
+            # analysis of bad data. The exporter has taken a failure map from the
+            # start; it was only ever filled by a path with no caller.
+            analysed, failed = _ap_split_multi_results(all_results)
+
+            # Several measurement columns tested at once is a multiple-testing
+            # family, and the combined report is built to say so: it renders an
+            # adjusted p-value per card and a note naming the family size. Both
+            # stayed empty here, because the only implementation of the
+            # correction sat in the sheet-loop nothing calls -- measured on three
+            # columns at p = 0.00013 / 0.0012 / 0.014, all reported uncorrected.
+            AnalysisManager.apply_across_dataset_fdr(analysed)
+
             combined_report = ap_file_path
-            export_result = ExportDispatcher.export_multi_dataset_results(all_results, combined_report)
+            export_result = ExportDispatcher.export_multi_dataset_results(
+                analysed, combined_report, failed)
             if export_result.get("warning"):
                 logger.warning(f"WARNING: {export_result['warning']}")
 
