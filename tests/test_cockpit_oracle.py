@@ -277,3 +277,65 @@ def test_the_renderer_reads_the_same_summary_the_oracle_does():
                 "inference_effect_size", "context_design",
                 "context_sample_overview", "context_analysis_scope"):
         assert key in built, "the builder no longer produces %s" % key
+
+# --- a group list a reader can take apart ---------------------------------------
+#
+# A two-factor design addresses its groups by cell, and the label for a cell is
+# "FacA=A0, FacB=B0" -- so the comma the card joined on lived inside the names.
+# Four cells rendered as
+#
+#     Groups: FacA=A0, FacB=B0, FacA=A0, FacB=B1, FacA=A1, FacB=B0, ...
+#
+# which reads as eight groups and gives no way to see where one ends.
+
+CELLS = ["FacA=A0, FacB=B0", "FacA=A0, FacB=B1", "FacA=A1, FacB=B0"]
+
+
+def _cell_summary(groups):
+    context = dict(CONTEXT, group_labels=groups, selected_groups=groups)
+    results = dict(RESULT, groups=groups, selected_groups=groups)
+    return build_summary(context, results), context, results
+
+
+def test_cell_labels_are_separated_by_something_they_do_not_contain():
+    summary, _, _ = _cell_summary(CELLS)
+    listed = summary["context_sample_overview"].split("Groups:")[1]
+    assert " | " in listed, listed
+    for cell in CELLS:
+        assert cell in listed, listed
+
+
+def test_plain_group_names_still_read_as_a_comma_list():
+    """The separator steps aside only where it has to."""
+    summary, _, _ = _cell_summary(["A", "B", "C"])
+    listed = summary["context_sample_overview"].split("Groups:")[1]
+    assert "A, B, C" in listed, listed
+    assert "|" not in listed, listed
+
+
+def test_a_label_carrying_the_replacement_too_falls_back_to_one_per_line():
+    groups = ["FacA=A0, FacB=B|0", "FacA=A1, FacB=B1"]
+    summary, _, _ = _cell_summary(groups)
+    listed = summary["context_sample_overview"].split("Groups:")[1]
+    for name in groups:
+        assert name in listed, listed
+    assert listed.strip().count("\n") == len(groups) - 1, listed
+
+
+@pytest.mark.parametrize("groups", [CELLS, ["A", "B", "C"],
+                                    ["FacA=A0, FacB=B|0", "FacA=A1, FacB=B1"]])
+def test_the_oracle_reads_every_separator_back(groups):
+    summary, context, results = _cell_summary(groups)
+    violations, fired = _check(summary, results, context)
+    assert violations == [], violations
+    assert "cockpit_groups_round_trip" in fired
+
+
+@pytest.mark.parametrize("groups", [CELLS, ["A", "B", "C"]])
+def test_a_phantom_cell_is_still_caught(groups):
+    """Following the card's separator must not cost the check its teeth."""
+    summary, context, results = _cell_summary(groups)
+    card = summary["context_sample_overview"]
+    summary["context_sample_overview"] = card.replace(groups[-1], "FacA=A9, FacB=B9")
+    violations, _ = _check(summary, results, context)
+    assert any("did not run on" in v or "omits the group" in v for v in violations), violations

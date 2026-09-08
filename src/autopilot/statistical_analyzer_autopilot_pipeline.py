@@ -1856,11 +1856,20 @@ def _ap_format_context_sample_overview(self, context, results):
             n_total = sum(len(values) for values in raw_data.values()
                           if hasattr(values, "__len__"))
 
+    # A two-factor design names its groups by CELL -- "Genotype=WT, Time=D0" --
+    # so the comma this joins on appears INSIDE the names, and four cells read as
+    # eight groups with nothing marking where one ends. The separator steps aside
+    # where the names already use it, and again where they use the replacement.
+    if any("," in group for group in selected_groups):
+        separator = " | " if not any("|" in group for group in selected_groups) else "\n"
+    else:
+        separator = ", "
+
     if selected_groups:
         if len(selected_groups) > 6:
-            group_text = ", ".join(selected_groups[:6]) + f" (+{len(selected_groups) - 6} more)"
+            group_text = separator.join(selected_groups[:6]) + f" (+{len(selected_groups) - 6} more)"
         else:
-            group_text = ", ".join(selected_groups)
+            group_text = separator.join(selected_groups)
     else:
         group_text = "All available groups"
 

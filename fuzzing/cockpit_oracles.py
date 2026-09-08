@@ -291,8 +291,16 @@ def _oracle_sample_size_round_trips(summary, context, results, violations) -> bo
 
 def _oracle_groups_round_trip(summary, context, results, violations) -> bool:
     """The groups listed are the groups analysed, and a truncation says how many it hid."""
-    shown = _line(summary.get("context_sample_overview"), "Groups:")
-    if shown is None or shown == "All available groups":
+    # Everything after "Groups:" to the end of the card, not just the first
+    # line of it: where every candidate separator appears inside the names
+    # themselves the card lists one group per line, and reading only the first
+    # would report the rest as omitted.
+    card = _text(summary.get("context_sample_overview"))
+    head = card.find("Groups:")
+    if head < 0:
+        return False
+    shown = card[head + len("Groups:"):].strip()
+    if not shown or shown == "All available groups":
         return False
     expected = (results.get("selected_groups") or context.get("selected_groups")
                 or results.get("groups") or [])
@@ -320,14 +328,17 @@ def _oracle_groups_round_trip(summary, context, results, violations) -> bool:
         if name not in listed:
             violations.append(f"card omits the group {name!r} the analysis ran on")
 
-    # The card joins group names with ", " and a two-factor design names its
-    # groups by CELL -- "FacA=A0, FacB=B0" -- so the separator appears inside
-    # the names themselves and the listing cannot be split back apart. Counting
-    # the pieces there measured the commas, not the groups. Where no name
-    # carries one, the stronger question is still worth asking: is anything
-    # listed that was not analysed?
-    if not any("," in name for name in expected):
-        names = [part.strip() for part in listed.split(",") if part.strip()]
+    # Split on the same separator the card chose. A two-factor design names its
+    # groups by CELL -- "FacA=A0, FacB=B0" -- so the comma appears inside the
+    # names, and splitting on it counted the commas rather than the groups: four
+    # cells came back as eight groups, none of which the analysis had "run on".
+    # The card steps the separator aside for exactly this, and the oracle has to
+    # follow the same rule to ask the stronger question at all -- is anything
+    # listed that was never analysed?
+    separator = ("," if not any("," in name for name in expected)
+                 else "|" if not any("|" in name for name in expected) else "\n")
+    if not any(separator in name for name in expected):
+        names = [part.strip() for part in listed.split(separator) if part.strip()]
         if not hidden and len(names) != len(expected):
             violations.append(
                 f"card lists {len(names)} groups; the analysis ran on {len(expected)}")
