@@ -125,3 +125,61 @@ def test_the_overview_names_both_surviving_datasets(tmp_path, monkeypatch):
     text = report.read_text(encoding="utf-8")
     assert "DS1" in text and "DS2" in text
     assert "2 datasets summarized" in text
+
+# --- a cancel is a third outcome, and it used to be filed as the first ---------
+#
+# `_standardize_results` gives a cancelled result the full set of standard keys
+# with "error": None, so the classification -- which asked only about the error
+# -- put it straight into `all_results` and counted it a success. A fuzz seed
+# whose dialog stand-in cancelled both datasets came back as
+# `successful_datasets: ['DS1', 'DS2']`, with a combined report written over two
+# analyses that never happened.
+#
+# Same shape as the defect this file already guards, one state further along:
+# success and failure are not the only two things a dataset can do.
+
+def _cancelled(dataset_name):
+    return {"cancelled": True, "cancel_reason": "User cancelled the post-hoc dialog.",
+            "error": None, "test": None, "p_value": None, "dataset_name": dataset_name}
+
+
+def _run_two_with(tmp_path, monkeypatch, factory):
+    from analysis.analysis_core import AnalysisManager
+
+    seen = []
+
+    def fake_single(**kwargs):
+        seen.append(kwargs["dataset_name"])
+        return factory(kwargs["dataset_name"])
+
+    monkeypatch.setattr(AnalysisManager, "_analyze_single_dataset",
+                        staticmethod(fake_single))
+    summary = AnalysisManager._analyze_multiple_datasets(
+        file_path="unused.xlsx", group_col="Group", groups=["A", "B"],
+        selected_datasets=["DS1", "DS2"], value_cols=["Value"],
+        combine_columns=False, width=8, height=6, dependent=False, compare=None,
+        colors=None, hatches=None, title=None, x_label=None, y_label=None,
+        file_name=str(tmp_path / "run"), save_plot=False, skip_plots=True,
+        error_type="sd", additional_factors=None, show_individual_lines=False,
+    )
+    return summary, seen
+
+
+def test_a_cancelled_dataset_is_not_counted_as_successful(tmp_path, monkeypatch):
+    summary, _ = _run_two_with(tmp_path, monkeypatch, _cancelled)
+
+    assert summary.get("cancelled") is True, summary
+    assert summary.get("successful_datasets") is None, (
+        "a cancelled run must not report datasets as analysed: %r" % summary)
+
+
+def test_a_cancel_stops_the_remaining_datasets(tmp_path, monkeypatch):
+    """Consent withdrawn for one dataset is not consent to analyse the rest."""
+    _, seen = _run_two_with(tmp_path, monkeypatch, _cancelled)
+    assert seen == ["DS1"], seen
+
+
+def test_a_cancel_writes_no_combined_report(tmp_path, monkeypatch):
+    summary, _ = _run_two_with(tmp_path, monkeypatch, _cancelled)
+    assert summary.get("combined_report") is None
+    assert not list(tmp_path.glob("*combined*")), list(tmp_path.glob("*"))

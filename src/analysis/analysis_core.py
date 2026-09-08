@@ -487,6 +487,19 @@ class AnalysisManager:
                 # `_standardize_results` gives every result it returns a full set
                 # of standard keys, "error": None among them, so a membership
                 # test marks every standardised success as a failure.
+                if result.get("cancelled"):
+                    # The user backed out of a dialog mid-analysis. Nothing ran
+                    # for this dataset -- so it is neither a success nor a
+                    # failure, and filing it under either would misreport it.
+                    # There is no third bucket because the whole batch stops:
+                    # the window's own multi path returns on the first cancelled
+                    # dependent variable, and a consent withdrawn for one dataset
+                    # is not consent to keep analysing the rest. The cancelled
+                    # result is handed back unchanged, which is the shape every
+                    # caller of analyze() already knows how to read.
+                    logger.info(f"Analysis cancelled during {dataset_name}; "
+                                "the remaining datasets were not analysed")
+                    return result
                 if result.get("error"):
                     failed_datasets[dataset_name] = result["error"]
                     logger.error(f"ERROR analyzing {dataset_name}: {result['error']}")
