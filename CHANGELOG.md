@@ -4,6 +4,32 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- The English report stops speaking German. A logistic regression on small
+  groups printed "Kleine Gruppenbesetzung ... Logistische Regression instabil"
+  into an otherwise entirely English report, and the replicate warning printed
+  "Technische Replikate ... auf Probandenebene gemittelt" into the same block.
+  The crash dialog said "Unerwarteter Fehler". All are English now, and the
+  replicate sentence -- which was the same literal in two writers -- is one
+  constant.
+- A cancelled dataset is no longer counted as a successful one. A multi-dataset
+  run classified each dataset by asking only about its error, and a cancelled
+  result carries none, so it was listed under `successful_datasets`, entered the
+  FDR family, and had a combined report written over an analysis that never ran.
+  A cancel now stops the batch, which is what the window's own multi path does.
+- The cockpit's group list can be taken apart again. A two-factor design names
+  its groups by cell ("FacA=A0, FacB=B0"), and the card joined those names with
+  ", " -- so three cells read as six groups with nothing marking where one
+  ended. The separator now steps aside where the names already use it.
+
+### Removed
+
+- `_format_rationale`, a cockpit formatter with no caller anywhere, and the five
+  fallback keys in the panel's reader that nothing sends. The dead fallback made
+  the dead formatter look reachable; a report on the cockpit this week quoted a
+  line from it that no user has ever seen.
+
 ### Testing
 
 - The fuzzer reads the Result Cockpit. Three defects were found in that panel by
