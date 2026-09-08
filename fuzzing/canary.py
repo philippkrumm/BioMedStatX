@@ -94,6 +94,18 @@ CANARIES = [
         "paths": ["src/autopilot/statistical_analyzer_autopilot_pipeline.py"],
     },
     {
+        "name": "group-list-runs-together",
+        "what": "three two-factor cells listed as six groups, joined on the comma inside their own names",
+        "fix": "4e8dd02",
+        # The oracle that catches this shipped in the SAME commit, so a whole
+        # revert takes the check out along with the defect and reports MISSED
+        # for a check that works -- measured, that is exactly what it did.
+        # Naming the product path puts back the defect alone.
+        "paths": ["src/autopilot/statistical_analyzer_autopilot_pipeline.py"],
+        "expect": "card lists",
+        "start": 900000, "count": 60, "designs": "two_way_anova",
+    },
+    {
         "name": "legend-out-of-frame",
         "what": "forty legend entries drew past the bottom of a fixed 680px container",
         "fix": "a221c26",
