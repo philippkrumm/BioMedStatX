@@ -98,8 +98,8 @@ from statistical_testing.validators import AnalysisCancelledError
 # Modified AnalysisManager.analyze function
 class AnalysisManager:
     @staticmethod
-    def analyze(file_path, group_col, groups, sheet_name=0, value_cols=None, 
-                selected_datasets=None, combine_columns=False, width=12, height=10, 
+    def analyze(file_path, group_col, groups, sheet_name=0, value_cols=None,
+                combine_columns=False, width=12, height=10, 
                 dependent=False, compare=None, colors=None, hatches=None,
                 title=None, x_label=None, y_label=None, file_name=None, 
                 save_plot=True, skip_plots=False, error_type="sd", 
@@ -111,26 +111,21 @@ class AnalysisManager:
         logger.debug(f"DEBUG ANALYZE: file_path = {file_path}")
         logger.debug(f"DEBUG ANALYZE: file_name = {file_name}")
         logger.debug(f"DEBUG ANALYZE: save_plot = {save_plot}, skip_plots = {skip_plots}")
-        # Single dataset analysis (existing functionality)
-        if selected_datasets is None or len(selected_datasets) <= 1:
-            # Use existing single dataset logic
-            actual_sheet = selected_datasets[0] if selected_datasets else sheet_name
-            return AnalysisManager._analyze_single_dataset(
-                file_path, group_col, groups, actual_sheet, value_cols, 
-                combine_columns, width, height, dependent, compare, colors, hatches,
-                title, x_label, y_label, file_name, save_plot, skip_plots, 
-                error_type, dataset_name, additional_factors, 
-                show_individual_lines, **kwargs
-            )
-        
-        # Multiple dataset analysis
-        else:
-            return AnalysisManager._analyze_multiple_datasets(
-                file_path, group_col, groups, selected_datasets, value_cols,
-                combine_columns, width, height, dependent, compare, colors, hatches,
-                title, x_label, y_label, file_name, save_plot, skip_plots,
-                error_type, additional_factors, show_individual_lines, **kwargs
-            )
+        # One analysis, one dataset. Analysing several at once is a LOOP the
+        # window runs over the mapped measurement columns, not a mode of this
+        # function: it calls this once per column and combines the results
+        # afterwards. The branch that used to sit here walked the SHEETS of a
+        # workbook instead -- a different feature, with no caller anywhere in the
+        # program, and the only home of the across-dataset FDR correction the
+        # live loop was missing. That correction now lives in
+        # `apply_across_dataset_fdr`, where the loop can reach it.
+        return AnalysisManager._analyze_single_dataset(
+            file_path, group_col, groups, sheet_name, value_cols,
+            combine_columns, width, height, dependent, compare, colors, hatches,
+            title, x_label, y_label, file_name, save_plot, skip_plots,
+            error_type, dataset_name, additional_factors,
+            show_individual_lines, **kwargs
+        )
 
     @staticmethod
     def _load_dataframe(file_path, sheet_name=0):
@@ -494,148 +489,6 @@ class AnalysisManager:
             logger.info(f"Warning: FDR correction failed: {exc}")
             return 0
 
-    @staticmethod
-    def _analyze_multiple_datasets(file_path, group_col, groups, selected_datasets, value_cols,
-                                  combine_columns, width, height, dependent, compare, colors, hatches,
-                                  title, x_label, y_label, file_name, save_plot, skip_plots,
-                                  error_type, additional_factors, show_individual_lines, **kwargs):
-        """
-        Multiple dataset analysis with a unified HTML report
-        """
-        all_results = {}
-        failed_datasets = {}
-        
-        logger.info(f"Starting analysis of {len(selected_datasets)} datasets...")
-        
-        # Analyze each selected dataset
-        for i, dataset_name in enumerate(selected_datasets):
-            logger.info(f"Analyzing dataset {i+1}/{len(selected_datasets)}: {dataset_name}")
-            
-            try:
-                # Analyze single dataset
-                result = AnalysisManager._analyze_single_dataset(
-                    file_path=file_path,
-                    group_col=group_col,
-                    groups=groups,
-                    sheet_name=dataset_name,
-                    value_cols=value_cols,
-                    combine_columns=combine_columns,
-                    width=width,
-                    height=height,
-                    dependent=dependent,
-                    compare=compare,
-                    colors=colors,
-                    hatches=hatches,
-                    title=f"{title} - {dataset_name}" if title else dataset_name,
-                    x_label=x_label,
-                    y_label=y_label,
-                    file_name=f"{file_name}_{dataset_name}" if file_name else dataset_name,
-                    save_plot=save_plot,
-                    skip_plots=skip_plots,
-                    error_type=error_type,
-                    dataset_name=dataset_name,
-                    additional_factors=additional_factors,
-                    show_individual_lines=show_individual_lines,
-                    dialog_progress=f"({i+1}/{len(selected_datasets)})",
-                    dialog_column=dataset_name,
-                    **kwargs
-                )
-                
-                # Ask what the error says, not whether the key is there:
-                # `_standardize_results` gives every result it returns a full set
-                # of standard keys, "error": None among them, so a membership
-                # test marks every standardised success as a failure.
-                if result.get("cancelled"):
-                    # The user backed out of a dialog mid-analysis. Nothing ran
-                    # for this dataset -- so it is neither a success nor a
-                    # failure, and filing it under either would misreport it.
-                    # There is no third bucket because the whole batch stops:
-                    # the window's own multi path returns on the first cancelled
-                    # dependent variable, and a consent withdrawn for one dataset
-                    # is not consent to keep analysing the rest. The cancelled
-                    # result is handed back unchanged, which is the shape every
-                    # caller of analyze() already knows how to read.
-                    logger.info(f"Analysis cancelled during {dataset_name}; "
-                                "the remaining datasets were not analysed")
-                    return result
-                if result.get("error"):
-                    failed_datasets[dataset_name] = result["error"]
-                    logger.error(f"ERROR analyzing {dataset_name}: {result['error']}")
-                else:
-                    all_results[dataset_name] = result
-                    logger.info(f"Successfully analyzed {dataset_name}")
-                    
-            except Exception as e:
-                error_msg = f"Exception during analysis: {str(e)}"
-                failed_datasets[dataset_name] = error_msg
-                logger.error(f"ERROR analyzing {dataset_name}: {error_msg}")
-        
-        # Apply FDR correction (Benjamini-Hochberg) across all primary p-values
-        if len(all_results) >= 2:
-            try:
-                import math
-                multipletests = get_statsmodels_multitest()
-                dataset_names_ordered = list(all_results.keys())
-                raw_ps = [all_results[n].get("p_value") for n in dataset_names_ordered]
-                valid_indices = [i for i, p in enumerate(raw_ps) if isinstance(p, (float, int)) and not isinstance(p, bool) and math.isfinite(p)]
-                if len(valid_indices) >= 2:
-                    valid_ps = [raw_ps[i] for i in valid_indices]
-                    _, p_adj, _, _ = multipletests(valid_ps, method='fdr_bh')
-                    for rank, ds_idx in enumerate(valid_indices):
-                        all_results[dataset_names_ordered[ds_idx]]["p_value_fdr"] = float(p_adj[rank])
-                    logger.info(f"FDR correction applied across {len(valid_indices)} datasets.")
-                    # Trace: FDR-Korrektur (2e) — write into first dataset's trace
-                    try:
-                        from core.methodology_trace import MethodologyTrace as _MT
-                        _first_ds = dataset_names_ordered[valid_indices[0]]
-                        _fdr_trace = all_results[_first_ds].get("methodology_trace") or _MT()
-                        _m = len(valid_indices)
-                        _fdr_trace.add(5, "Multiple Testing Correction",
-                                       f"Benjamini-Hochberg FDR correction applied (m = {_m} tests).",
-                                       detail=(f"To control the false discovery rate across {_m} simultaneously "
-                                               "tested dependent variables, Benjamini-Hochberg (BH) correction "
-                                               "was applied to all raw p-values. Adjusted p-values (q-values) "
-                                               "are reported alongside uncorrected values. The FDR family "
-                                               f"included all {_m} successfully analysed outcome variables."))
-                        all_results[_first_ds]["methodology_trace"] = _fdr_trace
-                    except Exception:
-                        pass  # FDR trace is non-critical
-            except Exception as e:
-                logger.info(f"Warning: FDR correction failed: {str(e)}")
-
-        # Create combined HTML report. Written even when nothing survived: a run
-        # in which every dataset failed is exactly the one the user most needs a
-        # report for, and the outlier path already behaves this way.
-        report_path = None
-        if all_results or failed_datasets:
-            base_name = file_name if file_name else "multi_dataset_analysis"
-            report_path = f"{base_name}_combined_results.html"
-
-            try:
-                ExportDispatcher = get_export_dispatcher()
-                export_result = ExportDispatcher.export_multi_dataset_results(
-                    all_results, report_path, failed_datasets)
-                if export_result.get("warning"):
-                    logger.warning(f"WARNING: {export_result['warning']}")
-                logger.info(f"Combined results saved to: {report_path}")
-            except Exception as e:
-                logger.error(f"Error creating combined HTML report: {str(e)}")
-        
-        # Return summary
-        return {
-            "type": "multi_dataset_analysis",
-            "successful_datasets": list(all_results.keys()),
-            "failed_datasets": failed_datasets,
-            "results": all_results,
-            "combined_report": report_path,
-            "summary": {
-                "total_datasets": len(selected_datasets),
-                "successful": len(all_results),
-                "failed": len(failed_datasets),
-                "success_rate": f"{len(all_results)/len(selected_datasets)*100:.1f}%"
-            }
-        }
-            
     @staticmethod
     def _analyze_single_dataset(file_path, group_col, groups, sheet_name, value_cols, 
                                combine_columns, width, height, dependent, compare, colors, hatches,
