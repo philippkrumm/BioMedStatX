@@ -1,5 +1,6 @@
 import logging
 import os
+from core.level_order import natural_order
 from datetime import datetime
 
 import numpy as np
@@ -7,17 +8,14 @@ import pandas as pd
 
 from core.lazy_imports import get_scipy_stats, get_statsmodels_multitest, get_matplotlib_pyplot
 
+logger = logging.getLogger(__name__)
+
 
 
 
 def get_export_dispatcher():
     from export.export_dispatcher import ExportDispatcher
     return ExportDispatcher
-
-
-def get_data_visualizer():
-    from visualization.datavisualizer import DataVisualizer
-    return DataVisualizer
 
 
 def get_statistical_tester():
@@ -91,86 +89,43 @@ PostHocAnalyzer = _PostHocAnalyzerProxy
 PostHocStatistics = _PostHocStatisticsProxy
 
 
-class DatasetSelector:
-    """Helper class to manage dataset selection in the UI"""
-    
-    @staticmethod
-    def get_available_datasets(file_path, sheet_name=None):
-        """
-        Get all available datasets (sheets) from an Excel file
-        
-        Returns:
-        --------
-        dict: {sheet_name: preview_info}
-        """
-        try:
-            if file_path.endswith('.xlsx') or file_path.endswith('.xls'):
-                # Get all sheet names
-                xl_file = pd.ExcelFile(file_path)
-                datasets = {}
-                
-                for sheet in xl_file.sheet_names:
-                    try:
-                        # Get a preview of each sheet
-                        df_preview = pd.read_excel(file_path, sheet_name=sheet, nrows=5)
-                        datasets[sheet] = {
-                            'columns': df_preview.columns.tolist(),
-                            'shape': f"{len(pd.read_excel(file_path, sheet_name=sheet))} rows",
-                            'preview': df_preview.head(3).to_dict('records')
-                        }
-                    except Exception as e:
-                        datasets[sheet] = {'error': str(e)}
-                
-                return datasets
-            else:
-                # For CSV files, return single dataset
-                df_preview = pd.read_csv(file_path, nrows=5)
-                return {
-                    'CSV Data': {
-                        'columns': df_preview.columns.tolist(),
-                        'shape': f"{len(pd.read_csv(file_path))} rows",
-                        'preview': df_preview.head(3).to_dict('records')
-                    }
-                }
-        except Exception as e:
-            return {'Error': {'error': str(e)}}
+
+# AnalysisCancelledError lives in statistical_testing.validators (a leaf module)
+# so the post-hoc engines can raise it without importing analysis_core (circular).
+from statistical_testing.validators import AnalysisCancelledError
+
 
 # Modified AnalysisManager.analyze function
 class AnalysisManager:
     @staticmethod
-    def analyze(file_path, group_col, groups, sheet_name=0, value_cols=None, 
-                selected_datasets=None, combine_columns=False, width=12, height=10, 
+    def analyze(file_path, group_col, groups, sheet_name=0, value_cols=None,
+                combine_columns=False, width=12, height=10, 
                 dependent=False, compare=None, colors=None, hatches=None,
                 title=None, x_label=None, y_label=None, file_name=None, 
                 save_plot=True, skip_plots=False, error_type="sd", 
                 dataset_name=None, additional_factors=None, show_individual_lines=True, 
                 **kwargs):
         
-        print("DEBUG ANALYZE: AnalysisManager.analyze called")
-        print(f"DEBUG ANALYZE: Current working directory: {os.getcwd()}")
-        print(f"DEBUG ANALYZE: file_path = {file_path}")
-        print(f"DEBUG ANALYZE: file_name = {file_name}")
-        print(f"DEBUG ANALYZE: save_plot = {save_plot}, skip_plots = {skip_plots}")
-        # Single dataset analysis (existing functionality)
-        if selected_datasets is None or len(selected_datasets) <= 1:
-            # Use existing single dataset logic
-            actual_sheet = selected_datasets[0] if selected_datasets else sheet_name
-            return AnalysisManager._analyze_single_dataset(
-                file_path, group_col, groups, actual_sheet, value_cols, 
-                combine_columns, width, height, dependent, compare, colors, hatches,
-                title, x_label, y_label, file_name, save_plot, skip_plots, 
-                error_type, dataset_name, additional_factors, 
-                show_individual_lines, **kwargs
-            )
-        
-        # Multiple dataset analysis
-        else:
-            return AnalysisManager._analyze_multiple_datasets(
-                file_path, group_col, groups, selected_datasets, value_cols,
-                combine_columns, width, height, dependent, compare, colors, hatches,
-                title, x_label, y_label, file_name, save_plot, skip_plots,
-                error_type, additional_factors, show_individual_lines, **kwargs
-            )
+        logger.debug("DEBUG ANALYZE: AnalysisManager.analyze called")
+        logger.debug(f"DEBUG ANALYZE: Current working directory: {os.getcwd()}")
+        logger.debug(f"DEBUG ANALYZE: file_path = {file_path}")
+        logger.debug(f"DEBUG ANALYZE: file_name = {file_name}")
+        logger.debug(f"DEBUG ANALYZE: save_plot = {save_plot}, skip_plots = {skip_plots}")
+        # One analysis, one dataset. Analysing several at once is a LOOP the
+        # window runs over the mapped measurement columns, not a mode of this
+        # function: it calls this once per column and combines the results
+        # afterwards. The branch that used to sit here walked the SHEETS of a
+        # workbook instead -- a different feature, with no caller anywhere in the
+        # program, and the only home of the across-dataset FDR correction the
+        # live loop was missing. That correction now lives in
+        # `apply_across_dataset_fdr`, where the loop can reach it.
+        return AnalysisManager._analyze_single_dataset(
+            file_path, group_col, groups, sheet_name, value_cols,
+            combine_columns, width, height, dependent, compare, colors, hatches,
+            title, x_label, y_label, file_name, save_plot, skip_plots,
+            error_type, dataset_name, additional_factors,
+            show_individual_lines, **kwargs
+        )
 
     @staticmethod
     def _load_dataframe(file_path, sheet_name=0):
@@ -190,6 +145,7 @@ class AnalysisManager:
                 value_cols=value_cols,
                 combine_columns=combine_columns
             )
+            samples = {g: list(v) if hasattr(v, "tolist") else list(v) for g, v in samples.items()}
             filtered_samples = {g: samples[g] for g in groups if g in samples}
             return {
                 "d": df,
@@ -226,6 +182,25 @@ class AnalysisManager:
 
         selected_group_column = analysis_context.get("selected_group_column")
         selected_groups = analysis_context.get("selected_groups") or []
+
+        # Count rows whose grouping label is missing BEFORE the selected-groups
+        # filter removes them: a NaN/blank label is not in `selected_groups`, so
+        # the .isin() below drops it silently -- the same invisible loss as a
+        # label that later matches no group. Measured on the real factor column
+        # (display_group_col is still factor_columns[0] here; the two-way
+        # __AUTO_GROUP__ reassignment happens further down). Skipped for
+        # correlation/regression, where that column is a continuous predictor,
+        # not a group label.
+        _req_test = (analysis_context.get("inferred_test") or kwargs.get("test") or "")
+        _n_missing_label = 0
+        if (_req_test not in ("correlation", "linear_regression")
+                and display_group_col in working_df.columns):
+            _lbl = working_df[display_group_col]
+            _lbl_missing = _lbl.isna() | (
+                _lbl.astype(str).str.strip().str.lower().isin(["", "nan", "none"])
+            )
+            _n_missing_label = int(_lbl_missing.sum())
+
         if selected_group_column and selected_groups and selected_group_column in working_df.columns:
             working_df = working_df[working_df[selected_group_column].isin(selected_groups)]
 
@@ -238,24 +213,171 @@ class AnalysisManager:
                 group_factor_map[group_name] = {"major": str(row[factor_a]), "minor": str(row[factor_b])}
                 return group_name
             working_df[display_group_col] = working_df.apply(make_auto_group, axis=1)
+            analysis_context = analysis_context.copy()
             analysis_context["group_factor_map"] = group_factor_map
             if not groups_to_use:
-                groups_to_use = sorted(working_df[display_group_col].dropna().unique(), key=lambda item: str(item))
+                groups_to_use = list(working_df[display_group_col].dropna().unique())
         else:
             if not groups_to_use:
-                groups_to_use = sorted(working_df[display_group_col].dropna().unique(), key=lambda item: str(item))
+                groups_to_use = list(working_df[display_group_col].dropna().unique())
+
+        # Strip whitespace so "A" and "A " (a stray space from a dirty sheet) are
+        # the same group, not two. Must match the identical strip on group_key
+        # below, or the split stops matching. Case is deliberately NOT folded --
+        # that is a separate design decision.
+        groups_to_use = [str(g).strip() for g in groups_to_use]
+
+        # One authoritative ranking, applied to whatever the caller supplied
+        # rather than only when they supplied nothing. natural_order used to be
+        # reached solely from the `if not groups_to_use` branches above -- and
+        # the window always supplies groups, taken from _sorted_unique, a plain
+        # sorted(key=str). So on the path every real user walks the ranking was
+        # skipped and the axis came out alphabetical: KO drawn before its WT
+        # control, a timecourse rendered D0, D14, D21, D7. Ranking here rather
+        # than trusting each caller to do it is the same call as the CLD gate
+        # and style_tokens: one place decides. It is safe unconditionally
+        # because natural_order preserves membership -- `groups` is a selection
+        # as well as an order, and a deselected group must not come back -- and
+        # is idempotent, so a caller that already had it right is untouched.
+        # A two-factor design joins its cells into one label -- "Genotype=WT,
+        # Time=D0" -- before reaching this point, and ranking those strings is
+        # not the same as ranking the design. The numeric half survives the join
+        # (D7 still precedes D21, because natural_order reads the digits inside
+        # the string), but control-first does not: "Genotype=KO, ..." simply
+        # sorts before "Genotype=WT, ...", so the reference cell stops leading
+        # the axis. Where it looks right -- Control before Treated -- that is
+        # alphabetical luck, not the rule.
+        #
+        # The components are still available: the same branch that builds the
+        # label records {"major", "minor"} per cell. Ranking each factor once
+        # and ordering the cells by that pair keeps every rule the single-factor
+        # path has, major factor first. Anything the map does not cover falls
+        # back to ranking the label, which is what happened before.
+        factor_map = analysis_context.get("group_factor_map") or {}
+        cell_parts = {}
+        for group in groups_to_use:
+            part = factor_map.get(group)
+            if not isinstance(part, dict) or "major" not in part or "minor" not in part:
+                cell_parts = {}
+                break
+            cell_parts[group] = (str(part["major"]), str(part["minor"]))
+
+        if cell_parts:
+            major_rank = {str(level): index for index, level in enumerate(
+                natural_order([major for major, _ in cell_parts.values()]))}
+            minor_rank = {str(level): index for index, level in enumerate(
+                natural_order([minor for _, minor in cell_parts.values()]))}
+            groups_to_use = sorted(
+                groups_to_use,
+                key=lambda g: (major_rank.get(cell_parts[g][0], 0),
+                               minor_rank.get(cell_parts[g][1], 0)))
+            groups_to_use = [str(g) for g in groups_to_use]
+        else:
+            groups_to_use = [str(g) for g in natural_order(groups_to_use)]
+
+        # The group split below matches stringified labels, so the column has to
+        # be compared as text. Casting it in place is what the categorical branch
+        # relies on — it is how a numeric factor (Dose = 1/2/3) becomes
+        # categorical for every downstream formula.
+        #
+        # For correlation and linear regression `display_group_col` is not a
+        # grouping column at all: it is the continuous predictor. Stringifying it
+        # there killed RegressionHealthScanner (np.median over object dtype) and
+        # exported the predictor as text in the Raw Data Vault. So keep the cast
+        # for the split itself, but only write it back for the grouped designs.
+        _requested_test = (analysis_context.get("inferred_test")
+                           or kwargs.get("test") or "")
+        _predictor_is_continuous = _requested_test in ("correlation", "linear_regression")
+
+        group_key = working_df[display_group_col].astype(str).str.strip()
+        if not _predictor_is_continuous:
+            working_df[display_group_col] = group_key
 
         primary_dv = context_value_cols[0]
         samples = {}
+        preprocessing_notes = []
         for group_name in groups_to_use:
-            subset = working_df[working_df[display_group_col] == group_name]
-            samples[group_name] = subset[primary_dv].dropna().tolist()
+            subset = working_df[group_key == group_name]
+            # Coerce to numeric so whitespace-only / non-numeric cells become NaN
+            # and are dropped, instead of leaking strings into the test as a fake
+            # categorical value (would crash scipy/pingouin downstream).
+            _raw_vals = subset[primary_dv]
+            _num_vals = pd.to_numeric(_raw_vals, errors="coerce")
+            # A cell that held some text but is not parseable as a number ("N/A",
+            # a stray unit, a German "1,5") is silently dropped here. Surface that:
+            # count only NON-empty unparseable cells -- a blank/NaN cell is
+            # expected missing data, not a corruption, and must not be flagged.
+            _nonempty = _raw_vals.notna() & (_raw_vals.astype(str).str.strip() != "")
+            _n_coerced = int((_num_vals.isna() & _nonempty).sum())
+            if _n_coerced:
+                preprocessing_notes.append(
+                    f"Group '{group_name}': {_n_coerced} non-numeric value(s) "
+                    f"could not be read as a number and were dropped."
+                )
+            samples[group_name] = _num_vals.dropna().tolist()
+
+        if _n_missing_label:
+            preprocessing_notes.append(
+                f"{_n_missing_label} row(s) were dropped because the group label "
+                f"was missing or blank."
+            )
+
+        # Subject-aligned pairing for the standalone two-group dependent test.
+        # The lists above are in row order; validate_paired_data / ttest_rel /
+        # wilcoxon then zip the two groups positionally, so the pairing was only
+        # correct when both groups happened to list their subjects in the same
+        # order. A user re-sorting the sheet silently re-paired the wrong rows.
+        # Rebuild the two groups from an inner join on the subject id so
+        # position i refers to the same subject in both groups; unpaired
+        # subjects are dropped (they cannot contribute to a paired test).
+        _dependent = analysis_context.get("dependent", dependent)
+        _subject_col = analysis_context.get("subject_column")
+        _req_test = (analysis_context.get("inferred_test") or kwargs.get("test") or "")
+        
+        # Bypass strict inner-join for models that natively handle unbalanced data (MLE/robust)
+        _mle_models = {"lmm", "logistic_regression"}
+        
+        if (_dependent and _subject_col and _subject_col in working_df.columns
+                and len(groups_to_use) == 2 and _req_test not in _mle_models):
+            g1, g2 = groups_to_use
+            _dv_numeric = pd.to_numeric(working_df[primary_dv], errors="coerce")
+            _paired = pd.DataFrame({
+                "_subject": working_df[_subject_col].values,
+                "_group": group_key.values,
+                "_value": _dv_numeric.values,
+            }).dropna(subset=["_value"])
+            # Collapse any technical replicates (a subject measured more than once
+            # at the same condition) to their mean, so the join stays one-to-one.
+            _per_cell = (_paired[_paired["_group"].isin([g1, g2])]
+                         .groupby(["_subject", "_group"])["_value"].mean().unstack("_group"))
+            if g1 in _per_cell.columns and g2 in _per_cell.columns:
+                _aligned = _per_cell[[g1, g2]].dropna().sort_index()
+                if not _aligned.empty:
+                    samples[g1] = _aligned[g1].tolist()
+                    samples[g2] = _aligned[g2].tolist()
 
         local_kwargs = dict(kwargs)
         inferred_test = analysis_context.get("inferred_test")
+        
+        # CRITICAL FIX: If the user mapped a Subject ID but the test fell back to Two-Way ANOVA,
+        # aggressively upgrade it back to Mixed ANOVA to prevent pseudoreplication.
+        _subj = analysis_context.get("subject_column")
+        _factors = analysis_context.get("factor_columns", [])
+        if inferred_test == "two_way_anova" and _subj and len(_factors) == 2:
+            inferred_test = "mixed_anova"
+            # Ensure between and within factors are defined if they were lost
+            if not analysis_context.get("between_factors") or not analysis_context.get("within_factors"):
+                # As a last resort fallback, treat the first factor as between, second as within
+                # (which aligns with the template instructions: Timepoint->Factor 1, BetweenGrp->Factor 2
+                # Wait, Timepoint (within) is Factor 1, BetweenGrp (between) is Factor 2)
+                # We can just check the UI buckets or rely on the fact that if it failed, we must guess.
+                # Actually, role_by_factor in autopilot usually works, but if it failed, let's use the template mapping:
+                analysis_context["between_factors"] = [_factors[1]] if len(_factors) > 1 else [_factors[0]]
+                analysis_context["within_factors"] = [_factors[0]]
+
         if inferred_test in {"two_way_anova", "mixed_anova", "repeated_measures_anova",
                              "ancova", "two_way_ancova", "lmm", "logistic_regression",
-                             "beta_regression", "correlation", "linear_regression"}:
+                             "correlation", "linear_regression"}:
             local_kwargs["test"] = inferred_test
         if analysis_context.get("subject_column"):
             local_kwargs["subject_column"] = analysis_context.get("subject_column")
@@ -286,129 +408,87 @@ class AnalysisManager:
             "value_cols": context_value_cols,
             "dependent": analysis_context.get("dependent", dependent),
             "additional_factors": resolved_additional_factors,
+            "preprocessing_notes": preprocessing_notes,
             "kwargs": local_kwargs,
         }
             
     @staticmethod
-    def _analyze_multiple_datasets(file_path, group_col, groups, selected_datasets, value_cols,
-                                  combine_columns, width, height, dependent, compare, colors, hatches,
-                                  title, x_label, y_label, file_name, save_plot, skip_plots,
-                                  error_type, additional_factors, show_individual_lines, **kwargs):
-        """
-        Multiple dataset analysis with unified Excel output
-        """
-        all_results = {}
-        failed_datasets = {}
-        
-        print(f"Starting analysis of {len(selected_datasets)} datasets...")
-        
-        # Analyze each selected dataset
-        for i, dataset_name in enumerate(selected_datasets):
-            print(f"Analyzing dataset {i+1}/{len(selected_datasets)}: {dataset_name}")
-            
-            try:
-                # Analyze single dataset
-                result = AnalysisManager._analyze_single_dataset(
-                    file_path=file_path,
-                    group_col=group_col,
-                    groups=groups,
-                    sheet_name=dataset_name,
-                    value_cols=value_cols,
-                    combine_columns=combine_columns,
-                    width=width,
-                    height=height,
-                    dependent=dependent,
-                    compare=compare,
-                    colors=colors,
-                    hatches=hatches,
-                    title=f"{title} - {dataset_name}" if title else dataset_name,
-                    x_label=x_label,
-                    y_label=y_label,
-                    file_name=f"{file_name}_{dataset_name}" if file_name else dataset_name,
-                    save_plot=save_plot,
-                    skip_plots=skip_plots,
-                    error_type=error_type,
-                    dataset_name=dataset_name,
-                    additional_factors=additional_factors,
-                    show_individual_lines=show_individual_lines,
-                    dialog_progress=f"({i+1}/{len(selected_datasets)})",
-                    dialog_column=dataset_name,
-                    **kwargs
-                )
-                
-                if "error" in result:
-                    failed_datasets[dataset_name] = result["error"]
-                    print(f"ERROR analyzing {dataset_name}: {result['error']}")
-                else:
-                    all_results[dataset_name] = result
-                    print(f"Successfully analyzed {dataset_name}")
-                    
-            except Exception as e:
-                error_msg = f"Exception during analysis: {str(e)}"
-                failed_datasets[dataset_name] = error_msg
-                print(f"ERROR analyzing {dataset_name}: {error_msg}")
-        
-        # Apply FDR correction (Benjamini-Hochberg) across all primary p-values
-        if len(all_results) >= 2:
-            try:
-                multipletests = get_statsmodels_multitest()
-                dataset_names_ordered = list(all_results.keys())
-                raw_ps = [all_results[n].get("p_value") for n in dataset_names_ordered]
-                valid_indices = [i for i, p in enumerate(raw_ps) if isinstance(p, (float, int))]
-                if len(valid_indices) >= 2:
-                    valid_ps = [raw_ps[i] for i in valid_indices]
-                    _, p_adj, _, _ = multipletests(valid_ps, method='fdr_bh')
-                    for rank, ds_idx in enumerate(valid_indices):
-                        all_results[dataset_names_ordered[ds_idx]]["p_value_fdr"] = float(p_adj[rank])
-                    print(f"FDR correction applied across {len(valid_indices)} datasets.")
-                    # Trace: FDR-Korrektur (2e) — write into first dataset's trace
-                    try:
-                        from core.methodology_trace import MethodologyTrace as _MT
-                        _first_ds = dataset_names_ordered[valid_indices[0]]
-                        _fdr_trace = all_results[_first_ds].get("methodology_trace") or _MT()
-                        _m = len(valid_indices)
-                        _fdr_trace.add(5, "Multiple Testing Correction",
-                                       f"Benjamini-Hochberg FDR correction applied (m = {_m} tests).",
-                                       detail=(f"To control the false discovery rate across {_m} simultaneously "
-                                               "tested dependent variables, Benjamini-Hochberg (BH) correction "
-                                               "was applied to all raw p-values. Adjusted p-values (q-values) "
-                                               "are reported alongside uncorrected values. The FDR family "
-                                               f"included all {_m} successfully analysed outcome variables."))
-                        all_results[_first_ds]["methodology_trace"] = _fdr_trace
-                    except Exception:
-                        pass  # FDR trace is non-critical
-            except Exception as e:
-                print(f"Warning: FDR correction failed: {str(e)}")
+    def _merge_preprocessing_notes(results, notes):
+        """Route preprocessing data-loss notes (dropped non-numeric cells,
+        missing group labels) into ``results["data_health"]["warnings"]`` -- the
+        one channel the report renders (report_summaries._build_data_health_warnings
+        -> _build_assumption_summary). Extends any existing DataHealthScanner
+        warnings rather than clobbering them; de-duplicates; no-ops when clean."""
+        if not notes:
+            return
+        _dh = results.get("data_health")
+        if not isinstance(_dh, dict):
+            _dh = {"warnings": [], "checks": {}}
+        _warns = list(_dh.get("warnings") or [])
+        for _note in notes:
+            if _note not in _warns:
+                _warns.append(_note)
+        _dh["warnings"] = _warns
+        results["data_health"] = _dh
 
-        # Create combined Excel output
-        if all_results:
-            base_name = file_name if file_name else "multi_dataset_analysis"
-            excel_path = f"{base_name}_combined_results.xlsx"
-            
+    @staticmethod
+    def apply_across_dataset_fdr(all_results):
+        """Benjamini-Hochberg across the primary p-value of every dataset.
+
+        Analysing several measurement columns at once IS a multiple-testing
+        problem, and the combined report is built to show the answer: it renders
+        an "Adjusted p-value" per card and a note naming the family size, both
+        conditional on the results carrying ``p_value_fdr``.
+
+        Nothing filled that on the path users take. This correction lived inside
+        the sheet-loop reached by ``analyze(selected_datasets=...)``, which has
+        no caller in the program at all -- so a run of three measurement columns
+        reported three uncorrected p-values, measured. Its own trace text gives
+        the intent away: it says "across N simultaneously tested DEPENDENT
+        VARIABLES", which is the column loop, not the sheets it was sitting in.
+
+        Mutates the results in place, the way the caller's loop holds them, and
+        returns how many entries entered the family. Fewer than two valid
+        p-values is not a family and is left alone.
+        """
+        import math
+
+        if not isinstance(all_results, dict) or len(all_results) < 2:
+            return 0
+        try:
+            multipletests = get_statsmodels_multitest()
+            dataset_names_ordered = list(all_results.keys())
+            raw_ps = [(all_results[n] or {}).get("p_value") for n in dataset_names_ordered]
+            valid_indices = [i for i, p in enumerate(raw_ps)
+                             if isinstance(p, (float, int)) and not isinstance(p, bool)
+                             and math.isfinite(p)]
+            if len(valid_indices) < 2:
+                return 0
+            valid_ps = [raw_ps[i] for i in valid_indices]
+            _, p_adj, _, _ = multipletests(valid_ps, method='fdr_bh')
+            for rank, ds_idx in enumerate(valid_indices):
+                all_results[dataset_names_ordered[ds_idx]]["p_value_fdr"] = float(p_adj[rank])
+            logger.info(f"FDR correction applied across {len(valid_indices)} datasets.")
             try:
-                ExportDispatcher = get_export_dispatcher()
-                export_result = ExportDispatcher.export_multi_dataset_results(all_results, excel_path)
-                if export_result.get("warning"):
-                    print(f"WARNING: {export_result['warning']}")
-                print(f"Combined results saved to: {excel_path}")
-            except Exception as e:
-                print(f"Error creating combined Excel file: {str(e)}")
-        
-        # Return summary
-        return {
-            "type": "multi_dataset_analysis",
-            "successful_datasets": list(all_results.keys()),
-            "failed_datasets": failed_datasets,
-            "results": all_results,
-            "combined_excel": excel_path if all_results else None,
-            "summary": {
-                "total_datasets": len(selected_datasets),
-                "successful": len(all_results),
-                "failed": len(failed_datasets),
-                "success_rate": f"{len(all_results)/len(selected_datasets)*100:.1f}%"
-            }
-        }
-            
+                from core.methodology_trace import MethodologyTrace as _MT
+                _first_ds = dataset_names_ordered[valid_indices[0]]
+                _fdr_trace = all_results[_first_ds].get("methodology_trace") or _MT()
+                _m = len(valid_indices)
+                _fdr_trace.add(5, "Multiple Testing Correction",
+                               f"Benjamini-Hochberg FDR correction applied (m = {_m} tests).",
+                               detail=(f"To control the false discovery rate across {_m} simultaneously "
+                                       "tested dependent variables, Benjamini-Hochberg (BH) correction "
+                                       "was applied to all raw p-values. Adjusted p-values (q-values) "
+                                       "are reported alongside uncorrected values. The FDR family "
+                                       f"included all {_m} successfully analysed outcome variables."))
+                all_results[_first_ds]["methodology_trace"] = _fdr_trace
+            except Exception:
+                pass  # FDR trace is non-critical
+            return len(valid_indices)
+        except Exception as exc:
+            logger.info(f"Warning: FDR correction failed: {exc}")
+            return 0
+
     @staticmethod
     def _analyze_single_dataset(file_path, group_col, groups, sheet_name, value_cols, 
                                combine_columns, width, height, dependent, compare, colors, hatches,
@@ -417,9 +497,7 @@ class AnalysisManager:
                                show_individual_lines, **kwargs):
         
         # Get classes lazily to avoid circular imports
-        # Get classes lazily to avoid circular imports
         StatisticalTester = get_statistical_tester()
-        DataVisualizer = get_data_visualizer()
         
         # CRITICAL FIX: Ensure additional_factors is available in kwargs
         # since the advanced test logic looks for it there
@@ -444,7 +522,7 @@ class AnalysisManager:
         _test_type = kwargs.get('test', '')
         _analysis_context = kwargs.get('analysis_context', {}) or {}
         _is_continuous_analysis = _test_type in ('correlation', 'linear_regression',
-                                                   'logistic_regression', 'beta_regression',
+                                                   'logistic_regression',
                                                    'ancova', 'two_way_ancova', 'lmm')
         if _is_continuous_analysis:
             # For regression/correlation the "group_col" slot holds the predictor/factor variable
@@ -454,7 +532,6 @@ class AnalysisManager:
                 'correlation': 'Correlation',
                 'linear_regression': 'Linear Regression',
                 'logistic_regression': 'Logistic Regression',
-                'beta_regression': 'Beta Regression',
                 'ancova': 'ANCOVA',
                 'two_way_ancova': 'Two-Way ANCOVA',
                 'lmm': 'Linear Mixed Model',
@@ -498,15 +575,23 @@ class AnalysisManager:
             value_cols = prepared_inputs["value_cols"]
             dependent = prepared_inputs["dependent"]
             additional_factors = prepared_inputs["additional_factors"]
+            preprocessing_notes = prepared_inputs.get("preprocessing_notes") or []
             kwargs = prepared_inputs.get("kwargs", kwargs)
 
             # Validations and logging
             if not filtered_samples:
                 raise ValueError(f"None of the specified groups were found in the data. Available groups: {list(samples.keys())}")
 
-            for group, values in filtered_samples.items():
-                if len(values) < 1:
-                    raise ValueError(f"Group '{group}' contains no data.")
+            empty_groups = [group for group, values in filtered_samples.items() if len(values) < 1]
+            if empty_groups:
+                from statistical_testing.validators import BLOCK_MESSAGES
+                reason = BLOCK_MESSAGES["EMPTY_GROUP"].format(group=empty_groups[0])
+                analysis_log += f"\nAnalysis blocked (data quality): {reason}\n"
+                blocked = StatisticalTester.make_blocked_result(
+                    reason, code="EMPTY_GROUP", details={"empty_groups": empty_groups},
+                )
+                blocked["analysis_log"] = analysis_log
+                return blocked
 
             analysis_log += "Data imported successfully.\n"
             if not _is_continuous_analysis:
@@ -521,9 +606,9 @@ class AnalysisManager:
 
             # --- Clinical model dispatch (ANCOVA, LMM, Logistic Regression, Correlation, Linear Regression) ---
             if kwargs.get('test') in ('ancova', 'two_way_ancova', 'lmm', 'logistic_regression',
-                                      'beta_regression', 'correlation', 'linear_regression'):
+                                      'correlation', 'linear_regression'):
                 from analysis.clinical_models import (ANCOVAModel, LinearMixedModel,
-                                             LogisticRegressionModel, BetaRegressionModel,
+                                             LogisticRegressionModel,
                                              DataHealthScanner)
 
                 clinical_test = kwargs['test']
@@ -531,29 +616,85 @@ class AnalysisManager:
                 analysis_context = kwargs.get('analysis_context', {})
                 subject_column = kwargs.get('subject_column') or analysis_context.get('subject_column')
 
+                # --- Data-quality pre-flight (blocking) ---
+                # Clinical models bypass the group-based chokepoint, so a constant /
+                # empty / Inf / overflow outcome or covariate would otherwise fit a
+                # meaningless or singular model. Gate the continuous DV (skip the
+                # categorical logistic outcome) and every covariate.
+                from statistical_testing.validators import validate_outcome
+                _cm_issue = None
+                if clinical_test != 'logistic_regression':
+                    _cm_issue = validate_outcome(df[value_cols[0]], label=value_cols[0])
+                # Correlation / linear regression also depend on a non-degenerate
+                # predictor: a constant X makes r undefined (scipy returns nan) or
+                # the OLS design singular. The DV gate above never covered it, so a
+                # constant column was shipped as a fabricated "very strong (|r|=nan)"
+                # result. Gate it here for one honest block instead.
+                if _cm_issue is None and clinical_test in ('correlation', 'linear_regression'):
+                    _x_pred = analysis_context.get('x_variable')
+                    if _x_pred and _x_pred in df.columns:
+                        _cm_issue = validate_outcome(df[_x_pred], label=_x_pred)
+                if _cm_issue is None:
+                    for _cov in covariates:
+                        if _cov in df.columns:
+                            _ci = validate_outcome(df[_cov], label=_cov)
+                            if _ci is not None:
+                                _cm_issue = _ci
+                                break
+                if _cm_issue is not None:
+                    analysis_log += f"\nAnalysis blocked (data quality): {_cm_issue.message}\n"
+                    _blocked = StatisticalTester.make_blocked_result(
+                        _cm_issue.message, code=_cm_issue.code, details={"model": clinical_test},
+                    )
+                    _blocked["analysis_log"] = analysis_log
+                    return _blocked
+
                 # --- Data Health Scan (runs before model fit, non-blocking) ---
                 _model_type_map = {
                     'ancova': 'ANCOVA', 'two_way_ancova': 'ANCOVA',
                     'lmm': 'LMM', 'logistic_regression': 'LogisticRegression',
-                    'beta_regression': 'BetaRegression',
                 }
-                try:
-                    _scanner = DataHealthScanner(
-                        df=df,
-                        model_type=_model_type_map[clinical_test],
-                        dv=value_cols[0],
-                        covariates=covariates,
-                        factors=analysis_context.get('factor_columns', []),
-                        subject_col=subject_column,
-                    )
-                    _health_report = _scanner.run()
-                except Exception:
-                    _health_report = {"warnings": [], "checks": {}}
+                # correlation / linear_regression are not in the map — they get
+                # their own RegressionHealthScanner further down. Running this
+                # block for them only raised a KeyError into the except below.
+                _health_report = {"warnings": [], "checks": {}}
+                if clinical_test in _model_type_map:
+                    try:
+                        _scanner = DataHealthScanner(
+                            df=df,
+                            model_type=_model_type_map[clinical_test],
+                            dv=value_cols[0],
+                            covariates=covariates,
+                            factors=analysis_context.get('factor_columns', []),
+                            subject_col=subject_column,
+                        )
+                        _health_report = _scanner.run()
+                    except Exception as _health_exc:
+                        logger.warning(
+                            "DataHealthScanner failed for %r — the report will show no "
+                            "data-quality findings: %s", clinical_test, _health_exc,
+                            exc_info=True,
+                        )
+                        _health_report = {"warnings": [], "checks": {}}
 
                 if clinical_test in ('ancova', 'two_way_ancova'):
                     model = ANCOVAModel()
                     between_factors = analysis_context.get('between_factors') or analysis_context.get('factor_columns', [])
-                    model.fit(df, dv=value_cols[0], between_factors=between_factors, covariates=covariates)
+
+                    ancova_control = None
+                    primary_factor = between_factors[0] if between_factors else None
+                    _control_cb = kwargs.get('control_group_callback')
+                    if _control_cb and primary_factor:
+                        try:
+                            primary_levels = sorted(
+                                str(v) for v in df[primary_factor].dropna().unique()
+                            )
+                            ancova_control = _control_cb(primary_levels)
+                        except Exception as exc:
+                            logger.warning("ANCOVA control-group selection failed in core: %s", exc)
+
+                    model.fit(df, dv=value_cols[0], between_factors=between_factors,
+                              covariates=covariates, control_group=ancova_control)
                     test_results = model.as_results_dict()
 
                 elif clinical_test == 'lmm':
@@ -563,9 +704,22 @@ class AnalysisManager:
                     if not fixed_effects:
                         fixed_effects = analysis_context.get('factor_columns', [])
                     random_slope_candidate = within_factors[0] if within_factors else None
+
+                    lmm_control = None
+                    primary_factor = fixed_effects[0] if fixed_effects else None
+                    _control_cb = kwargs.get('control_group_callback')
+                    if _control_cb and primary_factor:
+                        try:
+                            primary_levels = sorted(
+                                str(v) for v in df[primary_factor].dropna().unique()
+                            )
+                            lmm_control = _control_cb(primary_levels)
+                        except Exception as exc:
+                            logger.warning("LMM control-group selection failed in core: %s", exc)
+
                     model.fit(df, dv=value_cols[0], fixed_effects=fixed_effects,
                               random_intercept=subject_column, covariates=covariates or None,
-                              random_slope=random_slope_candidate)
+                              random_slope=random_slope_candidate, alpha=0.05, control_group=lmm_control)
                     test_results = model.as_results_dict()
 
                 elif clinical_test == 'logistic_regression':
@@ -573,50 +727,6 @@ class AnalysisManager:
                     predictors = analysis_context.get('factor_columns', [])
                     model.fit(df, dv=value_cols[0], predictors=predictors, covariates=covariates or None)
                     test_results = model.as_results_dict()
-
-                elif clinical_test == 'beta_regression':
-                    from core.methodology_trace import MethodologyTrace
-                    _beta_trace = MethodologyTrace()
-                    _beta_predictors = analysis_context.get('factor_columns', [])
-                    _beta_n = int(df[value_cols[0]].dropna().count())
-                    _beta_n_pred = analysis_context.get('beta_n_predictors') or max(1, len(covariates or []) + 1)
-                    _beta_epv = analysis_context.get('beta_epv') or (_beta_n / _beta_n_pred)
-                    _beta_bias = analysis_context.get('beta_bias_corrected', _beta_epv < 10)
-                    _beta_sv = analysis_context.get('beta_sv_transformed', False)
-                    _beta_n_unique = int(df[value_cols[0]].dropna().nunique())
-
-                    if _beta_sv:
-                        _beta_trace.add(1, "Data Transformation",
-                            "Boundary values (exact 0 or 1) were present in the outcome. "
-                            "Smithson-Verkuilen transformation applied: y_adj = (y × (n−1) + 0.5) / n. "
-                            "This pushes boundary values strictly inside (0,1) as required by Beta Regression.",
-                            detail=f"n={_beta_n}")
-
-                    if _beta_bias:
-                        _beta_trace.add(2, "Test Selection",
-                            "Outcome detected as proportion (all values strictly in (0,1), "
-                            f"{_beta_n_unique} unique values). "
-                            f"EPV = {_beta_n} / {_beta_n_pred} = {_beta_epv:.1f} < 10. "
-                            "Bias-corrected Beta Regression applied to compensate for "
-                            "small sample bias (Peduzzi et al., 1996, adapted). "
-                            "Note: EPV rule was derived for logistic regression — "
-                            "interpretation should be cautious.",
-                            detail=f"EPV={_beta_epv:.1f}, n={_beta_n}, predictors={_beta_n_pred}")
-                    else:
-                        _beta_trace.add(2, "Test Selection",
-                            "Outcome detected as proportion (all values strictly in (0,1), "
-                            f"{_beta_n_unique} unique values). "
-                            f"EPV = {_beta_n} / {_beta_n_pred} = {_beta_epv:.1f} ≥ 10. "
-                            "Standard Beta Regression applied.",
-                            detail=f"EPV={_beta_epv:.1f}, n={_beta_n}, predictors={_beta_n_pred}")
-
-                    model = BetaRegressionModel()
-                    model.fit(df, dv=value_cols[0], predictors=_beta_predictors,
-                              covariates=covariates or None, bias_corrected=_beta_bias)
-                    test_results = model.as_results_dict()
-                    test_results["methodology_trace"] = _beta_trace
-                    test_results["sv_transformed"] = _beta_sv
-                    test_results["epv"] = round(_beta_epv, 2)
 
                 elif clinical_test in ('correlation', 'linear_regression'):
                     from analysis.correlation_models import (CorrelationModel, SimpleLinearRegressionModel,
@@ -646,7 +756,12 @@ class AnalysisManager:
                             covariates=covariates or None,
                         )
                         _health_report = _scanner.run()
-                    except Exception:
+                    except Exception as _health_exc:
+                        logger.warning(
+                            "RegressionHealthScanner failed for %r (x=%r, y=%r) — the "
+                            "report will show no data-quality findings: %s",
+                            clinical_test, x_col, y_col, _health_exc, exc_info=True,
+                        )
                         _health_report = {"warnings": [], "checks": {}}
 
                     if clinical_test == 'correlation':
@@ -671,11 +786,46 @@ class AnalysisManager:
                 # Attach health report to results (non-blocking)
                 test_results["data_health"] = _health_report
 
+                # A logistic fit whose own omnibus is not a number has produced
+                # no test, and its AUC, ROC curve and calibration plot come from
+                # that same unidentified model -- presenting them beside a "no
+                # result" note leaves a quotable 0.92 AUC on the page. Firth is
+                # why this blocks rather than warns: penalised likelihood exists
+                # to survive separation, so a Firth fit that still returns
+                # nothing is evidence about the design, not a numerical stumble.
+                if (clinical_test == 'logistic_regression'
+                        and not StatisticalTester._omnibus_is_usable(test_results)):
+                    _blocked = StatisticalTester.blocked_unidentified_logistic(test_results)
+                    _blocked["data_health"] = _health_report
+                    _blocked["analysis_log"] = analysis_log
+                    return _blocked
+
                 # Clinical models handle their own assumptions; skip normality/variance
                 test_info = None
                 test_recommendation = None
                 transformed_samples = filtered_samples
                 results.update(test_results)
+
+                # The same safety net the standard path applies, on the branch
+                # its own docstring already claims to cover: it names "LMM,
+                # RM/Mixed/Two-Way ANOVA, ANCOVA", and LMM and ANCOVA return
+                # from HERE, before the line that consults it. The gate above is
+                # on the INPUT -- a constant or Inf outcome never reaches a fit;
+                # nothing looked at what the fit gave back. A mixed model whose
+                # likelihood overflows returns statistic nan, p_value nan and no
+                # exception, and five fuzz seeds turned that into a 4.8 MB report
+                # with five figures drawn from a number that does not exist.
+                _cm_nf_block = StatisticalTester.nonfinite_block(results)
+                if _cm_nf_block is not None:
+                    analysis_log += ("\nAnalysis blocked (non-finite result): "
+                                     f"{_cm_nf_block['block_reason']}\n")
+                    _cm_nf_block["analysis_log"] = analysis_log
+                    return _cm_nf_block
+
+                # Import-time data loss (dropped non-numeric cells, missing group
+                # labels) applies to clinical models too -- they share the same
+                # sample chokepoint. Merge alongside the DataHealthScanner warnings.
+                AnalysisManager._merge_preprocessing_notes(results, preprocessing_notes)
 
                 # Skip the rest of the standard flow (normality check, post-hoc, etc.)
                 # Jump straight to export
@@ -684,16 +834,17 @@ class AnalysisManager:
                 # filtered_samples has no meaningful group structure — skip it to avoid the group
                 # chart and descriptive table using X-values as bogus group labels.
                 # Instead, embed raw data as named columns for the Raw Data Vault.
-                _no_group_raw = clinical_test in ('correlation', 'linear_regression', 'logistic_regression', 'beta_regression')
+                _no_group_raw = clinical_test in ('correlation', 'linear_regression', 'logistic_regression')
                 if not _no_group_raw:
                     results['raw_data'] = {g: filtered_samples[g][:] for g in groups}
                 else:
                     if clinical_test in ('correlation', 'linear_regression'):
                         _raw_col_names = [c for c in ([x_col, y_col] + (covariates or [])) if c]
                         _raw_source = analysis_df
-                    else:  # logistic_regression / beta_regression
+                    else:  # logistic_regression
                         _predictors_used = analysis_context.get('factor_columns', [])
                         _raw_col_names = [c for c in ([value_cols[0]] + _predictors_used + (covariates or [])) if c]
+                        _raw_col_names = list(dict.fromkeys(_raw_col_names))  # Make unique
                         _raw_source = df
                     _valid_raw_cols = [c for c in _raw_col_names if c in _raw_source.columns]
                     if _valid_raw_cols:
@@ -717,28 +868,56 @@ class AnalysisManager:
                     file_base = file_name
                 else:
                     file_base = "_".join(map(str, groups))
-                excel_file = f"{file_base}_results.xlsx"
+                report_file = f"{file_base}_results.html"
 
                 original_dir = os.getcwd()
                 export_result = {}
                 try:
-                    output_dir = os.path.dirname(os.path.abspath(excel_file))
+                    output_dir = os.path.dirname(os.path.abspath(report_file))
                     if output_dir:
                         os.makedirs(output_dir, exist_ok=True)
                     ExportDispatcher = get_export_dispatcher()
-                    export_result = ExportDispatcher.export_analysis_results(results, excel_file, analysis_log)
+                    export_result = ExportDispatcher.export_analysis_results(results, report_file, analysis_log)
                     if export_result.get("warning"):
-                        print(f"WARNING: {export_result['warning']}")
-                    
-                    # No excel path anymore, ignore excel path mapping
-                    analysis_log += f"\nResults were saved to {excel_file} (HTML instead of Excel).\n"
+                        logger.warning(f"WARNING: {export_result['warning']}")
+
+                    analysis_log += f"\nResults were saved to {report_file}.\n"
                 except Exception as export_error:
-                    print(f"Error exporting: {export_error}")
+                    logger.error(f"Error exporting: {export_error}")
+                    results["export_warning"] = str(export_error)
                 finally:
                     os.chdir(original_dir)
 
                 results["analysis_log"] = analysis_log
                 return results
+
+            # Central data-quality pre-flight gate. Catches NaN/Inf, zero-variance,
+            # overflow risk, constant paired differences, too-few-groups, n<min —
+            # turning pathological input into a clean labeled block instead of a
+            # crash or a silently-wrong result (e.g. zero-variance Welch -> p=1.0).
+            # Advanced df-based designs are validated in their own pipeline.
+            if kwargs.get('test') not in ['mixed_anova', 'two_way_anova', 'repeated_measures_anova']:
+                from statistical_testing.validators import validate_samples_for_test
+                _quality = validate_samples_for_test(filtered_samples, groups, dependent=dependent)
+                if _quality.blocking_issue is not None:
+                    _reason = _quality.blocking_issue.message
+                    analysis_log += f"\nAnalysis blocked (data quality): {_reason}\n"
+                    _blocked = StatisticalTester.make_blocked_result(
+                        _reason,
+                        code=_quality.blocking_issue.code,
+                        details={"groups": [str(g) for g in groups]},
+                        warnings=_quality.warnings,
+                    )
+                    _blocked["analysis_log"] = analysis_log
+                    return _blocked
+
+            # prepare_advanced_test extracts its own samples from the frame and
+            # derives transformed_samples from them, so those two pair by
+            # construction. The raw-data table needs that pairing, so the raw
+            # half travels alongside the transformed one from here on. Bound
+            # before the branch, not inside it, so no path can reach the write
+            # site without it.
+            _advanced_raw_samples = None
 
             # For advanced tests that use prepare_advanced_test, skip the normality check here
             # as it will be handled in the advanced test flow
@@ -754,9 +933,6 @@ class AnalysisManager:
                     # differences, not of pooled OLS residuals (B1).
                     model_type = "paired" if dependent else "ttest"
                     formula = "Value ~ C(Group)"
-                elif len(groups) > 2:
-                    model_type = "oneway"
-                    formula = "Value ~ C(Group)"
                 else:
                     model_type = "oneway"
                     formula = "Value ~ C(Group)"
@@ -771,8 +947,8 @@ class AnalysisManager:
                     formula=formula,
                     model_type=model_type
                 )
-            print(f"DEBUG: Test recommendation is '{test_recommendation}'")
-            print(f"DEBUG: Test info transformation: '{test_info.get('transformation') if test_info else 'N/A'}'")
+            logger.debug(f"DEBUG: Test recommendation is '{test_recommendation}'")
+            logger.debug(f"DEBUG: Test info transformation: '{test_info.get('transformation') if test_info else 'N/A'}'")
 
             # Write test recommendation to log (only if we have one)
             if test_recommendation:
@@ -785,9 +961,46 @@ class AnalysisManager:
                     error_message = "Error validating dependent data:\n" + "\n".join(validation["messages"])
                     analysis_log += f"\n{error_message}\n"
                     if not kwargs.get('force_continue', False):
-                        print(f"WARNING: {error_message}")
+                        logger.warning(f"WARNING: {error_message}")
                         analysis_log += "\nAnalysis continues with warning, results may be unreliable."
                         
+
+            # Define UI callbacks for advanced post-hoc engine to preserve headless compute
+            def _posthoc_cb(test_name, dv_col, def_method):
+                from analysis.stats_functions import UIDialogManager
+                return UIDialogManager.select_posthoc_test_dialog(
+                    parent=None, progress_text=f"({test_name})", column_name=dv_col, default_method=def_method
+                )
+
+            def _control_cb(group_list):
+                from analysis.stats_functions import UIDialogManager
+                return UIDialogManager.select_control_group_dialog(parent=None, groups=group_list)
+
+            def _custom_pairs_cb(all_pairs, checked_default=False):
+                try:
+                    import sys
+                    from PyQt5.QtWidgets import QApplication
+                    from ui.dialogs.comparison_selection_dialog import ComparisonSelectionDialog
+                    app = QApplication.instance()
+                    if app is None:
+                        app = QApplication(sys.argv)
+                    dialog = ComparisonSelectionDialog(all_pairs, checked_by_default=checked_default)
+                    if dialog.exec_() == dialog.Accepted:
+                        chosen = dialog.get_selected_comparisons()
+                        return chosen if chosen else all_pairs
+                    # Cancelled -> abort the whole analysis, consistent with the
+                    # transformation / post-hoc dialogs (was a silent "select all
+                    # pairs" default). AnalysisCancelledError is a BaseException, so
+                    # the except-Exception below does not swallow it.
+                    raise AnalysisCancelledError(
+                        "Comparison selection cancelled — analysis aborted."
+                    )
+                except Exception as exc:
+                    # Infrastructure failure (dialog could not be shown) is NOT a
+                    # user cancel: fall back to all pairs rather than aborting, but
+                    # logged (already warned) so it is not invisible.
+                    logger.warning("Could not show custom pairs dialog: %s", exc)
+                    return all_pairs
 
             # Perform the appropriate statistical test - only call ONCE
             if kwargs.get('test') == 'mixed_anova':
@@ -796,13 +1009,15 @@ class AnalysisManager:
                 if len(additional_factors) >= 2:
                     between_factor, within_factor = additional_factors[0], additional_factors[1]
                 else:
-                    return {"error": "Mixed ANOVA requires two factors (between and within)"}
+                    from analysis.statisticaltester import StatisticalTester
+                    return StatisticalTester.make_blocked_result(code="INVALID_DESIGN", reason="Mixed ANOVA requires two factors (between and within)")
                 # Step 3: Call prepare_advanced_test first
                 prep = StatisticalTester.prepare_advanced_test(
                     df, 'mixed_anova', value_cols[0], subject_column, [between_factor], [within_factor]
                 )
                 if "error" in prep:
-                    return prep  # or handle error
+                    from analysis.statisticaltester import StatisticalTester
+                    return StatisticalTester.make_blocked_result("PREP_ERROR", prep["error"])
 
                 # Step 4: Pass outputs to perform_advanced_test
                 results = StatisticalTester.perform_advanced_test(
@@ -818,18 +1033,22 @@ class AnalysisManager:
                     test_info=prep["test_info"],
                     transform_fn=None,
                     force_parametric=kwargs.get('force_parametric', False),
-                    file_name=file_name
+                    file_name=file_name,
+                    posthoc_method_callback=_posthoc_cb,
+                    control_group_callback=_control_cb,
+                    custom_pairs_callback=_custom_pairs_cb
                 )
                 # Get the transformation type from the test_info
                 requested_transform = prep["test_info"].get("transformation", "None")
-                print(f"DEBUG: Requested transformation: {requested_transform}")
-                print(f"DEBUG: Applied transformation: {results.get('transformation')}")
+                logger.debug(f"DEBUG: Requested transformation: {requested_transform}")
+                logger.debug(f"DEBUG: Applied transformation: {results.get('transformation')}")
                 # For consistency with the rest of the code, assign results to test_results
                 test_results = results
                 # Also extract the test_info and other variables for the rest of the code
                 test_info = prep["test_info"]
                 test_recommendation = prep["recommendation"]
                 transformed_samples = prep["transformed_samples"]
+                _advanced_raw_samples = prep["samples"]
             elif kwargs.get('test') == 'two_way_anova':
                 between_factors = kwargs.get('additional_factors', [])
                 # Step 3: Call prepare_advanced_test first
@@ -837,7 +1056,8 @@ class AnalysisManager:
                     df, 'two_way_anova', value_cols[0], None, between_factors, None
                 )
                 if "error" in prep:
-                    return prep  # or handle error
+                    from analysis.statisticaltester import StatisticalTester
+                    return StatisticalTester.make_blocked_result("PREP_ERROR", prep["error"])
 
                 # Step 4: Pass outputs to perform_advanced_test
                 results = StatisticalTester.perform_advanced_test(
@@ -853,18 +1073,22 @@ class AnalysisManager:
                     test_info=prep["test_info"],
                     transform_fn=None,
                     force_parametric=kwargs.get('force_parametric', False),
-                    file_name=file_name
+                    file_name=file_name,
+                    posthoc_method_callback=_posthoc_cb,
+                    control_group_callback=_control_cb,
+                    custom_pairs_callback=_custom_pairs_cb
                 )
                 # Get the transformation type from the test_info
                 requested_transform = prep["test_info"].get("transformation", "None")
-                print(f"DEBUG: Requested transformation: {requested_transform}")
-                print(f"DEBUG: Applied transformation: {results.get('transformation')}")
+                logger.debug(f"DEBUG: Requested transformation: {requested_transform}")
+                logger.debug(f"DEBUG: Applied transformation: {results.get('transformation')}")
                 # For consistency with the rest of the code, assign results to test_results
                 test_results = results
                 # Also extract the test_info and other variables for the rest of the code
                 test_info = prep["test_info"]
                 test_recommendation = prep["recommendation"]
                 transformed_samples = prep["transformed_samples"]
+                _advanced_raw_samples = prep["samples"]
             elif kwargs.get('test') == 'repeated_measures_anova':
                 additional_factors = kwargs.get('additional_factors', [])
                 subject_column = kwargs.get('subject_column') or kwargs.get('analysis_context', {}).get('subject_column') or 'Subject'
@@ -877,7 +1101,8 @@ class AnalysisManager:
                     df, 'repeated_measures_anova', value_cols[0], subject_column, None, [within_factor]
                 )
                 if "error" in prep:
-                    return prep  # or handle error
+                    from analysis.statisticaltester import StatisticalTester
+                    return StatisticalTester.make_blocked_result("PREP_ERROR", prep["error"])
 
                 # Step 4: Pass outputs to perform_advanced_test
                 results = StatisticalTester.perform_advanced_test(
@@ -893,18 +1118,22 @@ class AnalysisManager:
                     test_info=prep["test_info"],
                     transform_fn=None,
                     force_parametric=kwargs.get('force_parametric', False),
-                    file_name=file_name
+                    file_name=file_name,
+                    posthoc_method_callback=_posthoc_cb,
+                    control_group_callback=_control_cb,
+                    custom_pairs_callback=_custom_pairs_cb
                 )
                 # Get the transformation type from the test_info
                 requested_transform = prep["test_info"].get("transformation", "None")
-                print(f"DEBUG: Requested transformation: {requested_transform}")
-                print(f"DEBUG: Applied transformation: {results.get('transformation')}")
+                logger.debug(f"DEBUG: Requested transformation: {requested_transform}")
+                logger.debug(f"DEBUG: Applied transformation: {results.get('transformation')}")
                 # For consistency with the rest of the code, assign results to test_results
                 test_results = results
                 # Also extract the test_info and other variables for the rest of the code
                 test_info = prep["test_info"]
                 test_recommendation = prep["recommendation"]
                 transformed_samples = prep["transformed_samples"]
+                _advanced_raw_samples = prep["samples"]
             else:
                 # Standard path for simple tests
                 test_results = StatisticalTester.perform_statistical_test(
@@ -955,13 +1184,14 @@ class AnalysisManager:
                     analysis_log += "\nTransformation: No transformation performed.\n"
 
             posthoc_results = None
+            posthoc_choice = None
 
             if test_results is not None and test_results.get('p_value') is not None and test_results['p_value'] < 0.05 and len(groups) > 2:
                 # Significant result: perform post-hoc tests
                 valid_groups = [g for g in groups if g in transformed_samples and len(transformed_samples[g]) > 0]
-                print("DEBUG: valid_groups after filter:", valid_groups)
-                print("DEBUG: transformed_samples:", {g: len(transformed_samples[g]) for g in transformed_samples})
-                print("DEBUG: original_samples:", {g: len(filtered_samples[g]) for g in filtered_samples})
+                logger.debug("DEBUG: valid_groups after filter: %s", valid_groups)
+                logger.debug("DEBUG: transformed_samples: %s", {g: len(transformed_samples[g]) for g in transformed_samples})
+                logger.debug("DEBUG: original_samples: %s", {g: len(filtered_samples[g]) for g in filtered_samples})
 
                 test_name = test_results.get('test', '').lower()
 
@@ -974,7 +1204,7 @@ class AnalysisManager:
                 if not test_results.get('pairwise_comparisons'):
                     # Let the perform_refactored_posthoc_testing function handle dialog selection for all tests
                     if 'kruskal' in test_name or 'friedman' in test_name or test_recommendation == 'non_parametric':
-                        print("DEBUG: Significant non-parametric test (section 2), calling perform_refactored_posthoc_testing without preset posthoc_choice")
+                        logger.debug("DEBUG: Significant non-parametric test (section 2), calling perform_refactored_posthoc_testing without preset posthoc_choice")
                         posthoc_results = StatisticalTester.perform_refactored_posthoc_testing(
                             valid_groups,
                             transformed_samples,
@@ -999,36 +1229,53 @@ class AnalysisManager:
                                     # Import required modules
                                     stats = get_scipy_stats()
                                     multipletests = get_statsmodels_multitest()
-                                    
-                                    # Paired t-tests for the selected pairs
+
+                                    # Pair type follows the DESIGN, not the option name.
+                                    # This inline handler is reached from the one-way
+                                    # dialog, where the groups are independent: a paired
+                                    # t-test would pair row i of one group with row i of
+                                    # the other (order-dependent, and it raises on
+                                    # unequal n). posthoc_fallback fixed its own copy the
+                                    # same way; this duplicate had been left unguarded.
+                                    _paired = bool(dependent)
+                                    _equal_var = test_recommendation != "welch"
+                                    if _paired:
+                                        _pair_label = "Paired t-test (Holm-Bonferroni)"
+                                    elif _equal_var:
+                                        _pair_label = "Independent t-test (Holm-Bonferroni)"
+                                    else:
+                                        _pair_label = "Welch's t-test (Holm-Bonferroni)"
+
                                     pvals, stats_list = [], []
                                     for g1, g2 in pairs:
                                         x, y = np.array(transformed_samples[g1]), np.array(transformed_samples[g2])
-                                        tstat, p = stats.ttest_rel(x, y)
+                                        if _paired:
+                                            tstat, p = stats.ttest_rel(x, y)
+                                        else:
+                                            tstat, p = stats.ttest_ind(x, y, equal_var=_equal_var)
                                         stats_list.append(tstat)
                                         pvals.append(p)
-                                        # Holm–Šidák correction
-                                    # C3b: Holm-Bonferroni controls FWER correctly for
-                                    # dependent pairwise comparisons (Holm-Šidák assumed
-                                    # independence, which is violated here).
+                                    # C3b: Holm-Bonferroni controls FWER correctly under
+                                    # arbitrary dependence (Holm-Šidák assumes an
+                                    # independence these pairwise contrasts do not have).
                                     reject, p_adj, _, _ = multipletests(pvals, alpha=0.05, method='holm')
 
                                     # Create results in the same format as other post-hoc tests
                                     posthoc_results = {
-                                        "posthoc_test": "Custom paired t-tests (Holm-Bonferroni)",
+                                        "posthoc_test": f"Custom {'paired' if _paired else 'independent'} t-tests (Holm-Bonferroni)",
                                         "pairwise_comparisons": [],
                                         "error": None
                                     }
 
                                     # Collect results
                                     for i, (g1, g2) in enumerate(pairs):
-                                        ci = PostHocStatistics.calculate_ci_mean_diff(transformed_samples[g1], transformed_samples[g2], alpha=0.05, paired=True)
-                                        d = PostHocStatistics.calculate_cohens_d(transformed_samples[g1], transformed_samples[g2], paired=True)
+                                        ci = PostHocStatistics.calculate_ci_mean_diff(transformed_samples[g1], transformed_samples[g2], alpha=0.05, paired=_paired)
+                                        d = PostHocStatistics.calculate_cohens_d(transformed_samples[g1], transformed_samples[g2], paired=_paired)
                                         PostHocAnalyzer.add_comparison(
                                             posthoc_results,
                                             group1=g1,
                                             group2=g2,
-                                            test="Paired t-test (Holm-Bonferroni)",
+                                            test=_pair_label,
                                             p_value=p_adj[i],
                                             statistic=stats_list[i],
                                             corrected=True,
@@ -1045,24 +1292,29 @@ class AnalysisManager:
                                         "error": None
                                     }
                             else:
-                                # Dunnett needs a control group first; then this
-                                # plus games_howell/tukey all run via the refactored
-                                # post-hoc function.
-                                if posthoc_choice == "dunnett":
-                                    control_group = UIDialogManager.select_control_group_dialog(valid_groups)
+                                # Dunnett needs a control group; the refactored
+                                # post-hoc function prompts for it internally and
+                                # falls back to Games-Howell if that selection is
+                                # cancelled. Do NOT pre-prompt here: passing the
+                                # result back in would either double-prompt or, with
+                                # the old groups[0]-on-cancel dialog, silently run
+                                # Dunnett against an arbitrary control. control_group
+                                # is None here (see init above) unless already set.
                                 posthoc_results = StatisticalTester.perform_refactored_posthoc_testing(
                                     valid_groups, transformed_samples, test_recommendation,
                                     alpha=0.05, posthoc_choice=posthoc_choice, control_group=control_group
                                 )
                         else:
-                            # User cancelled the dialog (or chose "none"): no
-                            # fallback is forced — the user declined post-hoc, so
-                            # the report omits pairwise comparisons.
-                            posthoc_results = {
-                                "posthoc_test": "No post-hoc tests performed (declined by user)",
-                                "pairwise_comparisons": [],
-                                "error": None,
-                            }
+                            # Reaching here means posthoc_choice is falsy: the user
+                            # CANCELLED the post-hoc dialog (it only ever returns a
+                            # method name or None -- it offers no "none" option).
+                            # Per product decision, cancelling post-hoc aborts the
+                            # whole analysis. Raise here, before the report is
+                            # exported below, so no results, no report file, and no
+                            # confetti reach the user.
+                            raise AnalysisCancelledError(
+                                "Post-hoc selection cancelled — analysis aborted."
+                            )
                     # Process results uniformly - ONLY ONCE here!
                     if posthoc_results:                      
                         if posthoc_choice == "dunnett" and "control_group" in posthoc_results:
@@ -1071,31 +1323,31 @@ class AnalysisManager:
                             import copy
                             test_results['pairwise_comparisons'] = copy.deepcopy(posthoc_results['pairwise_comparisons'])
       
-                            print("DEBUG: Copied pairwise_comparisons from posthoc_results to test_results")
-                            print(f"DEBUG: Same object? {posthoc_results.get('pairwise_comparisons', None) is test_results.get('pairwise_comparisons', None)}")
+                            logger.debug("DEBUG: Copied pairwise_comparisons from posthoc_results to test_results")
+                            logger.debug(f"DEBUG: Same object? {posthoc_results.get('pairwise_comparisons', None) is test_results.get('pairwise_comparisons', None)}")
 
                         test_results["posthoc_test"] = posthoc_results.get("posthoc_test")
 
                         # Add debug print to verify
-                        print(f"DEBUG: posthoc_results['pairwise_comparisons'] length: {len(posthoc_results.get('pairwise_comparisons', []))}")
+                        logger.debug(f"DEBUG: posthoc_results['pairwise_comparisons'] length: {len(posthoc_results.get('pairwise_comparisons', []))}")
 
                     # INSERT DEBUG OUTPUTS HERE
-                    print(f"DEBUG: Pairwise comparisons after post-hoc: {len(test_results.get('pairwise_comparisons', []))}")
+                    logger.debug(f"DEBUG: Pairwise comparisons after post-hoc: {len(test_results.get('pairwise_comparisons', []))}")
                     
             # After post-hoc processing, before test_results.update:
-            print(f"DEBUG: Post-hoc results: {posthoc_results.keys() if posthoc_results else None}")
+            logger.debug(f"DEBUG: Post-hoc results: {posthoc_results.keys() if posthoc_results else None}")
             if posthoc_results and 'error' in posthoc_results and posthoc_results['error']:
-                print(f"DEBUG: Post-hoc ERROR: {posthoc_results['error']}")
-            print(f"DEBUG: test_results pairwise_comparisons: {len(test_results.get('pairwise_comparisons', []))} items")        
+                logger.debug(f"DEBUG: Post-hoc ERROR: {posthoc_results['error']}")
+            logger.debug(f"DEBUG: test_results pairwise_comparisons: {len(test_results.get('pairwise_comparisons', []))} items")        
 
 
             # Make sure normality and variance test results are explicitly set (only if available)
-            # Convert new test_info structure to the expected format for Excel export
+            # Convert new test_info structure to the expected format for report export
             if test_info:
-                print(f"DEBUG TEST_INFO STRUCTURE: {test_info}")
-                print(f"DEBUG TEST_INFO KEYS: {list(test_info.keys())}")
+                logger.debug(f"DEBUG TEST_INFO STRUCTURE: {test_info}")
+                logger.debug(f"DEBUG TEST_INFO KEYS: {list(test_info.keys())}")
                 if "pre_transformation" in test_info:
-                    print(f"DEBUG PRE_TRANSFORMATION: {test_info['pre_transformation']}")
+                    logger.debug(f"DEBUG PRE_TRANSFORMATION: {test_info['pre_transformation']}")
                 
                 # Convert new residuals-based test info to compatible format
                 normality_tests_compat = {}
@@ -1134,7 +1386,7 @@ class AnalysisManager:
                         "p_value": pre_var.get("p_value"),
                         "equal_variance": pre_var.get("equal_variance", False)
                     })
-                    print(f"DEBUG VARIANCE_TEST_COMPAT: {variance_test_compat}")
+                    logger.debug(f"DEBUG VARIANCE_TEST_COMPAT: {variance_test_compat}")
                 
                 if transformation_applied and "post_transformation" in test_info and "variance" in test_info["post_transformation"]:
                     post_var = test_info["post_transformation"]["variance"]
@@ -1147,13 +1399,13 @@ class AnalysisManager:
                 results["normality_tests"] = normality_tests_compat
                 results["variance_test"] = variance_test_compat
                 
-                print(f"DEBUG FINAL normality_tests: {results['normality_tests']}")
-                print(f"DEBUG FINAL variance_test: {results['variance_test']}")
+                logger.debug(f"DEBUG FINAL normality_tests: {results['normality_tests']}")
+                logger.debug(f"DEBUG FINAL variance_test: {results['variance_test']}")
                 
                 # Add test_info for complete information
                 results["test_info"] = test_info
             else:
-                print("DEBUG: test_info is None or empty!")
+                logger.debug("DEBUG: test_info is None or empty!")
 
             # Make sure test_type/recommendation is set (only if available):
             if test_recommendation:
@@ -1161,7 +1413,26 @@ class AnalysisManager:
 
             # Merge important transformation and test info into results
             results.update(test_results)
-            
+            # Surface preprocessing data loss (dropped non-numeric cells, missing
+            # group labels) in the persistent report via the data_health channel
+            # so it is no longer a silent, report-invisible loss.
+            AnalysisManager._merge_preprocessing_notes(results, preprocessing_notes)
+
+            # Ensure analysis_context is available in the common results path
+            # (clinical branch assigns it at line 640; non-clinical branch only
+            # at line 1516 — too late for the _upgraded_from_twoway check below).
+            analysis_context = kwargs.get('analysis_context', {})
+
+            # Universal safety net: advanced engines (LMM, RM/Mixed/Two-Way ANOVA,
+            # ANCOVA) bypass the per-sample chokepoint and can emit a non-finite
+            # statistic / p-value on a degenerate design without raising. Block it
+            # instead of presenting a mathematically-meaningless result as valid.
+            _nf_block = StatisticalTester.nonfinite_block(results)
+            if _nf_block is not None:
+                analysis_log += f"\nAnalysis blocked (non-finite result): {_nf_block['block_reason']}\n"
+                _nf_block["analysis_log"] = analysis_log
+                return _nf_block
+
             # Store normality_tests and variance_test before they get overwritten
             preserved_normality = results.get("normality_tests", {})
             preserved_variance = results.get("variance_test", {})
@@ -1200,7 +1471,7 @@ class AnalysisManager:
                 results["variance_test"] = {}
 
             # Nach results.update(test_results):
-            print(f"DEBUG: results pairwise_comparisons: {len(results.get('pairwise_comparisons', []))} items")            
+            logger.debug(f"DEBUG: results pairwise_comparisons: {len(results.get('pairwise_comparisons', []))} items")            
 
             if test_info and "boxcox_lambda" in test_info:
                 results["boxcox_lambda"] = test_info["boxcox_lambda"]
@@ -1264,12 +1535,89 @@ class AnalysisManager:
             else:
                 file_base = "_".join(map(str, groups))
 
-            excel_file = f"{file_base}_results.xlsx"
-            
             results['groups'] = groups
-            results['raw_data'] = {g: filtered_samples[g][:] for g in groups}
-            if results.get('transformation', 'None') != 'None':
-                results['raw_data_transformed'] = {g: transformed_samples[g][:] for g in groups}
+            _safe_groups = [g for g in groups if g in filtered_samples]
+            if not _safe_groups: _safe_groups = list(filtered_samples.keys())
+            # The raw and transformed dicts are printed side by side, one row
+            # per index, so a row only means anything if both halves came out
+            # of the same extraction. Advanced designs get their transformed
+            # samples from prepare_advanced_test, which extracts them from the
+            # frame itself; taking the raw half from this function's own,
+            # separately-extracted copy left the two holding the same values in
+            # a different order, and the report paired each measurement with
+            # another subject's transformed value (RM report bug 2026-08-27).
+            # Measured on one repeated-measures run: 24 of 28 printed rows.
+            #
+            # So pair the transformed dict with the raw dict it was actually
+            # derived from. Only when that dict describes exactly the same
+            # groups -- otherwise nothing downstream would recognise the keys,
+            # and a mismatched key set makes the table drop the transformed
+            # column rather than mispair it, which is already safe.
+            _pair_source = filtered_samples
+            if (isinstance(_advanced_raw_samples, dict)
+                    and isinstance(transformed_samples, dict)
+                    and set(_advanced_raw_samples) == set(_safe_groups)
+                    and set(_advanced_raw_samples) == set(transformed_samples)
+                    and all(len(_advanced_raw_samples[g]) == len(transformed_samples[g])
+                            for g in _advanced_raw_samples)):
+                _pair_source = _advanced_raw_samples
+            results['raw_data'] = {g: list(_pair_source[g]) for g in _safe_groups}
+            # Only expose transformed raw data when the transformation actually
+            # changed the values. The old `results.get('transformation','None')
+            # != 'None'` guard was broken: with no transformation the value is
+            # Python None (not the string 'None'), so `None != 'None'` was always
+            # True and a Transformed column identical to Raw was emitted on every
+            # untransformed analysis (report bug 2026-08). Keeps the _safe_ts_groups
+            # robustness added upstream.
+            #
+            # And only when it lines up with the raw column it is printed beside.
+            # The two come from different extractions, and they disagree about
+            # missing values: one drops a NaN row, the other keeps it. On a frame
+            # with scattered NaNs a cell held 5 raw values against 8 transformed
+            # ones, so every printed row after the first gap named the wrong
+            # measurement and three had no partner at all. The same difference
+            # also fooled the change-gate above -- the two dicts differ, but by
+            # NaN handling rather than by a transformation, so a Transformed
+            # column was emitted for a run that transformed nothing.
+            #
+            # Dropped rather than realigned, for the same reason the subject
+            # labels are: guessing which value belongs to which is what produced
+            # the defect. An absent column says nothing; a misaligned one says
+            # something false.
+            from statistical_testing.validators import (
+                drop_unpaired_transformed, grouped_samples_changed,
+                transformed_pairs_up)
+            if (isinstance(transformed_samples, dict)
+                    and grouped_samples_changed(filtered_samples, transformed_samples, groups)):
+                _safe_ts_groups = [g for g in groups if g in transformed_samples]
+                if not _safe_ts_groups: _safe_ts_groups = list(transformed_samples.keys())
+                _pairs_up = transformed_pairs_up(
+                    results['raw_data'], transformed_samples, _safe_ts_groups)
+                if _pairs_up:
+                    results['raw_data_transformed'] = {
+                        g: transformed_samples[g][:] for g in _safe_ts_groups}
+                else:
+                    logger.warning(
+                        "transformed values do not line up with the raw ones "
+                        "(%s); the Transformed column is dropped rather than "
+                        "printed against the wrong measurements.",
+                        {g: (len(results['raw_data'].get(g, [])),
+                             len(transformed_samples[g])) for g in _safe_ts_groups},
+                    )
+
+            # And whatever wrote it -- this branch, the tester, either branch of
+            # the advanced pipeline -- the column is printable only against the
+            # raw dict that ENDED UP in the result. raw_data is chosen just
+            # above, from one of two extractions, so an upstream write that
+            # paired with the other one has to be re-checked here rather than
+            # trusted: guarding the writers alone left seed 51307 printing a
+            # Box-Cox column against a raw column of a different length, because
+            # the pairing was broken by the choice rather than by the write.
+            for _dropped in drop_unpaired_transformed(results):
+                logger.warning(
+                    "%s does not line up with the raw values that were kept; "
+                    "the Transformed column is dropped rather than printed "
+                    "against the wrong measurements.", _dropped)
             analysis_context = kwargs.get('analysis_context', {})
             results['selected_groups'] = analysis_context.get('selected_groups') or groups
             results['group_column'] = analysis_context.get('selected_group_column') or analysis_context.get('factor_columns', [None])[0] or group_col
@@ -1285,301 +1633,88 @@ class AnalysisManager:
             if "variance_test" not in results:
                 results["variance_homogeneity_test"] = test_info.get("variance_test", {}) if test_info else {}    
 
-            # Add debug statements before Excel export
-            print("DEBUG: Assumption tests before Excel export:")
-            print("  Normality tests:", results.get("normality_tests", {}))
-            print("  Variance tests:", results.get("variance_test", {}))
-            print("  Test recommendation:", test_recommendation)
-                
-            # Export to Excel
+            # Add debug statements before report export
+            logger.debug("DEBUG: Assumption tests before report export:")
+            logger.info("  Normality tests: %s", results.get("normality_tests", {}))
+            logger.info("  Variance tests: %s", results.get("variance_test", {}))
+            logger.info("  Test recommendation: %s", test_recommendation)
+
+            # Export the HTML report
             original_dir = os.getcwd()
-            print(f"DEBUG: Directory before Excel export: {original_dir}")
-            
-            # Use absolute path for Excel file
+            logger.debug(f"DEBUG: Directory before report export: {original_dir}")
+
+            # Use absolute path for the report file
             from analysis.stats_functions import get_output_path
-            excel_file = get_output_path(file_base, "xlsx") 
-            
-            ExportDispatcher = get_export_dispatcher()
-            export_result = ExportDispatcher.export_analysis_results(results, excel_file, analysis_log)
-            if export_result.get("warning"):
-                print(f"WARNING: {export_result['warning']}")
-            
-            # No excel path anymore, ignore excel path mapping
-            analysis_log += f"\nResults were saved to {excel_file} (HTML instead of Excel).\n"
-            
-            # Ensure we're back in the original directory
-            if os.getcwd() != original_dir:
-                os.chdir(original_dir)
-                print(f"DEBUG: Restored original directory: {original_dir}")
+            report_file = get_output_path(file_base, "html")
 
-            # Create the plot, if not skipped
-            if not skip_plots:
-                print(f"DEBUG: Current working directory before export: {os.getcwd()}")
-                pairwise_comparisons = results.get('pairwise_comparisons', None)
-                
-                # Get plot type from kwargs, default to 'Bar'
-                plot_type = kwargs.get('plot_type', 'Bar')
-                print(f"DEBUG: Creating plot of type: {plot_type}")
-                
-                # Create a clean kwargs dict without parameters that plotting methods don't accept
-                # Only exclude parameters that definitely don't exist in plot methods
-                plot_kwargs = {k: v for k, v in kwargs.items() if k not in [
-                    'plot_type', 'file_path', 'group_col', 'groups', 'sheet_name',
-                    'value_cols', 'combine_columns', 'skip_plots',
-                    'dependent', 'show_individual_lines', 'compare', 'additional_factors',
-                    'dataset_name', 'dialog_column', 'dialog_progress',
-                    # Parameters that don't exist in plot_bar method
-                    'aspect',
-                    'refline', 'panel_labels', 'value_annotations', 'significance_mode',
-                    'embed_fonts', 'add_metadata',
-                    # Legacy keys that are not supported by plotting signatures
-                    'font_main', 'font_axis', 'axis_linewidth', 'gridline_width',
-                    # Analysis metadata — not a plot parameter
-                    'analysis_context',
-                ]}
-                
-                # Choose the appropriate plot function based on plot_type
-                if plot_type == "Bar":
-                    plot_kwargs['show_points'] = plot_kwargs.get('show_points', True)
-                    plot_kwargs['point_size'] = plot_kwargs.get('point_size', 80)
-                    plot_kwargs['point_alpha'] = plot_kwargs.get('point_alpha', 0.8)
-                    # Always pass colors to legend
-                    fig, ax = DataVisualizer.plot_bar(
-                        groups, filtered_samples, width=width, height=height,
-                        colors=colors, hatches=hatches, compare=compare,
-                        test_recommendation=test_recommendation,
-                        x_label=x_label, y_label=y_label,
-                        title=title, save_plot=save_plot, error_type=error_type,
-                        pairwise_results=pairwise_comparisons,
-                        file_name=file_base, legend_colors=colors, **plot_kwargs)
-                elif plot_type == "Box":
-                    fig, ax = DataVisualizer.plot_box(
-                        groups, filtered_samples, width=width, height=height,
-                        colors=colors, hatches=hatches,
-                        test_recommendation=test_recommendation,
-                        x_label=x_label, y_label=y_label,
-                        title=title, save_plot=save_plot,
-                        pairwise_results=pairwise_comparisons,
-                        file_name=file_base, legend_colors=colors, **plot_kwargs)
-                elif plot_type == "Violin":
-                    fig, ax = DataVisualizer.plot_violin(
-                        groups, filtered_samples, width=width, height=height,
-                        colors=colors, hatches=hatches,
-                        test_recommendation=test_recommendation,
-                        x_label=x_label, y_label=y_label,
-                        title=title, save_plot=save_plot,
-                        pairwise_results=pairwise_comparisons,
-                        file_name=file_base, legend_colors=colors, **plot_kwargs)
-                elif plot_type == "Strip":
-                    # Strip plot doesn't exist, fall back to box plot with points
-                    plot_kwargs['show_points'] = plot_kwargs.get('show_points', True)
-                    plot_kwargs['point_size'] = plot_kwargs.get('point_size', 80)
-                    plot_kwargs['point_alpha'] = plot_kwargs.get('point_alpha', 0.8)
-                    fig, ax = DataVisualizer.plot_box(
-                        groups, filtered_samples, width=width, height=height,
-                        colors=colors, hatches=hatches,
-                        test_recommendation=test_recommendation,
-                        x_label=x_label, y_label=y_label,
-                        title=title, save_plot=save_plot,
-                        pairwise_results=pairwise_comparisons,
-                        file_name=file_base, legend_colors=colors, **plot_kwargs)
-                elif plot_type == "Raincloud":
-                    fig, ax = DataVisualizer.plot_raincloud(
-                        groups, filtered_samples, width=width, height=height,
-                        colors=colors, hatches=hatches,
-                        test_recommendation=test_recommendation,
-                        x_label=x_label, y_label=y_label,
-                        title=title, save_plot=save_plot,
-                        pairwise_results=pairwise_comparisons,
-                        file_name=file_base, legend_colors=colors, **plot_kwargs)
-                else:
-                    # Fallback to bar plot for unknown plot types
-                    print(f"WARNING: Unknown plot type '{plot_type}', falling back to Bar plot")
-                    plot_kwargs['show_points'] = plot_kwargs.get('show_points', True)
-                    plot_kwargs['point_size'] = plot_kwargs.get('point_size', 80)
-                    plot_kwargs['point_alpha'] = plot_kwargs.get('point_alpha', 0.8)
-                    fig, ax = DataVisualizer.plot_bar(
-                        groups, filtered_samples, width=width, height=height,
-                        colors=colors, hatches=hatches, compare=compare,
-                        test_recommendation=test_recommendation,
-                        x_label=x_label, y_label=y_label,
-                        title=title, save_plot=save_plot, error_type=error_type,
-                        pairwise_results=pairwise_comparisons,
-                        file_name=file_base, legend_colors=colors, **plot_kwargs)
-                analysis_log += "\nPlots were saved as:\n"
-                analysis_log += f"  {file_base}.pdf\n"
-                analysis_log += f"  {file_base}.png\n"
-                get_matplotlib_pyplot().close(fig)
-                results["_file_paths"] = {
-                    "excel": os.path.abspath(excel_file),
-                    "pd": os.path.abspath(f"{file_base}.pd"),
-                    "png": os.path.abspath(f"{file_base}.png")
-                }
-            else:
-                results["_file_paths"] = {
-                    "excel": os.path.abspath(excel_file)
-                }
-            # Special visualization for dependent data
-            if dependent and not skip_plots:
-                try:
-                    line_fig, line_ax = DataVisualizer.plot_dependent_samples(
-                        groups, filtered_samples, width=width, height=height,
-                        colors=colors, title=f"{title} (dependent measurements)" if title else "Dependent measurements",
-                        x_label=x_label, y_label=y_label,
-                        save_plot=save_plot, file_name=file_base+"_lines",
-                        show_individual=show_individual_lines
-                    )
-                    get_matplotlib_pyplot().close(line_fig)
-                    line_plot_base = file_base+"_lines"
-                    results["_file_paths"]["pdf_lines"] = os.path.abspath(f"{line_plot_base}.pdf")
-                    results["_file_paths"]["png_lines"] = os.path.abspath(f"{line_plot_base}.png")
-                    analysis_log += "\nAdditional line plot for dependent data created:\n"
-                    analysis_log += f"  {line_plot_base}.pdf\n"
-                    analysis_log += f"  {line_plot_base}.png\n"
-                except Exception as e:
-                    analysis_log += f"\nError creating line plot for dependent data: {str(e)}\n"
-                    print(f"Error creating line plot: {str(e)}")
-            if results.get('transformation', 'None') != 'None':
-                results['transformed_data'] = transformed_samples
+            try:
+                ExportDispatcher = get_export_dispatcher()
+                export_result = ExportDispatcher.export_analysis_results(results, report_file, analysis_log)
+                if export_result.get("warning"):
+                    logger.warning(f"WARNING: {export_result['warning']}")
 
-            # About line 5647, just before "return results"
-            params = {
-                "file_path": file_path,
-                "sheet_name": sheet_name,
-                "group_col": group_col,
-                "value_cols": value_cols,
-                "groups": groups,
-                "dependent": dependent,
-                "error_type": error_type,
-                "test_type": kwargs.get('test', ''),
-                "analysis_context": kwargs.get('analysis_context') or {},
+                analysis_log += f"\nResults were saved to {report_file}.\n"
+            finally:
+                # Ensure we're back in the original directory
+                if os.getcwd() != original_dir:
+                    os.chdir(original_dir)
+                    logger.debug(f"DEBUG: Restored original directory: {original_dir}")
+
+            # The matplotlib figure export used to run here behind "if not
+            # skip_plots". Its only entry point was the "Configure Plot..."
+            # button, which is commented out, so skip_plots was True on every
+            # reachable path and this branch never ran. The figures the user
+            # actually sees come from the HTML report.
+            results["_file_paths"] = {
+                "report": os.path.abspath(report_file)
             }
-            # Build protocol
-            def build_analysis_log(results, params):
-                log = []
-                log.append("ANALYSIS LOG")
-                log.append('"This sheet documents the course of the statistical analysis and the decisions made. The log provides a chronological overview of the individual analysis steps, methods used, transformations, test selection, and special notes.\nEach paragraph describes a key step or decision in the analysis process."\n')
-                log.append(f"Analysis report\nDate and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                if 'file_path' in params:
-                    log.append(f"File: {params['file_path']}")
-                if 'sheet_name' in params:
-                    log.append(f"Worksheet: {params['sheet_name']}")
 
-                _ctx = params.get('analysis_context') or {}
-                _test_t = params.get('test_type', '') or _ctx.get('inferred_test', '') or results.get('test', '')
-                _continuous_tests = ('correlation', 'linear_regression', 'logistic_regression',
-                                     'beta_regression', 'ancova', 'two_way_ancova', 'lmm')
-                _is_continuous = _test_t in _continuous_tests
-                _test_label_map = {
-                    'correlation': 'Correlation',
-                    'linear_regression': 'Linear Regression',
-                    'logistic_regression': 'Logistic Regression',
-                    'beta_regression': 'Beta Regression',
-                    'ancova': 'ANCOVA',
-                    'two_way_ancova': 'Two-Way ANCOVA',
-                    'lmm': 'Linear Mixed Model',
+            # Same two gates as raw_data_transformed above: an actual value
+            # change, not the (broken) None-vs-'None' name comparison (report bug
+            # 2026-08), and a column that lines up with the raw one. The report
+            # falls back to this key when raw_data_transformed is absent, so
+            # guarding only the first would have left the misaligned column
+            # reaching the page by the other door.
+            from statistical_testing.validators import grouped_samples_changed
+            if (isinstance(transformed_samples, dict)
+                    and grouped_samples_changed(filtered_samples, transformed_samples, groups)
+                    and 'raw_data_transformed' in results):
+                results['transformed_data'] = {
+                    g: list(transformed_samples[g]) for g in groups if g in transformed_samples
                 }
-                if _is_continuous:
-                    log.append(f"Analysis Type: {_test_label_map.get(_test_t, _test_t)}")
-                    _factor_cols = _ctx.get('factor_columns') or ([params['group_col']] if params.get('group_col') else [])
-                    _dv_cols = _ctx.get('dv_columns') or params.get('value_cols') or []
-                    log.append(f"Predictor / Factor variable(s): {', '.join(_factor_cols) if _factor_cols else '—'}")
-                    log.append(f"Outcome / Dependent variable(s): {', '.join(_dv_cols) if _dv_cols else '—'}")
-                    _covariates = params.get('covariates') or _ctx.get('covariates') or []
-                    if _covariates:
-                        log.append(f"Covariates: {', '.join(_covariates)}")
-                else:
-                    if 'group_col' in params:
-                        log.append(f"Group column: {params['group_col']}")
-                    if 'value_cols' in params:
-                        log.append(f"Value column(s): {', '.join(params['value_cols'])}")
-                    if 'groups' in params:
-                        log.append(f"Groups to analyze: {', '.join(str(g) for g in params['groups'])}")
-                    if 'dependent' in params:
-                        log.append(f"Dependent samples: {'Yes' if params['dependent'] else 'No'}")
-                    if 'error_type' in params:
-                        log.append(f"Error bar type: {'SEM (standard error)' if params['error_type']=='se' else 'SD (standard deviation)'}")
-                log.append("\n--- ANALYSIS ---\n")
-                if results.get('import_status'):
-                    log.append("Data imported successfully.")
-                if 'group_sizes' in results:
-                    log.append("Number of data points per group:")
-                    for group, n in results['group_sizes'].items():
-                        log.append(f"{group}: {n} data points")
-                if 'test_recommendation' in results:
-                    log.append(f"Test recommendation: {results['test_recommendation']}")
-                if 'normality_p' in results:
-                    log.append(f"Shapiro-Wilk test (normality): p = {results['normality_p']:.4f} - {'Normally distributed' if results['normality_p'] > 0.05 else 'Not normally distributed'}")
-                if 'levene_p' in results:
-                    log.append(f"Brown-Forsythe test (variance homogeneity): p = {results['levene_p']:.4f} - {'Variances homogeneous' if results['levene_p'] > 0.05 else 'Variances heterogeneous'}")
-                if 'transformation' in results:
-                    log.append(f"Transformation: {results['transformation'] if results['transformation'] else 'No transformation performed.'}")
-                if 'test' in results:
-                    log.append(f"Test performed: {results['test']}")
-                if 'p_value' in results:
-                    p_value = results['p_value']
-                    if p_value is None:
-                        log.append("p-Value: Not available (test may have failed)")
-                        if 'error' in results and results['error']:
-                            log.append(f"Error: {results['error']}")
-                    elif isinstance(p_value, (float, int)):
-                        log.append(f"p-Value: {p_value:.6f}")
-                        log.append(f"Significance: {'Significant (p < 0.05)' if p_value < 0.05 else 'Not significant'}")
-                    else:
-                        log.append(f"p-Value: {p_value}")
-                        log.append("Significance: Not determinable")
-                if "factors" in results:
-                    for factor in results["factors"]:
-                        if not isinstance(factor, dict):
-                            continue
-                        log.append(
-                            f"Main effect {factor['factor']}: F({factor['df1']}, {factor['df2']}) = {factor['F']:.3f}, "
-                            f"p = {factor['p_value']:.4f}, Effect size: {factor.get('effect_size', 'N/A')}"
-                        )
-                if "interactions" in results:
-                    for inter in results["interactions"]:
-                        if not isinstance(inter, dict):
-                            continue
-                        inter_factors = inter.get('factors') if isinstance(inter.get('factors'), list) else []
-                        inter_a = inter_factors[0] if len(inter_factors) > 0 else "Factor 1"
-                        inter_b = inter_factors[1] if len(inter_factors) > 1 else "Factor 2"
-                        log.append(
-                            f"Interaction {inter_a} x {inter_b}: F({inter['df1']}, {inter['df2']}) = {inter['F']:.3f}, "
-                            f"p = {inter['p_value']:.4f}, Effect size: {inter.get('effect_size', 'N/A')}"
-                        )
-                if 'pairwise_comparisons' in results and results['pairwise_comparisons']:
-                    posthoc_test = results.get("posthoc_test", "Post-hoc test")
-                    log.append(f"\nPost‑hoc test: {posthoc_test}")
-                    log.append("Pairwise comparisons:")
-                    for comp in results["pairwise_comparisons"]:
-                        group1 = str(comp['group1'])
-                        group2 = str(comp['group2'])
-                        p_val = comp['p_value']
-                        significant = comp['significant']
-                        p_text = "p < 0.001" if isinstance(p_val, (float, int)) and p_val < 0.001 else f"p = {p_val:.4f}"
-                        sign_text = "significant" if significant else "not significant"
-                        stars = "***" if significant and p_val < 0.001 else "**" if significant and p_val < 0.01 else "*" if significant else ""
-                        log.append(f"{group1} vs {group2}: {p_text}, {sign_text} {stars}")
-                else:
-                    log.append("\nNo pairwise comparisons were performed or calculated.")
-                return "\n".join(log)
-            analysis_log = build_analysis_log(results, params)
+
             results["analysis_log"] = analysis_log
             return results
+
+        except AnalysisCancelledError as _cx:
+            # User backed out of a mid-analysis dialog (e.g. post-hoc selection).
+            # Not an error: return a clean cancelled result (no report was written
+            # -- the raise unwound before the export step). The pipeline resets to
+            # the mapping state with no render and no confetti.
+            analysis_log += f"\nAnalysis cancelled by user: {_cx}\n"
+            return {
+                "cancelled": True,
+                "cancel_reason": str(_cx) or "Analysis cancelled by user.",
+                "analysis_log": analysis_log,
+            }
 
         except Exception as e:
             error_message = str(e) if str(e) else "Unknown error occurred"
             analysis_log += f"\nERROR: {error_message}\n"
-            print(f"Error during analysis: {error_message}")
-            import traceback
-            traceback.print_exc()
-            return {"error": error_message, "analysis_log": analysis_log}       
+            logger.exception(f"Error during analysis: {error_message}")
+            from analysis.statisticaltester import StatisticalTester
+            _blocked = StatisticalTester.make_blocked_result(
+                error_message, code="UNHANDLED_EXCEPTION", details={"type": type(e).__name__}
+            )
+            _blocked["error_type"] = type(e).__name__
+            _blocked["analysis_log"] = analysis_log
+            return _blocked       
 
 def get_output_path(file_base, ext):
     """Get an absolute path to save output files on desktop."""
     if os.path.isabs(file_base):
         abs_path = os.path.abspath(f"{file_base}.{ext}")
-        print(f"DEBUG: get_output_path returns absolute path from absolute base: {abs_path}")
+        logger.debug(f"DEBUG: get_output_path returns absolute path from absolute base: {abs_path}")
         return abs_path
 
     desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
@@ -1589,6 +1724,6 @@ def get_output_path(file_base, ext):
     
     out_path = os.path.join(desktop_path, f"{file_base}.{ext}")
     abs_path = os.path.abspath(out_path)
-    print(f"DEBUG: get_output_path returns absolute path: {abs_path}")
+    logger.debug(f"DEBUG: get_output_path returns absolute path: {abs_path}")
     return abs_path
 

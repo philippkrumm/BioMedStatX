@@ -1,4 +1,5 @@
 import pandas as pd
+from core.level_order import natural_order
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
@@ -21,11 +22,6 @@ def get_export_dispatcher():
     """Get ExportDispatcher class lazily"""
     from export.export_dispatcher import ExportDispatcher
     return ExportDispatcher
-
-def get_data_visualizer():
-    """Get DataVisualizer class lazily"""
-    from visualization.datavisualizer import DataVisualizer
-    return DataVisualizer
 
 def get_statistical_tester():
     """Get StatisticalTester class lazily"""
@@ -57,6 +53,9 @@ from PyQt5.QtWidgets import QApplication
 import time
 from contextlib import contextmanager
 
+import logging
+logger = logging.getLogger(__name__)
+
 @contextmanager
 def working_directory(path):
     """Context manager for safely changing directories"""
@@ -67,7 +66,7 @@ def working_directory(path):
     finally:
         os.chdir(previous_dir)
 
-print(f"DEBUG: RUNNING FILE VERSION FROM {time.time()} - {os.path.abspath(__file__)}")
+logger.debug(f"DEBUG: RUNNING FILE VERSION FROM {time.time()} - {os.path.abspath(__file__)}")
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
@@ -186,11 +185,11 @@ class AssumptionVisualizer:
             fig.savefig(temp_path, dpi=300, bbox_inches=None, facecolor='white', pad_inches=0.2)
             plt.close(fig)
             
-            print(f"DEBUG: Generated normality plot: {temp_path}")
+            logger.debug(f"DEBUG: Generated normality plot: {temp_path}")
             return temp_path
             
         except Exception as e:
-            print(f"DEBUG: Error creating normality plot: {str(e)}")
+            logger.debug(f"DEBUG: Error creating normality plot: {str(e)}")
             import traceback
             traceback.print_exc()
             return None
@@ -295,11 +294,11 @@ class AssumptionVisualizer:
             fig.savefig(temp_path, dpi=300, bbox_inches=None, facecolor='white', pad_inches=0.2)
             plt.close(fig)
             
-            print(f"DEBUG: Generated homoscedasticity plot: {temp_path}")
+            logger.debug(f"DEBUG: Generated homoscedasticity plot: {temp_path}")
             return temp_path
             
         except Exception as e:
-            print(f"DEBUG: Error creating homoscedasticity plot: {str(e)}")
+            logger.debug(f"DEBUG: Error creating homoscedasticity plot: {str(e)}")
             import traceback
             traceback.print_exc()
             return None
@@ -336,51 +335,60 @@ class AssumptionVisualizer:
             # Get original data
             raw_data = results.get('raw_data', results.get('original_data', {}))
             if not raw_data:
-                print("DEBUG: No raw data found for assumption plots")
+                logger.debug("DEBUG: No raw data found for assumption plots")
                 return plot_paths
             
             # Get transformation info
             transformation = results.get('transformation', 'None')
             transformed_data = results.get('raw_data_transformed', results.get('transformed_data', {}))
-            
+
+            # Gate the "Before/After Transformation" labelling and the AFTER plots on
+            # an ACTUAL value change, not on the transformation NAME: a truthy label
+            # whose apply-loop left the data untouched (identity Box-Cox, an
+            # unrecognised label) must not spawn an "After Transformation" plot that
+            # merely mirrors the raw data (presence-vs-value audit, 2026-08).
+            from statistical_testing.validators import grouped_samples_changed
+            _values_changed = grouped_samples_changed(raw_data or {}, transformed_data or {})
+
             # Filter out non-data keys
             raw_data_filtered = {k: v for k, v in raw_data.items() if str(k).lower() not in ['group', 'sample', '']}
             
             # Generate BEFORE transformation plots
             if raw_data_filtered:
-                print(f"DEBUG: Generating BEFORE plots for {len(raw_data_filtered)} groups: {list(raw_data_filtered.keys())}")
+                logger.debug(f"DEBUG: Generating BEFORE plots for {len(raw_data_filtered)} groups: {list(raw_data_filtered.keys())}")
                 plot_paths['normality_before'] = AssumptionVisualizer.create_normality_plot(
-                    raw_data_filtered, " - Before Transformation" if transformation and transformation.lower() != 'none' else "",
+                    raw_data_filtered, " - Before Transformation" if _values_changed else "",
                     results=results
                 )
-                print(f"DEBUG: Q-Q plot BEFORE path: {plot_paths['normality_before']}")
+                logger.debug(f"DEBUG: Q-Q plot BEFORE path: {plot_paths['normality_before']}")
                 
                 plot_paths['homoscedasticity_before'] = AssumptionVisualizer.create_homoscedasticity_plot(
-                    raw_data_filtered, " - Before Transformation" if transformation and transformation.lower() != 'none' else ""
+                    raw_data_filtered, " - Before Transformation" if _values_changed else ""
                 )
-                print(f"DEBUG: Boxplot BEFORE path: {plot_paths['homoscedasticity_before']}")
+                logger.debug(f"DEBUG: Boxplot BEFORE path: {plot_paths['homoscedasticity_before']}")
             else:
-                print("DEBUG: No valid raw data found after filtering")
+                logger.debug("DEBUG: No valid raw data found after filtering")
             
-            # Generate AFTER transformation plots (if transformation was applied)
-            if transformed_data and transformation and transformation.lower() != 'none':
+            # Generate AFTER transformation plots (only if a transformation actually
+            # changed the values, not merely if one was named)
+            if _values_changed:
                 transformed_filtered = {k: v for k, v in transformed_data.items() if str(k).lower() not in ['group', 'sample', '']}
                 if transformed_filtered:
-                    print(f"DEBUG: Generating AFTER plots for {len(transformed_filtered)} groups: {list(transformed_filtered.keys())}")
+                    logger.debug(f"DEBUG: Generating AFTER plots for {len(transformed_filtered)} groups: {list(transformed_filtered.keys())}")
                     plot_paths['normality_after'] = AssumptionVisualizer.create_normality_plot(
                         transformed_filtered, " - After Transformation", transformation, results=results
                     )
                     plot_paths['homoscedasticity_after'] = AssumptionVisualizer.create_homoscedasticity_plot(
                         transformed_filtered, " - After Transformation", transformation
                     )
-                    print(f"DEBUG: Q-Q plot AFTER path: {plot_paths['normality_after']}")
-                    print(f"DEBUG: Boxplot AFTER path: {plot_paths['homoscedasticity_after']}")
+                    logger.debug(f"DEBUG: Q-Q plot AFTER path: {plot_paths['normality_after']}")
+                    logger.debug(f"DEBUG: Boxplot AFTER path: {plot_paths['homoscedasticity_after']}")
             
             
             return plot_paths
             
         except Exception as e:
-            print(f"DEBUG: Error generating assumption plots: {str(e)}")
+            logger.debug(f"DEBUG: Error generating assumption plots: {str(e)}")
             import traceback
             traceback.print_exc()
             return plot_paths
@@ -423,7 +431,7 @@ class DataImporter:
         for col in value_cols:
             if col not in df.columns:
                 raise ValueError(f"The value column '{col}' was not found. Available columns: {', '.join(df.columns)}")
-        groups = sorted(df[group_col].unique())
+        groups = natural_order(df[group_col].unique())
         samples = {}
         if combine_columns:
             for group in groups:
@@ -434,7 +442,7 @@ class DataImporter:
                 samples[group] = combined_values
         else:  # if combine_columns=False
             if len(value_cols) > 1:
-                print("Warning: Multiple value columns specified, but combine_columns=False. Only the first column will be used.")
+                logger.info("Warning: Multiple value columns specified, but combine_columns=False. Only the first column will be used.")
             
             for group in groups:
                 values = df[df[group_col] == group][value_cols[0]].dropna().tolist()
@@ -450,7 +458,31 @@ except ImportError:
 # GLMMTwoWayANOVA, GEERMANOVA, GLMMMixedANOVA, auto_anova_decision removed (dead code).
 
 
-            
+# Nonparametric post-hoc options, module-level so the correction each label
+# advertises can be pinned against the correction the code actually applies.
+# The two descriptions used to be swapped: "dunn" promised Holm-Bonferroni while
+# DunnTest runs statsmodels' 'holm-sidak', and "mw_custom" promised Sidak while
+# the Mann-Whitney branch runs 'holm' (Holm-Bonferroni) -- deliberately, see the
+# C3b note at its call site.
+NONPARAMETRIC_POSTHOC_OPTIONS = (
+    ("Dunn Test (all pairs, Holm-Šidák correction)", "dunn"),
+    ("Mann-Whitney-U Tests (custom pairs, Holm-Bonferroni correction)", "mw_custom"),
+)
+
+# One-way post-hoc options. The omnibus on this path is always Welch's ANOVA
+# (select_comparison_test returns welch_anova unconditionally for >2 independent
+# normal groups), so every option here must hold under heteroscedasticity.
+# "paired_custom" used to be advertised as "Custom paired t-tests": that text
+# outlived the fix which stopped the branch from running ttest_rel on
+# independent groups, so the label the user read BEFORE choosing still promised
+# a paired test while an independent/Welch one ran.
+ONEWAY_POSTHOC_OPTIONS = (
+    ("Games-Howell Test (compares all pairs, robust to unequal variances)", "games_howell"),
+    ("Dunnett Test (compares all groups against ONE control group)", "dunnett"),
+    ("Selected pairs only (independent t-tests, Holm-Šidák)", "paired_custom"),
+)
+
+
 class UIDialogManager:
     @staticmethod
     def _ensure_qt_application():
@@ -466,12 +498,41 @@ class UIDialogManager:
 
     @staticmethod
     def _configure_dialog(dialog, object_name=None):
-        if object_name:
-            dialog.setObjectName(object_name)
-        dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        """Thin wrapper kept for the existing call sites; the behaviour lives in
+        ui.widget_style so every dialog picks up the same defaults."""
+        from ui.widget_style import configure_dialog
+        configure_dialog(dialog, object_name=object_name)
 
     @staticmethod
-    def select_posthoc_test_dialog(parent=None, progress_text=None, column_name=None, default_method=None, equal_variance=None):
+    def _posthoc_prompt_text(progress_text):
+        """Design-aware guidance for the post-hoc selection dialog.
+
+        Which pairing is statistically appropriate depends on the design, so the
+        recommendation must NOT be a blanket "paired t-tests":
+          * repeated-measures -> within-subjects            -> paired t-tests
+          * two-way           -> between-subjects            -> independent pairwise t-tests
+          * mixed             -> both within- AND between    -> pairing chosen per
+            comparison automatically (a blanket "paired" hint would be wrong for
+            the between-subject pairs, the same artifact as the Two-Way label bug).
+        """
+        pt = progress_text or ""
+        if "repeated_measures_anova" in pt:
+            return ("The Repeated-Measures ANOVA has revealed significant differences. "
+                    "This is a within-subjects design, so paired t-tests are the appropriate "
+                    "follow-up for pairwise comparisons. Please select a post-hoc test:")
+        if "two_way_anova" in pt:
+            return ("The Two-Way ANOVA has revealed significant differences. This is a "
+                    "between-subjects design, so independent pairwise t-tests are the "
+                    "appropriate follow-up. Please select a post-hoc test:")
+        if "mixed_anova" in pt:
+            return ("The Mixed ANOVA has revealed significant differences. Mixed designs "
+                    "contain both within-subject and between-subject comparisons; the "
+                    "appropriate pairing (paired vs. independent) is selected automatically "
+                    "per comparison. Please select a post-hoc test:")
+        return "The ANOVA has revealed significant differences. Please select a post-hoc test:"
+
+    @staticmethod
+    def select_posthoc_test_dialog(parent=None, progress_text=None, column_name=None, default_method=None):
         UIDialogManager._ensure_qt_application()
         dialog = QDialog(parent)
         UIDialogManager._configure_dialog(dialog, object_name="posthocSelectionDialog")
@@ -485,15 +546,7 @@ class UIDialogManager:
             title += f" {progress_text}"
         dialog.setWindowTitle(title)
 
-        info_text = "The ANOVA has revealed significant differences. Please select a post-hoc test:"
-        if progress_text and ("two_way_anova" in progress_text or "mixed_anova" in progress_text or "repeated_measures_anova" in progress_text):
-            info_text = ("The advanced ANOVA has revealed significant differences. For advanced ANOVAs, "
-                        "paired t-tests are often preferred to examine specific interaction effects. "
-                        "Please select a post-hoc test:")
-        elif progress_text and "two_way_anova" in progress_text:
-            info_text = ("The Two-Way ANOVA has revealed significant differences. For Two-Way ANOVA, "
-                        "paired t-tests are often preferred to examine specific interaction effects. "
-                        "Please select a post-hoc test:")
+        info_text = UIDialogManager._posthoc_prompt_text(progress_text)
         
         info = QLabel(info_text)
         info.setWordWrap(True)
@@ -501,16 +554,31 @@ class UIDialogManager:
 
         # RadioButtons for post-hoc tests - options depend on context
         if progress_text and ("two_way_anova" in progress_text or "mixed_anova" in progress_text or "repeated_measures_anova" in progress_text):
-            options = [
-                ("Tukey-HSD Test (all pairs, strict FWER control)", "tukey"),
-                ("Specific comparisons – strict correction (Holm-\u0160id\u00e1k)", "paired_custom"),
-            ]
+            if "two_way_anova" in progress_text:
+                # Two-Way ANOVA Tukey uses statsmodels pairwise_tukeyhsd (correct
+                # for independent samples). RM/Mixed get NO Tukey option: a
+                # studentized-range post-hoc assumes the sphericity the omnibus
+                # corrects for by default (Greenhouse-Geisser), and the prior
+                # hand-rolled RM/Mixed Tukey was removed (pre-2.0 audit, SC2).
+                options = [
+                    ("Tukey-HSD Test (all pairs, strict FWER control)", "tukey"),
+                    ("Specific comparisons – strict correction (Holm-\u0160id\u00e1k)", "paired_custom"),
+                ]
+            else:
+                options = [
+                    ("Specific comparisons – strict correction (Holm-\u0160id\u00e1k)", "paired_custom"),
+                ]
+            if "mixed_anova" in progress_text:
+                options.append(
+                    ("Dunnett vs control, each timepoint (EMM + multivariate-t)", "emm_mvt")
+                )
+            if "repeated_measures_anova" in progress_text:
+                options.append(
+                    ("Dunnett vs baseline level (EMM + multivariate-t)", "emm_mvt")
+                )
         else:
             # For One-Way ANOVA (Welch): offer unconditional robust options
-            options = []
-            options.append(("Games-Howell Test (compares all pairs, robust to unequal variances)", "games_howell"))
-            options.append(("Dunnett Test (compares all groups against ONE control group)", "dunnett"))
-            options.append(("Custom paired t-tests (you select specific pairs, Holm-\u0160id\u00e1k)", "paired_custom"))
+            options = list(ONEWAY_POSTHOC_OPTIONS)
 
         radio_buttons = []
         for label, value in options:
@@ -563,10 +631,7 @@ class UIDialogManager:
         info = QLabel("Please select the desired nonparametric post-hoc test:")
         layout.addWidget(info)
 
-        options = [
-            ("Dunn Test (all pairs, Holm-Bonferroni correction)", "dunn"),
-            ("Mann-Whitney-U Tests (custom pairs, Sidak correction)", "mw_custom"),
-        ]
+        options = list(NONPARAMETRIC_POSTHOC_OPTIONS)
         radio_buttons = []
         for label, value in options:
             rb = QRadioButton(label)
@@ -586,7 +651,7 @@ class UIDialogManager:
         return None
     
     @staticmethod
-    def select_custom_pairs_dialog(groups):
+    def select_custom_pairs_dialog(groups, parent=None):
         """
         Dialog to select custom group pairs for paired t-tests.
         Returns a list of (group1, group2) tuples.
@@ -647,13 +712,13 @@ class UIDialogManager:
                 self.selected_pairs = [pair for cb, pair in self.checkboxes if cb.isChecked()]
                 super().accept()
 
-        dialog = PairSelectionDialog(groups)
+        dialog = PairSelectionDialog(groups, parent=parent)
         if dialog.exec_() == QDialog.Accepted:
             return dialog.selected_pairs
         return []
 
     @staticmethod
-    def select_control_group_dialog(groups):
+    def select_control_group_dialog(groups, parent=None):
         """Opens a dialog window to select the control group"""
         from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QRadioButton, QDialogButtonBox
 
@@ -694,10 +759,15 @@ class UIDialogManager:
                 super().accept()
 
         # Always create a new dialog
-        dialog = ControlGroupDialog(groups)
+        dialog = ControlGroupDialog(groups, parent=parent)
         if dialog.exec_() == QDialog.Accepted:
             return dialog.selected_group
-        return groups[0]  # Default: first group
+        # Cancelled: return None, never a silent groups[0]. Every caller guards
+        # `control_group is None` and falls back appropriately (Dunnett ->
+        # Games-Howell for the pairwise paths; no designated control for
+        # ANCOVA/LMM). Returning the first group here made those guards dead code
+        # and ran Dunnett against an arbitrary control the user never chose.
+        return None
     
     @staticmethod
     def select_transformation_dialog(parent=None, progress_text=None, column_name=None, force_show=False,
@@ -736,6 +806,10 @@ class UIDialogManager:
                 ("Log10 transformation (for positive, right-skewed data)", "log10"),
                 ("Box-Cox transformation (automatic lambda optimization)", "boxcox"),
                 ("Arcsin square root transformation (for percentages/proportions)", "arcsin_sqrt"),
+                # Explicit "no transform" choice so it is distinct from Cancel:
+                # Cancel aborts the whole analysis, this option continues without a
+                # transform (routes to the non-parametric test).
+                ("Continue without transformation (use non-parametric test)", "skip"),
             ]
         else:
             options = list(transforms)
@@ -760,12 +834,47 @@ class UIDialogManager:
         
         # If canceled, return None
         return None
-       
 
-from analysis.analysis_core import DatasetSelector, AnalysisManager, get_output_path
+    @staticmethod
+    def select_arcsin_domain_type(parent=None, progress_text=None, column_name=None):
+        """Ask the user to declare the arcsin-sqrt data domain.
+
+        Returns "proportion" (0-1) or "percent" (0-100), or None if cancelled /
+        not chosen. No preselection is inferred from the data — arcsin-sqrt is
+        valid only for true proportions, so the user declares the scale actively
+        and out-of-range values are hard-rejected downstream.
+        """
+        UIDialogManager._ensure_qt_application()
+        dialog = QDialog(parent)
+        UIDialogManager._configure_dialog(dialog, object_name="arcsinDomainDialog")
+        layout = QVBoxLayout(dialog)
+        title = "Arcsin-sqrt data domain"
+        if column_name:
+            title += f" for '{column_name}'"
+        dialog.setWindowTitle(title)
+        layout.addWidget(QLabel(
+            "Arcsin-square-root is variance-stabilizing only for proportion data.\n"
+            "Declare how these values are scaled:"
+        ))
+        rb_prop = QRadioButton("Proportion (0 – 1)")
+        rb_pct = QRadioButton("Percent (0 – 100)")
+        layout.addWidget(rb_prop)
+        layout.addWidget(rb_pct)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        layout.addWidget(buttons)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        if dialog.exec_() == QDialog.Accepted:
+            if rb_prop.isChecked():
+                return "proportion"
+            if rb_pct.isChecked():
+                return "percent"
+        return None
+
+
+from analysis.analysis_core import AnalysisManager, get_output_path
 from analysis.outlier_core import OUTLIER_IMPORTS_AVAILABLE, OutlierDetector
 
 
 # Note: Classes are imported lazily to avoid circular imports.
-# Use get_data_visualizer(), get_statistical_tester() functions instead.
-DataVisualizer = get_data_visualizer()
+# Use get_statistical_tester() instead.

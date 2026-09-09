@@ -266,6 +266,15 @@ def build_report() -> str:
     sections = []
 
     sections.append("# BioMedStatX — Dead-Code Audit Report\n")
+    sections.append(
+        "> **STATIC REACHABILITY ONLY.** This audit sees code that is never "
+        "referenced. It does NOT see runtime-gated dead weight — code that is "
+        "bound and called but unreachable behind a condition that is never true "
+        "(e.g. the removed marginaleffects wrappers, gated on `model_class == "
+        "\"GEE\"` which nothing ever sets). \"0 findings\" therefore means "
+        "\"statically clean\", NOT \"no dead weight\". Before deleting anything, "
+        "verify it with a real call-graph trace, not this report alone.\n"
+    )
     sections.append(f"Source: `{SOURCE_DIR}`\n")
     sections.append(f"Dateien geprüft: {len(py_files())}\n")
 
@@ -281,6 +290,10 @@ def build_report() -> str:
     sections.append(header("4. Regex-Scan (projektspezifische tote-Code-Muster)"))
     sections.extend(run_regex_scan())
 
+    # Everything from here down is high-volume, low-signal (every external import
+    # flagged as a lazy_imports.py candidate). Kept in the full report/artifact but
+    # cut from the CI step summary via this marker, so the summary stays readable.
+    sections.append("\n<!-- SUMMARY_CUT -->")
     sections.append(header("5. Import-Herkunft (externe Imports außerhalb lazy_imports.py)"))
     sections.extend(run_import_source_check())
 

@@ -10,10 +10,14 @@ All model classes follow the pattern established in clinical_models.py:
     results = model.as_results_dict()
 """
 
+import math
 import re
 import numpy as np
 import pandas as pd
 from scipy import stats as scipy_stats
+
+import logging
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -25,6 +29,14 @@ def _sanitize_columns(df, columns):
 
     Returns a dict mapping original name -> sanitized name.
     The DataFrame is renamed in-place (same pattern as clinical_models.py).
+
+    Deliberately NOT merged with the same-named helper in clinical_models: that
+    one additionally renames columns called C, I or Q, because its formulas wrap
+    factors as ``C(col)`` and a column literally named ``C`` then makes patsy
+    resolve the call against the data ("'Series' object is not callable").
+    The models here only ever use bare continuous terms, where patsy resolves a
+    column named ``C`` from the data namespace and the result is correct, so the
+    extra renaming would only mangle the user's column names for no benefit.
     """
     mapping = {}
     for col in columns:
@@ -53,6 +65,42 @@ def _is_continuous(df, col, threshold=10):
     return df[col].nunique() > threshold
 
 
+def _select_correlation_method(n, skew_x, skew_y, kurt_x, kurt_y):
+    """Single source of truth for auto Pearson-vs-Spearman selection.
+
+    Selection is by sample-size tier and shape (skewness / excess kurtosis),
+    NOT by a Shapiro-Wilk pre-test. A significance test as a gate has too
+    little power at the small n typical of biomedical correlation (3-30) and
+    too much at large n, where it rejects clinically irrelevant departures
+    from normality — the same two-stage objection that put this project on
+    Welch-only for the t-test. Shapiro-Wilk is still computed and shown for
+    information by the callers, but it does not drive this choice.
+
+    Both CorrelationModel (single pair) and ExploratoryCorrelationMatrix
+    (per pair) route through here so the two engines can never disagree on
+    the same data.
+
+    Tiers:
+        n < MIN_N_SMALL:   always Spearman (too few points to trust shape).
+        MIN_N_SMALL <= n < 100: Pearson iff |skew| <= 1.0 AND |kurt| <= 2.0
+                                for BOTH variables, else Spearman.
+        n >= 100:          Pearson unless |skew| > 2.0 OR |kurt| > 4.0 for
+                           either variable (extreme asymmetry -> Spearman).
+    """
+    from statistical_testing.validators import MIN_N_SMALL
+    if n < MIN_N_SMALL:
+        return 'spearman'
+    if MIN_N_SMALL <= n < 100:
+        if (abs(skew_x) <= 1.0 and abs(skew_y) <= 1.0 and
+                abs(kurt_x) <= 2.0 and abs(kurt_y) <= 2.0):
+            return 'pearson'
+        return 'spearman'
+    # n >= 100
+    if abs(skew_x) > 2.0 or abs(skew_y) > 2.0 or abs(kurt_x) > 4.0 or abs(kurt_y) > 4.0:
+        return 'spearman'
+    return 'pearson'
+
+
 def _fisher_z_ci(r, n, alpha=0.05, method="pearson"):
     """CI for a Pearson or Spearman r via Fisher z-transform.
 
@@ -73,7 +121,10 @@ def _fisher_z_ci(r, n, alpha=0.05, method="pearson"):
         lo = float(np.tanh(z - z_crit * se))
         hi = float(np.tanh(z + z_crit * se))
         return (lo, hi)
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "Fisher-z CI not computable (r=%r, n=%r, method=%r): %s", r, n, method, exc
+        )
         return (None, None)
 
 
@@ -85,7 +136,13 @@ def _apply_transform(vals: np.ndarray, name: str):
 
     Explicitly handles non-positive values by setting them to np.nan, 
     ensuring they are dropped via listwise deletion later in the pipeline.
-    There is no automatic data shifting (c=0.0 always).
+    There is no automatic data shifting (c=0.0 always). This intentionally
+    diverges from the ANOVA / advanced-design transform path (assumption_checks /
+    TransformationEngine), which shifts non-positive values up by (-min + 1) to
+    keep every observation: for a group comparison that preserves n and balance.
+    For a correlation/regression, adding a data-driven constant would distort the
+    x-y relationship, so invalid (<=0) points are dropped as (x, y) pairs instead.
+    Deliberate, not a bug (Wave-4 SHOULD-VERIFY, confirmed intentional).
 
     Args:
         vals: 1-D numpy array of finite floats.
@@ -156,10 +213,13 @@ def _optimize_boxcox_for_regression(y: np.ndarray, x_matrix: np.ndarray):
     from scipy.stats import gmean
     from scipy.special import boxcox as scipy_boxcox
     
+    # Unified with the shared bounded_boxcox_lambda contract (S7): failure and
+    # out-of-range optima fall back to lambda=0 (natural log), NOT lambda=1
+    # (identity, no transform), and NEVER a boundary clamp.
     valid_mask = (y > 0) & ~np.isnan(y)
     if not np.any(valid_mask):
-        return 1.0 # Fallback if no valid data
-        
+        return 0.0  # no valid data -> log
+
     y_valid = y[valid_mask]
     x_valid = x_matrix[valid_mask]
     
@@ -182,10 +242,17 @@ def _optimize_boxcox_for_regression(y: np.ndarray, x_matrix: np.ndarray):
         except np.linalg.LinAlgError:
             return np.inf
             
-    res = minimize_scalar(rss_for_lambda, bounds=(-2.0, 2.0), method='bounded')
-    if res.success:
-        return res.x
-    return 1.0 # Fallback to no transformation (lambda=1)
+    # Search a window wider than the [-3, 3] validity interval so a genuine
+    # optimum inside it is found freely; reject (-> log) anything that lands
+    # outside, rather than clamping to the edge (shared helper's docstring:
+    # "Clamping to the boundary is methodologically invalid and is never done").
+    BOXCOX_VALID = 3.0
+    res = minimize_scalar(
+        rss_for_lambda, bounds=(-(BOXCOX_VALID + 2.0), BOXCOX_VALID + 2.0), method='bounded'
+    )
+    if not res.success or not np.isfinite(res.x) or abs(res.x) > BOXCOX_VALID:
+        return 0.0  # diverged / out of [-3, 3] -> log
+    return float(res.x)
 
 
 # ---------------------------------------------------------------------------
@@ -195,8 +262,12 @@ def _optimize_boxcox_for_regression(y: np.ndarray, x_matrix: np.ndarray):
 class CorrelationModel:
     """Pearson or Spearman correlation with 95 % CI (Fisher z-transform).
 
-    method='auto' applies Shapiro-Wilk to both variables and uses Pearson when
-    both are normally distributed (p > alpha), otherwise Spearman.
+    method='auto' picks Pearson or Spearman based on sample size and shape, not
+    on the Shapiro-Wilk p-value (Shapiro-Wilk is computed and reported as a
+    diagnostic, but the branch never reads it): n < 20 always uses Spearman;
+    20 <= n < 100 uses Pearson only if both variables have |skewness| <= 1.0
+    and |excess kurtosis| <= 2.0; n >= 100 uses Pearson unless either variable
+    has |skewness| > 2.0 or |excess kurtosis| > 4.0.
     Pairwise deletion: only rows without NaN in x_col or y_col are used.
     """
 
@@ -275,23 +346,10 @@ class CorrelationModel:
             sw_stat_y, py = scipy_stats.shapiro(y_vals[:5000])
             both_normal_sw = bool(px > alpha and py > alpha)
             
-            # Determine method based on N-tier:
-            from statistical_testing.validators import MIN_N_SMALL
-            if self.n < MIN_N_SMALL:
-                self._method_used = 'spearman'
-            elif MIN_N_SMALL <= self.n < 100:
-                # Pearson if |skewness| <= 1.0 and |excess kurtosis| <= 2.0 for both
-                if (abs(skew_x) <= 1.0 and abs(skew_y) <= 1.0 and 
-                        abs(kurt_x) <= 2.0 and abs(kurt_y) <= 2.0):
-                    self._method_used = 'pearson'
-                else:
-                    self._method_used = 'spearman'
-            else: # N >= 100
-                # Pearson unless extreme asymmetry
-                if abs(skew_x) > 2.0 or abs(skew_y) > 2.0 or abs(kurt_x) > 4.0 or abs(kurt_y) > 4.0:
-                    self._method_used = 'spearman'
-                else:
-                    self._method_used = 'pearson'
+            # Determine method by sample-size tier and shape (shared with the
+            # matrix engine); Shapiro-Wilk above is informational, not decisive.
+            self._method_used = _select_correlation_method(
+                self.n, skew_x, skew_y, kurt_x, kurt_y)
                     
             has_transform = (self._x_transform != 'none' or self._y_transform != 'none')
             if has_transform:
@@ -316,7 +374,10 @@ class CorrelationModel:
                         y_col: {"statistic": float(sw_stat_y), "p_value": float(py), "normal": bool(py > alpha), "skewness": skew_y, "kurtosis": kurt_y},
                         "both_normal": both_normal_sw,
                     },
-                    "both_normal": both_normal_sw,
+                    # Top-level both_normal describes the branch taken (pearson =
+                    # both-normal), kept consistent with the non-transform branch;
+                    # the raw Shapiro verdicts stay inside the sub-dicts above.
+                    "both_normal": self._method_used == 'pearson',
                 }
             else:
                 self._normality_check = {
@@ -327,11 +388,16 @@ class CorrelationModel:
                     "kurtosis_y": kurt_y,
                     "shapiro_x_p": float(px),
                     "shapiro_y_p": float(py),
+                    # The raw Shapiro verdict lives here; keep it distinct from
+                    # both_normal, which describes the branch actually taken.
                     "shapiro_both_normal": both_normal_sw,
+                    # both_normal = did we take the pearson (both-normal) branch.
+                    # A second "both_normal": both_normal_sw used to follow and
+                    # clobber this with the Shapiro verdict, so the flowchart lit
+                    # the Pearson leaf even when Spearman ran (F2/F3).
                     "both_normal": self._method_used == 'pearson',
                     x_col: {"statistic": float(sw_stat_x), "p_value": float(px), "normal": bool(px > alpha)},
                     y_col: {"statistic": float(sw_stat_y), "p_value": float(py), "normal": bool(py > alpha)},
-                    "both_normal": both_normal_sw,
                 }
         else:
             self._method_used = method
@@ -365,6 +431,11 @@ class CorrelationModel:
 
     @staticmethod
     def _interpret(r):
+        # A nan r (zero-variance input) must never fall through the cascade below
+        # into "very strong" — nan fails every "<" comparison, so it would hit the
+        # final else. Say plainly that it is not computable.
+        if r is None or (isinstance(r, float) and math.isnan(r)):
+            return "Not computable (correlation undefined — zero-variance input)"
         abs_r = abs(r)
         direction = "positive" if r >= 0 else "negative"
         if abs_r < 0.2:
@@ -579,10 +650,20 @@ class SimpleLinearRegressionModel:
         self._cov_type = "nonrobust"
         if n >= 20 and bp_p is not None and bp_p < alpha:
             try:
-                self.result = self.result.get_robustcov_results(cov_type='HC3')
+                # get_robustcov_results() returns a bare OLSResults, not the
+                # RegressionResultsWrapper that .fit() hands back: params/bse/
+                # resid come out as ndarrays and conf_int() as a plain array, so
+                # every downstream .index / .values / .loc access would break.
+                # Re-wrapping restores the pandas contract without touching the
+                # numbers — unlike .fit(cov_type='HC3'), which would silently
+                # flip use_t from True to False and change every p-value.
+                from statsmodels.regression.linear_model import RegressionResultsWrapper
+                self.result = RegressionResultsWrapper(
+                    self.result.get_robustcov_results(cov_type='HC3')
+                )
                 self._cov_type = "HC3"
             except Exception as exc:
-                print(f"WARNING: Failed to apply HC3 covariance: {exc}")
+                logger.warning(f"WARNING: Failed to apply HC3 covariance: {exc}")
 
         return self
 
@@ -713,7 +794,8 @@ class SimpleLinearRegressionModel:
                     "confidence_level": float(1.0 - self._alpha),
                 },
             }
-        except Exception:
+        except Exception as exc:
+            logger.warning("Regression plot payload could not be built: %s", exc, exc_info=True)
             return None
 
     def diagnostics(self):
@@ -722,7 +804,10 @@ class SimpleLinearRegressionModel:
             return {}
 
         diag = {}
-        residuals = self.result.resid.values
+        try:
+            residuals = np.asarray(self.result.resid)
+        except Exception:
+            residuals = np.array([])
         n = len(residuals)
 
         # 1. Normality of residuals (Shapiro-Wilk)
@@ -807,8 +892,8 @@ class SimpleLinearRegressionModel:
                     {"x": float(xv), "y": float(yv)}
                     for xv, yv in zip(x_obs[valid], y_obs[valid])
                 ]
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Raw association points unavailable: %s", exc, exc_info=True)
 
         # Residuals and fitted values at top level for QQ plot and residuals-vs-fitted chart
         residuals_list = None
@@ -816,8 +901,11 @@ class SimpleLinearRegressionModel:
         try:
             residuals_list = [float(v) for v in self.result.resid.values]
             fitted_list = [float(v) for v in self.result.fittedvalues.values]
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "Residuals/fitted values unavailable — QQ and residual plots will be "
+                "missing: %s", exc, exc_info=True,
+            )
 
         coef_interp = self._build_coef_interpretation(main_beta) if main_beta is not None else None
 
@@ -893,6 +981,7 @@ class ExploratoryCorrelationMatrix:
         self.p_matrix = None
         self.p_corrected_matrix = None
         self.n_matrix = None
+        self.method_matrix = None
         self.strata_results = None
 
     def fit(self, df, columns, method='spearman', correction='fdr_bh',
@@ -924,22 +1013,24 @@ class ExploratoryCorrelationMatrix:
             base = base.dropna(subset=self._columns)
 
         # Unstratified matrix (always computed)
-        r_m, p_m, pc_m, n_m = self._compute_matrix(base[self._columns])
+        r_m, p_m, pc_m, n_m, meth_m = self._compute_matrix(base[self._columns])
         self.r_matrix = r_m
         self.p_matrix = p_m
         self.p_corrected_matrix = pc_m
         self.n_matrix = n_m
+        self.method_matrix = meth_m
 
         # Stratified matrices (optional)
         if stratify_by and stratify_by in base.columns:
             self.strata_results = {}
             for grp_val, grp_df in base.groupby(stratify_by):
-                r_s, p_s, pc_s, n_s = self._compute_matrix(grp_df[self._columns])
+                r_s, p_s, pc_s, n_s, meth_s = self._compute_matrix(grp_df[self._columns])
                 self.strata_results[str(grp_val)] = {
                     "r_matrix": r_s,
                     "p_matrix": p_s,
                     "p_corrected_matrix": pc_s,
                     "n_matrix": n_s,
+                    "method_matrix": meth_s,
                 }
 
         return self
@@ -951,6 +1042,10 @@ class ExploratoryCorrelationMatrix:
         r_mat = np.full((k, k), np.nan)
         p_mat = np.full((k, k), np.nan)
         n_mat = np.zeros((k, k))
+        # method_mat records which correlation actually ran for each pair, so a
+        # mixed 'auto' matrix stays auditable (which cell was Pearson, which
+        # Spearman). Object array of 'pearson'/'spearman'/None (B5).
+        method_mat = np.full((k, k), None, dtype=object)
         np.fill_diagonal(r_mat, 1.0)
         np.fill_diagonal(n_mat, data[cols].notna().sum().values.astype(float))
 
@@ -970,9 +1065,14 @@ class ExploratoryCorrelationMatrix:
 
                 m = self._method
                 if m == 'auto':
-                    _, px = scipy_stats.shapiro(x[:5000])
-                    _, py = scipy_stats.shapiro(y[:5000])
-                    m = 'pearson' if (px > self._alpha and py > self._alpha) else 'spearman'
+                    # Same skew/kurtosis tiers as the single-pair engine, so the
+                    # two never disagree on identical data. Shapiro-Wilk is NOT
+                    # the gate here (it used to be) — see _select_correlation_method.
+                    sx = float(scipy_stats.skew(x))
+                    sy = float(scipy_stats.skew(y))
+                    kx = float(scipy_stats.kurtosis(x))
+                    ky = float(scipy_stats.kurtosis(y))
+                    m = _select_correlation_method(n, sx, sy, kx, ky)
 
                 try:
                     if m == 'pearson':
@@ -981,10 +1081,14 @@ class ExploratoryCorrelationMatrix:
                         r, p = scipy_stats.spearmanr(x, y)
                     r_mat[i, j] = r_mat[j, i] = float(r)
                     p_mat[i, j] = p_mat[j, i] = float(p)
+                    method_mat[i, j] = method_mat[j, i] = m
                     all_p.append(float(p))
                     ij_indices.append((i, j))
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning(
+                        "Correlation for pair (%r, %r) failed, cell left empty: %s",
+                        cols[i], cols[j], exc,
+                    )
 
         # Multiple testing correction
         pc_mat = p_mat.copy()
@@ -994,10 +1098,16 @@ class ExploratoryCorrelationMatrix:
                 _, p_adj, _, _ = multipletests(all_p, method=self._correction)
                 for idx, (i, j) in enumerate(ij_indices):
                     pc_mat[i, j] = pc_mat[j, i] = float(p_adj[idx])
-            except Exception:
-                pass  # Fall back to uncorrected p-values
+            except Exception as exc:
+                # Silently reporting uncorrected p-values as if they were corrected
+                # is the dangerous failure mode here — say so loudly.
+                logger.warning(
+                    "Multiple-testing correction %r failed over %d p-values; the "
+                    "'corrected' matrix still holds UNCORRECTED values: %s",
+                    self._correction, len(all_p), exc, exc_info=True,
+                )
 
-        return r_mat, p_mat, pc_mat, n_mat
+        return r_mat, p_mat, pc_mat, n_mat, method_mat
 
     @staticmethod
     def _ndarray_to_nested_dict(mat, cols):
@@ -1021,6 +1131,20 @@ class ExploratoryCorrelationMatrix:
                 out[ci][cj] = None if np.isnan(val) else int(val)
         return out
 
+    @staticmethod
+    def _method_mat_to_dict(mat, cols):
+        """Convert the k×k object array of method names to a nested dict.
+
+        Diagonal and never-computed pairs stay None; off-diagonal cells carry
+        'pearson' or 'spearman' — the method that actually ran for that pair.
+        """
+        out = {}
+        for i, ci in enumerate(cols):
+            out[ci] = {}
+            for j, cj in enumerate(cols):
+                out[ci][cj] = mat[i, j] if isinstance(mat[i, j], str) else None
+        return out
+
     def as_results_dict(self):
         if self.r_matrix is None:
             return {"error": "Matrix not computed"}
@@ -1028,6 +1152,7 @@ class ExploratoryCorrelationMatrix:
         cols = self._columns
         _d = self._ndarray_to_nested_dict
         _n = self._n_mat_to_dict
+        _m = self._method_mat_to_dict
 
         result = {
             "test": "Explorative Korrelationsmatrix",
@@ -1040,6 +1165,9 @@ class ExploratoryCorrelationMatrix:
             "p_matrix": _d(self.p_matrix, cols),
             "p_corrected_matrix": _d(self.p_corrected_matrix, cols),
             "n_matrix": _n(self.n_matrix, cols),
+            # Which method actually ran per pair — the record that makes a mixed
+            # 'auto' matrix auditable (B5).
+            "method_matrix": _m(self.method_matrix, cols),
         }
 
         if self.strata_results:
@@ -1049,6 +1177,7 @@ class ExploratoryCorrelationMatrix:
                     "r_matrix": _d(mats["r_matrix"], cols),
                     "p_corrected_matrix": _d(mats["p_corrected_matrix"], cols),
                     "n_matrix": _n(mats["n_matrix"], cols),
+                    "method_matrix": _m(mats["method_matrix"], cols),
                 }
             result["strata"] = strat_out
 

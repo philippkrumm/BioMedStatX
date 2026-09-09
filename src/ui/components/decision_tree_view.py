@@ -1,7 +1,7 @@
 import math
 from PyQt5.QtCore import Qt, QRectF, QPointF
 from PyQt5.QtGui import (
-    QColor, QPen, QBrush, QFont, QFontMetrics, QPolygonF, QPainter,
+    QColor, QPen, QBrush, QFont, QFontMetrics, QFontMetricsF, QPolygonF, QPainter,
     QStaticText, QTextOption, QPalette
 )
 from PyQt5.QtWidgets import (
@@ -37,6 +37,31 @@ def get_line_intersection(x1, y1, x2, y2, w_src, h_src, w_tgt, h_tgt):
     return ex1, ey1, ex2, ey2
 
 
+def node_metrics(label, is_active):
+    """Node box size + font. The width is MEASURED with the same QFont the paint
+    method uses (via QFontMetricsF), not estimated from character count: a
+    char-count guess under-sized the box so long labels spilled past the rounded
+    border into neighbouring nodes. Measuring the real rendered advance (which
+    honours the actual font fallback, e.g. Helvetica Neue when Segoe UI is
+    absent) makes the box fit its text on every platform."""
+    lines = str(label or "").split('\n')
+    fs = 15 if is_active else 12
+    lh = fs * 1.3
+    font = QFont("Segoe UI")
+    font.setPixelSize(int(fs))
+    if is_active:
+        font.setBold(True)
+    fm = QFontMetricsF(font)
+    max_text_w = max((fm.horizontalAdvance(line) for line in lines), default=0.0)
+    min_w = 155.0 if is_active else 130.0
+    min_h = 60.0 if is_active else 52.0
+    # +24 clears the 6px-per-side text inset used by paint() plus a little air,
+    # so the label never wraps unexpectedly or touches the border.
+    node_w = max(min_w, min(760.0, max_text_w + 24.0))
+    node_h = max(min_h, min(500.0, len(lines) * lh + 34.0))
+    return node_w, node_h, fs
+
+
 class DecisionNodeItem(QGraphicsItem):
     """
     Renders a dynamic decision node. Caches text layouts via QStaticText
@@ -49,33 +74,14 @@ class DecisionNodeItem(QGraphicsItem):
         self.is_active = is_active
         self.is_square = is_square
         self.is_dark = is_dark
-        
-        # Dimensions based on dynamic QFontMetrics in set_tree_data
-        self.w = 120.0
-        self.h = 44.0
-        
-        # Calculate dynamic text metrics to fit node
-        font = QFont("Segoe UI", 9)
-        if self.is_active:
-            font.setBold(True)
-            
-        metrics = QFontMetrics(font)
-        text_rect = metrics.boundingRect(QRectF(0, 0, self.w - 12.0, 1000.0).toRect(), 
-                                         Qt.AlignCenter | Qt.TextWordWrap, self.label)
-        self.h = max(44.0, text_rect.height() + 14.0)
-        
+
+        # Dimensions mirror the HTML/SVG renderer for a consistent look.
+        self.w, self.h, self.fs = node_metrics(label, is_active)
+
         self.setPos(x, y)
         self.setAcceptHoverEvents(True)
         self.setToolTip(self.label.replace('\n', ' · '))
-        
-        # Cache layout to avoid drawText performance hit on repaint
-        self.static_text = QStaticText(self.label)
-        option = QTextOption()
-        option.setWrapMode(QTextOption.WordWrap)
-        option.setAlignment(Qt.AlignCenter)
-        self.static_text.setTextOption(option)
-        self.static_text.setTextWidth(self.w - 12.0)
-        
+
         # Cache item rendering as device coordinates
         self.setCacheMode(QGraphicsItem.DeviceCoordinateCache)
 
@@ -98,36 +104,41 @@ class DecisionNodeItem(QGraphicsItem):
                 text_color = QColor("#8ba4ac")      # Muted text
                 border_width = 1.0
         else:
+            # Match the HTML/SVG report colors exactly (rgba over white).
             if self.is_active:
-                fill_color = QColor("#e6f3f2")      # Soft Teal
-                border_color = QColor("#0f766e")    # Deep Teal accent
+                fill_color = QColor(15, 118, 110, 31)    # rgba(15,118,110,0.12)
+                border_color = QColor("#0f766e")         # Deep Teal accent
                 text_color = QColor("#0f766e")
-                border_width = 2.0
+                border_width = 2.3
             else:
-                fill_color = QColor("#f8fafc")      # Soft Gray/Slate
-                border_color = QColor("#e2e8f0")    # Light boundary
-                text_color = QColor("#6b7c84")      # Muted text
-                border_width = 1.0
-                
+                fill_color = QColor(22, 49, 58, 8)        # rgba(22,49,58,0.03)
+                border_color = QColor(22, 49, 58, 51)     # rgba(22,49,58,0.20)
+                text_color = QColor(22, 49, 58, 173)      # rgba(22,49,58,0.68)
+                border_width = 1.2
+
         # Draw background card
         pen = QPen(border_color, border_width)
         painter.setPen(pen)
         painter.setBrush(QBrush(fill_color))
-        
+
         rx = 5.0 if self.is_square else 16.0
-        painter.drawRoundedRect(self.boundingRect(), rx, rx)
         
-        # Draw cached text layout centered vertically
-        font = QFont("Segoe UI", 9)
+        # Adjust drawing rect by half pen width so the border doesn't get clipped
+        adj = border_width / 2.0
+        draw_rect = self.boundingRect().adjusted(adj, adj, -adj, -adj)
+        painter.drawRoundedRect(draw_rect, rx, rx)
+
+        # Draw multi-line text. drawText honours explicit '\n' line breaks
+        # (QStaticText collapsed them, joining words like "participantsin").
+        font = QFont("Segoe UI")
+        font.setPixelSize(int(self.fs))
         if self.is_active:
             font.setBold(True)
         painter.setFont(font)
         painter.setPen(text_color)
-        
-        text_size = self.static_text.size()
-        text_x = -self.w / 2.0 + 6.0
-        text_y = -text_size.height() / 2.0
-        painter.drawStaticText(QPointF(text_x, text_y), self.static_text)
+
+        text_rect = self.boundingRect().adjusted(6.0, 4.0, -6.0, -4.0)
+        painter.drawText(text_rect, Qt.AlignCenter | Qt.TextWordWrap, self.label)
 
 
 class DecisionEdgeItem(QGraphicsItem):
@@ -183,35 +194,48 @@ class DecisionEdgeItem(QGraphicsItem):
             else:
                 color = QColor("#243538")
         else:
+            # Mirror the HTML/SVG report edge colors exactly.
             if self.is_active:
                 color = QColor("#0f766e")
             elif self.is_alternative:
-                color = QColor("#9fb8be")   # Muted teal-grey for dashed branches
+                color = QColor(22, 49, 58, 82)    # rgba(22,49,58,0.32)
             else:
-                color = QColor("#cbd5e1")
+                color = QColor(22, 49, 58, 33)    # rgba(22,49,58,0.13)
 
-        width = 3.0 if self.is_active else (1.4 if self.is_alternative else 1.2)
+        # Stroke widths mirror the HTML renderer.
+        width = 2.8 if self.is_active else (1.5 if self.is_alternative else 1.2)
         pen = QPen(color, width)
         if self.is_alternative and not self.is_active:
             pen.setStyle(Qt.DashLine)
         painter.setPen(pen)
 
         # Draw line path
-        painter.drawLine(QPointF(ex1, ey1), QPointF(ex2, ey2))
-        
-        # Rotate and render arrowhead dynamically at (ex2, ey2)
+        # Shorten line by arrow length to avoid bleed-through
+        arrow_len = 9.0 * width
+        L = math.hypot(dx, dy)
+        if L > arrow_len:
+            line_ex2 = ex2 - (dx / L) * arrow_len
+            line_ey2 = ey2 - (dy / L) * arrow_len
+            painter.drawLine(QPointF(ex1, ey1), QPointF(line_ex2, line_ey2))
+        else:
+            painter.drawLine(QPointF(ex1, ey1), QPointF(ex2, ey2))
+
+        # Arrowhead. SVG markers scale with stroke width (markerUnits="strokeWidth"):
+        # marker is 9×7 units, so the px size is 9*width long by 7*width tall —
+        # that is why the HTML arrows look much larger than the old fixed 7px ones.
         angle_rad = math.atan2(dy, dx)
         angle_deg = math.degrees(angle_rad)
-        
+
         painter.save()
         painter.translate(ex2, ey2)
         painter.rotate(angle_deg)
-        
-        arrow_size = 7.0 if self.is_active else 5.0
+
+        arrow_len = 9.0 * width
+        half_base = 3.5 * width
         p_tip = QPointF(0, 0)
-        p_bottom_left = QPointF(-arrow_size, -arrow_size * 0.4)
-        p_bottom_right = QPointF(-arrow_size, arrow_size * 0.4)
-        
+        p_bottom_left = QPointF(-arrow_len, -half_base)
+        p_bottom_right = QPointF(-arrow_len, half_base)
+
         painter.setBrush(QBrush(color))
         painter.setPen(Qt.NoPen)
         painter.drawPolygon(QPolygonF([p_tip, p_bottom_left, p_bottom_right]))
@@ -256,18 +280,31 @@ class InteractiveDecisionTreeWidget(QGraphicsView):
         bg_color = QColor("#0f1a1c") if is_dark else QColor("#ffffff")
         self.setBackgroundBrush(QBrush(bg_color))
         
-        self.placeholder_item = self.scene.addText(text, QFont("Segoe UI", 10))
-        self.placeholder_item.setDefaultTextColor(QColor("#8ba4ac") if is_dark else QColor("#6b7c84"))
-        
+        # Match the app-wide empty-state language (lblEmptyState): small, italic,
+        # muted, centered — instead of a large left-aligned block that competes
+        # with the panel subtitle above the canvas.
+        placeholder_font = QFont("Segoe UI", 11)
+        placeholder_font.setItalic(True)
+        self.placeholder_item = self.scene.addText("", placeholder_font)
+        self.placeholder_item.setTextWidth(360)
+        option = QTextOption(Qt.AlignCenter)
+        option.setWrapMode(QTextOption.WordWrap)
+        self.placeholder_item.document().setDefaultTextOption(option)
+        self.placeholder_item.setPlainText(text)
+        self.placeholder_item.setDefaultTextColor(QColor("#8ba4ac") if is_dark else QColor("#8aacbf"))
+
+        self.resetTransform()
         rect = self.placeholder_item.boundingRect()
-        self.placeholder_item.setPos(-rect.width() / 2.0, -rect.height() / 2.0)
-        self.setSceneRect(-rect.width() / 2.0 - 50, -rect.height() / 2.0 - 50, rect.width() + 100, rect.height() + 100)
-        self.fitInView(self.sceneRect(), Qt.KeepAspectRatio)
+        self.placeholder_item.setPos(0, 0)
+        self.setSceneRect(0, 0, rect.width(), rect.height())
+        self.setAlignment(Qt.AlignCenter)
 
     def set_tree_data(self, tree_json):
         self.scene.clear()
         self.tree_data = tree_json
         self.user_interacted = False
+        # Restore default centering for the actual tree (placeholder uses AlignTop).
+        self.setAlignment(Qt.AlignCenter)
         
         if not tree_json or "nodes" not in tree_json or not tree_json["nodes"]:
             self.show_placeholder("No decision tree data available.")
@@ -287,28 +324,45 @@ class InteractiveDecisionTreeWidget(QGraphicsView):
         min_x, max_x = min(xs), max(xs)
         min_y, max_y = min(ys), max(ys)
         
-        # Estimate max text height to adjust column layout vertically
-        font_active = QFont("Segoe UI", 9)
-        font_active.setBold(True)
-        metrics_active = QFontMetrics(font_active)
-        font_normal = QFont("Segoe UI", 9)
-        metrics_normal = QFontMetrics(font_normal)
-        
-        max_node_h = 44.0
+        SCALE_Y = 64.0 * 1.7
+        PAD = 96.0
+
+        # Largest node half-extent shifts the whole layout clear of the edges,
+        # exactly like the HTML renderer's maxNodeHalfW / maxNodeHalfH. Also track
+        # the widest box and the tightest horizontal gap between nodes on the same
+        # row so the x-grid can be scaled to keep siblings from overlapping.
+        max_half_w, max_half_h = 65.0, 28.0
+        max_node_w = 160.0
         for node in nodes:
-            lbl = node["label"]
-            metrics = metrics_active if node["isActive"] else metrics_normal
-            rect = metrics.boundingRect(0, 0, 108, 1000, Qt.AlignCenter | Qt.TextWordWrap, lbl)
-            max_node_h = max(max_node_h, rect.height() + 14.0)
-            
-        # Determine dynamic spacing metrics
-        SCALE_X = 145.0
-        SCALE_Y = max_node_h + 80.0
-        PAD = 80.0
-        
+            nw, nh, _fs = node_metrics(node["label"], node["isActive"])
+            max_half_w = max(max_half_w, nw / 2.0)
+            max_half_h = max(max_half_h, nh / 2.0)
+            max_node_w = max(max_node_w, nw)
+
+        min_row_gap = None
+        for i in range(len(nodes)):
+            for j in range(i + 1, len(nodes)):
+                if abs(nodes[i]["y"] - nodes[j]["y"]) < 0.75:  # same visual row
+                    dx = abs(nodes[i]["x"] - nodes[j]["x"])
+                    if dx > 1e-6:
+                        min_row_gap = dx if min_row_gap is None else min(min_row_gap, dx)
+        if not min_row_gap:
+            min_row_gap = 2.0
+
+        # Widen the x-grid so the widest box plus a 30px gutter clears the
+        # tightest sibling gap -- long leaf labels used to overlap their
+        # neighbour at the old fixed SCALE_X=64 (the compact method flowcharts:
+        # correlation/regression/ANCOVA). But keep the whole scene within a width
+        # budget so a large full-decision tree (78 nodes spanning ~120 x-units)
+        # can't explode: there the 64 floor (old behaviour) wins and the view
+        # pans/scrolls instead of shrinking everything to an unreadable sliver.
+        x_span = max(max_x - min_x, 1.0)
+        overlap_scale = (max_node_w + 30.0) / min_row_gap
+        SCALE_X = max(64.0, min(overlap_scale, 260.0, 2600.0 / x_span))
+
         def to_qt_coords(x, y):
-            qx = (x - min_x) * SCALE_X + PAD
-            qy = (max_y - y) * SCALE_Y + PAD
+            qx = (x - min_x) * SCALE_X + PAD + max_half_w
+            qy = (max_y - y) * SCALE_Y + PAD + max_half_h
             return qx, qy
             
         node_map = {}
@@ -397,6 +451,28 @@ class InteractiveDecisionTreeWidget(QGraphicsView):
     def mousePressEvent(self, event):
         self.user_interacted = True
         super().mousePressEvent(event)
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key_Plus, Qt.Key_Equal):
+            self.user_interacted = True
+            factor = self._zoom_factor
+            current_scale = self.transform().m11()
+            if self._min_zoom <= current_scale * factor <= self._max_zoom:
+                self.scale(factor, factor)
+            event.accept()
+        elif event.key() == Qt.Key_Minus:
+            self.user_interacted = True
+            factor = 1.0 / self._zoom_factor
+            current_scale = self.transform().m11()
+            if self._min_zoom <= current_scale * factor <= self._max_zoom:
+                self.scale(factor, factor)
+            event.accept()
+        elif event.key() == Qt.Key_0:
+            self.user_interacted = False
+            self.refit_view()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

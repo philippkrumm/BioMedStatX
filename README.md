@@ -1,7 +1,7 @@
 # BioMedStatX
 
-A comprehensive, GUI-based tool for statistical analysis of experimental data.  
-Users can import Excel or CSV files, define groups, and let BioMedStatX handle the rest - from outlier detection and assumption checks, to guided data transformations, selection of appropriate tests, post-hoc analyses, and generation of fully documented reports.
+A GUI-based tool for statistical analysis of experimental data.  
+Users can import Excel or CSV files, define groups, and let BioMedStatX handle the rest: outlier detection, assumption checks, guided data transformations, automatic test selection, post-hoc analyses, and fully documented HTML reports.
 
 > **Repository:** [philippkrumm/BioMedStatX](https://github.com/philippkrumm/BioMedStatX)  
 > **Releases (Download ready-to-use app):** https://github.com/philippkrumm/BioMedStatX/releases  
@@ -17,27 +17,34 @@ BioMedStatX is designed for experimental and biomedical research workflows:
   Load data, select groups and variables, and trigger analyses without writing code.
 
 - **Automated statistical pipeline**  
-  - Outlier detection  
   - Assumption checks (normality, variance homogeneity, etc.)  
   - Guided data transformations where appropriate  
   - Automatic selection of parametric vs. nonparametric tests for supported designs  
   - Guided post-hoc analyses when needed
 
-  - **Rich output**  
-  - Publication-ready plots  
+- **Rich output**  
+  - Publication-ready plots, exportable as PNG or SVG from the interactive figure builder  
   - Self-contained HTML report with all intermediate steps, assumptions, test decisions, and an interactive decision tree  
   - Clear documentation of which test was selected and why
+
+- **Multi-Dataset Analysis**  
+  - Run several measurement columns (for example several genes or markers) through the same factor mapping in one go  
+  - One summary card per column in a combined report, with Benjamini-Hochberg FDR correction applied across the family of p-values  
+  - Columns that could not be analysed are listed with their reason instead of quietly disappearing  
+  - Restricted to ANOVA-capable designs
+
+- **Outlier detection** (a separate step, run from **Analysis -> Detect Outliers**)  
+  - Grubbs' test (selected by default) and/or a modified Z-score, iterative by default  
+  - Works on a copy and writes its findings to an output file of your choosing: the loaded data is never edited and no rows are dropped  
+  - Deliberately not part of the automatic analysis run, so removing a flagged value stays your decision
 
 - **Excel/CSV support**  
   - Direct import of `.xlsx` and `.csv` files
 
 - **Correlation & Regression**
-  - Pearson / Spearman correlation with 95% confidence intervals (auto-selected via Shapiro-Wilk)
+  - Pearson / Spearman correlation with 95% confidence intervals (auto-selected by sample size and distribution shape, i.e. skewness / kurtosis, not a Shapiro-Wilk gate)
   - Simple and multiple linear regression (OLS) with full residual diagnostics (Ramsey RESET, Breusch-Pagan, Shapiro-Wilk on residuals)
   - Exploratory correlation matrix across all numeric variables with FDR (Benjamini-Hochberg) or Bonferroni correction, pairwise deletion, and optional stratification
-
-- **Subgroup analysis via Filter-Bucket**
-  - Drag any categorical column into the Filter bucket to restrict the analysis to a subset of rows (e.g. On-Pump patients only)
 
 - **Transparent methodology**
   - Advanced explanations for ANOVA workflows: see [Advanced ANOVA Guide](./docs/ADVANCED_ANOVA_GUIDE.md)
@@ -49,20 +56,32 @@ BioMedStatX is designed for experimental and biomedical research workflows:
 
 BioMedStatX is distributed as a standalone application for end users and as source code for developers.
 
-### Option 1: Recommended for most users - Download from Releases
+### Option 1: Download from Releases (recommended for most users)
 
-1. Go to the GitHub Releases page:  
-   -> https://github.com/philippkrumm/BioMedStatX/releases
-2. Download the latest release (e.g. a `.zip` file containing `BioMedStatX.exe`).
-3. Extract the archive to a folder of your choice. **Please note that this is a one-folder packaging and the BioMedStatX.exe stays always together with the _internal file in one folder**
-4. Start the application by double-clicking `BioMedStatX.exe`.
+Go to the GitHub Releases page and download the archive for your platform:  
+-> https://github.com/philippkrumm/BioMedStatX/releases
 
-That's it - no Python installation or command line usage is required for running the app.
+**Windows**
+
+1. Download the Windows archive.
+2. Extract it to a folder of your choice. **The app uses one-folder packaging: keep `BioMedStatX.exe` and the `_internal` folder together.**
+3. Start the application by double-clicking `BioMedStatX.exe`.
+
+**macOS** (Apple Silicon)
+
+1. Download the macOS archive.
+2. Extract it and move `BioMedStatX.app` where you want to keep it.
+3. The app is not signed with an Apple Developer certificate, so macOS will refuse to open it on the first attempt. **Right-click the app and choose "Open"**, then confirm.
+4. If that is not enough, macOS has flagged the download as quarantined. The release notes for your version give the exact `xattr` command to clear it.
+
+Both builds are self-contained. No Python installation or command-line usage is required.
+
+The app checks GitHub for a newer release a few seconds after it starts, and again on demand via **Help -> Check for Updates...**. It only reads the public releases page and never uploads anything; if the machine is offline, the check fails quietly.
 
 For a step-by-step walkthrough of the GUI (with screenshots), see:  
 -> [How to use BioMedStatX (User Guide with screenshots)](./docs/HowTo.md)
 
-### Option 2: For developers and contributors – Run from source
+### Option 2: Run from source (developers and contributors)
 
 If you want to inspect or modify the source code, or contribute to the project:
 
@@ -73,7 +92,7 @@ git clone https://github.com/philippkrumm/BioMedStatX.git
 cd BioMedStatX
 ```
 
-For information about the helper scripts included in this repository, including [`Start_BioMedStatX_on_Linux.sh`](./Start_BioMedStatX_on_Linux.sh) and [`start.bat`](./start.bat), see: [docs/SCRIPTS.md](./docs/SCRIPTS.md)
+For information about the helper scripts included in this repository, including [`start.sh`](./start.sh) and [`run.bat`](./run.bat), see: [docs/SCRIPTS.md](./docs/SCRIPTS.md)
 
 
 ---
@@ -88,7 +107,7 @@ A detailed, step-by-step **User Guide with screenshots and numbered button refer
 ### Basic workflow (short version)
 
 1. **Start BioMedStatX**  
-   Launch the main application (e.g., via your Python entry point or executable - see the User Guide for details).
+   Launch the main application (see the [User Guide](./docs/HowTo.md) for details on entry points and executables).
 
 2. **Load your dataset**  
    - Import an Excel or CSV file.
@@ -104,14 +123,7 @@ A detailed, step-by-step **User Guide with screenshots and numbered button refer
    - Adjust settings as needed (see the [User Guide](./docs/HowTo.md) for screenshots).
 
 5. **Run the analysis**  
-   - Start the analysis and let BioMedStatX automatically:
-     - detect outliers,
-     - check assumptions,
-     - select the appropriate supported test,
-       - run post-hoc tests when needed.
-    - You decide when prompted:
-       - whether to apply offered transformations,
-       - which post-hoc procedure to run when multiple valid options exist.
+   BioMedStatX will automatically detect outliers, check assumptions, select the appropriate test, and run post-hoc analyses when needed. When prompted, you decide whether to apply a suggested transformation and which post-hoc procedure to use.
 
 6. **Inspect the output**  
    - Review plots and statistical results.  
@@ -151,7 +163,8 @@ Additional documentation can be added to the [`docs/`](./docs) folder.
 - Linear Mixed Models (LMM) and Logistic Regression are available for longitudinal and binary outcome designs via the Auto-pilot.
 - Correlation (Pearson/Spearman) and linear regression (OLS) are supported via the Auto-pilot when a continuous variable is assigned to the Factor 1 bucket.
 - Exploratory correlation matrices are available via **Analysis -> Exploratory Correlation Matrix**.
-- Subgroup analyses can be performed using the Filter bucket to restrict any analysis to a subset of rows.
+- Multi-Dataset Analysis takes two or more measurement columns under one factor mapping and analyses them in sequence. Because that is a family of simultaneous tests, Benjamini-Hochberg FDR correction is applied across the p-values and both the adjusted values and the family size are shown in the combined report. The family covers the columns that produced a p-value; with fewer than two, no correction is applied and none is claimed.
+- For two independent groups the pipeline always uses Welch's t-test rather than Student's, and for one-way designs Welch's ANOVA. This is deliberate: Welch is valid whether or not variances are equal, so the choice does not depend on a variance pre-test that is itself unreliable at small n.
 - For Windows and macOS end users, the recommended path is to use the packaged application from the GitHub Releases page. The repository launcher scripts are mainly intended for source-based usage.
 
 ---
@@ -166,8 +179,8 @@ BioMedStatX/
 ├─ LICENSE                        # MIT License
 ├─ CONTRIBUTING.md                # Detailed contributing guidelines
 ├─ CODE_OF_CONDUCT.md             # Contributor Covenant Code of Conduct
-├─ Start_BioMedStatX_on_Linux.sh  # Launcher for Linux/macOS source/binary startup
-├─ start.bat                      # Launcher for Windows source/binary startup
+├─ start.sh                       # Launcher for Linux/macOS source/binary startup
+├─ run.bat                        # Launcher for Windows source/binary startup
 ├─ src/                   # Main application source code
 ├─ docs/                          # User-facing documentation
 │  ├─ HowTo.md                           # Screenshot-based user guide (GUI)
@@ -250,8 +263,8 @@ Please use [GitHub Issues](https://github.com/philippkrumm/BioMedStatX/issues/ne
 
 ## ToDos
 
-In this section, we provide some ideas that we think should be implemented, but the maintainers, have not had the time to. If you have the resources to fulfill any of these ToDos, we would love your contribution.
+These are features worth adding when resources allow. Contributions are welcome.
 
-➡️ [Contributing & Issue Reporting](#contributing--issue-reporting)
+-> [Contributing & Issue Reporting](#contributing--issue-reporting)
 
 - Improve support for running from source on Linux, especially for workflows that depend on Excel-specific behavior.

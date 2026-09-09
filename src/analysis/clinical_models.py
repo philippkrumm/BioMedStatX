@@ -14,6 +14,33 @@ import re
 import numpy as np
 import pandas as pd
 
+import logging
+logger = logging.getLogger(__name__)
+
+from abc import ABC, abstractmethod
+from enum import Enum
+
+from statistical_testing.validators import ModelDesignError
+
+# Shared with the pure-Python EMM post-hoc so both multivariate-t paths pin the
+# same Monte-Carlo seed (see the rationale on the definition). Re-exported here
+# because this module used to own it.
+from analysis.emm_posthoc import MVT_RANDOM_STATE
+
+
+class DesignType(str, Enum):
+    INDEPENDENT = "INDEPENDENT"
+    REPEATED = "REPEATED"
+    MIXED = "MIXED"
+
+class BaseStatisticalModel(ABC):
+    
+    @property
+    @abstractmethod
+    def design_type(self) -> DesignType:
+        """Jeder erbende Test MUSS dieses Flag definieren."""
+        pass
+
 
 def _sanitize_columns(df, columns):
     """Rename columns with special characters so patsy can parse them.
@@ -24,6 +51,11 @@ def _sanitize_columns(df, columns):
     mapping = {}
     for col in columns:
         safe = re.sub(r'[^A-Za-z0-9_]', '_', str(col))
+        
+        # Block patsy keywords
+        if safe in ('C', 'I', 'Q'):
+            safe = f"{safe}_safe"
+            
         if safe != col:
             # Avoid collisions
             base = safe
@@ -35,8 +67,85 @@ def _sanitize_columns(df, columns):
         mapping[col] = safe
     return mapping
 
+def _restore_names_in_dict(d, rev_map):
+    """Recursively reverse the sanitized names back to original names in dictionaries and lists."""
+    if not rev_map:
+        return d
+        
+    if isinstance(d, dict):
+        new_d = {}
+        for k, v in d.items():
+            new_k = k
+            if isinstance(k, str):
+                # Replace longer safe names first to prevent partial replacements
+                for safe, orig in sorted(rev_map.items(), key=lambda x: len(x[0]), reverse=True):
+                    if safe != orig:
+                        new_k = new_k.replace(safe, str(orig))
+            new_d[new_k] = _restore_names_in_dict(v, rev_map)
+        return new_d
+    elif isinstance(d, list):
+        return [_restore_names_in_dict(item, rev_map) for item in d]
+    elif isinstance(d, str):
+        new_str = d
+        for safe, orig in sorted(rev_map.items(), key=lambda x: len(x[0]), reverse=True):
+            if safe != orig:
+                new_str = new_str.replace(safe, str(orig))
+        return new_str
+    else:
+        return d
 
-class ANCOVAModel:
+
+def _parameter_source_columns(param_name, term=None):
+    """Source data column(s) behind a patsy design-matrix parameter.
+
+    ``C(Dose)[T.d1]`` -> ``['Dose']``; ``C(A):C(B)`` -> ``['A', 'B']``; a plain
+    numeric column keeps its own name. Used to look up a parameter's role from
+    an existing column classification by exact membership, instead of testing
+    whether a column name happens to be a substring of the parameter name.
+    """
+    text = term if term else str(param_name)
+    columns = []
+    for part in str(text).split(":"):
+        part = part.strip()
+        match = re.match(r"^C\(\s*([^,)]+?)\s*(?:,[^)]*)?\)", part)
+        if match:
+            columns.append(match.group(1).strip())
+        else:
+            columns.append(re.sub(r"\[.*\]$", "", part).strip())
+    return [c for c in columns if c]
+
+
+def _residual_normality(residuals, alpha=0.05, label="Model residuals"):
+    """Shapiro-Wilk on the residuals of the model that was actually fitted.
+
+    Returns ``(residual_list, normality_tests)``. The second element uses the
+    same shape the report already reads for ``normality_tests``, so the clinical
+    models feed the existing assumption-summary rows instead of a parallel path.
+
+    Input screening goes through ``validate_residuals_for_shapiro`` — the same
+    contract (finite, n>=3, non-constant) the rest of the app applies before
+    calling Shapiro-Wilk.
+    """
+    from scipy import stats as _scipy_stats
+    from statistical_testing.validators import validate_residuals_for_shapiro
+
+    try:
+        array = validate_residuals_for_shapiro(np.asarray(residuals, dtype=float))
+    except Exception as exc:
+        logger.info(f"Residual normality check not applicable: {exc}")
+        return None, {}
+
+    outcome = _scipy_stats.shapiro(array)
+    return [float(v) for v in array], {
+        label: {
+            "statistic": float(outcome.statistic),
+            "p_value": float(outcome.pvalue),
+            "is_normal": bool(outcome.pvalue > alpha),
+        }
+    }
+
+
+class ANCOVAModel(BaseStatisticalModel):
     """ANCOVA via statsmodels OLS with Type III SS (Sum contrasts).
 
     Type III SS with Sum-to-zero contrasts gives interpretable main effects in
@@ -46,6 +155,7 @@ class ANCOVAModel:
     """
 
     def __init__(self):
+        self._rev_map = {}
         self.result = None
         self.anova_table = None
         self._df = None
@@ -53,16 +163,30 @@ class ANCOVAModel:
         self._between_factors = None
         self._covariates = None
         self._alpha = 0.05
+        self._control_group = None
 
-    def fit(self, df, dv, between_factors, covariates, alpha=0.05):
+    @property
+    def design_type(self) -> DesignType:
+        return DesignType.INDEPENDENT
+
+    def fit(self, df, dv, between_factors, covariates, alpha=0.05, control_group=None):
         import statsmodels.formula.api as smf
         from statsmodels.stats.anova import anova_lm
 
+        if not between_factors:
+            raise ModelDesignError("ANCOVA requires at least one between-subjects factor.")
+        if not covariates:
+            raise ModelDesignError("ANCOVA requires at least one covariate.")
+
         self._df = df.dropna(subset=[dv] + between_factors + covariates).copy()
         self._alpha = alpha
+        # Control level for vs-control EMM contrasts (original, un-sanitized
+        # label — only column *names* get sanitized, not the level values).
+        self._control_group = control_group
 
         # Sanitize column names for patsy formulas (replace spaces/special chars)
         col_map = _sanitize_columns(self._df, [dv] + between_factors + covariates)
+        self._rev_map = {v: k for k, v in col_map.items()}
         self._dv = col_map[dv]
         self._between_factors = [col_map[f] for f in between_factors]
         self._covariates = [col_map[c] for c in covariates]
@@ -85,36 +209,63 @@ class ANCOVAModel:
         import statsmodels.formula.api as smf
         from statsmodels.stats.anova import anova_lm
 
+        from itertools import combinations as _combinations
+
         results = {}
-        # Use sanitized column names (already renamed in-place during fit)
-        col_map = {c: c for c in [self._dv] + self._between_factors + self._covariates}
-        # Columns were already sanitized in fit(), just use current df column names
+        factor_terms = [f"C({f}, Sum)" for f in self._between_factors]
+
         for cov in self._covariates:
-            for factor in self._between_factors:
-                # C1: Use Sum contrasts for Type III SS
-                factor_term = f"C({factor}, Sum)"
-                formula = f"{self._dv} ~ {factor_term} * {cov}"
-                
-                try:
-                    model_interaction = smf.ols(formula, data=self._df).fit()
-                    table = anova_lm(model_interaction, typ=3)
-                    
-                    interaction_term = f"{factor_term}:{cov}"
-                    key = f"{factor}:{cov}"
-                    if interaction_term in table.index:
-                        row = table.loc[interaction_term]
-                        p_val = float(row["PR(>F)"])
-                        results[key] = {
-                            "F": float(row["F"]),
-                            "p_value": p_val,
-                            "df": row["df"],
-                            "assumption_holds": p_val > self._alpha,
-                        }
-                except Exception:
-                    results[f"{factor}:{cov}"] = {
+            # One model per covariate, containing EVERY between factor and their
+            # interactions with the covariate. Fitting a marginal one-factor
+            # model per pair leaves the other factors out, so an omitted
+            # factor x covariate interaction leaks into the tested term whenever
+            # the omitted factor is unbalanced across the tested one.
+            other_covs = [c for c in self._covariates if c != cov]
+            factor_block = " * ".join(factor_terms)
+            formula = f"{self._dv} ~ ({factor_block}) * {cov}"
+            if other_covs:
+                formula += " + " + " + ".join(other_covs)
+
+            # every factor combination that can carry a slope difference
+            wanted = []
+            for size in range(1, len(self._between_factors) + 1):
+                for combo in _combinations(range(len(self._between_factors)), size):
+                    key = ":".join(self._between_factors[i] for i in combo) + f":{cov}"
+                    term = ":".join(factor_terms[i] for i in combo) + f":{cov}"
+                    wanted.append((key, term))
+
+            try:
+                model_interaction = smf.ols(formula, data=self._df).fit()
+                table = anova_lm(model_interaction, typ=3)
+            except Exception:
+                for key, _ in wanted:
+                    results[key] = {
                         "F": None, "p_value": None, "df": None,
-                        "assumption_holds": None, "error": "Could not fit interaction model"
+                        "assumption_holds": None,
+                        "error": "Could not fit interaction model",
                     }
+                continue
+
+            for key, term in wanted:
+                row = None
+                if term in table.index:
+                    row = table.loc[term]
+                else:
+                    # patsy may order the interaction components differently
+                    parts = set(term.split(":"))
+                    for idx in table.index:
+                        if set(str(idx).split(":")) == parts:
+                            row = table.loc[idx]
+                            break
+                if row is None:
+                    continue
+                p_val = float(row["PR(>F)"])
+                results[key] = {
+                    "F": float(row["F"]),
+                    "p_value": p_val,
+                    "df": row["df"],
+                    "assumption_holds": p_val > self._alpha,
+                }
         return results
 
     def adjusted_means(self):
@@ -168,6 +319,127 @@ class ANCOVAModel:
             means[factor] = adjusted
         return means
 
+    def _emm_functional(self, factor, level):
+        """Linear functional L (length = n model params) whose dot product with
+        the OLS coefficients yields the EMM of ``level`` for ``factor``.
+
+        Built from the *same* balanced reference grid as ``adjusted_means``
+        (other between-factors balanced, covariates at their grand mean), so the
+        contrast L_A - L_B is exactly the difference of adjusted means.
+        """
+        from itertools import product as _product
+        from patsy import dmatrix
+
+        cov_means = {c: self._df[c].mean() for c in self._covariates}
+        other_factors = [f for f in self._between_factors if f != factor]
+        other_levels = [self._df[f].unique() for f in other_factors]
+
+        grid_rows = []
+        for combo in (_product(*other_levels) if other_factors else [()]):
+            row = {factor: level}
+            row.update(dict(zip(other_factors, combo)))
+            row.update(cov_means)
+            grid_rows.append(row)
+        grid = pd.DataFrame(grid_rows)
+
+        design_info = self.result.model.data.design_info
+        X = np.asarray(dmatrix(design_info, grid, return_type="matrix"))
+        return X.mean(axis=0)
+
+    @staticmethod
+    def _mvt_pvalues(t_values, R, df):
+        """Single-step two-sided multivariate-t adjusted p-values for a family
+        of contrasts with correlation matrix ``R`` and ``df`` residual df. This
+        is the emmeans ``adjust="mvt"`` rule: it accounts for the correlation
+        between the contrasts instead of the conservative Bonferroni/Holm bound.
+        """
+        from scipy.stats import multivariate_t, t as student_t
+
+        k = len(t_values)
+        if k == 1:
+            return [float(2.0 * student_t.sf(abs(t_values[0]), df))]
+        rv = multivariate_t(loc=np.zeros(k), shape=R, df=df, allow_singular=True)
+        out = []
+        for tv in t_values:
+            c = abs(float(tv))
+            p_all = float(rv.cdf(np.full(k, c), lower_limit=np.full(k, -c),
+                                 random_state=MVT_RANDOM_STATE))
+            out.append(float(min(1.0, max(0.0, 1.0 - p_all))))
+        return out
+
+    def emm_contrasts(self, method="vs_control", control_group=None, factor=None):
+        """EMM (covariate-adjusted) post-hoc contrasts on the primary between
+        factor, computed via ``result.t_test`` on the fitted OLS model.
+
+        method="vs_control": treatment-vs-control family, multivariate-t adjusted
+        (optimal for targeted designs with a defined reference, e.g. empty-vector
+        controls in Dual-Luciferase assays). Requires ``control_group``.
+
+        method="pairwise": all C(G,2) contrasts, Holm-Bonferroni adjusted.
+
+        Returns a list of comparison dicts (group1, group2, estimate, se, t, df,
+        p_value, significant) or ``None`` if the model is not fitted / <2 levels.
+        Each estimate has sign ``mean(group1) - mean(group2)``.
+        """
+        if self.result is None:
+            return None
+        factor = factor or self._between_factors[0]
+        levels = list(pd.unique(self._df[factor]))
+        if len(levels) < 2:
+            return None
+
+        functionals = {lvl: self._emm_functional(factor, lvl) for lvl in levels}
+        beta = np.asarray(self.result.params.values, dtype=float)
+        cov_params = np.asarray(self.result.cov_params().values, dtype=float)
+        ddf = float(self.result.df_resid)
+
+        if method == "vs_control":
+            if control_group is None or control_group not in levels:
+                raise ValueError("vs_control requires a control_group present in the data")
+            treatments = [lvl for lvl in levels if lvl != control_group]
+            pairs = [(trt, control_group) for trt in treatments]
+        elif method == "pairwise":
+            from itertools import combinations as _combinations
+            pairs = list(_combinations(levels, 2))
+        else:
+            raise ValueError(f"unknown contrast method {method!r}")
+
+        Lmat = np.vstack([functionals[a] - functionals[b] for a, b in pairs])
+        est = Lmat @ beta
+        cov_c = Lmat @ cov_params @ Lmat.T
+        se = np.sqrt(np.clip(np.diag(cov_c), 0.0, None))
+        with np.errstate(divide="ignore", invalid="ignore"):
+            t_values = np.where(se > 0, est / se, 0.0)
+
+        if method == "vs_control":
+            d = np.sqrt(np.clip(np.diag(cov_c), 1e-300, None))
+            R = cov_c / np.outer(d, d)
+            np.fill_diagonal(R, 1.0)
+            p_adj = self._mvt_pvalues(list(t_values), R, ddf)
+        else:
+            from scipy.stats import t as student_t
+            from statsmodels.stats.multitest import multipletests
+            p_raw = [float(2.0 * student_t.sf(abs(tv), ddf)) for tv in t_values]
+            _, p_adj, _, _ = multipletests(p_raw, alpha=self._alpha, method="holm")
+            p_adj = list(p_adj)
+
+        contrasts = []
+        for (a, b), e, s, tv, p in zip(pairs, est, se, t_values, p_adj):
+            contrasts.append({
+                "group1": str(a),
+                "group2": str(b),
+                "estimate": float(e),
+                "std_err": float(s),
+                "statistic": float(tv),
+                "df": ddf,
+                "p_value": float(p),
+                "significant": bool(p < self._alpha),
+                "test": "ANCOVA EMM Contrast",
+                "corrected": True,
+                "correction": "multivariate-t" if method == "vs_control" else "Holm-Bonferroni",
+            })
+        return contrasts
+
     def run_simple_slopes_and_jn(self):
         """Perform Simple Slopes (Pick-a-Point) and Johnson-Neyman analysis when slopes are heterogeneous."""
         if self.result is None or not self._covariates or not self._between_factors:
@@ -184,7 +456,7 @@ class ANCOVAModel:
         # 1. Simple Slopes (Pick-a-Point Approach)
         cov_vals = df_clean[cov].dropna().values
         cov_mean = float(np.mean(cov_vals))
-        cov_sd = float(np.std(cov_vals))
+        cov_sd = float(np.std(cov_vals, ddof=1)) if len(cov_vals) > 1 else 0.0
         
         points = {
             "Mean - 1 SD": cov_mean - cov_sd,
@@ -222,7 +494,7 @@ class ANCOVAModel:
                             "ci_upper": float(fit_centered.conf_int().loc[param, 1]),
                         })
             except Exception as e:
-                print(f"Error in simple slopes at {label}: {e}")
+                logger.error(f"Error in simple slopes at {label}: {e}")
 
         # 2. Johnson-Neyman Interval
         jn_result = None
@@ -296,7 +568,7 @@ class ANCOVAModel:
                             "covariate_max": cov_max,
                         }
             except Exception as e:
-                print(f"Error calculating Johnson-Neyman: {e}")
+                logger.error(f"Error calculating Johnson-Neyman: {e}")
                 
         return {
             "simple_slopes": simple_slopes,
@@ -311,6 +583,34 @@ class ANCOVAModel:
 
         slope_homogeneity = self.check_regression_slope_homogeneity()
         adj_means = self.adjusted_means()
+
+        # EMM post-hoc contrasts on the primary between factor. Default to the
+        # vs-control family (EMM + multivariate-t) when a control group is
+        # identifiable; otherwise fall back to all-pairwise (EMM + Holm) so the
+        # pipeline never crashes on missing control metadata.
+        emm_comparisons = []
+        posthoc_label = None
+        try:
+            primary = self._between_factors[0]
+            primary_levels = list(pd.unique(self._df[primary]))
+            # Resolve the control label dtype-safely: the UI hands back a string,
+            # but the actual level values may be numeric.
+            ctrl = None
+            if self._control_group is not None:
+                ctrl = next(
+                    (lvl for lvl in primary_levels
+                     if str(lvl) == str(self._control_group)),
+                    None,
+                )
+            if ctrl is not None:
+                emm_comparisons = self.emm_contrasts(method="vs_control", control_group=ctrl)
+                posthoc_label = f"EMM contrasts vs control '{ctrl}' (multivariate-t)"
+            elif len(primary_levels) >= 2:
+                emm_comparisons = self.emm_contrasts(method="pairwise")
+                posthoc_label = "EMM pairwise contrasts (Holm-Bonferroni)"
+        except Exception as exc:
+            logger.error(f"Error computing ANCOVA EMM contrasts: {exc}")
+            emm_comparisons = []
 
         # Determine if slopes are heterogeneous (any interaction p < alpha)
         slopes_heterogeneous = any(v.get("p_value") is not None and v.get("p_value") < self._alpha for v in slope_homogeneity.values())
@@ -353,24 +653,44 @@ class ANCOVAModel:
             main_p = float(self.anova_table.loc[factor_key, "PR(>F)"])
             main_f = float(self.anova_table.loc[factor_key, "F"])
 
-        # Compute eta-squared for main factor
+        # Compute partial eta-squared for main factor (ss_factor / (ss_factor + ss_residual))
         eta_sq = None
         if self.anova_table is not None and factor_key in self.anova_table.index:
             ss_factor = self.anova_table.loc[factor_key, "sum_sq"]
-            ss_total = self.anova_table["sum_sq"].sum()
-            if ss_total > 0:
-                eta_sq = float(ss_factor / ss_total)
+            # Exact row name, not a substring search: the index is
+            # [Intercept, factors..., covariates..., Residual], so a covariate
+            # called e.g. "Residual_Volume" would match first and be used as the
+            # error term.
+            residual_key = next(
+                (k for k in self.anova_table.index
+                 if str(k).strip().lower() == "residual"),
+                None,
+            )
+            if residual_key is not None:
+                ss_residual = self.anova_table.loc[residual_key, "sum_sq"]
+                denom = ss_factor + ss_residual
+                if denom > 0:
+                    eta_sq = float(ss_factor / denom)
 
-        return {
+        model_residuals, normality_tests = _residual_normality(
+            self.result.resid, alpha=self._alpha
+        )
+
+        res = {
+            "design_type": self.design_type.value,
             "test": "ANCOVA" if len(self._between_factors) == 1 else "Two-Way ANCOVA",
             "model_type": "ANCOVA",
+            "model_residuals": model_residuals,
+            "normality_tests": normality_tests,
             "p_value": main_p,
             "statistic": main_f,
             "effect_size": eta_sq,
-            "effect_size_type": "eta_squared",
+            "effect_size_type": "partial_eta_squared",
             "anova_table": anova_rows,
             "covariate_effects": covariate_effects,
             "adjusted_means": adj_means,
+            "pairwise_comparisons": emm_comparisons,
+            "posthoc_test": posthoc_label,
             "slope_homogeneity": slope_homogeneity,
             "slopes_heterogeneous": slopes_heterogeneous,
             "simple_slopes_analysis": simple_slopes_analysis,
@@ -382,9 +702,10 @@ class ANCOVAModel:
             "covariates_used": self._covariates,
             "between_factors": self._between_factors,
         }
+        return _restore_names_in_dict(res, self._rev_map)
 
 
-class LinearMixedModel:
+class LinearMixedModel(BaseStatisticalModel):
     """LMM for longitudinal clinical data via statsmodels MixedLM.
 
     Fits Random Intercept and compares with Random Intercept + Random Slope via LRT.
@@ -392,6 +713,7 @@ class LinearMixedModel:
     """
 
     def __init__(self):
+        self._rev_map = {}
         self.result = None
         self._df = None
         self._dv = None
@@ -403,10 +725,61 @@ class LinearMixedModel:
         self._lrt_stat = None
         self._lrt_p = None
         self._random_structure_chosen = "Random Intercept Only"
+        self._alpha = 0.05
+        self._control_group = None
+        self._groups_vals = None
 
-    def fit(self, df, dv, fixed_effects, random_intercept, covariates=None, random_slope=None):
+    @property
+    def design_type(self) -> DesignType:
+        if not hasattr(self, '_df') or self._df is None:
+            return DesignType.REPEATED
+        
+        between_cols = set()
+        for col in self._fixed_effects + (self._covariates or []):
+            vals = self._df[col].values
+            is_constant = True
+            for g_id in self._df[self._random_intercept].unique():
+                mask = (self._df[self._random_intercept].values == g_id)
+                g_vals = vals[mask]
+                if len(g_vals) > 1 and not np.all(g_vals == g_vals[0]):
+                    is_constant = False
+                    break
+            if is_constant:
+                between_cols.add(col)
+        return DesignType.MIXED if between_cols else DesignType.REPEATED
+
+    @staticmethod
+    def _re_param_count(fit):
+        """Number of free random-effects covariance parameters in a MixedLM fit.
+
+        The LRT degrees of freedom is the difference of this count between the
+        two candidate structures. It cannot be assumed: statsmodels' default
+        covariance is unstructured, so a k-dimensional random effect carries
+        k(k+1)/2 free parameters, and a *categorical* random slope contributes
+        one column per non-reference level. A 3-level within factor therefore
+        goes from 1 (intercept only) to 6, i.e. df = 5, not 1.
+
+        ``k_re2`` is statsmodels' own count for the cov_re block and ``k_vc``
+        covers additional variance components; the cov_re triangle is the
+        fallback if either attribute is unavailable.
+        """
+        k_re2 = getattr(fit, "k_re2", None)
+        if k_re2 is None:
+            k = fit.cov_re.shape[0]
+            k_re2 = k * (k + 1) // 2
+        return int(k_re2) + int(getattr(fit, "k_vc", 0) or 0)
+
+    def fit(self, df, dv, fixed_effects, random_intercept, covariates=None, random_slope=None, alpha=0.05, control_group=None):
         import statsmodels.formula.api as smf
         from scipy import stats as scipy_stats
+
+        if not fixed_effects:
+            raise ModelDesignError("Linear Mixed Model requires at least one fixed effect.")
+        if random_intercept is None:
+            raise ModelDesignError("Linear Mixed Model requires a subject/ID column for the random intercept.")
+
+        self._alpha = alpha
+        self._control_group = control_group
 
         all_cols = [dv, random_intercept] + fixed_effects + (covariates or [])
         if random_slope and random_slope not in all_cols:
@@ -414,11 +787,13 @@ class LinearMixedModel:
         self._df = df.dropna(subset=all_cols).copy()
 
         col_map = _sanitize_columns(self._df, all_cols)
+        self._rev_map = {v: k for k, v in col_map.items()}
         self._dv = col_map[dv]
         self._fixed_effects = [col_map[f] for f in fixed_effects]
         self._random_intercept = col_map[random_intercept]
         self._random_slope = col_map[random_slope] if random_slope else None
         self._covariates = [col_map[c] for c in (covariates or [])]
+        self._groups_vals = self._df[self._random_intercept].values
 
         terms = []
         if self._fixed_effects:
@@ -451,8 +826,9 @@ class LinearMixedModel:
                     ll_ri = fit_ri.llf
                     ll_ri_rs = fit_ri_rs.llf
                     D = 2 * (ll_ri_rs - ll_ri)
-                    
-                    df_diff = 2
+                    df_diff = self._re_param_count(fit_ri_rs) - self._re_param_count(fit_ri)
+                    if df_diff < 1:
+                        df_diff = 1
                     p_val = float(scipy_stats.chi2.sf(D, df_diff))
                     
                     self._lrt_performed = True
@@ -466,11 +842,62 @@ class LinearMixedModel:
                         self.result = fit_ri
                         self._random_structure_chosen = "Random Intercept Only"
             except Exception as e:
-                print(f"LMM fit with random slope failed/did not converge: {e}. Falling back to Random Intercept only.")
+                logger.info(f"LMM fit with random slope failed/did not converge: {e}. Falling back to Random Intercept only.")
                 self.result = fit_ri
                 self._random_structure_chosen = "Random Intercept Only (Fallback)"
 
         return self
+
+    def _primary_term_slice(self):
+        """(term_name, column indices) of the primary fixed factor in the
+        fixed-effects design matrix, or (None, None)."""
+        try:
+            slices = self.result.model.data.design_info.term_name_slices
+        except Exception:
+            return None, None
+        k_fe = int(self.result.k_fe)
+        for fe in self._fixed_effects or []:
+            term = f"C({fe})"
+            sl = slices.get(term)
+            if sl is None:
+                continue
+            cols = [c for c in range(*sl.indices(k_fe))]
+            if cols:
+                return term, cols
+        return None, None
+
+    def _omnibus_fixed_effect(self):
+        """Wald test over the primary fixed factor's whole parameter block.
+
+        Returns (statistic, df, p_value). Under REML the log-likelihood is not
+        comparable across different fixed-effect structures, so a
+        likelihood-ratio test is not available here — Wald is the correct
+        omnibus for the fixed effects of a REML fit.
+        """
+        if self.result is None:
+            return None, None, None
+        term, cols = self._primary_term_slice()
+        if not cols:
+            return None, None, None
+
+        from scipy.stats import chi2 as _chi2
+
+        k_fe = int(self.result.k_fe)
+        beta = np.asarray(self.result.fe_params.values, dtype=float)
+        cov = np.asarray(self.result.cov_params())[:k_fe, :k_fe]
+
+        R = np.zeros((len(cols), k_fe))
+        for row, col in enumerate(cols):
+            R[row, col] = 1.0
+        diff = R @ beta
+        mid = R @ cov @ R.T
+        try:
+            mid_inv = np.linalg.inv(mid)
+        except np.linalg.LinAlgError:
+            mid_inv = np.linalg.pinv(mid)
+        stat = float(diff @ mid_inv @ diff)
+        df_num = len(cols)
+        return stat, df_num, float(_chi2.sf(stat, df_num))
 
     def icc(self):
         """Compute Intraclass Correlation Coefficient."""
@@ -512,6 +939,20 @@ class LinearMixedModel:
                 
         n_between_predictors = len(between_cols)
         n_within_predictors = len(within_cols)
+
+        # Map each fixed-effect parameter back to the source column(s) it came
+        # from, so the Between-Within df can be looked up from the classification
+        # computed above instead of being re-derived per parameter. Matching
+        # `col in param_name` as a substring made a between-subject covariate
+        # named "Dose_base" collide with a within factor named "Dose".
+        term_by_param = {}
+        try:
+            _param_names = list(self.result.fe_params.index)
+            for _term, _sl in self.result.model.data.design_info.term_name_slices.items():
+                for _idx in range(*_sl.indices(len(_param_names))):
+                    term_by_param[_param_names[_idx]] = _term
+        except Exception:
+            term_by_param = {}
         
         apply_correction = (n_groups < 100)
         df_method = "Between-Within (Kenward-Roger / Satterthwaite approximation)" if apply_correction else "Asymptotic (z-test)"
@@ -527,11 +968,10 @@ class LinearMixedModel:
                 if param_name == "Intercept":
                     df_param = n_groups - 1
                 else:
-                    is_within = False
-                    for col in within_cols:
-                        if col in param_name:
-                            is_within = True
-                            break
+                    source_cols = _parameter_source_columns(
+                        param_name, term_by_param.get(param_name)
+                    )
+                    is_within = any(col in within_cols for col in source_cols)
                     if is_within:
                         df_param = n_obs - n_groups - n_within_predictors
                     else:
@@ -569,27 +1009,52 @@ class LinearMixedModel:
         except Exception:
             pass
 
-        # Extract p-values for main fixed effects
-        main_p = None
-        main_z = None
-        for fe in self._fixed_effects:
-            for entry in fixed_effects_table:
-                param_name = entry["parameter"]
-                if f"C({fe})" in param_name and ":" not in param_name and param_name != "Intercept":
-                    main_p = entry["p_value"]
-                    main_z = entry["z_value"]
-                    break
-            if main_p is not None:
-                break
+        # Headline effect for the primary fixed factor: an omnibus Wald test over
+        # the factor's whole parameter block. Reporting the first dummy contrast
+        # instead answers a different question entirely once the factor has more
+        # than two levels.
+        main_stat, main_df, main_p = self._omnibus_fixed_effect()
 
         icc_val = self.icc()
 
-        return {
+        # EMM post-hoc contrasts on the primary fixed effect factor.
+        emm_comparisons = []
+        posthoc_label = None
+        try:
+            if self._fixed_effects:
+                primary = self._fixed_effects[0]
+                primary_levels = list(pd.unique(self._df[primary]))
+                ctrl = None
+                if self._control_group is not None:
+                    ctrl = next(
+                        (lvl for lvl in primary_levels
+                         if str(lvl) == str(self._control_group)),
+                        None,
+                    )
+                if ctrl is not None:
+                    emm_comparisons = self.emm_contrasts(method="vs_control", control_group=ctrl)
+                    posthoc_label = f"EMM contrasts vs control '{ctrl}' (multivariate-t)"
+                elif len(primary_levels) >= 2:
+                    emm_comparisons = self.emm_contrasts(method="pairwise")
+                    posthoc_label = "EMM pairwise contrasts (Holm-Bonferroni)"
+        except Exception as exc:
+            logger.error(f"Error computing LMM EMM contrasts: {exc}")
+            emm_comparisons = []
+
+        model_residuals, normality_tests = _residual_normality(
+            self.result.resid, alpha=self._alpha
+        )
+
+        res = {
+            "design_type": self.design_type.value,
             "test": "Linear Mixed Model",
             "model_type": "LMM",
+            "model_residuals": model_residuals,
+            "normality_tests": normality_tests,
             "p_value": main_p,
-            "statistic": main_z,
-            "statistic_type": "z",
+            "statistic": main_stat,
+            "statistic_type": "chi2",
+            "omnibus_df": main_df,
             "effect_size": icc_val,
             "effect_size_type": "ICC",
             "fixed_effects_table": fixed_effects_table,
@@ -603,6 +1068,8 @@ class LinearMixedModel:
             "n_subjects": n_groups,
             "n_observations": n_obs,
             "fixed_effects_used": self._fixed_effects,
+            "between_effects": list(between_cols),
+            "within_effects": list(within_cols),
             "random_intercept": self._random_intercept,
             "covariates_used": self._covariates,
             "lrt_performed": self._lrt_performed,
@@ -610,13 +1077,172 @@ class LinearMixedModel:
             "lrt_p_value": self._lrt_p,
             "random_structure_chosen": self._random_structure_chosen,
             "df_method": df_method,
+            "pairwise_comparisons": emm_comparisons,
+            "posthoc_test": posthoc_label,
         }
+        return _restore_names_in_dict(res, self._rev_map)
+
+    def emm_contrasts(self, method="vs_control", control_group=None, factor=None):
+        """EMM post-hoc contrasts on the fixed effects factors, computed via
+        manually evaluated contrasts on the fitted MixedLM model.
+        """
+        if self.result is None:
+            return None
+        factor = factor or self._fixed_effects[0]
+        levels = list(pd.unique(self._df[factor]))
+        if len(levels) < 2:
+            return None
+
+        # 1. Classify factors as Between-Subject or Within-Subject for degrees of freedom
+        between_cols = set()
+        within_cols = set()
+        for col in self._fixed_effects + (self._covariates or []):
+            vals = self._df[col].values
+            is_constant = True
+            for g_id in np.unique(self._groups_vals):
+                mask = (self._groups_vals == g_id)
+                g_vals = vals[mask]
+                if len(g_vals) > 1 and not np.all(g_vals == g_vals[0]):
+                    is_constant = False
+                    break
+            if is_constant:
+                between_cols.add(col)
+            else:
+                within_cols.add(col)
+
+        # 2. Determine k_between and k_within from Fixed-Effects design matrix X
+        X = self.result.model.exog
+        param_names = self.result.fe_params.index.tolist()
+        group_ids = self._groups_vals
+        
+        k_between = 0
+        k_within = 0
+        for i, col_name in enumerate(param_names):
+            if col_name == "Intercept":
+                continue
+            col_vals = X[:, i]
+            is_constant_within_clusters = True
+            for g_id in np.unique(group_ids):
+                g_vals = col_vals[group_ids == g_id]
+                if len(g_vals) > 1 and not np.all(g_vals == g_vals[0]):
+                    is_constant_within_clusters = False
+                    break
+            if is_constant_within_clusters:
+                k_between += 1
+            else:
+                k_within += 1
+
+        n_groups = len(np.unique(self._groups_vals))
+        n_obs = len(self._df)
+
+        if factor in within_cols:
+            df_bw = n_obs - n_groups - k_within
+        else:
+            df_bw = n_groups - 1 - k_between
+        df_bw = max(1, df_bw)
+
+        # 3. Build EMM functionals for each level
+        functionals = {lvl: self._emm_functional(factor, lvl) for lvl in levels}
+        
+        # 4. Get Fixed Effects coefficients and Fixed Effects covariance submatrix
+        beta = np.asarray(self.result.fe_params.values, dtype=float)
+        cov_params = np.asarray(self.result.cov_params().iloc[:self.result.k_fe, :self.result.k_fe].values, dtype=float)
+
+        if method == "vs_control":
+            if control_group is None or control_group not in levels:
+                raise ValueError("vs_control requires a control_group present in the data")
+            treatments = [lvl for lvl in levels if lvl != control_group]
+            pairs = [(trt, control_group) for trt in treatments]
+        elif method == "pairwise":
+            from itertools import combinations as _combinations
+            pairs = list(_combinations(levels, 2))
+        else:
+            raise ValueError(f"unknown contrast method {method!r}")
+
+        Lmat = np.vstack([functionals[a] - functionals[b] for a, b in pairs])
+        est = Lmat @ beta
+        cov_c = Lmat @ cov_params @ Lmat.T
+        se = np.sqrt(np.clip(np.diag(cov_c), 0.0, None))
+        with np.errstate(divide="ignore", invalid="ignore"):
+            t_values = np.where(se > 0, est / se, 0.0)
+
+        if method == "vs_control":
+            d = np.sqrt(np.clip(np.diag(cov_c), 1e-300, None))
+            R = cov_c / np.outer(d, d)
+            np.fill_diagonal(R, 1.0)
+            p_adj = self._mvt_pvalues(list(t_values), R, df_bw)
+        else:
+            from scipy.stats import t as student_t
+            from statsmodels.stats.multitest import multipletests
+            p_raw = [float(2.0 * student_t.sf(abs(tv), df_bw)) for tv in t_values]
+            _, p_adj, _, _ = multipletests(p_raw, alpha=self._alpha, method="holm")
+            p_adj = list(p_adj)
+
+        contrasts = []
+        for (a, b), e, s, tv, p in zip(pairs, est, se, t_values, p_adj):
+            contrasts.append({
+                "group1": str(a),
+                "group2": str(b),
+                "estimate": float(e),
+                "std_err": float(s),
+                "statistic": float(tv),
+                "p_value": float(p),
+                "significant": bool(p < self._alpha),
+                "test": "LMM EMM Contrast",
+                "df": float(df_bw),
+                "corrected": True,
+                "correction": "multivariate-t" if method == "vs_control" else "Holm-Bonferroni"
+            })
+        return contrasts
+
+    def _emm_functional(self, factor, level):
+        """Linear functional L (length = n model params) whose dot product with
+        the Fixed Effects coefficients yields the EMM of ``level`` for ``factor``.
+        """
+        from itertools import product as _product
+        from patsy import dmatrix
+
+        cov_means = {c: self._df[c].mean() for c in self._covariates}
+        other_factors = [f for f in self._fixed_effects if f != factor]
+        other_levels = [self._df[f].unique() for f in other_factors]
+
+        grid_rows = []
+        for combo in (_product(*other_levels) if other_factors else [()]):
+            row = {factor: level}
+            row.update(dict(zip(other_factors, combo)))
+            row.update(cov_means)
+            grid_rows.append(row)
+        grid = pd.DataFrame(grid_rows)
+
+        design_info = self.result.model.data.design_info
+        X = np.asarray(dmatrix(design_info, grid, return_type="matrix"))
+        return X.mean(axis=0)
+
+    @staticmethod
+    def _mvt_pvalues(t_values, R, df):
+        """Single-step two-sided multivariate-t adjusted p-values for a family
+        of contrasts with correlation matrix ``R`` and ``df`` residual df.
+        """
+        from scipy.stats import multivariate_t, t as student_t
+
+        k = len(t_values)
+        if k == 1:
+            return [float(2.0 * student_t.sf(abs(t_values[0]), df))]
+        rv = multivariate_t(loc=np.zeros(k), shape=R, df=df, allow_singular=True)
+        out = []
+        for tv in t_values:
+            c = abs(float(tv))
+            p_all = float(rv.cdf(np.full(k, c), lower_limit=np.full(k, -c),
+                                 random_state=MVT_RANDOM_STATE))
+            out.append(float(min(1.0, max(0.0, 1.0 - p_all))))
+        return out
 
 
-class LogisticRegressionModel:
+class LogisticRegressionModel(BaseStatisticalModel):
     """Logistic regression for binary outcomes via statsmodels GLM(Binomial) with Firth fallback."""
 
     def __init__(self):
+        self._rev_map = {}
         self.result = None
         self._df = None
         self._dv = None
@@ -627,14 +1253,22 @@ class LogisticRegressionModel:
         self._firth_bse = None
         self._firth_cov = None
 
+    @property
+    def design_type(self) -> DesignType:
+        return DesignType.INDEPENDENT
+
     def fit(self, df, dv, predictors, covariates=None):
         import statsmodels.formula.api as smf
         import statsmodels.api as sm
+
+        if not predictors and not covariates:
+            raise ModelDesignError("Logistic regression requires at least one predictor or covariate.")
 
         all_cols = [dv] + predictors + (covariates or [])
         self._df = df.dropna(subset=all_cols).copy()
 
         col_map = _sanitize_columns(self._df, all_cols)
+        self._rev_map = {v: k for k, v in col_map.items()}
         self._dv = col_map[dv]
         self._predictors = [col_map[p] for p in predictors]
         self._covariates = [col_map[c] for c in (covariates or [])]
@@ -642,7 +1276,7 @@ class LogisticRegressionModel:
         # Encode DV as 0/1 if needed
         unique_vals = sorted(self._df[self._dv].unique())
         if len(unique_vals) != 2:
-            raise ValueError(f"Logistic regression requires exactly 2 outcome levels, found {len(unique_vals)}")
+            raise ModelDesignError(f"Logistic regression requires exactly 2 outcome levels, found {len(unique_vals)}")
         if set(unique_vals) != {0, 1}:
             self._df[self._dv] = (self._df[self._dv] == unique_vals[1]).astype(int)
 
@@ -654,11 +1288,12 @@ class LogisticRegressionModel:
         model = smf.glm(formula, data=self._df, family=sm.families.Binomial())
         self.result = model.fit()
 
+        SEPARATION_BSE_THRESHOLD = 5.0
         # Check standard errors of coefficients to detect separation
         has_large_se = False
         try:
             for param in self.result.params.index:
-                if self.result.bse[param] > 5.0:
+                if self.result.bse[param] > SEPARATION_BSE_THRESHOLD:
                     has_large_se = True
                     break
         except Exception:
@@ -669,6 +1304,7 @@ class LogisticRegressionModel:
         self._firth_bse = None
         self._firth_cov = None
         self._firth_plr_pvals = {}
+        self._firth_failed = False
 
         if not self.result.converged or has_large_se:
             # Fallback to Firth Penalized Likelihood
@@ -691,7 +1327,8 @@ class LogisticRegressionModel:
                     except Exception:
                         pass  # odds_ratios falls back to Wald for this parameter
             except Exception as e:
-                print(f"WARNING: Firth solver failed/did not converge: {e}. Keeping standard logit results.")
+                self._firth_failed = True
+                logger.warning(f"WARNING: Firth solver failed/did not converge: {e}. Keeping standard logit results.")
 
         return self
 
@@ -932,6 +1569,68 @@ class LogisticRegressionModel:
                 })
         return rows
 
+    def _primary_term_columns(self):
+        """(term_name, column indices) of the primary predictor in the design
+        matrix. Falls back to the first covariate when the model was fitted from
+        covariates only."""
+        try:
+            slices = self.result.model.data.design_info.term_name_slices
+        except Exception:
+            return None, None
+        n_cols = self.result.model.exog.shape[1]
+        candidates = [f"C({p})" for p in (self._predictors or [])]
+        candidates += list(self._covariates or [])
+        for term in candidates:
+            sl = slices.get(term)
+            if sl is None:
+                continue
+            cols = [c for c in range(*sl.indices(n_cols))]
+            if cols:
+                return term, cols
+        return None, None
+
+    def _omnibus_predictor(self):
+        """Likelihood-ratio test for the primary predictor's whole parameter
+        block. Returns (statistic, df, p_value).
+
+        LR rather than Wald: with a near-separated level the Wald statistic
+        collapses (Hauck-Donner), which is exactly the situation this model is
+        built to survive. The Firth variant uses the penalized likelihood, the
+        same inference its per-coefficient p-values already use.
+        """
+        if self.result is None:
+            return None, None, None
+        term, cols = self._primary_term_columns()
+        if not cols:
+            return None, None, None
+
+        from scipy.stats import chi2 as _chi2
+
+        exog = self.result.model.exog
+        endog = self.result.model.endog
+        df_num = len(cols)
+
+        try:
+            if self._model_variant == "Firth Penalized Likelihood" and self._firth_coefs is not None:
+                pll_full = self._penalized_loglik(exog, endog, self._firth_coefs)
+                beta_c, _, _ = self._fit_firth_logistic(exog, endog, fixed_zero=set(cols))
+                pll_reduced = self._penalized_loglik(exog, endog, beta_c)
+                stat = max(2.0 * (pll_full - pll_reduced), 0.0)
+            else:
+                import statsmodels.api as sm
+
+                reduced_exog = np.delete(np.asarray(exog, dtype=float), cols, axis=1)
+                if reduced_exog.shape[1] == 0:
+                    reduced_exog = np.ones((len(endog), 1))
+                reduced = sm.GLM(endog, reduced_exog,
+                                 family=sm.families.Binomial()).fit()
+                stat = max(2.0 * (float(self.result.llf) - float(reduced.llf)), 0.0)
+        except Exception as exc:
+            logger.warning(f"Logistic omnibus test failed for term {term!r}: {exc}")
+            return None, None, None
+
+        return float(stat), df_num, float(_chi2.sf(stat, df_num))
+
     def hosmer_lemeshow(self, n_groups=10):
         """Hosmer-Lemeshow goodness-of-fit test (deprecated but kept for backward compatibility)."""
         from scipy import stats as scipy_stats
@@ -1021,7 +1720,7 @@ class LogisticRegressionModel:
                 "calibration_curve": calibration_curve
             }
         except Exception as e:
-            print(f"Error in calibration_analysis: {e}")
+            logger.error(f"Error in calibration_analysis: {e}")
             return {
                 "brier_score": None,
                 "calibration_slope": None,
@@ -1074,11 +1773,11 @@ class LogisticRegressionModel:
         roc = self.roc_data()
         cal = self.calibration_analysis()
 
-        main_p = None
-        main_or = None
-        if or_table:
-            main_p = or_table[0]["p_value"]
-            main_or = or_table[0]["odds_ratio"]
+        # Headline effect for the primary predictor: an omnibus likelihood-ratio
+        # test over its whole parameter block. `or_table[0]` is a single dummy
+        # coefficient and says nothing about the predictor once it has more than
+        # two levels.
+        main_stat, main_df, main_p = self._omnibus_predictor()
 
         pseudo_r2 = None
         if self._model_variant != "Firth Penalized Likelihood":
@@ -1090,13 +1789,68 @@ class LogisticRegressionModel:
             except Exception:
                 pass
 
-        return {
+        converged = getattr(self.result, "converged", True) if self._model_variant != "Firth Penalized Likelihood" else True
+        if getattr(self, "_firth_failed", False):
+            converged = False
+
+        # A rank-deficient / unidentified design (e.g. collinear predictors like
+        # x1 == x2) can leave the optimizer — standard or Firth — reporting
+        # "converged" while the coefficient standard errors are non-finite. That
+        # is not an identified fit; flag it instead of presenting a misleading
+        # result with NaN standard errors.
+        try:
+            _bse = self._firth_bse if self._model_variant == "Firth Penalized Likelihood" else self.result.bse
+            _bse = np.asarray(_bse, dtype=float)
+            _identified = _bse.size > 0 and bool(np.all(np.isfinite(_bse)))
+        except Exception:
+            _identified = False
+        if not _identified:
+            converged = False
+
+        # The check above reads the coefficient standard errors, which can come
+        # back finite while the omnibus itself does not: a Firth fit on
+        # quasi-separated data overflowed in the link function and returned
+        # statistic = nan, p = nan with finite standard errors, and was reported
+        # as a converged result. A test whose own statistic is not a number has
+        # not produced a weak answer, it has produced none.
+        _omnibus_usable = all(
+            isinstance(v, (int, float)) and not isinstance(v, bool)
+            and np.isfinite(float(v))
+            for v in (main_stat, main_p)
+        )
+        if not _omnibus_usable:
+            converged = False
+
+        warnings_list = []
+        if not converged:
+            warnings_list.append(
+                "Logistic regression did not converge to an identified solution "
+                "(e.g. non-finite standard errors from collinear predictors). "
+                "Results may be unreliable."
+            )
+        if not _omnibus_usable:
+            warnings_list.append(
+                "The omnibus test produced no usable statistic. This usually "
+                "means near-complete separation or collinear predictors — check "
+                "the data quality notes, and note that Firth penalisation is "
+                "already applied here, so it cannot be the remedy."
+                if self._model_variant == "Firth Penalized Likelihood" else
+                "The omnibus test produced no usable statistic. This usually "
+                "means near-complete separation or collinear predictors — check "
+                "the data quality notes."
+            )
+
+        res = {
+            "design_type": self.design_type.value,
             "test": "Logistic Regression",
             "model_type": "LogisticRegression",
+            "converged": converged,
+            "warnings": warnings_list,
             "model_variant": self._model_variant,
             "p_value": main_p,
-            "statistic": main_or,
-            "statistic_type": "odds_ratio",
+            "statistic": main_stat,
+            "statistic_type": "chi2",
+            "omnibus_df": main_df,
             "effect_size": roc["auc"],
             "effect_size_type": "AUC",
             "odds_ratios": or_table,
@@ -1114,189 +1868,9 @@ class LogisticRegressionModel:
             "predictors_used": self._predictors,
             "covariates_used": self._covariates,
         }
+        return _restore_names_in_dict(res, self._rev_map)
 
 
-class BetaRegressionModel:
-    """Beta regression for proportion outcomes strictly in (0, 1).
-
-    Uses statsmodels BetaModel (othermod.betareg) with a logit link.
-    Reports coefficients, 95% CI, pseudo-R², dispersion parameter (phi),
-    and fitted vs. residual data for diagnostics.
-    """
-
-    def __init__(self):
-        self.result = None
-        self._df = None
-        self._dv = None
-        self._predictors = None
-        self._covariates = None
-        self._bias_corrected = False
-        self._boot_se = None  # populated when bias_corrected=True via bootstrap
-
-    def fit(self, df, dv, predictors, covariates=None, bias_corrected=False):
-        from statsmodels.othermod.betareg import BetaModel
-
-        self._bias_corrected = bias_corrected
-        all_cols = [dv] + predictors + (covariates or [])
-        self._df = df.dropna(subset=all_cols).copy()
-
-        col_map = _sanitize_columns(self._df, all_cols)
-        self._dv = col_map[dv]
-        self._predictors = [col_map[p] for p in predictors]
-        self._covariates = [col_map[c] for c in (covariates or [])]
-
-        # Validate strictly (0, 1) — S-V transformation must have been applied upstream
-        series = self._df[self._dv]
-        if series.min() <= 0.0 or series.max() >= 1.0:
-            raise ValueError(
-                "Beta regression requires outcome values strictly between 0 and 1 (exclusive). "
-                "Values at exactly 0 or 1 are present — apply a boundary transformation first "
-                "(e.g. y_adj = (y * (n-1) + 0.5) / n)."
-            )
-
-        terms = [f"C({p})" for p in self._predictors]
-        if self._covariates:
-            terms.extend(self._covariates)
-        formula = f"{self._dv} ~ {' + '.join(terms)}"
-
-        model = BetaModel.from_formula(formula, data=self._df)
-        self.result = model.fit(disp=False)
-
-        if bias_corrected:
-            self._boot_se = self._bootstrap_se(formula, n_boot=1000)
-
-        return self
-
-    def _bootstrap_se(self, formula, n_boot=1000):
-        """Bootstrapped standard errors as bias correction for small samples."""
-        from statsmodels.othermod.betareg import BetaModel
-        boot_params = []
-        rng = np.random.default_rng(42)
-        n = len(self._df)
-        for _ in range(n_boot):
-            try:
-                idx = rng.integers(0, n, size=n)
-                boot_df = self._df.iloc[idx].reset_index(drop=True)
-                m = BetaModel.from_formula(formula, data=boot_df)
-                r = m.fit(disp=False, maxiter=100)
-                boot_params.append(r.params.values)
-            except Exception:
-                continue
-        if len(boot_params) < 10:
-            return None
-        boot_arr = np.array(boot_params)
-        return dict(zip(self.result.params.index, boot_arr.std(axis=0)))
-
-    def coefficients(self):
-        if self.result is None:
-            return []
-        conf = self.result.conf_int()
-        rows = []
-        for param in self.result.params.index:
-            if param in ("Intercept", "phi"):
-                continue
-            # Use bootstrapped SE if available, fall back to model SE
-            if self._boot_se and param in self._boot_se:
-                se = self._boot_se[param]
-                coef = float(self.result.params[param])
-                z = coef / se if se > 0 else float("nan")
-                from scipy.stats import norm
-                p = float(2 * (1 - norm.cdf(abs(z))))
-                ci_lower = coef - 1.96 * se
-                ci_upper = coef + 1.96 * se
-                se_source = "bootstrap"
-            else:
-                se = float(self.result.bse[param])
-                z = float(self.result.tvalues[param])
-                p = float(self.result.pvalues[param])
-                ci_lower = float(conf.loc[param, 0])
-                ci_upper = float(conf.loc[param, 1])
-                se_source = "model"
-            rows.append({
-                "parameter": str(param),
-                "coefficient": float(self.result.params[param]),
-                "ci_lower": ci_lower,
-                "ci_upper": ci_upper,
-                "std_err": se,
-                "std_err_source": se_source,
-                "z_value": z,
-                "p_value": p,
-            })
-        return rows
-
-    def as_results_dict(self):
-        if self.result is None:
-            return {"error": "Model not fitted"}
-
-        coef_table = self.coefficients()
-        main_p = coef_table[0]["p_value"] if coef_table else None
-        main_coef = coef_table[0]["coefficient"] if coef_table else None
-
-        # Pseudo-R² (McFadden)
-        pseudo_r2 = None
-        try:
-            ll_model = self.result.llf
-            ll_null = self.result.llnull if hasattr(self.result, "llnull") else None
-            if ll_null is not None and ll_null != 0:
-                pseudo_r2 = float(1 - ll_model / ll_null)
-        except Exception:
-            pass
-
-        # Dispersion parameter phi (precision)
-        phi = None
-        try:
-            if "phi" in self.result.params.index:
-                phi = float(self.result.params["phi"])
-        except Exception:
-            pass
-
-        # Fitted values and residuals for diagnostics
-        fitted = residuals = None
-        try:
-            fitted = [float(v) for v in self.result.predict()]
-            residuals = [float(v) for v in (self._df[self._dv].values - self.result.predict())]
-        except Exception:
-            pass
-
-        # Raw x/y data for chart: primary predictor vs observed outcome
-        xy_data = {}
-        try:
-            if self._predictors:
-                pred_col = self._predictors[0]
-                xy_data = {
-                    "x": [float(v) for v in self._df[pred_col].values],
-                    "y": [float(v) for v in self._df[self._dv].values],
-                    "x_label": pred_col,
-                }
-        except Exception:
-            pass
-
-        return {
-            "test": "Beta Regression",
-            "model_type": "BetaRegression",
-            "p_value": main_p,
-            "statistic": main_coef,
-            "statistic_type": "coefficient",
-            "effect_size": pseudo_r2,
-            "effect_size_type": "pseudo_R2",
-            "coefficients": coef_table,
-            "phi": phi,
-            "fitted_values": fitted,
-            "residuals": residuals,
-            "xy_data": xy_data,
-            "pseudo_r_squared": pseudo_r2,
-            "aic": float(self.result.aic) if hasattr(self.result, "aic") else None,
-            "bic": float(self.result.bic) if hasattr(self.result, "bic") else None,
-            "log_likelihood": float(self.result.llf) if hasattr(self.result, "llf") else None,
-            "n_observations": int(self.result.nobs),
-            "predictors_used": self._predictors,
-            "covariates_used": self._covariates,
-            "detection_note": "Outcome detected as proportion (all values strictly in (0,1))",
-            "bias_corrected": self._bias_corrected,
-            "bias_correction_method": "bootstrapped SE (n_boot=1000)" if self._bias_corrected and self._boot_se else (
-                "requested but bootstrap produced insufficient samples" if self._bias_corrected else None
-            ),
-        }
 
 
 class DataHealthScanner:
@@ -1530,8 +2104,9 @@ class DataHealthScanner:
             self.checks["group_sizes"] = counts.to_dict()
             if small_groups:
                 self.warnings.append(
-                    f"Kleine Gruppenbesetzung: {', '.join(small_groups)}. "
-                    "Logistische Regression instabil bei n < 10 pro Outcome-Kategorie."
+                    f"Small group sizes: {', '.join(small_groups)}. "
+                    "Logistic regression is unstable below n = 10 per outcome "
+                    "category."
                 )
         except Exception as exc:
             self.checks["group_sizes"] = {"error": str(exc)}

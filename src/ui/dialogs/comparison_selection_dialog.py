@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QCheckBox, QDialogButtonBox, QWidget, QScrollArea, QPushButton, QHBoxLayout
+from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QCheckBox, QDialogButtonBox, QWidget, QScrollArea, QPushButton, QHBoxLayout, QMessageBox
 from PyQt5.QtCore import Qt
 
 class ComparisonSelectionDialog(QDialog):
@@ -21,9 +21,18 @@ class ComparisonSelectionDialog(QDialog):
 
         # Scroll area for many comparisons
         scroll = QScrollArea(self)
+        scroll.setObjectName("comparisonScroll")
         scroll.setWidgetResizable(True)
         scroll_content = QWidget()
+        scroll_content.setObjectName("comparisonScrollContent")
         scroll_layout = QVBoxLayout(scroll_content)
+        # Align the list surface with the app's design system instead of the
+        # default platform grey of an unstyled QScrollArea.
+        scroll.setStyleSheet(
+            "#comparisonScroll { background: #f6fbfe; border: 1px solid #dbe7f0;"
+            " border-radius: 6px; }"
+            " #comparisonScrollContent { background: #f6fbfe; }"
+        )
 
         for comp in self.comparisons:
             text = f"{comp[0]}  vs  {comp[1]}"
@@ -77,6 +86,21 @@ class ComparisonSelectionDialog(QDialog):
         """Deselect all checkboxes"""
         for cb in self.checkboxes:
             cb.setChecked(False)
+
+    def accept(self):
+        # Block OK on an all-unchecked selection instead of letting the caller
+        # silently fall back to "all pairs". _custom_pairs_cb does
+        # `chosen if chosen else all_pairs`, so an empty return is invisible —
+        # a getter-level guard (the outlier dialog's "return None" pattern)
+        # would still be swallowed by that fallback. Enforcing it at accept-time
+        # keeps the dialog open with a warning; Cancel still aborts the analysis.
+        if not any(cb.isChecked() for cb in self.checkboxes):
+            QMessageBox.warning(
+                self, "No comparisons selected",
+                "Select at least one comparison, or press Cancel to abort the analysis.",
+            )
+            return
+        super().accept()
 
     def get_selected_comparisons(self):
         selected = []

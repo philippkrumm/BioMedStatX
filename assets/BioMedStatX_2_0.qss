@@ -94,7 +94,7 @@ QGroupBox#grpPlotPreview::title {
 
 /* ── TYPOGRAPHY ── */
 QLabel#heroTitle {
-    font-size: 28px;
+    font-size: 25px;
     font-weight: 700;
     color: #0d2830;
 }
@@ -114,7 +114,7 @@ QLabel#sectionLabel {
 }
 
 QLabel#panelTitle {
-    font-size: 17px;
+    font-size: 16px;
 }
 
 QLabel#sectionLabel {
@@ -157,10 +157,16 @@ QLabel#pipelineStepIcon {
     padding-top: 2px;
 }
 
-QLabel#pipelineStepTitle,
-QLabel#pipelineConnector {
+QLabel#pipelineStepTitle {
     color: #52708f;
     font-weight: 600;
+}
+
+QLabel#pipelineConnector {
+    color: #9ab8cb;
+    font-size: 20px;
+    font-weight: 400;
+    padding: 0 2px;
 }
 
 /* ── BUTTONS ── */
@@ -170,7 +176,7 @@ QPushButton {
     background: transparent;
     border: 1px solid #c4daea;
     border-radius: 8px;
-    padding: 8px 16px;
+    padding: 7px 14px;
     color: #2a5272;
     font-weight: 600;
     font-size: 13px;
@@ -198,7 +204,7 @@ QPushButton#btnAnalyzeAll {
     color: #ffffff;
     border: none;
     border-radius: 8px;
-    padding: 12px 24px;
+    padding: 9px 18px;
     font-weight: 700;
     font-size: 14px;
 }
@@ -375,8 +381,32 @@ QLabel#decisionTreeImage {
     padding: 16px;
 }
 
+QGraphicsView#decisionTreeView {
+    background: #f4f8fb;
+    border: none;
+    border-radius: 14px;
+}
+
 QPushButton#decisionTreeMaximizeButton {
-    padding: 8px 12px;
+    background: transparent;
+    border: 1px solid #c4daea;
+    border-radius: 8px;
+    padding: 6px 14px;
+    color: #2a5272;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QPushButton#decisionTreeMaximizeButton:hover {
+    background: #e5f5f3;
+    border-color: #5bbdb5;
+    color: #0f766e;
+}
+
+QPushButton#decisionTreeMaximizeButton:disabled {
+    background: transparent;
+    color: #9ab3c5;
+    border-color: #dce8f2;
 }
 
 QFrame#decisionTreeOverlay {
@@ -454,10 +484,46 @@ QComboBox::drop-down {
     width: 20px;
 }
 
+QComboBox::down-arrow {
+    image: url("{CHEVRON_DOWN_PATH}");
+    width: 10px;
+    height: 6px;
+}
+
 QScrollArea {
     background: #f4f8fb;
     border: none;
     border-radius: 12px;
+}
+
+QScrollArea#headerCardScroll {
+    background: #f4f8fb;
+    border: none;
+    border-radius: 10px;
+}
+
+QWidget#headerCardsInner {
+    background: #f4f8fb;
+    border-radius: 10px;
+}
+
+/* Cockpit scroll container — transparent so the panel background shows through
+   (its solid cards fill the viewport, so no grey ever shows in gaps). */
+QScrollArea#cockpitScroll, QScrollArea#cockpitScroll > QWidget > QViewport,
+QScrollArea#cockpitScroll > QWidget {
+    background: transparent;
+    border: none;
+}
+
+/* Mapping scroll + panel — explicit white (matches the dashboard panel). The
+   buckets have gaps between them; a transparent viewport is NOT reliably
+   painted over on the macOS/cocoa platform, so the default window grey showed
+   through the gaps and the buckets' rounded corners. A solid colour paints
+   reliably on every platform. */
+QScrollArea#mappingScroll, QScrollArea#mappingScroll > QWidget,
+QWidget#mappingPanel {
+    background: #ffffff;
+    border: none;
 }
 
 QLineEdit {
@@ -620,6 +686,8 @@ QTextEdit#debugConsoleText {
     border-radius: 10px;
     color: #d9e8f5;
     padding: 8px;
+    font-family: "Cascadia Mono", "Consolas", monospace;
+    font-size: 12px;
 }
 
 QDialog#plotConfigDialog QGroupBox,
@@ -881,4 +949,103 @@ QDialog#rangeSelectionDialog QRadioButton::indicator:checked {
 
 QDialog#rangeSelectionDialog QRadioButton::indicator:hover {
     border-color: #4db5ac;
+}
+
+/* ── TUTORIAL OVERLAY ── */
+QFrame#tutorialBubble {
+    background: #ffffff;
+    border: 1px solid #c4dce8;
+    border-radius: 14px;
+    padding: 0;
+    min-width: 340px;
+    max-width: 420px;
+}
+
+QLabel#tutorialTitle {
+    color: #0f766e;
+    font-family: "Segoe UI", "Avenir Next", sans-serif;
+    font-size: 16px;
+    font-weight: 700;
+    padding: 0;
+    margin: 0;
+}
+
+QLabel#tutorialBody {
+    color: #16313a;
+    font-family: "Segoe UI", "Avenir Next", sans-serif;
+    font-size: 13px;
+    padding: 0;
+    margin: 0;
+}
+
+QLabel#tutorialTip {
+    color: #2f6473;
+    font-family: "Segoe UI", "Avenir Next", sans-serif;
+    font-size: 12px;
+    font-style: italic;
+    padding: 4px 8px;
+    background: #eef5fb;
+    border-radius: 6px;
+    margin: 0;
+}
+
+QLabel#tutorialProgress {
+    color: #4a6b78;
+    font-family: "Segoe UI", "Avenir Next", sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 0;
+}
+
+QPushButton#tutorialNext {
+    background: #0f766e;
+    color: #ffffff;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 20px;
+    font-family: "Segoe UI", "Avenir Next", sans-serif;
+    font-weight: 700;
+    font-size: 13px;
+}
+
+QPushButton#tutorialNext:hover {
+    background: #0d6b63;
+}
+
+QPushButton#tutorialNext:pressed {
+    background: #0a5c55;
+}
+
+QPushButton#tutorialBack {
+    background: #e6eff7;
+    color: #2e5d82;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-family: "Segoe UI", "Avenir Next", sans-serif;
+    font-weight: 600;
+    font-size: 13px;
+}
+
+QPushButton#tutorialBack:hover {
+    background: #d4e5f2;
+}
+
+QPushButton#tutorialBack:disabled {
+    color: #b0c4d0;
+    background: #f0f4f8;
+}
+
+QPushButton#tutorialSkip {
+    background: transparent;
+    color: #4a6b78;
+    border: none;
+    padding: 8px 12px;
+    font-family: "Segoe UI", "Avenir Next", sans-serif;
+    font-size: 12px;
+}
+
+QPushButton#tutorialSkip:hover {
+    color: #16313a;
+    text-decoration: underline;
 }

@@ -1,6 +1,7 @@
 # pyright: reportAttributeAccessIssue=false
 # pyright: reportOptionalMemberAccess=false
 import os
+from core.level_order import natural_order
 import sys
 
 import numpy as np
@@ -22,6 +23,7 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QRadioButton,
     QScrollArea,
+    QSizePolicy,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -30,32 +32,42 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from visualization.datavisualizer import DataVisualizer
 from export.export_dispatcher import ExportDispatcher
-from ui.dialogs.plot_aesthetics_dialog import PlotAestheticsDialog
+from core.csv_import import read_csv_localized, CSV_FORMAT_PRESETS, DEFAULT_CSV_FORMAT
 from ui.dialogs.statistical_analyzer_dialogs import ExploratoryMatrixDialog, GroupSelectionDialog
 from autopilot.statistical_analyzer_autopilot_ui import (
     ConfettiOverlay,
     DecisionTreePanel,
     DraggableColumnCard,
-    FilterBucketWidget,
     MappingBucketWidget,
     PipelineTrackerWidget,
     ResultCockpitWidget,
     SheetSelectionDialog,
     _detect_wide_format,
+    _reject_missing_subject_ids,
     _infer_column_kind,
     _looks_like_subject,
     _pivot_wide_to_long,
     _safe_file_slug,
     _sorted_unique,
+    extract_bivariate_from_coordinates,
     extract_from_coordinates,
+    extract_paired_from_coordinates,
 )
 from analysis.statisticaltester import StatisticalTester
 from analysis.stats_functions import AnalysisManager
 
+import logging
+logger = logging.getLogger(__name__)
+
 DEFAULT_COLORS = ["#0f766e", "#1f7a5a", "#b7791f", "#9f3a38", "#1d4ed8", "#7c3aed"]
 DEFAULT_HATCHES = ["/", "\\", "|", "-", "+", "x", "o", ".", "*", ""]
+
+
+def should_offer_tour(stored_version, current_version: str) -> bool:
+    """First-run gate: offer the tour when the stored completed-version does
+    not match the current app version (covers empty/None on a fresh machine)."""
+    return (stored_version or "") != (current_version or "")
 
 
 def _resource_path(relative_path):
@@ -68,13 +80,7 @@ def _resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 
-def _apply_elevation(widget, radius=18, x_offset=0, y_offset=4, opacity=0.18):
-    """Apply a drop shadow to give a widget visual elevation. QSS cannot do this."""
-    shadow = QGraphicsDropShadowEffect(widget)
-    shadow.setBlurRadius(radius)
-    shadow.setOffset(x_offset, y_offset)
-    shadow.setColor(QColor(0, 0, 0, int(255 * opacity)))
-    widget.setGraphicsEffect(shadow)
+from ui.widget_style import apply_elevation as _apply_elevation  # shared: see ui/widget_style.py
 
 def _load_auto_pilot_stylesheet():
     stylesheet_paths = [
@@ -84,7 +90,9 @@ def _load_auto_pilot_stylesheet():
     for path in stylesheet_paths:
         if os.path.exists(path):
             with open(path, "r", encoding="utf-8") as handle:
-                return handle.read()
+                qss = handle.read()
+                arrow_path = _resource_path("assets/icons/chevron-down.png").replace("\\", "/")
+                return qss.replace("{CHEVRON_DOWN_PATH}", arrow_path)
     return ""
 
 
@@ -96,8 +104,8 @@ def _ap_init_ui(self):
     central_widget = QWidget()
     central_widget.setObjectName("autoPilotRoot")
     root_layout = QVBoxLayout(central_widget)
-    root_layout.setContentsMargins(24, 18, 24, 18)
-    root_layout.setSpacing(16)
+    root_layout.setContentsMargins(16, 10, 16, 10)
+    root_layout.setSpacing(12)
 
     self.pipeline_tracker = PipelineTrackerWidget()
     root_layout.addWidget(self.pipeline_tracker)
@@ -108,7 +116,7 @@ def _ap_init_ui(self):
     title = QLabel("BioMedStatX 2.0")
     title.setObjectName("heroTitle")
     title_block.addWidget(title)
-    subtitle = QLabel("Auto-pilot statistical analysis with guided mapping and transparent decisions.")
+    subtitle = QLabel("Welcome to BioMedStatX, your assistant for statistical analysis.")
     subtitle.setObjectName("heroSubtitle")
     subtitle.setWordWrap(True)
     title_block.addWidget(subtitle)
@@ -127,8 +135,8 @@ def _ap_init_ui(self):
     left_panel = QFrame()
     left_panel.setObjectName("dashboardPanel")
     left_layout = QVBoxLayout(left_panel)
-    left_layout.setContentsMargins(18, 18, 18, 18)
-    left_layout.setSpacing(14)
+    left_layout.setContentsMargins(12, 12, 12, 12)
+    left_layout.setSpacing(9)
 
     left_title = QLabel("Data Source")
     left_title.setObjectName("panelTitle")
@@ -138,9 +146,9 @@ def _ap_init_ui(self):
     self.auto_file_label = QLabel("No file selected")
     self.auto_file_label.setObjectName("filePathLabel")
     file_row.addWidget(self.auto_file_label, 1)
-    browse_button = QPushButton("Load Data File")
-    browse_button.clicked.connect(self.browse_file)
-    file_row.addWidget(browse_button)
+    self.browse_button = QPushButton("Load Data File")
+    self.browse_button.clicked.connect(self.browse_file)
+    file_row.addWidget(self.browse_button)
     left_layout.addLayout(file_row)
 
     mode_row = QHBoxLayout()
@@ -169,8 +177,8 @@ def _ap_init_ui(self):
     self.range_select_btn = QPushButton("Select Data Ranges...")
     self.range_select_btn.setObjectName("secondaryButton")
     self.range_select_btn.setToolTip(
-        "Open the raw sheet viewer to select cell ranges and assign them to groups.\n"
-        "Single-factor only — for multi-factor designs use a pre-formatted long-format file."
+        "Handles one grouping at a time. For two-factor designs, covariates, or mixed models, "
+        "arrange your data as a table with one row per measurement and load that instead."
     )
     self.range_select_btn.setVisible(False)
     self.range_select_btn.clicked.connect(self._ap_open_range_selector)
@@ -187,11 +195,17 @@ def _ap_init_ui(self):
     preview_label = QLabel("Table Preview")
     preview_label.setObjectName("sectionLabel")
     left_layout.addWidget(preview_label)
+    self.preview_hint = QLabel("Table preview appears after loading a file.")
+    self.preview_hint.setObjectName("lblEmptyState")
+    self.preview_hint.setWordWrap(True)
+    left_layout.addWidget(self.preview_hint)
     self.preview_table = QTableWidget(0, 0)
     self.preview_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
     self.preview_table.setSelectionMode(QAbstractItemView.NoSelection)
     self.preview_table.setAlternatingRowColors(True)
-    left_layout.addWidget(self.preview_table, 1)
+    self.preview_table.setMinimumHeight(110)
+    self.preview_table.setVisible(False)
+    left_layout.addWidget(self.preview_table, 2)
 
     cards_label = QLabel("Columns")
     cards_label.setObjectName("sectionLabel")
@@ -199,7 +213,9 @@ def _ap_init_ui(self):
     cards_scroll = QScrollArea()
     cards_scroll.setWidgetResizable(True)
     cards_scroll.setObjectName("headerCardScroll")
+    cards_scroll.setMinimumHeight(90)
     self.header_cards_widget = QWidget()
+    self.header_cards_widget.setObjectName("headerCardsInner")
     self.header_cards_layout = QVBoxLayout(self.header_cards_widget)
     self.header_cards_layout.setContentsMargins(0, 0, 0, 0)
     self.header_cards_layout.setSpacing(10)
@@ -207,14 +223,15 @@ def _ap_init_ui(self):
     cards_scroll.setWidget(self.header_cards_widget)
     left_layout.addWidget(cards_scroll, 1)
 
+    _apply_elevation(left_panel, radius=14, y_offset=3, opacity=0.13)
     splitter.addWidget(left_panel)
 
     # Center panel
     center_panel = QFrame()
     center_panel.setObjectName("dashboardPanel")
     center_layout = QVBoxLayout(center_panel)
-    center_layout.setContentsMargins(18, 18, 18, 18)
-    center_layout.setSpacing(14)
+    center_layout.setContentsMargins(12, 12, 12, 12)
+    center_layout.setSpacing(9)
 
     center_title = QLabel("Smart Mapping")
     center_title.setObjectName("panelTitle")
@@ -292,12 +309,33 @@ def _ap_init_ui(self):
             "Multiple variables can be added simultaneously."
         ),
     )
-    self.filter_bucket = FilterBucketWidget(get_df=lambda: self.df)
 
+    self.mapping_panel = QWidget()
+    self.mapping_panel.setObjectName("mappingPanel")
+    _mapping_layout = QVBoxLayout(self.mapping_panel)
+    _mapping_layout.setContentsMargins(0, 0, 0, 0)
+    _mapping_layout.setSpacing(8)
     for bucket in (self.dv_bucket, self.factor1_bucket, self.factor2_bucket,
-                   self.subject_bucket, self.covariates_bucket, self.filter_bucket):
+                   self.subject_bucket, self.covariates_bucket):
         bucket.changed.connect(self.on_mapping_changed)
-        center_layout.addWidget(bucket)
+        _mapping_layout.addWidget(bucket)
+    # Wrap the (tall) mapping buckets in their own scroll area — same pattern the
+    # result cockpit already uses — so the centre column's minimum height drops to
+    # its viewport instead of the full 5-bucket stack. That keeps the whole-window
+    # scroll from triggering on short/scaled screens (e.g. 1366x768, 1080p@150%);
+    # the buckets scroll internally only when the column is too short for all five.
+    _mapping_scroll = QScrollArea()
+    _mapping_scroll.setObjectName("mappingScroll")
+    _mapping_scroll.setWidgetResizable(True)
+    _mapping_scroll.setFrameShape(QFrame.NoFrame)
+    _mapping_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    _mapping_scroll.setWidget(self.mapping_panel)
+    # Ignored vertical policy: the column takes the available height and scrolls
+    # internally, so the buckets' full height does not inflate the window's
+    # preferred size and force the whole-window scroll (setWidgetResizable shows
+    # the outer scrollbar whenever content sizeHint > viewport, not min).
+    _mapping_scroll.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Ignored)
+    center_layout.addWidget(_mapping_scroll, 1)
 
     self.analysis_group_button = QPushButton("Select Groups For Analysis")
     self.analysis_group_button.setObjectName("secondaryButton")
@@ -322,7 +360,7 @@ def _ap_init_ui(self):
     corr_tr_layout.setSpacing(6)
 
     # Mode toggle: Correlation (default) vs. Simple Linear Regression
-    self.corr_regression_toggle = QCheckBox("Als Lineare Regression analysieren (Y = a + bX)")
+    self.corr_regression_toggle = QCheckBox("Analyze as Linear Regression (Y = a + bX)")
     self.corr_regression_toggle.setObjectName("panelDescription")
     self.corr_regression_toggle.setChecked(False)
     self.corr_regression_toggle.stateChanged.connect(self.on_mapping_changed)
@@ -394,30 +432,43 @@ def _ap_init_ui(self):
 
     center_layout.addStretch()
 
+    _apply_elevation(center_panel, radius=14, y_offset=3, opacity=0.13)
     splitter.addWidget(center_panel)
 
     # Right panel
     right_panel = QFrame()
     right_panel.setObjectName("dashboardPanel")
     right_layout = QVBoxLayout(right_panel)
-    right_layout.setContentsMargins(18, 18, 18, 18)
-    right_layout.setSpacing(14)
+    right_layout.setContentsMargins(12, 12, 12, 12)
+    right_layout.setSpacing(9)
 
     self.decision_tree_panel = DecisionTreePanel()
     right_layout.addWidget(self.decision_tree_panel, 1)
 
     self.result_cockpit = ResultCockpitWidget()
-    self.result_cockpit.configure_plot_requested.connect(self.configure_plot_from_result)
     self.result_cockpit.open_output_requested.connect(self.open_current_output_folder)
-    right_layout.addWidget(self.result_cockpit, 1)
-    _apply_elevation(self.result_cockpit)
+    # Cockpit scrolls internally so its many result cards never force the whole
+    # window to scroll — the right column stays bounded to the viewport height.
+    cockpit_scroll = QScrollArea()
+    cockpit_scroll.setWidgetResizable(True)
+    cockpit_scroll.setFrameShape(QFrame.NoFrame)
+    cockpit_scroll.setObjectName("cockpitScroll")
+    cockpit_scroll.setWidget(self.result_cockpit)
+    # Same as the mapping column: scroll internally instead of inflating the
+    # window's preferred height (keeps the whole-window scroll from triggering).
+    cockpit_scroll.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Ignored)
+    right_layout.addWidget(cockpit_scroll, 1)
     _apply_elevation(self.decision_tree_panel)
+    _apply_elevation(cockpit_scroll)
 
     splitter.addWidget(right_panel)
     splitter.setSizes([450, 430, 520])
 
     central_scroll.setWidget(central_widget)
     self.setCentralWidget(central_scroll)
+
+    self._refresh_preview_table()
+    self._rebuild_column_cards()
 
     self.file_path_label = self.auto_file_label
     self.current_analysis_context = None
@@ -426,6 +477,8 @@ def _ap_init_ui(self):
     self.current_multi_results = {}
     self.current_rendered_dataset = None
     self.analysis_selected_groups = []
+    self._tour_active = False
+    self._tour_overlay = None
 
 
 def _ap_refresh_preview_table(self):
@@ -433,8 +486,12 @@ def _ap_refresh_preview_table(self):
         self.preview_table.clear()
         self.preview_table.setRowCount(0)
         self.preview_table.setColumnCount(0)
+        self.preview_table.setVisible(False)
+        self.preview_hint.setVisible(True)
         return
 
+    self.preview_hint.setVisible(False)
+    self.preview_table.setVisible(True)
     preview_df = self.df.head(12).copy()
     self.preview_table.clear()
     self.preview_table.setColumnCount(len(preview_df.columns))
@@ -458,6 +515,11 @@ def _ap_rebuild_column_cards(self):
     self._column_cards = {}
 
     if self.df is None:
+        empty = QLabel("Load a file to see its columns here.")
+        empty.setObjectName("lblEmptyState")
+        empty.setWordWrap(True)
+        empty.setAlignment(Qt.AlignCenter)
+        self.header_cards_layout.addWidget(empty)
         self.header_cards_layout.addStretch()
         return
 
@@ -467,7 +529,7 @@ def _ap_rebuild_column_cards(self):
         # For categorical/text columns: show unique distinct values instead of
         # first 3 rows (which are often duplicates like "WT, WT, WT").
         if column_kind != "numeric":
-            uniques = series.dropna().astype(str).unique().tolist()
+            uniques = natural_order(series.dropna().astype(str))
             preview_values = uniques[:5]
             suffix = "" if len(uniques) <= 5 else f"  (+{len(uniques)-5} more)"
             preview_text = "Levels: " + (", ".join(preview_values) if preview_values else "—") + suffix
@@ -486,6 +548,13 @@ def _ap_apply_mapping_heuristics(self):
 
     if self.df is None:
         return
+
+    # Bivariate range extraction: X = predictor → Factor 1, Y = outcome → DV
+    if getattr(self, "_range_design_mode", None) == "bivariate":
+        if "X" in self.df.columns and "Y" in self.df.columns:
+            self.dv_bucket.assign_column("Y", _infer_column_kind(self.df["Y"]))
+            self.factor1_bucket.assign_column("X", _infer_column_kind(self.df["X"]))
+            return
 
     columns = list(self.df.columns)
     numeric_all = [column for column in columns if pd.api.types.is_numeric_dtype(self.df[column])]
@@ -571,14 +640,7 @@ def _ap_get_available_analysis_groups(self):
     if factor_col not in self.df.columns:
         return []
 
-    working_df = self.df.copy()
-    active_filter = getattr(self, 'filter_bucket', None)
-    filter_spec = active_filter.get_filter() if active_filter else None
-    if filter_spec:
-        filter_col, filter_val = filter_spec
-        if filter_col in working_df.columns:
-            working_df = working_df[working_df[filter_col] == filter_val]
-    return _sorted_unique(working_df[factor_col].dropna().tolist())
+    return _sorted_unique(self.df[factor_col].dropna().tolist())
 
 
 def _ap_update_analysis_group_selection_ui(self):
@@ -670,13 +732,11 @@ def _ap_is_binary_outcome_for_help(self):
     if series.empty:
         return False
 
-    unique_values = series.unique()
-    if len(unique_values) != 2:
-        return False
-
-    is_01 = set(unique_values) <= {0, 1, 0.0, 1.0}
-    is_str = all(isinstance(value, str) for value in unique_values)
-    return bool(is_01 or is_str)
+    # Help Hub stays conservative: only an unambiguous 0/1 / two-string outcome
+    # suggests the logistic recipe. The ambiguous "maybe_binary" case is resolved
+    # by a confirmation prompt at real routing time, not by pre-emptively steering
+    # Help Hub recipes.
+    return _classify_binary_outcome(series.unique(), dv_col) == "binary"
 
 
 def _ap_is_continuous_factor1_for_help(self):
@@ -794,9 +854,20 @@ def _ap_on_mapping_changed(self):
     wide_info = getattr(self, '_wide_format_info', None)
     if wide_info:
         cond_labels = ', '.join(f'"{c}"' for c in wide_info['value_cols'])
+        # _detect_wide_format accepts two to eight condition columns, so this
+        # line has to say which design was actually built. It used to read
+        # "Mapped as paired t-test design" for all of them: with three or more
+        # conditions the user was told about a paired t-test and then handed a
+        # repeated-measures ANOVA. The wording names the DESIGN rather than a
+        # test, because which test runs is still the decision logic's call --
+        # a failed normality check turns the same design into Wilcoxon or
+        # Friedman, and neither makes this line wrong.
+        n_conditions = len(wide_info['value_cols'])
+        design = ("paired design (2 conditions)" if n_conditions == 2
+                  else f"repeated-measures design ({n_conditions} conditions)")
         self.mapping_feedback_label.setText(
             f"Wide format detected \u2192 pivoted to long format. "
-            f"Conditions: {cond_labels}. Mapped as paired t-test design."
+            f"Conditions: {cond_labels}. Mapped as {design}."
         )
         self.start_analysis_button.setEnabled(True)
         return
@@ -844,7 +915,7 @@ def _ap_on_mapping_changed(self):
         is_corr_family = context.get("is_corr_family", False)
     except Exception as _ctx_err:
         import traceback
-        print(f"DEBUG _ap_on_mapping_changed context error: {_ctx_err}")
+        logger.debug(f"DEBUG _ap_on_mapping_changed context error: {_ctx_err}")
         traceback.print_exc()
         # Fallback: check directly whether the single factor looks continuous
         try:
@@ -889,6 +960,11 @@ def _ap_load_file(self):
     if not self.file_path:
         return
     try:
+        # Clear existing bucket assignments first!
+        for bucket in (self.dv_bucket, self.factor1_bucket, self.factor2_bucket,
+                       self.subject_bucket, self.covariates_bucket):
+            bucket.clear_assignments()
+
         path_lower = self.file_path.lower()
 
         # HTML report reload: extract embedded tidy data
@@ -915,7 +991,17 @@ def _ap_load_file(self):
             self.auto_sheet_combo.addItem("HTML")
             self.auto_sheet_combo.setEnabled(False)
         elif path_lower.endswith(".csv"):
-            self.df = pd.read_csv(self.file_path)
+            # Ask the user to declare the number format explicitly — no autodetect.
+            # A naive guess (decimal="," without thousands=".") silently NaN-destroys
+            # values like 1.234,56 (Wave-4b, class A), so the format is confirmed by
+            # the user, never assumed. Excel needs no such prompt (numbers are floats).
+            fmt = self._prompt_csv_format()
+            if fmt is None:
+                return  # user cancelled the format dialog; nothing loaded
+            self.df = read_csv_localized(
+                self.file_path,
+                sep=fmt["sep"], decimal=fmt["decimal"], thousands=fmt["thousands"],
+            )
             self.sheet_names = ["CSV"]
             self.auto_sheet_combo.clear()
             self.auto_sheet_combo.addItem("CSV")
@@ -971,6 +1057,11 @@ def _ap_load_sheet(self, index):
     if index < 0:
         return
     try:
+        # Clear existing bucket assignments first!
+        for bucket in (self.dv_bucket, self.factor1_bucket, self.factor2_bucket,
+                       self.subject_bucket, self.covariates_bucket):
+            bucket.clear_assignments()
+
         self.df = pd.read_excel(self.file_path, sheet_name=self.auto_sheet_combo.itemText(index))
         self.analysis_selected_groups = []
         self._maybe_pivot()
@@ -984,6 +1075,192 @@ def _ap_load_sheet(self, index):
         QMessageBox.critical(self, "Error", f"Error loading worksheet: {exc}")
 
 
+def _classify_binary_outcome(unique_values, dv_col_name):
+    """Classify a single DV column's unique values as a binary outcome.
+
+    Returns one of three states:
+
+    ``"binary"``
+        Unambiguously binary: exactly 2 values that are 0/1 (or booleans, or two
+        strings), and the column name does not hint at a grouping variable.
+        Routed straight to logistic regression, no confirmation needed.
+
+    ``"maybe_binary"``
+        Exactly 2 *numeric* values that are NOT 0/1 (e.g. 1/2, 5/12) and the
+        column name does not hint at a grouping variable. Ambiguous: could be a
+        binary outcome coded with other integers, or a genuinely continuous
+        measure that happens to take only two values. The caller MUST confirm
+        with the user before treating it as binary. Silently defaulting such a
+        column to correlation shipped a plausible-but-wrong Pearson result for
+        a logistic-intended outcome coded 1/2 -- the old 0/1-only gate let it
+        slip past unnoticed.
+
+    ``"not_binary"``
+        Everything else: not exactly 2 values, mixed/other types, or a
+        grouping-named column.
+
+    Kept as a pure function (no UI, no self) so both real routing
+    (``_ap_build_analysis_context``) and the Help Hub hint
+    (``_ap_is_binary_outcome_for_help``) share one classifier and cannot drift.
+    """
+    values = list(unique_values)
+    if len(values) != 2:
+        return "not_binary"
+
+    group_hints = {"group", "arm", "treatment", "condition", "sex",
+                   "gender", "cohort", "batch", "grp"}
+    if any(h in dv_col_name.lower() for h in group_hints):
+        return "not_binary"
+
+    is_01 = set(values) <= {0, 1, 0.0, 1.0}
+    is_str = all(isinstance(v, str) for v in values)
+    if is_01 or is_str:
+        return "binary"
+
+    # Two values, non-grouping name, but neither 0/1 nor two strings. If both are
+    # numeric (int/float, excluding bool which already satisfied is_01), it's an
+    # ambiguous binary candidate -- ask the user rather than silently guessing.
+    is_numeric = all(
+        isinstance(v, (int, float, np.integer, np.floating)) and not isinstance(v, bool)
+        for v in values
+    )
+    if is_numeric:
+        return "maybe_binary"
+    return "not_binary"
+
+
+def _detect_unmapped_repeated_subject(df, factor_a, factor_b, mapped_cols):
+    """Detect an unmapped column that looks like repeated-measures subject IDs.
+
+    Returns ``(column_name, within_factor)`` when a two-factor design without a
+    mapped Subject ID nonetheless contains a column whose values carry the
+    hallmark of subjects measured across a within factor; otherwise ``None``.
+
+    Signature (deliberately strict, to avoid false positives on ordinary
+    categorical columns): grouping the data by the candidate column, one factor
+    is constant within *every* group (the between factor) and the other spans
+    more than one level in *every* group (the within factor). The candidate must
+    also be ID-like -- genuinely repeated (not constant, not unique-per-row) and
+    with strictly more distinct values than either factor has levels. That last
+    guard is what separates real subject IDs from a mere relabelling of a factor:
+    a column that aliases the within factor (same number of distinct values as
+    that factor) carries the identical between/within signature but is not a
+    subject column.
+
+    Without this, a mixed design (e.g. Subject × Timepoint with Subject left
+    unmapped) silently runs as a between-subjects Two-Way ANOVA, ignoring the
+    within-subject correlation and reporting invalid Timepoint / interaction
+    p-values.
+    """
+    n = len(df)
+    n_levels_a = int(df[factor_a].nunique(dropna=True))
+    n_levels_b = int(df[factor_b].nunique(dropna=True))
+    max_factor_levels = max(n_levels_a, n_levels_b)
+    for col in df.columns:
+        if col in mapped_cols or col in (factor_a, factor_b):
+            continue
+        series = df[col].dropna()
+        if series.empty:
+            continue
+        n_unique = int(series.nunique())
+        if n_unique < 2 or n_unique >= n:  # constant or unique-per-row -> not IDs
+            continue
+        if n_unique <= max_factor_levels:  # aliases a factor, not subject IDs
+            continue
+        try:
+            a_span = df.groupby(col)[factor_a].nunique(dropna=True)
+            b_span = df.groupby(col)[factor_b].nunique(dropna=True)
+        except Exception:
+            continue
+        if a_span.empty or b_span.empty:
+            continue
+        a_within, a_between = bool((a_span > 1).all()), bool((a_span == 1).all())
+        b_within, b_between = bool((b_span > 1).all()), bool((b_span == 1).all())
+        if a_within and b_between:
+            return col, factor_a
+        if b_within and a_between:
+            return col, factor_b
+    return None
+
+
+def _ap_lmm_vs_rmanova_needed(df, subject_column, within_factor, dv_column):
+    """True if this DV column has structural or NaN-driven missingness across
+    the within-factor's levels for this subject_column, requiring an LMM
+    instead of RM-ANOVA/paired-ttest for THIS specific column. Each DV column
+    in a multi-DV batch can have a different missingness pattern (round-2
+    audit finding U2) - callers must invoke this per DV column, not just
+    once for the whole batch.
+    """
+    try:
+        counts = df.groupby([subject_column, within_factor]).size().unstack(fill_value=0)
+        if (counts == 0).any().any():
+            return True
+        if dv_column:
+            valid = df[[subject_column, within_factor, dv_column]].dropna(subset=[dv_column])
+            valid_counts = valid.groupby([subject_column, within_factor]).size().unstack(fill_value=0)
+            if (valid_counts == 0).any().any():
+                return True
+        return False
+    except Exception:
+        return False
+
+
+def _ap_confirm_binary_outcome(self, dv_col, values):
+    """Ask whether a two-value numeric outcome is binary or continuous.
+
+    Fires only for the ambiguous ``"maybe_binary"`` case (exactly two numeric
+    values not coded 0/1, e.g. 1/2). Returns ``True`` to treat the column as a
+    binary outcome (logistic regression), ``False`` to keep it continuous
+    (correlation / linear regression). This converts what used to be a silent,
+    plausible-but-wrong Pearson result into an explicit user decision.
+
+    Runs on the UI thread (``determine_and_run_test`` calls the context builder
+    synchronously), so a modal dialog is safe. No default button is set: this is
+    the high-severity anti-silent-wrong-selection path, so a deliberate click is
+    required rather than letting a reflexive Enter pick one. Dismissing the
+    dialog (Esc / window close) resolves to the safe non-logistic option, never
+    a silent logistic guess. The concrete two values are shown in the text so a
+    genuinely continuous pilot outcome (e.g. "1.023, 5.678") is obviously not a
+    coding and the user picks Continuous.
+    """
+    a, b = values
+    box = QMessageBox(self)
+    box.setIcon(QMessageBox.Question)
+    box.setWindowTitle("Binary outcome?")
+    box.setText(
+        f"The outcome column “{dv_col}” has exactly two distinct "
+        f"values ({a}, {b}), not coded as 0/1."
+    )
+    box.setInformativeText(
+        "Treat it as a binary outcome (logistic regression), or as a "
+        "continuous measure (correlation / linear regression)?"
+    )
+    binary_btn = box.addButton("Binary (logistic)", QMessageBox.AcceptRole)
+    continuous_btn = box.addButton("Continuous (correlation)", QMessageBox.RejectRole)
+    box.setEscapeButton(continuous_btn)
+    box.exec_()
+    return box.clickedButton() is binary_btn
+
+
+def _ap_warn_unmapped_subject(self, subject_col, within_factor):
+    """Advisory (non-blocking): a repeated-measures Subject column is present but
+    unmapped, so a mixed design ran as a plain between-subjects Two-Way ANOVA.
+
+    Informational only -- the analysis still proceeds; it just tells the user how
+    to get the mixed model they likely intended. Kept as its own method so tests
+    can stub it without a Qt event loop.
+    """
+    QMessageBox.warning(
+        self, "Possible mixed design",
+        f"Column “{subject_col}” looks like repeated-measures subject IDs "
+        f"(each subject spans multiple “{within_factor}” levels) but is not "
+        f"mapped as Subject ID.\n\n"
+        f"This analysis ran as a between-subjects Two-Way ANOVA. If the same "
+        f"subjects were measured across “{within_factor}”, map “{subject_col}” "
+        f"as Subject ID to run a Mixed ANOVA instead.",
+    )
+
+
 def _ap_build_analysis_context(self):
     dv_columns = self.dv_bucket.get_assigned_columns()
     factor_columns = [column for column in [
@@ -993,8 +1270,6 @@ def _ap_build_analysis_context(self):
     subject_columns = self.subject_bucket.get_assigned_columns()
     subject_column = subject_columns[0] if subject_columns else None
     covariate_columns = self.covariates_bucket.get_assigned_columns()
-    active_filter = getattr(self, 'filter_bucket', None)
-    filter_spec = active_filter.get_filter() if active_filter else None
 
     all_assigned = dv_columns + factor_columns + ([subject_column] if subject_column else []) + covariate_columns
     if len(set(all_assigned)) != len(all_assigned):
@@ -1015,16 +1290,13 @@ def _ap_build_analysis_context(self):
         "group_labels": [],
         "display_group_col": factor_columns[0],
         "inferred_test": None,
-        "filter": filter_spec,
         "selected_groups": list(self.analysis_selected_groups or []),
         "selected_group_column": factor_columns[0],
     }
 
     analysis_df = self.df.copy()
-    if filter_spec:
-        filter_col, filter_val = filter_spec
-        if filter_col in analysis_df.columns:
-            analysis_df = analysis_df[analysis_df[filter_col] == filter_val]
+
+    _reject_missing_subject_ids(analysis_df, subject_column)
 
     factor1_levels = _sorted_unique(analysis_df[factor_columns[0]].dropna().tolist())
     selected_factor1_groups = [group for group in context["selected_groups"] if group in factor1_levels]
@@ -1037,53 +1309,21 @@ def _ap_build_analysis_context(self):
         context["selected_groups"] = []
 
     # --- Binary DV detection: Logistic Regression ---
-    # --- Proportion DV detection: Beta Regression ---
     if len(dv_columns) == 1:
         dv_col = dv_columns[0]
-        _series = analysis_df[dv_col].dropna()
-        _unique = _series.unique()
-        # Conservative check: exactly 2 values that are 0/1 (or two strings),
-        # AND column name does not hint at a grouping variable.
-        _is_01 = set(_unique) <= {0, 1, 0.0, 1.0}
-        _is_str = all(isinstance(v, str) for v in _unique)
-        _group_hints = {"group", "arm", "treatment", "condition", "sex",
-                        "gender", "cohort", "batch", "grp"}
-        _name_is_grouping = any(h in dv_col.lower() for h in _group_hints)
-        is_binary = (
-            len(_unique) == 2
-            and pd.api.types.is_numeric_dtype(self.df[dv_col]) or _is_str
-            and (_is_01 or _is_str)
-            and not _name_is_grouping
+        _binary_status = _classify_binary_outcome(
+            analysis_df[dv_col].dropna().unique(), dv_col
         )
-        if is_binary:
+        if _binary_status == "binary":
+            # Unambiguous 0/1 / two-string outcome -> logistic, no prompt.
             context["outcome_type"] = "binary"
-
-        # Beta regression: outcome is a continuous proportion in [0, 1]
-        # Detection is purely data-driven (no column name assumptions).
-        # Guard: >5 unique values rules out discrete encoded scales (e.g. 0/0.25/0.5/0.75/1).
-        if (
-            not is_binary
-            and pd.api.types.is_numeric_dtype(_series)
-            and len(_unique) > 5
-        ):
-            _min, _max = float(_series.min()), float(_series.max())
-            _in_unit_interval = _min >= 0.0 and _max <= 1.0
-            if _in_unit_interval:
-                _n = int(_series.count())
-                _n_predictors = max(1, len(covariate_columns) + 1)
-                _epv = _n / _n_predictors
-                _has_boundary = _min == 0.0 or _max == 1.0
-
-                if _has_boundary:
-                    # Apply Smithson-Verkuilen transformation to push boundary values inside (0,1)
-                    self.df[dv_col] = (self.df[dv_col] * (_n - 1) + 0.5) / _n
-                    context["beta_sv_transformed"] = True
-
-                context["outcome_type"] = "proportion"
-                context["beta_epv"] = _epv
-                context["beta_n"] = _n
-                context["beta_n_predictors"] = _n_predictors
-                context["beta_bias_corrected"] = _epv < 10
+        elif _binary_status == "maybe_binary":
+            # Exactly two numeric values not coded 0/1 (e.g. 1/2). Ambiguous:
+            # ask the user instead of silently defaulting to correlation, which
+            # would ship a wrong Pearson result for a binary-intended outcome.
+            _two_values = sorted(analysis_df[dv_col].dropna().unique().tolist())
+            if self._confirm_binary_outcome(dv_col, _two_values):
+                context["outcome_type"] = "binary"
 
     if len(factor_columns) == 1:
         factor = factor_columns[0]
@@ -1130,6 +1370,15 @@ def _ap_build_analysis_context(self):
             context["between_factors"] = factor_columns[:2]
             context["inferred_test"] = "two_way_anova"
             context["dependent"] = False
+            # Advisory: warn if an unmapped column looks like repeated-measures
+            # subject IDs -- otherwise the intended mixed design silently ran as
+            # a between-subjects Two-Way ANOVA.
+            _repeated = _detect_unmapped_repeated_subject(
+                analysis_df, factor_a, factor_b,
+                mapped_cols={*dv_columns, *factor_columns, *covariate_columns},
+            )
+            if _repeated is not None:
+                self._warn_unmapped_subject(_repeated[0], _repeated[1])
 
     # --- Clinical test upgrades ---
 
@@ -1137,37 +1386,16 @@ def _ap_build_analysis_context(self):
     if context.get("outcome_type") == "binary":
         context["inferred_test"] = "logistic_regression"
 
-    # 1b. Proportion DV → Beta Regression (overrides group-comparison tests)
-    elif context.get("outcome_type") == "proportion":
-        context["inferred_test"] = "beta_regression"
-        # Pass EPV info into covariates/analysis metadata for dispatch
-        if context.get("beta_bias_corrected"):
-            context["beta_regression_variant"] = "bias_corrected"
-        else:
-            context["beta_regression_variant"] = "standard"
-
     # 2. Unbalanced repeated-measures → LMM (when Subject ID + within-factor present)
     elif subject_column and context["within_factors"]:
         within_factor = context["within_factors"][0]
         dv_col_for_balance = dv_columns[0] if dv_columns else None
-        try:
-            # Case 1: structural missingness (whole Subject×Timepoint combos absent)
-            counts = self.df.groupby([subject_column, within_factor]).size().unstack(fill_value=0)
-            has_structural_missing = (counts == 0).any().any()
-
-            # Case 2: row exists but DV is NaN (patient present at visit but no measurement)
-            has_nan_missing = False
-            if dv_col_for_balance and not has_structural_missing:
-                valid = self.df[[subject_column, within_factor, dv_col_for_balance]].dropna(
-                    subset=[dv_col_for_balance]
-                )
-                valid_counts = valid.groupby([subject_column, within_factor]).size().unstack(fill_value=0)
-                has_nan_missing = (valid_counts == 0).any().any()
-
-            if has_structural_missing or has_nan_missing:
-                context["inferred_test"] = "lmm"
-        except Exception:
-            pass
+        # Snapshot the test choice as it stood before the LMM upgrade check,
+        # so the multi-DV loop (_ap_determine_and_run_test) can fall back to
+        # it for any DV column that doesn't itself need LMM (U2 fix).
+        context["_test_before_lmm_upgrade"] = context["inferred_test"]
+        if _ap_lmm_vs_rmanova_needed(self.df, subject_column, within_factor, dv_col_for_balance):
+            context["inferred_test"] = "lmm"
 
     # 3. Covariates present → ANCOVA upgrade (only for non-clinical tests)
     if covariate_columns and context["inferred_test"] in ("independent_ttest", "one_way_anova"):
@@ -1181,7 +1409,12 @@ def _ap_build_analysis_context(self):
     # 4. Continuous primary factor → Correlation or Linear Regression
     #    Applied AFTER all other upgrades so it takes precedence over ANCOVA/t-test
     #    inferences when the factor is not a grouping variable.
-    if len(factor_columns) == 1 and not subject_column:
+    #    A binary outcome is excluded: logistic regression of a binary DV on a
+    #    continuous predictor is NOT a correlation, and without this guard a
+    #    single continuous predictor silently reverted logistic_regression (set
+    #    just above) back to correlation.
+    if (len(factor_columns) == 1 and not subject_column
+            and context.get("outcome_type") != "binary"):
         try:
             from analysis.correlation_models import _is_continuous as _corr_is_continuous
             if _corr_is_continuous(analysis_df, factor_columns[0]):
@@ -1203,7 +1436,7 @@ def _ap_build_analysis_context(self):
         raise ValueError("Single mode requires exactly one measurement column.")
     if context["mode"] == "multi" and len(dv_columns) < 2:
         raise ValueError("Multi mode requires at least two measurement columns (for example two or more genes).")
-    if context["mode"] == "multi" and context["inferred_test"] in {"independent_ttest", "paired_ttest", "logistic_regression", "beta_regression"}:
+    if context["mode"] == "multi" and context["inferred_test"] in {"independent_ttest", "paired_ttest", "logistic_regression"}:
         raise ValueError("Multi mode is restricted to ANOVA-capable designs.")
 
     # Variable transforms (meaningful for both correlation and user-selected linear regression)
@@ -1238,10 +1471,27 @@ def _ap_build_analysis_context(self):
 
 
 def _ap_detected_test_label(self, context):
+    """What the DESIGN is, read off the shape of the data.
+
+    Not what will be run. The test comes from the assumption checks afterwards,
+    and for independent groups the router picks Welch unconditionally -- a
+    classic one-way ANOVA and a Student t-test are never the outcome. Naming
+    those two entries after tests would announce analyses this program does not
+    perform; they name the layout instead, and the rest are read as designs and
+    run under exactly these names.
+
+    How far this reaches, measured rather than assumed: the one live caller is
+    the design card's fallback, taken only when the result carries no model name
+    -- and over 400 seeds, 204 rendered panels all carried one. So these labels
+    are a guard for a result shape that does not occur today, not text a user is
+    reading. Kept because a result without a test name is a real possibility and
+    printing nothing there would be worse; not kept as something to maintain as
+    though it were on screen.
+    """
     labels = {
-        "independent_ttest": "Independent t-test",
+        "independent_ttest": "Two independent groups",
         "paired_ttest": "Paired t-test",
-        "one_way_anova": "One-Way ANOVA",
+        "one_way_anova": "One-way design (independent groups)",
         "repeated_measures_anova": "Repeated Measures ANOVA",
         "two_way_anova": "Two-Way ANOVA",
         "mixed_anova": "Mixed ANOVA",
@@ -1249,25 +1499,10 @@ def _ap_detected_test_label(self, context):
         "two_way_ancova": "Two-Way ANCOVA",
         "lmm": "Linear Mixed Model (handles missing visits)",
         "logistic_regression": "Logistic Regression (Binary Outcome)",
-        "beta_regression": "Beta Regression (Proportion Outcome)",
-        "correlation": "Korrelationsanalyse (Spearman/Pearson)",
-        "linear_regression": "Lineare Regression (OLS)",
+        "correlation": "Correlation (Spearman/Pearson)",
+        "linear_regression": "Linear Regression (OLS)",
     }
-    label = labels.get(context["inferred_test"], context["inferred_test"])
-    if context.get("inferred_test") == "beta_regression":
-        epv = context.get("beta_epv")
-        sv = context.get("beta_sv_transformed", False)
-        bias = context.get("beta_bias_corrected", False)
-        parts = []
-        if sv:
-            parts.append("Smithson-Verkuilen transformation applied (boundary values present)")
-        if bias and epv is not None:
-            parts.append(f"EPV = {epv:.1f} — small sample, bias correction applied")
-        elif epv is not None:
-            parts.append(f"EPV = {epv:.1f} — adequate sample size")
-        if parts:
-            label += "\n  " + "\n  ".join(parts)
-    return label
+    return labels.get(context["inferred_test"], context["inferred_test"])
 
 
 def _ap_execute_single_analysis(self, context, dv_column, output_dir, skip_plots=True, title_suffix=None, file_base_override=None):
@@ -1339,7 +1574,7 @@ def _ap_execute_single_analysis(self, context, dv_column, output_dir, skip_plots
                 with open(html_path, "w", encoding="utf-8") as _fh:
                     _fh.write(html_content)
             except Exception as _exc:
-                print(f"WARNING: Could not inject provenance into HTML: {_exc}")
+                logger.warning(f"WARNING: Could not inject provenance into HTML: {_exc}")
 
     return result
 
@@ -1359,7 +1594,7 @@ def _ap_format_assumptions(self, results):
     elif "model_residuals" in normality_tests:
         is_normal = normality_tests["model_residuals"].get("is_normal")
         normality = "Normality OK" if is_normal else "Normality violated"
-    elif "transformed_data" in normality_tests:
+    elif transformation_applied and "transformed_data" in normality_tests:
         is_normal = normality_tests["transformed_data"].get("is_normal")
         normality = "Normality OK after transformation" if is_normal else "Normality violated"
     elif "all_data" in normality_tests:
@@ -1409,7 +1644,7 @@ def _ap_extract_normality_metric(self, results):
     if "model_residuals" in normality_tests:
         is_normal = normality_tests["model_residuals"].get("is_normal")
         return "OK" if is_normal else "Violated"
-    if "transformed_data" in normality_tests:
+    if transformation_applied and "transformed_data" in normality_tests:
         is_normal = normality_tests["transformed_data"].get("is_normal")
         return "OK (after transformation)" if is_normal else "Violated"
     if "all_data" in normality_tests:
@@ -1453,11 +1688,24 @@ def _ap_extract_variance_metric(self, results):
     return "Not available"
 
 
+def _is_real_number(value):
+    """A number the reader can act on: finite, and not a bool dressed as one."""
+    import math
+    return (isinstance(value, (int, float)) and not isinstance(value, bool)
+            and math.isfinite(value))
+
+
 def _ap_format_main_test_metric(self, results):
     tested_against = results.get("tested_against") or results.get("final_test_label") or results.get("test") or "Not available"
     p_value = results.get("p_value")
     if p_value is None:
         return f"{tested_against}; p = N/A"
+    # `p_value is None` is not the only way to have no p-value. NaN is not None,
+    # and `nan < 0.0001` is False, so a fit that produced nothing printed
+    # "p = nan" as though it were a number the reader could act on. The report
+    # grew a third state for this ("No result"); the cockpit kept printing it.
+    if not _is_real_number(p_value):
+        return f"{tested_against}; no p-value (the test produced none)"
     if p_value < 0.0001:
         p_text = "< 0.0001"
     else:
@@ -1478,22 +1726,29 @@ def _ap_format_effect_size_metric(self, results):
             return f"OR = {primary['odds_ratio']:.2f} [{primary['ci_lower']:.2f}-{primary['ci_upper']:.2f}]"
         return "OR: N/A"
 
-    if effect_size is None:
+    if effect_size is None or not _is_real_number(effect_size):
         return "Not available"
 
     labels = {
         "cohen_d": "Cohen's d",
         "hedges_g": "Hedges' g",
+        "cohen_f": "Cohen's f",
+        "cohen's f": "Cohen's f",
         "r": "r (rank correlation)",
         "eta_squared": "Eta-squared",
         "partial_eta_squared": "Partial eta-squared",
         "epsilon_squared": "Epsilon-squared",
         "kendall_w": "Kendall's W",
         "rank_biserial_r": "Rank-biserial r",
-        "ICC": "ICC",
-        "AUC": "AUC",
+        "icc": "ICC",
+        "auc": "AUC",
     }
-    type_label = labels.get(effect_size_type, effect_size_type.replace("_", " ").title() if effect_size_type else "Effect size")
+    # Match case-insensitively so plain-text types (e.g. "Cohen's f") resolve to
+    # a clean label instead of being mangled by .title() ("Cohen'S F").
+    type_label = labels.get(
+        str(effect_size_type).lower() if effect_size_type else None,
+        effect_size_type if effect_size_type else "Effect size",
+    )
     return f"{type_label} = {effect_size:.4f}"
 
 
@@ -1515,52 +1770,6 @@ def _ap_is_ttest_result(self, context, results):
     return False
 
 
-def _ap_format_rationale(self, context, results):
-    reasons = [f"Structure inferred as {self._detected_test_label(context)}."]
-    if context.get("subject_column"):
-        reasons.append(f"Subject ID detected via '{context['subject_column']}'.")
-    if context.get("covariates"):
-        reasons.append(f"Covariates: {', '.join(context['covariates'])}.")
-
-    model_type = results.get("model_type")
-    if model_type == "ANCOVA":
-        reasons.append("Treatment effects are adjusted for covariates (Type II SS).")
-    elif model_type == "LMM":
-        reasons.append("Linear Mixed Model uses all available data (ML estimation) — missing visits do not cause patient dropout.")
-    elif model_type == "LogisticRegression":
-        reasons.append("Binary outcome detected. Logistic regression provides odds ratios and AUC.")
-    elif model_type == "BetaRegression":
-        epv = context.get("beta_epv")
-        sv = context.get("beta_sv_transformed", False)
-        bias = context.get("beta_bias_corrected", False)
-        if sv:
-            reasons.append("Boundary values (0 or 1) were present — Smithson-Verkuilen transformation applied before fitting.")
-        if bias and epv is not None:
-            reasons.append(
-                f"Proportion outcome detected (EPV = {epv:.1f} < 10 — small sample). "
-                f"Bias-corrected Beta Regression applied with bootstrapped standard errors."
-            )
-        elif epv is not None:
-            reasons.append(
-                f"Proportion outcome detected (EPV = {epv:.1f} ≥ 10 — adequate sample). "
-                f"Standard Beta Regression applied."
-            )
-        else:
-            reasons.append("Proportion outcome detected. Beta Regression applied.")
-    elif results.get("transformation"):
-        reasons.append(f"Transformation chosen by user: {results['transformation']}.")
-
-    if results.get("analysis_note"):
-        reasons.append(results["analysis_note"])
-    elif results.get("note"):
-        reasons.append(results["note"])
-    elif results.get("recommendation") == "non_parametric":
-        reasons.append("Parametric assumptions failed, so a robust fallback model path was used.")
-    elif model_type not in ("ANCOVA", "LMM", "LogisticRegression"):
-        reasons.append("Auto-pilot stayed on the default supported path for this design.")
-    return " ".join(reasons)
-
-
 def _ap_format_posthoc_status(self, context, results):
     if self._is_ttest_result(context, results):
         return "No post-hoc applicable for t-tests (two groups only)."
@@ -1574,8 +1783,23 @@ def _ap_format_posthoc_status(self, context, results):
     return "No post-hoc performed."
 
 
+# Placeholders the result carries where nothing was actually fitted. Printing
+# one of these as the model would be worse than printing the plan.
+_NOT_A_MODEL_NAME = frozenset({"", "not performed", "none", "n/a"})
+
+
 def _ap_format_context_design(self, context, results):
-    model_label = self._detected_test_label(context)
+    # What RAN, not what was planned. `inferred_test` is chosen from the shape
+    # of the data, before the assumption checks look at the numbers -- so where
+    # those checks switch the analysis (equal variances failing turns One-Way
+    # ANOVA into Welch's, normality failing turns it into Kruskal-Wallis) the
+    # card kept announcing a model that never ran, beside a results section and
+    # a post-hoc that named the real one. The post-hoc line of this same panel
+    # already reads the result; this one did not.
+    performed = (results or {}).get("test")
+    performed = performed.strip() if isinstance(performed, str) else ""
+    model_label = (performed if performed.lower() not in _NOT_A_MODEL_NAME
+                   else self._detected_test_label(context))
     factor_columns = context.get("factor_columns") or []
     factor_text = ", ".join(map(str, factor_columns)) if factor_columns else "Not specified"
     subject_column = context.get("subject_column") or "None"
@@ -1591,19 +1815,40 @@ def _ap_format_context_sample_overview(self, context, results):
     selected_groups = [str(group) for group in selected_groups]
     group_column = results.get("group_column") or context.get("display_group_col") or "Not specified"
 
+    # Four keys, because the model paths use none of the first three: a linear
+    # or a logistic regression records its count as `n_observations` and carries
+    # no raw_data at all. Both printed "Sample size (N): 0" for runs on real
+    # data -- 23, 8, 20 and 19 observations on the four seeds it was measured
+    # on, every one of them shown as zero.
     n_total = results.get("n_total")
     if n_total is None:
         n_total = results.get("n")
     if n_total is None:
-        raw_data = results.get("raw_data") or {}
-        if isinstance(raw_data, dict):
-            n_total = sum(len(values) for values in raw_data.values() if hasattr(values, "__len__"))
+        n_total = results.get("n_observations")
+    if n_total is None:
+        raw_data = results.get("raw_data")
+        # Only where there IS raw data. `or {}` summed an absent frame to 0 and
+        # printed that as the sample size, so "not recorded" and "no
+        # observations" reached the reader identically -- the same missing third
+        # state that let the main-test line print `p = nan`.
+        if isinstance(raw_data, dict) and raw_data:
+            n_total = sum(len(values) for values in raw_data.values()
+                          if hasattr(values, "__len__"))
+
+    # A two-factor design names its groups by CELL -- "Genotype=WT, Time=D0" --
+    # so the comma this joins on appears INSIDE the names, and four cells read as
+    # eight groups with nothing marking where one ends. The separator steps aside
+    # where the names already use it, and again where they use the replacement.
+    if any("," in group for group in selected_groups):
+        separator = " | " if not any("|" in group for group in selected_groups) else "\n"
+    else:
+        separator = ", "
 
     if selected_groups:
         if len(selected_groups) > 6:
-            group_text = ", ".join(selected_groups[:6]) + f" (+{len(selected_groups) - 6} more)"
+            group_text = separator.join(selected_groups[:6]) + f" (+{len(selected_groups) - 6} more)"
         else:
-            group_text = ", ".join(selected_groups)
+            group_text = separator.join(selected_groups)
     else:
         group_text = "All available groups"
 
@@ -1619,23 +1864,27 @@ def _ap_format_context_analysis_scope(self, context, results):
     covariates = results.get("covariates") or context.get("covariates") or []
     covariate_text = ", ".join(map(str, covariates)) if covariates else "None"
 
-    filter_text = results.get("filter_applied")
-    if not filter_text and context.get("filter"):
-        filter_col, filter_val = context["filter"]
-        filter_text = f"{filter_col} = {filter_val}"
-    if not filter_text:
-        filter_text = "None"
-
     posthoc_text = self._format_posthoc_status(context, results)
     return (
-        f"Filter: {filter_text}\n"
         f"Covariates: {covariate_text}\n"
         f"Post-hoc: {posthoc_text}"
     )
 
 
-def _ap_render_result_summary(self, context, results, output_dir, subtitle):
-    summary = {
+def _ap_build_result_summary(self, context, results, subtitle=""):
+    """Every line the cockpit is about to claim, built in one place.
+
+    Split out of ``_ap_render_result_summary`` so something other than a live
+    QWidget can read it. The cockpit is the panel a user looks at before the
+    report, and it was the one surface of this program no fuzzer saw: three
+    defects in it were found by eye in the shipped build, in a single sitting.
+    An oracle needs the claims without the window, and re-assembling them
+    somewhere else would be a second copy free to drift from this one.
+
+    Keep the widget hand-off below reading THIS dict. A renderer that builds
+    its own goes unchecked again, which is what the structural test guards.
+    """
+    return {
         "subtitle": subtitle,
         "metric_normality": self._extract_normality_metric(results),
         "metric_variance": self._extract_variance_metric(results),
@@ -1645,8 +1894,18 @@ def _ap_render_result_summary(self, context, results, output_dir, subtitle):
         "context_sample_overview": self._format_context_sample_overview(context, results),
         "context_analysis_scope": self._format_context_analysis_scope(context, results),
     }
-    self.result_cockpit.set_summary(summary, enable_plot=False, enable_output=bool(output_dir))
-    ConfettiOverlay(self)
+
+
+def _ap_render_result_summary(self, context, results, output_dir, subtitle):
+    summary = self._build_result_summary(context, results, subtitle)
+    self.result_cockpit.set_summary(summary, enable_output=bool(output_dir))
+    from PyQt5.QtCore import QSettings, QTimer
+    if QSettings("BioMedStatX", "BioMedStatX").value("ui/confetti_enabled", True, type=bool):
+        # Defer the burst to the event loop (singleShot 0) so it starts only after
+        # the synchronous decision-tree render below and the rest of the analysis-
+        # completion chain have unwound and the main thread is idle -- launching it
+        # here would let that render eat the first frames and make it stutter.
+        QTimer.singleShot(0, lambda: ConfettiOverlay(self))
     self.decision_tree_panel.update_results(results)
     self._set_workflow_state("results", "Results ready")
     self.current_output_dir = output_dir
@@ -1655,6 +1914,28 @@ def _ap_render_result_summary(self, context, results, output_dir, subtitle):
     self.current_rendered_dataset = context.get("current_dv") or context["dv_columns"][0]
     self.samples = results.get("raw_data") or results.get("samples")
     self.available_groups = list((self.samples or {}).keys())
+
+
+def _ap_split_multi_results(all_results):
+    """Which of the analysed columns actually produced an analysis.
+
+    A column whose result carries an error is not a dataset that was analysed.
+    The multi loop only ever checked for a CANCEL, so an errored column went
+    into the combined overview as an ordinary card with nothing in it -- to the
+    reader, indistinguishable from a real analysis of bad data. The exporter has
+    taken a failure map since it was written; nothing on this path filled it.
+
+    A function rather than four lines inline because the fuzzer runs the same
+    loop and would otherwise hold a second copy of this rule, free to drift from
+    the one the window uses -- and telling success from failure on this exact
+    dict has already been got wrong twice.
+    """
+    results = all_results or {}
+    analysed = {name: result for name, result in results.items()
+                if not (result or {}).get("error")}
+    failed = {name: (result or {}).get("error") for name, result in results.items()
+              if (result or {}).get("error")}
+    return analysed, failed
 
 
 def _ap_determine_and_run_test(self):
@@ -1693,6 +1974,12 @@ def _ap_determine_and_run_test(self):
         if context["mode"] == "single":
             file_base_override = os.path.splitext(ap_file_path)[0]
             result = self._execute_single_analysis(context, context["dv_columns"][0], output_dir, skip_plots=True, file_base_override=file_base_override)
+            if result.get("cancelled"):
+                self._handle_cancelled_result(result)
+                return
+            if result.get("blocked"):
+                self._handle_blocked_result(result)
+                return
             self._render_result_summary(
                 context,
                 result,
@@ -1706,27 +1993,63 @@ def _ap_determine_and_run_test(self):
                 per_dv_context = dict(context)
                 per_dv_context["dv_columns"] = [dv_column]
                 per_dv_context["current_dv"] = dv_column
+                # U2 fix: re-derive the LMM-vs-base-test decision for THIS
+                # column instead of reusing the once-computed batch decision.
+                subject_column = context.get("subject_column")
+                within_factors = context.get("within_factors")
+                base_test = context.get("_test_before_lmm_upgrade")
+                if subject_column and within_factors and base_test is not None:
+                    per_dv_context["inferred_test"] = (
+                        "lmm"
+                        if _ap_lmm_vs_rmanova_needed(self.df, subject_column, within_factors[0], dv_column)
+                        else base_test
+                    )
                 QApplication.processEvents()
                 all_results[dv_column] = self._execute_single_analysis(per_dv_context, dv_column, output_dir, skip_plots=True)
+                if all_results[dv_column].get("cancelled"):
+                    # User cancelled a dialog for this DV -> abort the whole batch.
+                    self._handle_cancelled_result(all_results[dv_column])
+                    return
 
-            combined_excel = ap_file_path
-            export_result = ExportDispatcher.export_multi_dataset_results(all_results, combined_excel)
+            # A column whose analysis came back with an error is not a dataset
+            # that was analysed. This loop only ever checked for a CANCEL, so an
+            # errored column went into the overview as an ordinary card with
+            # nothing in it -- to the reader, indistinguishable from a real
+            # analysis of bad data. The exporter has taken a failure map from the
+            # start; it was only ever filled by a path with no caller.
+            analysed, failed = _ap_split_multi_results(all_results)
+
+            # Several measurement columns tested at once is a multiple-testing
+            # family, and the combined report is built to say so: it renders an
+            # adjusted p-value per card and a note naming the family size. Both
+            # stayed empty here, because the only implementation of the
+            # correction sat in the sheet-loop nothing calls -- measured on three
+            # columns at p = 0.00013 / 0.0012 / 0.014, all reported uncorrected.
+            AnalysisManager.apply_across_dataset_fdr(analysed)
+
+            combined_report = ap_file_path
+            export_result = ExportDispatcher.export_multi_dataset_results(
+                analysed, combined_report, failed)
             if export_result.get("warning"):
-                print(f"WARNING: {export_result['warning']}")
+                logger.warning(f"WARNING: {export_result['warning']}")
 
             lead_dv = context["dv_columns"][0]
             lead_result = all_results[lead_dv]
             lead_context = dict(context)
             lead_context["dv_columns"] = [lead_dv]
             lead_context["current_dv"] = lead_dv
+            if lead_result.get("blocked"):
+                self._handle_blocked_result(lead_result)
+                self.current_multi_results = all_results
+                return
             self._render_result_summary(
                 lead_context,
                 lead_result,
                 output_dir,
-                subtitle=f"Multi-dataset analysis completed for {len(all_results)} dependent variables. Combined Excel: {os.path.basename(combined_excel)}"
+                subtitle=f"Multi-dataset analysis completed for {len(all_results)} dependent variables. Combined report: {os.path.basename(combined_report)}"
             )
             self.current_multi_results = all_results
-            self.current_analysis_result["combined_excel"] = combined_excel
+            self.current_analysis_result["combined_report"] = combined_report
 
     except Exception as exc:
         self._set_workflow_state("map", "Analysis failed")
@@ -1734,99 +2057,34 @@ def _ap_determine_and_run_test(self):
         QMessageBox.critical(self, "Analysis Error", str(exc))
 
 
-def _ap_configure_plot_from_result(self):
-    if not self.current_analysis_result or not self.current_analysis_context:
-        QMessageBox.information(self, "No Result", "Run an analysis before configuring a plot.")
-        return
+def _ap_handle_cancelled_result(self, result):
+    """User backed out of a mid-analysis dialog (e.g. post-hoc selection): abort
+    the whole run. No results rendered, no report written (analyze() raised before
+    the export step), no confetti. Returns to the mapping state so the user can
+    re-run. Distinct from a data-quality block -- nothing went wrong."""
+    reason = result.get("cancel_reason") or "Analysis cancelled."
+    # NOT show_block: a cancel is not a data-quality block. show_cancelled uses a
+    # neutral "Analysis cancelled" headline so the user is not told their data
+    # failed a check. The workflow chip and mapping feedback also say "cancelled".
+    self.result_cockpit.show_cancelled(reason)
+    self.decision_tree_panel.show_placeholder(reason)
+    self._set_workflow_state("map", "Analysis cancelled")
+    self.mapping_feedback_label.setText(reason)
+    self.current_analysis_result = None
+    self.current_multi_results = {}
 
-    groups = list((self.current_analysis_result.get("raw_data") or self.current_analysis_result.get("samples") or {}).keys())
-    if not groups:
-        QMessageBox.warning(self, "Plot Configuration", "No group data are available for plot configuration.")
-        return
 
-    self.samples = self.current_analysis_result.get("raw_data") or self.current_analysis_result.get("samples")
-    self.available_groups = groups
-
-    default_filename = os.path.splitext(os.path.basename(self.file_path))[0]
-    if self.current_rendered_dataset:
-        default_filename = f"{default_filename}_{_safe_file_slug(self.current_rendered_dataset)}"
-
-    dialog = PlotAestheticsDialog(
-        groups=groups,
-        samples=self.samples or {},
-        analysis_result=self.current_analysis_result,
-        parent=self,
-        default_filename=default_filename,
-        dependent=self.current_analysis_context.get("dependent", False),
-    )
-    if hasattr(dialog, 'create_plot_check'):
-        dialog.create_plot_check.setChecked(False)
-
-    if dialog.exec_() != QDialog.Accepted:
-        return
-
-    plot_config = dialog.get_config()
-    if not plot_config:
-        return
-
-    output_dir = self.current_output_dir or QFileDialog.getExistingDirectory(self, "Select output directory for plot export")
-    if not output_dir:
-        return
-
-    try:
-        self._set_workflow_state("analyze", "Rendering plot", running=True)
-        QApplication.processEvents()
-
-        context = dict(self.current_analysis_context)
-        if self.current_rendered_dataset:
-            context["dv_columns"] = [self.current_rendered_dataset]
-            context["current_dv"] = self.current_rendered_dataset
-        context["group_labels"] = plot_config["groups"]
-        # Single source of truth: re-inject current in-memory df (see _execute_single_analysis).
-        if getattr(self, "df", None) is not None and context.get("injected_df") is None:
-            context["injected_df"] = self.df
-
-        file_base = os.path.join(
-            output_dir,
-            plot_config.get("file_name") or f"{_safe_file_slug(os.path.splitext(os.path.basename(self.file_path))[0])}_{_safe_file_slug(context['dv_columns'][0])}_plot"
-        )
-        appearance = plot_config.get("appearance_settings", {})
-        plot_result = AnalysisManager.analyze(
-            file_path=self.file_path,
-            group_col=context.get("display_group_col", context["factor_columns"][0]),
-            groups=plot_config["groups"],
-            sheet_name=self.auto_sheet_combo.currentText() if self.auto_sheet_combo.isEnabled() else 0,
-            value_cols=context["dv_columns"],
-            dependent=context.get("dependent", False),
-            compare=None,
-            colors=[plot_config["colors"].get(group, DEFAULT_COLORS[index % len(DEFAULT_COLORS)]) for index, group in enumerate(plot_config["groups"])],
-            hatches=[plot_config["hatches"].get(group, "") for group in plot_config["groups"]],
-            title=plot_config.get("title") or context["dv_columns"][0],
-            x_label=plot_config.get("x_label"),
-            y_label=plot_config.get("y_label"),
-            file_name=file_base,
-            save_plot=True,
-            skip_plots=not plot_config.get("create_plot", True),
-            error_type=plot_config.get("error_type", "sd"),
-            analysis_context=context,
-            subject_column=context.get("subject_column"),
-            plot_type=appearance.get("plot_type", "Bar"),
-            dpi=appearance.get("dpi", 300),
-            colors_override=plot_config["colors"],
-            test=context.get("inferred_test", ""),
-        )
-
-        files = []
-        for ext in ("xlsx", "pdf", "png"):
-            candidate = f"{file_base}.{ext}"
-            if os.path.exists(candidate):
-                files.append(candidate)
-        self.show_analysis_success_dialog("Configured plot export", files, output_dir)
-        self.current_analysis_result = plot_result
-        self._set_workflow_state("results", "Results ready")
-    except Exception as exc:
-        self._set_workflow_state("results", "Plot export failed")
-        QMessageBox.critical(self, "Plot Error", str(exc))
+def _ap_handle_blocked_result(self, result):
+    """Surface a data-quality block: clear cockpit cards, show the reason in the
+    cockpit + decision-tree panel, and stop short of rendering a (non-existent)
+    result. No confetti, no Open-Output."""
+    reason = result.get("block_reason") or result.get("error") or "Analysis could not be performed."
+    warnings = result.get("warnings") or []
+    self.result_cockpit.show_block(reason, warnings)
+    self.decision_tree_panel.show_placeholder(reason)
+    self._set_workflow_state("map", "Analysis blocked")
+    self.current_analysis_result = result
+    self.current_multi_results = getattr(self, "current_multi_results", {}) or {}
 
 
 def _ap_open_current_output_folder(self):
@@ -1918,11 +2176,13 @@ def _ap_open_range_selector(self):
     prior = getattr(self, "_range_selection_metadata", None) or {}
     prior_selection_map = None
     prior_replicate_type = None
+    prior_design_mode = None
     if prior:
         sels = prior.get("selections") or []
         if sels:
             prior_selection_map = {s["group"]: s.get("ranges", []) for s in sels}
             prior_replicate_type = sels[0].get("replicate_type")
+        prior_design_mode = prior.get("design_mode")
         # If prior selection was made on a different sheet, reopen that sheet
         prior_sheet = prior.get("sheet")
         if prior_sheet and available_sheets and prior_sheet in available_sheets \
@@ -1938,43 +2198,72 @@ def _ap_open_range_selector(self):
         parent=self,
         initial_selection_map=prior_selection_map,
         initial_replicate_type=prior_replicate_type,
+        initial_design_mode=prior_design_mode,
     )
     if dlg.exec_() != QDialog.Accepted:
         return
-    selection_map, replicate_type, sheet_name = dlg.get_result()
+    selection_map, replicate_type, sheet_name, design_mode = dlg.get_result()
     if not selection_map:
         return
 
     if sheet_name and sheet_name != initial_sheet and not path.lower().endswith(".csv"):
         df_raw = pd.read_excel(path, sheet_name=sheet_name, header=None, dtype=str)
 
-    result_df, nan_report = extract_from_coordinates(
-        df_raw, selection_map, replicate_type=replicate_type
-    )
-    # Drop metadata cols — prevent auto-mapping Source_Range as Factor 2
-    self.df = result_df.drop(columns=["Source_Range", "n_replicates"], errors="ignore")
+    # Route to correct extractor based on design mode
+    if design_mode == "paired":
+        result_df, nan_report = extract_paired_from_coordinates(df_raw, selection_map)
+        self.df = result_df
+    elif design_mode == "bivariate":
+        self.df = extract_bivariate_from_coordinates(df_raw, selection_map)
+        nan_report = {}
+    else:
+        result_df, nan_report = extract_from_coordinates(
+            df_raw, selection_map, replicate_type=replicate_type
+        )
+        self.df = result_df.drop(columns=["Source_Range", "n_replicates"], errors="ignore")
+
+    self._range_design_mode = design_mode
     self._range_selection_metadata = {
         "source_file": path,
         "sheet": sheet_name,
+        "design_mode": design_mode,
         "selections": [
             {"group": g, "ranges": r, "replicate_type": replicate_type}
             for g, r in selection_map.items()
         ],
     }
-    total_nan = sum(nan_report.values())
+
+    total_nan = sum(nan_report.values()) if nan_report else 0
     if total_nan > 0:
         self.statusBar().showMessage(
             f"{total_nan} non-numeric value(s) dropped during import.", 8000
         )
-    group_col = "Group"
-    group_counts = []
-    for g in selection_map:
-        n = int((self.df[group_col] == g).sum()) if group_col in self.df.columns else 0
-        group_counts.append(f"{g}: n={n}")
-    summary = "  |  ".join(group_counts)
+
+    # Summary label — wording varies by design mode
     if hasattr(self, "_range_groups_label"):
-        self._range_groups_label.setText(f"Imported groups — {summary}")
+        if design_mode == "bivariate":
+            x_n = len(self.df["X"].dropna()) if "X" in self.df.columns else 0
+            y_n = len(self.df["Y"].dropna()) if "Y" in self.df.columns else 0
+            summary = f"X = {x_n} values  |  Y = {y_n} values"
+            self._range_groups_label.setText(f"Imported variables — {summary}")
+        elif design_mode == "paired":
+            group_counts = []
+            for g in selection_map:
+                n = int((self.df["Group"] == g).sum()) if "Group" in self.df.columns else 0
+                group_counts.append(f"{g}: n={n}")
+            self._range_groups_label.setText(
+                "Imported conditions — " + "  |  ".join(group_counts)
+            )
+        else:
+            group_counts = []
+            for g in selection_map:
+                n = int((self.df["Group"] == g).sum()) if "Group" in self.df.columns else 0
+                group_counts.append(f"{g}: n={n}")
+            self._range_groups_label.setText(
+                "Imported groups — " + "  |  ".join(group_counts)
+            )
         self._range_groups_label.setVisible(True)
+
     self._wide_format_info = None
     self._ap_reset_result_area()
     self._refresh_preview_table()
@@ -1992,6 +2281,256 @@ def _ap_reset_result_area(self):
     self.decision_tree_panel.show_placeholder(
         "Map the columns, then run the auto-pilot analysis."
     )
+
+
+import shutil
+
+
+def _current_app_version() -> str:
+    try:
+        from core.updater import CURRENT_VERSION  # verified: updater.py:11
+        return str(CURRENT_VERSION)
+    except Exception:
+        return "2.0"
+
+
+def _ap_build_tour_steps(self):
+    """Return the ordered 7-step tour. Targets resolve lazily via closures so
+    hidden/empty widgets on first run degrade to a centered bubble."""
+    from ui.components.tutorial_overlay import TourStep, from_widgets, from_menu_action
+
+    central = self  # host window for coordinate mapping
+    help_action = getattr(self, "help_menu", None)
+    help_resolver = None
+    if help_action is not None:
+        help_resolver = from_menu_action(self.menuBar(), self.help_menu.menuAction())
+
+    return [
+        TourStep(
+            title="Bring In Your Data",
+            body=("Start by loading your experimental or clinical data. Open any Excel "
+                  "or CSV file here, then pick the relevant sheet from the worksheet "
+                  "dropdown. Once a file is loaded, a Select Data Ranges option appears "
+                  "for capturing only the cells you need from a cluttered sheet."),
+            tip=("New to the layout? A ready-made Excel template ships with BioMedStatX, "
+                 "with one tab per design (t-test, ANOVA, repeated measures, and more), "
+                 "each already in the long format the app expects."),
+            resolve_rect=from_widgets(central, self.browse_button,
+                                      self.auto_sheet_combo, self.range_select_btn),
+        ),
+        TourStep(
+            title="Meet Your Variables",
+            body=("A live preview of your table appears as soon as the file loads, and "
+                  "each column header becomes a draggable card here. These cards are the "
+                  "building blocks you route into your analysis."),
+            tip=("Every card shows its detected type (Numeric, Categorical, or Datetime) "
+                 "right on the card, so you can check each column at a glance."),
+            resolve_rect=from_widgets(central, self.preview_table, self.header_cards_widget),
+        ),
+        TourStep(
+            title="Shape Your Analysis",
+            body=("This is where you define your study design. Drag the variable cards "
+                  "into the buckets to assign their roles: Dependent Variable, Factor 1 "
+                  "and 2, an optional Subject ID for repeated measures, and Covariates. "
+                  "As you map, the status line below the buckets shows what each "
+                  "assignment means and what is still missing, and the Start button "
+                  "activates once your mapping is complete and consistent."),
+            tip=("Placed a card in the wrong bucket? Click the small x on the chip to "
+                 "return it."),
+            resolve_rect=from_widgets(central, self.mapping_panel),
+        ),
+        TourStep(
+            title="Define and Compute",
+            body=("Use the group selector to set your comparison cohorts, such as "
+                  "Treatment versus Control, then start the analysis. BioMedStatX checks "
+                  "normality and distribution to select the appropriate statistical test "
+                  "for your data."),
+            tip=("Assumption testing runs automatically in the background, so the method "
+                 "comes from your data rather than a guess."),
+            resolve_rect=from_widgets(central, self.analysis_group_button,
+                                      self.start_analysis_button),
+        ),
+        TourStep(
+            title="Full Statistical Transparency",
+            body=("BioMedStatX is not a black box. The decision tree traces every step "
+                  "the engine took, so you can see why a given test (an ANOVA, a "
+                  "Mann-Whitney U, and so on) was selected for your dataset."),
+            tip=("Hover over any node to read its full label, or use Maximize to study "
+                 "the whole path full-screen."),
+            resolve_rect=from_widgets(central, self.decision_tree_panel),
+            placement="left",
+        ),
+        TourStep(
+            title="Your Results at a Glance",
+            body=("The cockpit gathers your test statistics, p-values, effect sizes, and "
+                  "a written summary you can drop straight into a manuscript, all in one "
+                  "view."),
+            tip=("Use Open Output Folder for the full HTML report, including tables, "
+                 "plots, and the complete method trace."),
+            resolve_rect=from_widgets(central, self.result_cockpit),
+            placement="left",
+        ),
+        TourStep(
+            title="Help Is Always One Click Away",
+            body=("That is the whole workflow, from loading a file to a finished result. "
+                  "You can restart this tour anytime from the Help menu, which also holds "
+                  "the Getting Started guide and recipe-based help for every design."),
+            tip=("The Help menu links to dedicated guides for paired samples, advanced "
+                 "ANOVA, and correlation and regression."),
+            resolve_rect=help_resolver,
+            pulse=True,
+        ),
+    ]
+
+
+def _ap_start_tutorial(self):
+    """Launch (or no-op if already running) the guided tour overlay."""
+    from ui.components.tutorial_overlay import TutorialOverlay
+    if getattr(self, "_tour_active", False):
+        return
+    self._tour_active = True
+    overlay = TutorialOverlay(self, self._build_tour_steps())
+
+    def _on_closed():
+        self._tour_active = False
+        self._tour_overlay = None
+        self._mark_tour_seen()
+
+    overlay.closed_callback = _on_closed
+    self._tour_overlay = overlay
+    overlay.start()
+
+
+def _mark_tour_seen_impl(self):
+    from PyQt5.QtCore import QSettings
+    QSettings("BioMedStatX", "BioMedStatX").setValue(
+        "onboarding/completed_version", _current_app_version())
+
+
+def _ap_export_example_template(self):
+    """Copy the bundled Excel template to a user-chosen location and reveal it."""
+    from PyQt5.QtCore import QUrl
+    from PyQt5.QtGui import QDesktopServices
+    from PyQt5.QtWidgets import QFileDialog, QMessageBox
+    src = _resource_path("assets/BioMedStatX_Excel_Template.xlsx")
+    if not os.path.exists(src):
+        QMessageBox.critical(self, "Error", "Internal template asset missing.")
+        return
+    default = os.path.join(os.path.expanduser("~"), "Desktop",
+                           "BioMedStatX_Template.xlsx")
+    target, _ = QFileDialog.getSaveFileName(
+        self, "Save Example Template As", default, "Excel Worksheets (*.xlsx)")
+    if not target:
+        return
+    try:
+        shutil.copy2(src, target)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.dirname(target)))
+    except OSError as exc:
+        QMessageBox.critical(self, "Export Error", f"Could not write file:\n{exc}")
+
+
+class _CsvFormatDialog(QDialog):
+    """Explicit CSV number-format chooser: named presets + a manual option, with
+    a live preview of the first rows. No autodetect — a default is shown but the
+    user must actively confirm it (Wave-4b: guessing the format can silently
+    NaN-destroy values like 1.234,56)."""
+
+    _SEP_CHOICES = [(", (comma)", ","), ("; (semicolon)", ";"), ("tab", "\t"), ("| (pipe)", "|")]
+    _DEC_CHOICES = [(". (dot)", "."), (", (comma)", ",")]
+    _THOU_CHOICES = [("(none)", None), (". (dot)", "."), (", (comma)", ","), ("space", " ")]
+
+    def __init__(self, path, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("CSV Number Format")
+        self._path = path
+        self._chosen = None
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel(
+            "How are numbers formatted in this CSV file?\n"
+            "Choose a format and confirm — the file is never guessed automatically."
+        ))
+
+        self._rb_intl = QRadioButton(CSV_FORMAT_PRESETS["international"]["label"])
+        self._rb_de = QRadioButton(CSV_FORMAT_PRESETS["german"]["label"])
+        self._rb_manual = QRadioButton("Manual…")
+        self._rb_intl.setChecked(DEFAULT_CSV_FORMAT != "german")
+        self._rb_de.setChecked(DEFAULT_CSV_FORMAT == "german")
+        for rb in (self._rb_intl, self._rb_de, self._rb_manual):
+            layout.addWidget(rb)
+            rb.toggled.connect(self._refresh)
+
+        manual = QHBoxLayout()
+        self._sep = QComboBox(); self._sep.addItems([c[0] for c in self._SEP_CHOICES])
+        self._dec = QComboBox(); self._dec.addItems([c[0] for c in self._DEC_CHOICES])
+        self._thou = QComboBox(); self._thou.addItems([c[0] for c in self._THOU_CHOICES])
+        for label, combo in (("Separator", self._sep), ("Decimal", self._dec), ("Thousands", self._thou)):
+            manual.addWidget(QLabel(label)); manual.addWidget(combo)
+            combo.currentIndexChanged.connect(self._refresh)
+        self._manual_row = QWidget(); self._manual_row.setLayout(manual)
+        layout.addWidget(self._manual_row)
+
+        layout.addWidget(QLabel("Preview (first rows parsed with the selected format):"))
+        self._preview = QTableWidget()
+        self._preview.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._preview.setMaximumHeight(160)
+        layout.addWidget(self._preview)
+
+        buttons = QHBoxLayout()
+        cancel = QPushButton("Cancel"); ok = QPushButton("Import")
+        ok.setDefault(True)
+        cancel.clicked.connect(self.reject)
+        ok.clicked.connect(self._confirm)
+        buttons.addStretch(1); buttons.addWidget(cancel); buttons.addWidget(ok)
+        layout.addLayout(buttons)
+
+        self._refresh()
+
+    def current_format(self):
+        if self._rb_de.isChecked():
+            s = CSV_FORMAT_PRESETS["german"]
+            return {"sep": s["sep"], "decimal": s["decimal"], "thousands": s["thousands"]}
+        if self._rb_manual.isChecked():
+            return {
+                "sep": self._SEP_CHOICES[self._sep.currentIndex()][1],
+                "decimal": self._DEC_CHOICES[self._dec.currentIndex()][1],
+                "thousands": self._THOU_CHOICES[self._thou.currentIndex()][1],
+            }
+        s = CSV_FORMAT_PRESETS["international"]
+        return {"sep": s["sep"], "decimal": s["decimal"], "thousands": s["thousands"]}
+
+    def _refresh(self):
+        self._manual_row.setEnabled(self._rb_manual.isChecked())
+        fmt = self.current_format()
+        try:
+            df = read_csv_localized(self._path, nrows=5, **fmt)
+        except Exception as exc:
+            self._preview.clear()
+            self._preview.setRowCount(1)
+            self._preview.setColumnCount(1)
+            self._preview.setHorizontalHeaderLabels(["preview error"])
+            self._preview.setItem(0, 0, QTableWidgetItem(str(exc)))
+            return
+        self._preview.clear()
+        self._preview.setColumnCount(max(len(df.columns), 1))
+        self._preview.setRowCount(len(df))
+        self._preview.setHorizontalHeaderLabels([str(c) for c in df.columns])
+        for r in range(len(df)):
+            for c in range(len(df.columns)):
+                self._preview.setItem(r, c, QTableWidgetItem(str(df.iat[r, c])))
+
+    def _confirm(self):
+        self._chosen = self.current_format()
+        self.accept()
+
+
+def _ap_prompt_csv_format(self):
+    """Show the CSV number-format dialog. Returns {sep, decimal, thousands}, or
+    None if the user cancelled (in which case nothing is loaded)."""
+    dialog = _CsvFormatDialog(self.file_path, parent=self)
+    if dialog.exec_() != QDialog.Accepted:
+        return None
+    return dialog._chosen
 
 
 class AutopilotMixin:
@@ -2020,6 +2559,8 @@ class AutopilotMixin:
     _ap_get_available_analysis_groups = _ap_get_available_analysis_groups
     _ap_update_analysis_group_selection_ui = _ap_update_analysis_group_selection_ui
     open_analysis_group_selector = _ap_open_analysis_group_selector
+    _confirm_binary_outcome = _ap_confirm_binary_outcome
+    _warn_unmapped_subject = _ap_warn_unmapped_subject
     _build_analysis_context = _ap_build_analysis_context
     _detected_test_label = _ap_detected_test_label
     _execute_single_analysis = _ap_execute_single_analysis
@@ -2029,20 +2570,26 @@ class AutopilotMixin:
     _format_main_test_metric = _ap_format_main_test_metric
     _format_effect_size_metric = _ap_format_effect_size_metric
     _is_ttest_result = _ap_is_ttest_result
-    _format_rationale = _ap_format_rationale
     _format_posthoc_status = _ap_format_posthoc_status
     _format_context_design = _ap_format_context_design
     _format_context_sample_overview = _ap_format_context_sample_overview
     _format_context_analysis_scope = _ap_format_context_analysis_scope
+    _build_result_summary = _ap_build_result_summary
     _render_result_summary = _ap_render_result_summary
+    _handle_cancelled_result = _ap_handle_cancelled_result
+    _handle_blocked_result = _ap_handle_blocked_result
     determine_and_run_test = _ap_determine_and_run_test
-    configure_plot_from_result = _ap_configure_plot_from_result
     open_current_output_folder = _ap_open_current_output_folder
     reset_application_state = _ap_reset_application_state
     _maybe_pivot = _ap_maybe_pivot
+    _prompt_csv_format = _ap_prompt_csv_format
     open_exploratory_matrix_dialog = _ap_open_exploratory_matrix_dialog
     _ap_open_range_selector = _ap_open_range_selector
     _ap_reset_result_area = _ap_reset_result_area
+    _build_tour_steps = _ap_build_tour_steps
+    start_tutorial = _ap_start_tutorial
+    _mark_tour_seen = _mark_tour_seen_impl
+    export_example_template = _ap_export_example_template
 
 
 def attach_autopilot_methods(app_cls):  # pragma: no cover — legacy shim

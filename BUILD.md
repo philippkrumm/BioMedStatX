@@ -8,8 +8,10 @@ distributions and publishing them on the GitHub Releases page.
 ## Prerequisites (one-time setup)
 
 ### Common
-* Python 3.10+ with all `requirements`-style deps installed (the venv used for
-  development is enough).
+* Python 3.10+ with all `requirements`-style deps installed. Prefer a **dedicated
+  venv created from `requirements.txt`** over a shared Anaconda base — see the
+  per-platform notes below for why (unrelated packages in a shared environment
+  leak into the frozen bundle via PyInstaller's dependency graph).
 * `PyInstaller >= 6.0` (`pip install pyinstaller`).
 * GitHub CLI (`gh`) for uploading releases (optional — can also use the
   web UI). Portable Windows install:
@@ -36,6 +38,23 @@ Nothing extra. The `.spec` already references
   both Intel and Apple Silicon:
   ```bash
   pip install --upgrade --force-reinstall scipy numpy PyQt5 pingouin statsmodels
+  ```
+* **Build from a dedicated venv created from `requirements.txt`, not a shared
+  Anaconda base.** This is the same rule the Windows build already follows
+  (`C:\bmx_venv` below), and it matters just as much on macOS. PyInstaller freezes
+  whatever is importable in the build interpreter, so any unrelated package that
+  drifts into the shared base leaks into the `.app`: an unrelated `torch` install
+  once added ~400 MB before it was caught, and a `setuptools >= 81` upgrade
+  removed `pkg_resources` (which PyInstaller's `altgraph` still imports),
+  aborting the build before it started. A clean venv keeps the bundle lean and
+  the build reproducible:
+  ```bash
+  # python3 = the python.org universal2 interpreter verified above
+  python3 -m venv ~/bmx_venv
+  ~/bmx_venv/bin/pip install -r requirements.txt pyinstaller
+  # Build with THIS interpreter (it has the deps + a pinned setuptools<81),
+  # not whatever `python` is first on your PATH:
+  ~/bmx_venv/bin/python -m PyInstaller BioMedStatX.spec --noconfirm
   ```
 * **Apple Developer ID** (Apple Developer Program, $99/year). Without signing,
   users have to right-click → Open the first time and dismiss a Gatekeeper
@@ -100,11 +119,30 @@ C:\bmx_venv\Scripts\pyinstaller.exe BioMedStatX.spec --noconfirm
 
 **macOS / Linux:**
 ```bash
-pyinstaller BioMedStatX.spec --noconfirm
+python -m PyInstaller BioMedStatX.spec --noconfirm
 ```
 
+Invoke PyInstaller as `python -m PyInstaller`, not the bare `pyinstaller` console
+script, and make sure that `python` is the interpreter that actually has the
+project's dependencies installed. The `pyinstaller` script pins its interpreter
+in a shebang, which can differ from the `python` on your PATH (for example when a
+venv's `bin` directory ends up with more than one Python). If PyInstaller runs
+under an interpreter that lacks NumPy or PyQt5, the build still reports success
+but the bundled app crashes at launch with `ModuleNotFoundError: No module named
+'numpy'`. Check the interpreter before building:
+
+```bash
+python -m PyInstaller --version   # prints a version, not "No module named PyInstaller"
+python -c "import numpy, PyQt5"    # must succeed
+```
+
+After the build, confirm the bundle actually runs (a clean exit code does not
+prove it): `open dist/BioMedStatX.app`, or run `dist/BioMedStatX.app/Contents/MacOS/BioMedStatX`
+from a terminal to see any startup traceback.
+
 * Output (Windows): `dist/BioMedStatX/` — onefolder build, ~400 MB.
-* Output (macOS):   `dist/BioMedStatX.app/` — application bundle, ~100 MB.
+* Output (macOS):   `dist/BioMedStatX.app/` — application bundle; size tracks the
+  bundled NumPy/SciPy/PyQt5 build (~100–550 MB).
 
 Build time: 5–10 minutes depending on the machine. Watch `build_log.txt` if
 you tee'd the output. Hidden imports for `pingouin`, `statsmodels`, `scipy`,
@@ -165,6 +203,39 @@ The Excel template is shipped separately as
 you decide; not produced by PyInstaller).
 
 ---
+
+## Developer switches
+
+These are off unless the variable is set before the app starts. Nothing here
+reaches an installed copy: setting an environment variable before launch is a
+deliberate act, and double-clicking the app in the Finder is not one.
+
+### `BIOMEDSTATX_SELFCHECK=1` — check every report this session exports
+
+Every HTML export is read back and checked against the properties a report is
+supposed to have: that each section rendered, that the headline number reached
+the page, that compact letters were drawn from a complete comparison matrix and
+agree with the pairwise table, that the group axis is ranked, that estimated
+p-values are printed within their resolution, that one font is used throughout.
+
+Nothing appears when everything passes. When something does not, a
+`<report>_selfcheck.txt` lands beside the report naming the property, with a
+finding count — flags only, no values from the data. The report itself is
+written normally and never touched, and a failing check cannot fail an export.
+
+```bash
+export BIOMEDSTATX_SELFCHECK=1
+python src/analysis/statistical_analyzer.py
+```
+
+These are the same checks the fuzzers run (`src/export/report_selfcheck.py`, one
+implementation, imported by `fuzzing/html_oracles.py`). The reason to switch it
+on for your own session is the data: the fuzzers only ever invent theirs, and a
+real design has shapes no generator thinks of.
+
+Put the `export` line in your shell profile if you want it on for every
+development session — otherwise it is the kind of flag that gets rediscovered
+three months later.
 
 ## Publishing on GitHub
 

@@ -1,0 +1,303 @@
+"""Does the fuzzer still catch the bugs it once caught?
+
+A falling discovery rate is the thing this project wants to see before calling a
+release ready -- and it is also exactly what a broken fuzzer produces. Zero
+findings means "nothing left to find" and "nothing is being asked" equally well,
+and the second is the cheaper way to get there.
+
+So the rate is only evidence alongside this: take a defect the fuzzer really did
+find, put it back, and require the fuzzer to find it again. A quiet run next to a
+caught canary is evidence. A quiet run next to a missed canary means the
+instrument died and the trend was measuring nothing.
+
+The defect goes back by REVERTING its own fix in a throwaway worktree, not by
+editing a string in place. A mutation applied by search-and-replace that matches
+nothing looks exactly like a mutation the fuzzer failed to catch, and this
+repository has already produced that false result more than once.
+
+    python -m fuzzing.canary            # every canary
+    python -m fuzzing.canary --only negative-F
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(_HERE)
+
+# Each entry is a defect the fuzzer found for real, the commit that fixed it,
+# and the words its finding carried. The seed window is deliberately a RANGE
+# rather than the seed that originally caught it: the generator has changed
+# since, so a fixed seed no longer builds the same data, and pinning one would
+# make this fail for a reason that has nothing to do with the product.
+CANARIES = [
+    {
+        "name": "negative-F",
+        "what": "an incomplete factorial reported F = -3.07 as an ordinary result",
+        "fix": "6fc3b41",
+        "expect": "is negative",
+        "start": 1300, "count": 300, "designs": "two_way_anova",
+    },
+    {
+        "name": "transformed-pairing",
+        "what": "the Transformed column printed against a different extraction",
+        # 63e2cbe, not the earlier 4499ef3: a later commit reworked the same
+        # code, so reverting the first one conflicts. The canary follows the
+        # commit that holds the guard TODAY.
+        "fix": "63e2cbe",
+        "expect": "transformed column does not follow the raw one",
+        "start": 50000, "count": 400, "designs": "two_way_anova,rm_anova,mixed_anova",
+    },
+    {
+        "name": "posthoc-name",
+        "what": "the page said Tukey HSD over comparisons that were Holm-corrected t-tests",
+        # a58a320 does not come out on its own -- 4fbd531 reworked the same
+        # lines afterwards -- so the pair is reverted together, newest first.
+        "fix": ["4fbd531", "a58a320"],
+        "expect": "but its comparisons were produced by",
+        "start": 70000, "count": 300, "designs": "two_way_anova",
+    },
+    {
+        "name": "axis-size-past-max",
+        "what": "an axis font of 65 applied to a control that declares max 32",
+        # Both plot fixes come out together, and that is not belt-and-braces:
+        # 3d3003c does not revert alone because a221c26 reworked the same file
+        # afterwards, and reverting a221c26 ALONE leaves this seed clean --
+        # measured, it comes back MISSED. So the two fixes cover different
+        # seeds rather than the same one twice, and only the pair puts this
+        # particular defect back.
+        "fix": ["a221c26", "3d3003c"],
+        "expect": "overflows the plot container",
+        "start": 600043, "count": 1,
+        "runner": "fuzzing.run_visual_fuzzer",
+    },
+    {
+        "name": "cockpit-names-the-plan",
+        "what": "the panel announced One-Way ANOVA while Welch's ANOVA ran",
+        "fix": "59be500",
+        "expect": "but the analysis that ran was",
+        "start": 900000, "count": 20, "designs": "oneway",
+        "paths": ["src/autopilot/statistical_analyzer_autopilot_pipeline.py"],
+    },
+    {
+        "name": "cockpit-regression-n-zero",
+        "what": "a regression on 20 observations announced a sample size of 0",
+        "fix": "4743d70",
+        "expect": "card shows N",
+        "start": 910000, "count": 60, "designs": "regression,firth_logistic",
+        "paths": ["src/autopilot/statistical_analyzer_autopilot_pipeline.py"],
+    },
+    {
+        "name": "group-list-runs-together",
+        "what": "three two-factor cells listed as six groups, joined on the comma inside their own names",
+        "fix": "4e8dd02",
+        # The oracle that catches this shipped in the SAME commit, so a whole
+        # revert takes the check out along with the defect and reports MISSED
+        # for a check that works -- measured, that is exactly what it did.
+        # Naming the product path puts back the defect alone.
+        "paths": ["src/autopilot/statistical_analyzer_autopilot_pipeline.py"],
+        "expect": "card lists",
+        "start": 900000, "count": 60, "designs": "two_way_anova",
+    },
+    {
+        "name": "legend-out-of-frame",
+        "what": "forty legend entries drew past the bottom of a fixed 680px container",
+        "fix": "a221c26",
+        "expect": "overflows the plot container",
+        "start": 600140, "count": 8,
+        "runner": "fuzzing.run_visual_fuzzer",
+    },
+]
+
+# Defects that were put back and NOT found again. Recorded here rather than
+# added above, because a canary that always fails teaches nothing and gets
+# muted; the honest form is a named gap.
+#
+# Both were found by reading a report, never by an oracle, so nothing here
+# guards them today:
+#
+#   ea181d4  the mixed EMM/multivariate-t post-hoc could not be reached at all.
+#            Reverted, 500 mixed seeds, zero findings. The run degrades to
+#            isolated t-tests and then NAMES them honestly, so there is no
+#            contradiction on the page to catch. Seeing it needs an oracle that
+#            compares what the decision logic says should run against what ran.
+#
+#   b639cae  an unidentified logistic fit reported as a result. Reverted, 600
+#            firth_logistic seeds, zero findings. Here the gap may instead be
+#            reach: separation with a collinear predictor is a narrow corner and
+#            600 seeds may simply not have built one. The two readings are
+#            different problems and are not yet told apart.
+#   0018ea7  the cockpit printed `p = nan` and `Eta-squared = nan`. Reverted,
+#            400 seeds, zero findings. Nothing reaches the panel with a
+#            non-finite number: a non-finite p is refused upstream (and would
+#            be reported as its own violation long before the panel), and no
+#            seed produced a non-finite effect size. The fix is not therefore
+#            unnecessary -- the multi-dataset render site checks `blocked` on
+#            the lead result only -- but the fuzzer does not reach the state.
+#
+#   8f13175  two design labels named tests this program never runs. Reverted,
+#            400 seeds, zero findings, and here the reason is that the labels
+#            have no live reader at all: `_ap_detected_test_label` is called
+#            from the design card's FALLBACK, taken only when nothing was
+#            fitted -- and a run where nothing was fitted is blocked or
+#            cancelled, which returns before the cards are built. Measured:
+#            204 rendered panels over 400 seeds, 204 of them naming a real
+#            performed test, zero fallbacks. Its other caller,
+#            `_ap_format_rationale`, is bound to the mixin and called by
+#            nothing. A static property with no runtime path is a unit test's
+#            job, and tests/test_cockpit_names_the_test_that_ran.py has it.
+UNGUARDED = ["ea181d4", "b639cae", "0018ea7", "8f13175"]
+
+
+def _run(cmd, cwd, **kw):
+    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, **kw)
+
+
+def _findings_with(report_path, phrase):
+    """Every finding whose violations mention the phrase."""
+    with open(report_path) as fh:
+        report = json.load(fh)
+    hits = []
+    for finding in report.get("findings") or []:
+        for violation in finding.get("violations") or []:
+            if phrase.lower() in violation.lower():
+                hits.append((finding.get("seed"), violation))
+                break
+    return hits, report
+
+
+def _check_one(canary, timeout, jobs):
+    """Put the defect back in a worktree of its own and look for its finding."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tree = os.path.join(tmp, "tree")
+        add = _run(["git", "worktree", "add", "--detach", tree, "HEAD"], _ROOT)
+        if add.returncode != 0:
+            return {"status": "SETUP FAILED", "detail": add.stderr.strip()[-300:]}
+        try:
+            # A list where one fix cannot be undone alone: a later commit
+            # reworked the same lines, so the pair comes out together, newest
+            # first. Reverting more than the defect asks for would test more
+            # than the defect, which is why this is a list and not a range.
+            fixes = canary["fix"]
+            fixes = [fixes] if isinstance(fixes, str) else list(fixes)
+            # A fix that ships with its own regression test cannot be reverted
+            # whole: the test file was CREATED by it and edited since, so
+            # ``git revert`` stops on a modify/delete conflict before the
+            # product code is touched at all. Naming the source paths reverses
+            # the patch for those alone -- the defect goes back, and the tests
+            # that would now fail do not matter here because the canary runs the
+            # fuzzer and never the suite. Still a real revert of the real
+            # commit, not a string edit standing in for one.
+            paths = canary.get("paths")
+            for one in fixes:
+                if paths:
+                    reverse = _run(["git", "diff", one, one + "^", "--"] + list(paths), tree)
+                    if reverse.returncode != 0 or not reverse.stdout.strip():
+                        return {"status": "REVERT FAILED",
+                                "detail": "%s: no reverse patch for %s" % (one, paths)}
+                    # --3way, because a later commit editing the LINES AROUND
+                    # the hunk is enough to make a clean reverse patch fail on
+                    # context alone: the N-of-zero canary broke the day a fix
+                    # landed next to it, and read REVERT FAILED for a defect
+                    # that comes out perfectly well. Falling back to the blobs
+                    # is still the real patch from the real commit.
+                    revert = _run(["git", "apply", "--3way", "-"], tree,
+                                  input=reverse.stdout)
+                else:
+                    revert = _run(["git", "revert", "--no-commit", one], tree)
+                if revert.returncode != 0:
+                    # Worth saying plainly: a conflict means the canary needs
+                    # rewriting, not that the fuzzer failed.
+                    return {"status": "REVERT FAILED",
+                            "detail": "%s: %s" % (one, (revert.stderr or revert.stdout).strip()[-260:])}
+
+            report = os.path.join(tmp, "canary.json")
+            # The visual fuzzer is a different runner with a smaller flag set,
+            # so the flags are added only where the runner has them rather than
+            # kept in one list that would fail for half the canaries.
+            runner = canary.get("runner", "fuzzing.run_fuzzer")
+            cmd = [sys.executable, "-m", runner,
+                   "--count", str(canary["count"]), "--start", str(canary["start"]),
+                   "--timeout", str(timeout),
+                   "--report", report, "--keep-dir", os.path.join(tmp, "keep")]
+            if runner == "fuzzing.run_fuzzer":
+                cmd += ["--no-history"]
+                if canary.get("designs"):
+                    cmd += ["--designs", canary["designs"]]
+                if jobs:
+                    cmd += ["--jobs", str(jobs)]
+            env = dict(os.environ, QT_QPA_PLATFORM="offscreen", MPLBACKEND="Agg")
+            run = _run(cmd, tree, env=env)
+            if not os.path.exists(report):
+                return {"status": "RUN FAILED",
+                        "detail": (run.stderr or run.stdout).strip()[-400:]}
+
+            hits, full = _findings_with(report, canary["expect"])
+            # The visual runner reports "count"; the analysis runner also
+            # reports how many it actually ran after filtering.
+            ran = full.get("seeds_run")
+            if ran is None:
+                ran = full.get("count") or 0
+            return {"status": "caught" if hits else "MISSED",
+                    "hits": len(hits), "seeds_run": ran,
+                    "all_findings": len(full.get("findings") or []),
+                    "example": hits[0][1][:160] if hits else None}
+        finally:
+            _run(["git", "worktree", "remove", "--force", tree], _ROOT)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--only", default="", help="run just this canary by name")
+    ap.add_argument("--timeout", type=int, default=90)
+    ap.add_argument("--jobs", type=int, default=0)
+    args = ap.parse_args()
+
+    wanted = [c for c in CANARIES if not args.only or c["name"] == args.only]
+    if not wanted:
+        print("no canary named %r; have: %s"
+              % (args.only, ", ".join(c["name"] for c in CANARIES)))
+        return 2
+
+    print("putting %d defect%s back and asking the fuzzer to find them again\n"
+          % (len(wanted), "" if len(wanted) == 1 else "s"))
+    results = []
+    for canary in wanted:
+        print("--- %s: %s" % (canary["name"], canary["what"]))
+        fixes = canary["fix"]
+        print("    reverting %s, %d seeds from %d"
+              % (fixes if isinstance(fixes, str) else " + ".join(fixes),
+                 canary["count"], canary["start"]))
+        t0 = time.time()
+        outcome = _check_one(canary, args.timeout, args.jobs)
+        outcome["name"] = canary["name"]
+        results.append(outcome)
+        if outcome["status"] == "caught":
+            print("    caught: %d of %d findings carried it (%d seeds, %.0fs)"
+                  % (outcome["hits"], outcome["all_findings"],
+                     outcome["seeds_run"], time.time() - t0))
+            print("    %s" % outcome["example"])
+        elif outcome["status"] == "MISSED":
+            print("    MISSED: the defect was back and the fuzzer did not report it")
+            print("    (%d seeds, %d other findings) -- the trend is measuring nothing"
+                  % (outcome["seeds_run"], outcome["all_findings"]))
+        else:
+            print("    %s: %s" % (outcome["status"], outcome.get("detail")))
+        print()
+
+    caught = sum(1 for r in results if r["status"] == "caught")
+    print("=== %d of %d canaries caught ===" % (caught, len(results)))
+    for r in results:
+        if r["status"] != "caught":
+            print("    %-22s %s" % (r["name"], r["status"]))
+    return 0 if caught == len(results) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

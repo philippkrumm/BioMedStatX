@@ -3,7 +3,7 @@ methodology_trace.py
 ====================
 Lightweight audit trail for every automated statistical decision made during
 an analysis run.  Instances are passed through the analysis pipeline and later
-rendered into the "Methodology Log" Excel sheet.
+rendered into the HTML report's Methodology Log section.
 """
 
 
@@ -17,7 +17,6 @@ class MethodologyTrace:
               detail="W=0.891, p=0.031")
     trace.add(2, "Test Selection",
               "Normality violated → switched from One-Way ANOVA to Kruskal-Wallis.")
-    log_sheet_writer(workbook, results, fmt, trace=trace)
     """
 
     # Category → display order (lower = earlier in table)
@@ -45,7 +44,7 @@ class MethodologyTrace:
         ----------
         step_number : int
             Sequential step number (1-based).  Determines row order in the
-            Excel table.
+            methodology log.
         category : str
             High-level category, e.g. "Normality", "Test Selection", "Post-hoc".
         decision : str

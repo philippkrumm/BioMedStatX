@@ -41,7 +41,10 @@ icon = (
 
 # collect_all gathers binaries, datas, and hiddenimports automatically
 # for packages with many dynamic/lazy-loaded submodules
-_pkgs = ["pingouin", "statsmodels", "scipy", "sklearn", "networkx"]
+# numpy must be collected explicitly: PyInstaller's built-in numpy hook does not
+# bundle all of numpy 2.x's _core submodules (the frozen app crashed on startup
+# with "No module named 'numpy._core._exceptions'"), so collect_all it in full.
+_pkgs = ["numpy", "pingouin", "statsmodels", "scipy", "sklearn", "networkx"]
 all_datas, all_binaries, all_hiddenimports = [], [], []
 for pkg in _pkgs:
     d, b, h = collect_all(pkg)
@@ -62,8 +65,35 @@ def _is_excluded_data(entry):
     dst = entry[1].replace("\\", "/")
     parts = dst.split("/")
     return bool(_EXCLUDED_ROOTS.intersection(parts))
+
+def _is_excluded_hiddenimport(module_name):
+    parts = module_name.split(".")
+    return (
+        "tests" in parts
+        or "test" in parts
+        or module_name.endswith(".conftest")
+        or module_name == "conftest"
+    )
+
 all_datas = [e for e in all_datas if not _is_excluded_data(e)]
 all_binaries = [e for e in all_binaries if not _is_excluded_data(e)]
+all_hiddenimports = [m for m in all_hiddenimports if not _is_excluded_hiddenimport(m)]
+
+if IS_WIN:
+    _conda_bin = _os.path.join(sys.base_prefix, "Library", "bin")
+    _conda_runtime_dlls = [
+        "ffi-8.dll",
+        "libbz2.dll",
+        "libcrypto-3-x64.dll",
+        "libexpat.dll",
+        "liblzma.dll",
+        "libssl-3-x64.dll",
+        "sqlite3.dll",
+    ]
+    for _dll in _conda_runtime_dlls:
+        _src = _os.path.join(_conda_bin, _dll)
+        if _os.path.exists(_src):
+            all_binaries.append((_src, "."))
 
 a = Analysis(
     ["src/analysis/statistical_analyzer.py"],
@@ -76,10 +106,15 @@ a = Analysis(
         "PyQt5.QtPrintSupport",
         # matplotlib Qt backend
         "matplotlib.backends.backend_qt5agg",
+        # NumPy exposes f2py lazily via numpy.__getattr__; SciPy's import path
+        # can touch it even though the app does not call f2py directly.
+        "numpy.f2py",
     ],
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    # Runs before the entry script: redirects None stdout/stderr (windowed build)
+    # so import-time prints in scipy/statsmodels/etc. never crash the GUI.
+    runtime_hooks=["tools/pyi_rth_stdio.py"],
     # PySide6/PySide2/PyQt6 may be installed in the dev environment as deps of
     # other tools (plotly, jupyter widgets, etc.). The app uses PyQt5 only, so
     # exclude the alternative Qt bindings explicitly — PyInstaller refuses to
@@ -95,6 +130,33 @@ a = Analysis(
         "pytest", "_pytest",
         "sphinx", "docutils",
         "panel", "bokeh", "param",
+        # nltk is pulled in transitively but never used by the app. Its
+        # PyInstaller runtime hook eagerly imports nltk -> scipy.stats ->
+        # numpy.f2py at startup; in a windowed build (sys.stdout is None)
+        # numpy.f2py.cfuncs crashes with "'NoneType' object has no attribute
+        # 'write'". Excluding nltk removes the rthook and the crash.
+        "nltk",
+        # Bundle-slimming: transitive packages the app never imports. Verified
+        # absent from every src import AND from the frozen import-smoke list
+        # (statistical_analyzer.py). Removing them cost ~120 MB with the import
+        # smoke still fully green. If any of these is ever imported at runtime,
+        # the frozen import smoke (BIOMEDSTATX_SMOKE_IMPORTS=1) will fail loudly.
+        #   - AWS/cloud IO: pulled via fsspec's s3 backend, never used locally
+        "boto3", "botocore", "s3fs",
+        #   - dask/distributed parallelism: not used; pandas runs in-process
+        "dask", "distributed",
+        #   - altair: unused alt viz lib (the app uses matplotlib/plotly/seaborn)
+        "altair",
+        #   - HDF5 stack: unused, and h5py here is ABI-mismatched against numpy 2.x
+        "h5py", "tables",
+        #   - mypy: a static type checker, never a runtime dependency
+        "mypy", "mypyc",
+        #   - torch / jax: ~400 MB of GPU/autodiff frameworks pulled ONLY via
+        #     scipy/sklearn's optional array_api_compat backends. The app passes
+        #     NumPy arrays, never torch/jax tensors, so these backends are dead
+        #     weight. (If either isn't installed this is a harmless no-op.)
+        "torch", "torchvision", "torchaudio",
+        "jax", "jaxlib",
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,

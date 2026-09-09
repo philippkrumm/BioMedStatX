@@ -1,7 +1,5 @@
-import base64
 import copy
 import json
-import os
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +11,9 @@ from export.report_stat_rows import _StatRowsMixin
 from export.report_association import _AssociationMixin
 from export.report_charts import _ChartsMixin
 from export.report_summaries import _SummariesMixin
+from visualization import style_tokens
+from analysis.paired_lines import (PAIRED_LINE_MAX_SUBJECTS, build_paired_trajectories,
+                                   paired_lines_supported)
 
 try:
     from core.logger_config import get_logger
@@ -45,27 +46,45 @@ class _ResultsEncoder(json.JSONEncoder):
 class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationMixin, _ChartsMixin, _SummariesMixin):
 
     @staticmethod
-    def export_results_to_html(results: dict, output_file: str, analysis_log=None, pre_generated_tree=None) -> str | None:
+    def _safe_json_dumps(obj, cls=None) -> str:
+        s = json.dumps(obj, cls=cls, ensure_ascii=False)
+        return s.replace("</", "<\\/")
+
+    @staticmethod
+    def export_results_to_html(results: dict, output_file: str, analysis_log=None) -> str | None:
         try:
             output_path = Path(output_file).resolve()
             output_path.parent.mkdir(parents=True, exist_ok=True)
             context = HTMLExporter._prepare_single_report_context(
-                results, analysis_log=analysis_log, pre_generated_tree=pre_generated_tree
+                results, analysis_log=analysis_log
             )
             html = HTMLExporter._render_template(context, mode="single")
             with open(output_path, "w", encoding="utf-8") as handle:
                 handle.write(html)
+            # Developer instrument, and a no-op unless BIOMEDSTATX_SELFCHECK=1
+            # was set before launch -- an installed copy does nothing here and
+            # pays nothing for it. When it is on, the file is read back and
+            # checked against the properties it is supposed to have; a sidecar
+            # appears beside the report only when something did not pass. The
+            # report is already written and is never touched. The gate lives in
+            # write_sidecar, so it holds for any caller, not just this one.
+            try:
+                from export.report_selfcheck import write_sidecar
+                write_sidecar(str(output_path), results)
+            except Exception:
+                logger.debug("report self-check unavailable", exc_info=True)
             return str(output_path)
         except Exception as exc:
             logger.error("failed to write single report to %r: %s", output_file, exc, exc_info=True)
             return None
 
     @staticmethod
-    def export_multi_dataset_results_to_html(all_results: dict, output_file: str) -> str | None:
+    def export_multi_dataset_results_to_html(all_results: dict, output_file: str,
+                                             failed_datasets: dict | None = None) -> str | None:
         try:
             output_path = Path(output_file).resolve()
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            context = HTMLExporter._prepare_multi_report_context(all_results)
+            context = HTMLExporter._prepare_multi_report_context(all_results, failed_datasets)
             html = HTMLExporter._render_template(context, mode="multi")
             with open(output_path, "w", encoding="utf-8") as handle:
                 handle.write(html)
@@ -75,7 +94,7 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
             return None
 
     @staticmethod
-    def _prepare_single_report_context(results: dict, analysis_log=None, pre_generated_tree=None) -> dict:
+    def _prepare_single_report_context(results: dict, analysis_log=None) -> dict:
         results_copy = copy.deepcopy(results or {})
         normalized = HTMLExporter._normalize_for_json(results_copy)
         analysis_log_text = analysis_log if analysis_log is not None else results_copy.get("analysis_log", "")
@@ -136,6 +155,31 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
         if not group_order:
             group_order = list(plot_data.keys())
 
+        # Paired subject lines. The eligibility question is answered once, here,
+        # and shipped as a verdict rather than mirrored into JavaScript: it
+        # depends on core.level_order, whose reference-term tables and sort-key
+        # logic would be a large surface to duplicate and keep in step. The
+        # figure builder only filters the trajectories to the groups on screen
+        # and re-checks the count, which is the part that can change client-side.
+        line_supported, line_reason = paired_lines_supported(group_order, results_copy.get("raw_data_subjects") or {})
+        paired_lines_payload = {
+            "supported": bool(line_supported),
+            "reason": line_reason,
+            "max_subjects": PAIRED_LINE_MAX_SUBJECTS,
+            "trajectories": build_paired_trajectories(
+                group_order,
+                results_copy.get("raw_data") or results_copy.get("samples") or {},
+                results_copy.get("raw_data_subjects") or {},
+            ) if line_supported else [],
+        }
+
+        # One decision for the whole report: the static chart is annotated
+        # server-side, and the bracket overlay below has to know which form won
+        # so it does not relayout letters away. Same rule as the figure builder.
+        significance_mode = _ChartsMixin._significance_mode(
+            group_order, HTMLExporter._pairs_for_plot(results_copy, group_order)
+        )
+
         plot_subject_trajectories = HTMLExporter._build_plot_subject_trajectories(
             results_copy,
             group_order=group_order,
@@ -144,7 +188,6 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
         plot_reference_lines = HTMLExporter._build_plot_reference_lines(results_copy)
 
         plot_designer_enabled = bool(plot_data)
-        decision_tree_image = HTMLExporter._embed_decision_tree(results_copy, pre_generated_path=pre_generated_tree)
         decision_tree_json = HTMLExporter._build_decision_tree_json(results_copy)
         decision_path = HTMLExporter._build_decision_path_model(results_copy)
         methods_text = HTMLExporter._build_methods_text(results_copy, analysis_log_text)
@@ -155,35 +198,38 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
             "subtitle": hero["subtitle"],
             "hero": hero,
             "decision_path": decision_path,
-            "decision_tree_image": decision_tree_image,
-            "decision_tree_json": json.dumps(decision_tree_json, ensure_ascii=False) if decision_tree_json else "null",
-            "decision_path_json": json.dumps(decision_path, ensure_ascii=False),
+            "decision_tree_json": HTMLExporter._safe_json_dumps(decision_tree_json) if decision_tree_json else "null",
+            "decision_path_json": HTMLExporter._safe_json_dumps(decision_path),
             "statistical_rows": metrics,
             "assumptions": assumptions,
+            "sphericity_correction_note": assumptions.get("sphericity_correction_note"),
             "descriptive": descriptive,
             "pairwise_rows": pairwise,
-            "bracket_data_json": json.dumps(bracket_data, ensure_ascii=False),
-            "pairwise_data_json": json.dumps(pairwise_payload, cls=_ResultsEncoder, ensure_ascii=False),
-            "plot_data_json": json.dumps(plot_data, cls=_ResultsEncoder, ensure_ascii=False),
-            "plot_subject_trajectories_json": json.dumps(plot_subject_trajectories, cls=_ResultsEncoder, ensure_ascii=False),
-            "plot_reference_lines_json": json.dumps(plot_reference_lines, cls=_ResultsEncoder, ensure_ascii=False),
-            "stats_summary_json": json.dumps(stats_summary, cls=_ResultsEncoder, ensure_ascii=False),
-            "plot_stats_json": json.dumps(stats_summary, cls=_ResultsEncoder, ensure_ascii=False),
+            "bracket_data_json": HTMLExporter._safe_json_dumps(bracket_data),
+            "pairwise_data_json": HTMLExporter._safe_json_dumps(pairwise_payload, cls=_ResultsEncoder),
+            "plot_data_json": HTMLExporter._safe_json_dumps(plot_data, cls=_ResultsEncoder),
+            "plot_style_json": HTMLExporter._safe_json_dumps(style_tokens.as_json_dict()),
+            "plot_subject_trajectories_json": HTMLExporter._safe_json_dumps(plot_subject_trajectories, cls=_ResultsEncoder),
+            "plot_reference_lines_json": HTMLExporter._safe_json_dumps(plot_reference_lines, cls=_ResultsEncoder),
+            "stats_summary_json": HTMLExporter._safe_json_dumps(stats_summary, cls=_ResultsEncoder),
+            "plot_stats_json": HTMLExporter._safe_json_dumps(stats_summary, cls=_ResultsEncoder),
             "plot_designer_enabled": plot_designer_enabled,
-            "group_order_json": json.dumps(group_order, ensure_ascii=False),
+            "group_order_json": HTMLExporter._safe_json_dumps(group_order),
             "group_chart_div_id": "biomedstatx-group-chart" if group_chart_block else "",
+            "significance_mode": significance_mode,
+            "paired_lines_json": HTMLExporter._safe_json_dumps(paired_lines_payload, cls=_ResultsEncoder),
             "raw_data_table": raw_table,
             "chart_blocks": charts,
             "methods_text": methods_text,
-            "group_factor_map_json": json.dumps(results_copy.get("group_factor_map", {}), ensure_ascii=False),
+            "group_factor_map_json": HTMLExporter._safe_json_dumps(results_copy.get("group_factor_map", {})),
             "info_texts": HTMLExporter._info_texts(),
             "generated_warning": results_copy.get("error"),
-            "normalized_results_json": json.dumps(normalized, cls=_ResultsEncoder, ensure_ascii=False),
+            "normalized_results_json": HTMLExporter._safe_json_dumps(normalized, cls=_ResultsEncoder),
             "math_render_enabled": math_render_enabled,
         }
 
     @staticmethod
-    def _prepare_multi_report_context(all_results: dict) -> dict:
+    def _prepare_multi_report_context(all_results: dict, failed_datasets: dict | None = None) -> dict:
         cards = []
         significant_count = 0
         for idx, (dataset_name, results) in enumerate((all_results or {}).items()):
@@ -234,6 +280,7 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
                 "pairwise_count": len(r.get("pairwise_comparisons") or []),
                 "summary_note": hero["summary_note"],
                 "assumptions": assumptions,
+                "sphericity_correction_note": assumptions.get("sphericity_correction_note"),
                 # detail fields
                 "stat_rows": stat_rows,
                 "decision_path": decision_path,
@@ -256,12 +303,24 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
         if any((res or {}).get("p_value_fdr") is not None for res in (all_results or {}).values()):
             fdr_note = f"FDR correction (Benjamini-Hochberg) applied to m = {n_valid_for_fdr} tests."
 
+        # A dataset whose analysis failed never reaches ``all_results`` and would
+        # otherwise disappear from the overview entirely -- indistinguishable, to
+        # the reader, from one that was never selected.
+        failure_cards = [
+            {"dataset_name": str(name), "error": str(message)}
+            for name, message in (failed_datasets or {}).items()
+        ]
+        subtitle = f"{len(cards)} datasets summarized, {significant_count} significant main results."
+        if failure_cards:
+            subtitle += f" {len(failure_cards)} failed."
+
         return {
             "mode": "multi",
             "report_title": "BioMedStatX Multi-Dataset Scientific Report",
-            "subtitle": f"{len(cards)} datasets summarized, {significant_count} significant main results.",
+            "subtitle": subtitle,
             "fdr_note": fdr_note,
             "dataset_cards": cards,
+            "failed_cards": failure_cards,
             "generated_warning": None,
             "math_render_enabled": math_render_enabled,
         }
@@ -276,7 +335,10 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
             or "Statistical analysis"
         )
         p_value = results.get("p_value")
-        is_significant = isinstance(p_value, (int, float)) and p_value < 0.05
+        is_significant = HTMLExporter._significant_at(p_value)
+        # Three states, not two. A model that produced no number has not found
+        # the absence of an effect, and must not be badged as if it had.
+        has_p_value = HTMLExporter._has_p_value(p_value)
         effect_size = results.get("effect_size")
         effect_label = str(results.get("effect_size_type") or "Effect size")
         title = f"Scientific Report: {dataset_name}" if dataset_name else "BioMedStatX Scientific Report"
@@ -285,10 +347,19 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
             "title": title,
             "subtitle": subtitle,
             "test_name": test_name,
-            "p_value_display": HTMLExporter._format_p_value(p_value),
+            "p_value_display": HTMLExporter._format_p_value(
+                p_value, results.get("p_value_resolution")),
             "is_significant": is_significant,
-            "significance_label": "Significant" if is_significant else "Not significant",
-            "significance_class": "is-significant" if is_significant else "is-neutral",
+            "significance_label": (
+                "Significant" if is_significant
+                else "Not significant" if has_p_value
+                else "No result"
+            ),
+            "significance_class": (
+                "is-significant" if is_significant
+                else "is-neutral" if has_p_value
+                else "is-danger"
+            ),
             "effect_size_display": HTMLExporter._format_metric(effect_size),
             "effect_label": effect_label,
             "effect_magnitude": HTMLExporter._effect_size_magnitude(effect_size, effect_label),
@@ -300,10 +371,17 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
     def _build_summary_note(results: dict, test_name: str, p_value: Any) -> str:
         if results.get("error"):
             return str(results["error"])
-        if isinstance(p_value, (int, float)):
+        if HTMLExporter._has_p_value(p_value):
             if p_value < 0.05:
                 return f"{test_name} detected evidence against the null hypothesis."
             return f"{test_name} did not show evidence against the null hypothesis."
+        # A correct negation is still a dead end for the reader. Where the
+        # engine recorded why there is no number, say so and say what to look
+        # at -- "no result" without a cause leaves nothing to act on.
+        if results.get("converged") is False:
+            return (f"{test_name} produced no usable result: the model did not "
+                    f"converge. Check for near-complete separation or collinear "
+                    f"predictors.")
         return f"{test_name} completed without a numeric p-value."
 
     @staticmethod
@@ -324,38 +402,6 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
         except Exception as exc:
             logger.warning("decision tree JSON failed: %s", exc, exc_info=True)
             return None
-
-    @staticmethod
-    def _embed_decision_tree(results: dict, pre_generated_path: str | None = None) -> str | None:
-        # If caller already generated the tree, encode it directly without re-generating or deleting.
-        if pre_generated_path and os.path.exists(pre_generated_path):
-            try:
-                with open(pre_generated_path, "rb") as handle:
-                    encoded = base64.b64encode(handle.read()).decode("ascii")
-                return f"data:image/png;base64,{encoded}"
-            except Exception as exc:
-                logger.warning("decision tree embedding (pre-generated) failed: %s", exc, exc_info=True)
-                return None
-
-        temp_path = None
-        try:
-            from visualization.decisiontreevisualizer import DecisionTreeVisualizer
-
-            temp_path = DecisionTreeVisualizer.generate_and_save_for_excel(results)
-            if not temp_path or not os.path.exists(temp_path):
-                return None
-            with open(temp_path, "rb") as handle:
-                encoded = base64.b64encode(handle.read()).decode("ascii")
-            return f"data:image/png;base64,{encoded}"
-        except Exception as exc:
-            logger.warning("decision tree embedding failed: %s", exc, exc_info=True)
-            return None
-        finally:
-            if temp_path and os.path.exists(temp_path):
-                try:
-                    os.remove(temp_path)
-                except OSError as exc:
-                    logger.warning("decision tree temp cleanup failed for %s: %s", temp_path, exc)
 
     @staticmethod
     def _build_methods_text(results: dict, analysis_log: Any) -> str:
@@ -431,7 +477,8 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
                 "Sphericity (Mauchly\u2019s W) is only relevant for repeated-measures designs. "
                 "A violation triggers an adjustment of degrees of freedom: "
                 "Greenhouse\u2013Geisser (\u03b5\u202f<\u202f0.75) or Huynh\u2013Feldt "
-                "(\u03b5\u202f\u2265\u202f0.75) is selected automatically."
+                "(\u03b5\u202f\u2265\u202f0.75) is selected automatically.\n"
+                "For regression, homoscedasticity is assessed via Breusch-Pagan, and linearity via Ramsey RESET."
             ),
             "descriptive": (
                 "Summary statistics for each group:\n"
@@ -445,7 +492,7 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
                 "Parametric post-hoc tests (normality met):\n"
                 "  \u2022 Tukey HSD \u2014 all-pair comparisons, controls family-wise error rate\n"
                 "  \u2022 Dunnett \u2014 all groups vs. a single control group\n"
-                "  \u2022 Custom paired t-tests with Holm\u2013Sid\u00e1k correction\n\n"
+                "  \u2022 Pairwise t-tests (paired or independent, Holm-\u0160id\u00e1k)\n\n"
                 "Non-parametric post-hoc tests (normality violated):\n"
                 "  \u2022 Dunn test \u2014 rank-based all-pair comparisons with Holm\u2013Sid\u00e1k\n"
                 "  \u2022 Custom Mann\u2013Whitney U with Sid\u00e1k correction (assumes independence)\n"
@@ -456,11 +503,9 @@ class HTMLExporter(_FormattingMixin, _AssetsMixin, _StatRowsMixin, _AssociationM
                 "Significance: *\u202fp\u202f<\u202f0.05 \u2002 **\u202fp\u202f<\u202f0.01 \u2002 ***\u202fp\u202f<\u202f0.001"
             ),
             "charts": (
-                "Interactive Plotly charts rendered fully offline inside this file.\n"
                 "Boxplots show the median (central line), interquartile range (box), "
                 "1.5\u00d7IQR whiskers, and individual observations as jittered points.\n"
                 "Interaction plots and profile plots show cell means \u00b1 SE across factor levels.\n"
-                "Click the \u24d8 button on each chart for a description of what it shows.\n"
                 "Hover over any element to see exact values."
             ),
             "raw": (

@@ -12,7 +12,7 @@ from ..validators import (
     validate_balanced_design,
     validate_group_count,
     validate_minimum_n,
-    MIN_N_HARD,
+    MIN_N_BLOCK,
 )
 
 
@@ -101,7 +101,7 @@ class ComparisonEngine:
         try:
             validate_group_count(groups, min_groups=3, label="comparison_engine_multi_groups")
             for group in groups:
-                validate_minimum_n(samples.get(group, []), min_n=MIN_N_HARD, label=str(group), allow_missing=False)
+                validate_minimum_n(samples.get(group, []), min_n=MIN_N_BLOCK, label=str(group), allow_missing=False)
         except ValidationError as exc:
             return self._failed(str(exc), strategy=strategy)
 
@@ -140,6 +140,8 @@ class ComparisonEngine:
                 raise ValueError("Pingouin ANOVA returned empty table")
 
             row_between = aov.iloc[0]
+            df1 = row_between["DF"] if "DF" in row_between.index else None
+            results["df1"] = int(df1) if pd.notnull(df1) else (len(groups) - 1)
             if len(aov) > 1:
                 row_residual = aov.iloc[1]
                 df2 = row_residual["DF"]
@@ -168,6 +170,8 @@ class ComparisonEngine:
             results["test"] = "One-way ANOVA (SciPy)"
             results["p_value"] = float(pval)
             results["statistic"] = float(teststat)
+            results["df1"] = len(groups) - 1
+            results["df2"] = sum(len(samples[g]) for g in groups) - len(groups)
 
             all_data = np.concatenate([samples[g] for g in groups])
             grand_mean = np.mean(all_data)
@@ -208,19 +212,23 @@ class ComparisonEngine:
         n = sum(len(samples[g]) for g in groups)
         h = float(teststat)
         k = len(groups)
-        epsilon_sq = (h - k + 1) / (n - k) if n > k else None
-        if epsilon_sq is not None:
-            epsilon_sq = max(0.0, min(1.0, float(epsilon_sq)))
+        # (H-k+1)/(n-k) is eta-squared[H] (rstatix::kruskal_effsize default), NOT
+        # epsilon-squared -- true epsilon-squared is H/(n-1)
+        # (effectsize::rank_epsilon_squared). The value was already this formula;
+        # only the reported metric name was wrong. Name it for what it computes.
+        eta_sq_h = (h - k + 1) / (n - k) if n > k else None
+        if eta_sq_h is not None:
+            eta_sq_h = max(0.0, min(1.0, float(eta_sq_h)))
 
-        results["effect_size"] = epsilon_sq
-        results["effect_size_type"] = "epsilon_squared"
+        results["effect_size"] = eta_sq_h
+        results["effect_size_type"] = "eta_squared"
         results["anova_table"] = None
         results["confidence_interval"] = (None, None)
 
         try:
             from statsmodels.stats.power import FTestAnovaPower
 
-            f2_approx = (epsilon_sq / (1 - epsilon_sq)) * 0.955 if (epsilon_sq is not None and epsilon_sq < 1) else 0
+            f2_approx = (eta_sq_h / (1 - eta_sq_h)) * 0.955 if (eta_sq_h is not None and eta_sq_h < 1) else 0
             power_analysis = FTestAnovaPower()
             results["power"] = float(power_analysis.power(effect_size=f2_approx, k_groups=k, nobs=n, alpha=alpha))
         except Exception:

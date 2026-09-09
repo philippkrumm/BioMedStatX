@@ -34,19 +34,18 @@ from PyQt5.QtWidgets import (
 
 from analysis.stats_functions import OUTLIER_IMPORTS_AVAILABLE
 
+import logging
+logger = logging.getLogger(__name__)
+
 try:
-    from core.help_content import HELP_RECIPES
+    from core.help_content import HELP_RECIPES, CATEGORY_ORDER
 except ImportError as e:
     HELP_RECIPES = []
-    print(f"Warning: help content not available: {e}")
+    CATEGORY_ORDER = []
+    logger.info(f"Warning: help content not available: {e}")
 
 
-def _configure_dialog(dialog, object_name=None, remove_context_help=True):
-    """Apply common dialog defaults so all windows pick up the same QSS rules."""
-    if object_name:
-        dialog.setObjectName(object_name)
-    if remove_context_help and isinstance(dialog, QDialog):
-        dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+from ui.widget_style import configure_dialog as _configure_dialog  # shared: see ui/widget_style.py
 
 class GroupSelectionDialog(QDialog):
     """Dialog for selecting groups for a plot or analysis."""
@@ -160,6 +159,8 @@ class HelpHubDialog(QDialog):
 
         self.recipe_list = QListWidget()
         self.recipe_list.setObjectName("helpNavList")
+        self._skipping_header = False
+        self.recipe_list.currentItemChanged.connect(self._skip_header_item)
         self.recipe_list.currentItemChanged.connect(self._update_recipe_view)
         nav_layout.addWidget(self.recipe_list, 1)
 
@@ -247,16 +248,71 @@ class HelpHubDialog(QDialog):
                 self.recipe_list.setCurrentItem(item)
                 break
 
+    def _skip_header_item(self, current, previous):
+        """If keyboard navigation lands on a category header, jump to the nearest recipe."""
+        if self._skipping_header or current is None:
+            return
+        if current.data(Qt.UserRole) is not None:
+            return  # already on a real recipe — nothing to do
+        self._skipping_header = True
+        try:
+            current_row = self.recipe_list.row(current)
+            previous_row = self.recipe_list.row(previous) if previous is not None else -1
+            # Determine direction: moving down (or no prior) → search forward; moving up → search backward
+            moving_down = previous_row < current_row
+            count = self.recipe_list.count()
+            if moving_down:
+                search_range = range(current_row + 1, count)
+            else:
+                search_range = range(current_row - 1, -1, -1)
+            for idx in search_range:
+                candidate = self.recipe_list.item(idx)
+                if candidate is not None and not candidate.isHidden() and candidate.data(Qt.UserRole) is not None:
+                    self.recipe_list.setCurrentItem(candidate)
+                    return
+            # No candidate found in that direction: prefer staying on the previous recipe.
+            if previous is not None and not previous.isHidden() and previous.data(Qt.UserRole) is not None:
+                self.recipe_list.setCurrentItem(previous)
+                return
+            # Boundary case (e.g. Up from the first recipe lands on the header above with no
+            # usable previous): fall back to the first visible non-header recipe so selection
+            # never gets stuck on a header.
+            for idx in range(self.recipe_list.count()):
+                candidate = self.recipe_list.item(idx)
+                if candidate is not None and not candidate.isHidden() and candidate.data(Qt.UserRole) is not None:
+                    self.recipe_list.setCurrentItem(candidate)
+                    return
+        finally:
+            self._skipping_header = False
+
     def _populate_recipe_list(self):
         self.recipe_list.clear()
+        by_category = {cat: [] for cat in CATEGORY_ORDER}
         for recipe in self._recipes:
-            item = QListWidgetItem(recipe["title"])
-            item.setData(Qt.UserRole, recipe["id"])
-            item.setToolTip(recipe.get("summary", ""))
-            self.recipe_list.addItem(item)
+            by_category.setdefault(recipe.get("category", CATEGORY_ORDER[-1]), []).append(recipe)
 
-        if self.recipe_list.count():
-            self.recipe_list.setCurrentRow(0)
+        first_recipe_row = None
+        for category in CATEGORY_ORDER:
+            recipes = by_category.get(category) or []
+            if not recipes:
+                continue
+            header = QListWidgetItem(category)
+            header.setData(Qt.UserRole, None)
+            header.setFlags(Qt.ItemIsEnabled)  # enabled for display, NOT selectable
+            font = header.font()
+            font.setBold(True)
+            header.setFont(font)
+            self.recipe_list.addItem(header)
+            for recipe in recipes:
+                item = QListWidgetItem(recipe["title"])
+                item.setData(Qt.UserRole, recipe["id"])
+                item.setToolTip(recipe.get("summary", ""))
+                self.recipe_list.addItem(item)
+                if first_recipe_row is None:
+                    first_recipe_row = self.recipe_list.row(item)
+
+        if first_recipe_row is not None:
+            self.recipe_list.setCurrentRow(first_recipe_row)
 
     def _filter_recipe_list(self, text):
         query = str(text or "").strip().lower()
@@ -265,6 +321,8 @@ class HelpHubDialog(QDialog):
         for index in range(self.recipe_list.count()):
             item = self.recipe_list.item(index)
             recipe_id = item.data(Qt.UserRole)
+            if recipe_id is None:
+                continue  # category header: handled in second pass below
             recipe = self._recipe_by_id.get(recipe_id, {})
             haystack = " ".join([
                 recipe.get("title", ""),
@@ -275,6 +333,25 @@ class HelpHubDialog(QDialog):
             item.setHidden(not visible)
             if visible and first_visible is None:
                 first_visible = item
+
+        # Hide category headers whose recipes are all hidden. This pass must run even for an
+        # empty query: with no query every recipe is visible, so each header's forward scan
+        # finds a visible recipe and un-hides the header again. Skipping this pass when the
+        # query is empty would leave headers hidden after a search is cleared.
+        count = self.recipe_list.count()
+        for index in range(count):
+            item = self.recipe_list.item(index)
+            if item.data(Qt.UserRole) is not None:
+                continue
+            any_visible = False
+            for j in range(index + 1, count):
+                nxt = self.recipe_list.item(j)
+                if nxt.data(Qt.UserRole) is None:
+                    break
+                if not nxt.isHidden():
+                    any_visible = True
+                    break
+            item.setHidden(not any_visible)
 
         current = self.recipe_list.currentItem()
         if current is None or current.isHidden():
@@ -288,6 +365,8 @@ class HelpHubDialog(QDialog):
     def _update_recipe_view(self, current, _previous):
         if current is None:
             return
+        if current.data(Qt.UserRole) is None:
+            return  # header row, nothing to render
 
         recipe_id = current.data(Qt.UserRole)
         recipe = self._recipe_by_id.get(recipe_id)
@@ -295,7 +374,6 @@ class HelpHubDialog(QDialog):
             self._current_recipe = None
             self.recipe_title.setText("Recipe not found")
             self.recipe_browser.setHtml("<p>Recipe content is unavailable.</p>")
-            self.copy_button.setEnabled(False)
             return
 
         self._current_recipe = recipe
@@ -303,282 +381,7 @@ class HelpHubDialog(QDialog):
         self.recipe_browser.setHtml(recipe.get("html", "<p>No content available.</p>"))
 
 
-class ColumnSelectionDialog(QDialog):
-    """Dialog for selecting measurement columns for a dataset"""
-    def __init__(self, available_columns, parent=None):
-        if not available_columns:
-            QMessageBox.critical(parent, "Error", "No measurement columns available! Dialog will not open.")
-            raise ValueError("No measurement columns passed to ColumnSelectionDialog.")
-        super().__init__(parent)
-        _configure_dialog(self, object_name="columnSelectionDialog")
-        self.setWindowTitle("Select Measurement Columns")
-        self.resize(400, 500)
         
-        layout = QVBoxLayout(self)
-        layout.setObjectName("lyoColumnSelection")
-        
-        # Explanation
-        label = QLabel("Select the columns to be used for analysis:")
-        layout.addWidget(label)
-        
-        # NEW OPTION: Multi-dataset analysis
-        self.multi_dataset_check = QCheckBox("Separate analysis per dataset with shared Excel file")
-        self.multi_dataset_check.setToolTip("Analyzes each dataset separately, but combines all results in a shared Excel file")
-        layout.addWidget(self.multi_dataset_check)
-        
-        # Checkboxes for each column
-        scroll_area = QScrollArea()
-        scroll_area.setObjectName("scrollColumns")
-        scroll_area.setWidgetResizable(True)
-        scroll_content = QWidget()
-        scroll_content.setObjectName("widColumnContainer")
-        scroll_layout = QVBoxLayout(scroll_content)
-        scroll_layout.setObjectName("lyoColumnCheckboxes")
-        
-        self.column_checks = {}
-        for column in available_columns:
-            check = QCheckBox(str(column))
-            check.setObjectName(f"chkColumn_{str(column).replace(' ', '_')}")
-            self.column_checks[column] = check
-            scroll_layout.addWidget(check)
-        
-        scroll_area.setWidget(scroll_content)
-        # Limit height for many columns
-        scroll_area.setMaximumHeight(300)
-        layout.addWidget(scroll_area)
-        
-        # Buttons
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        button_box.setObjectName("btnDialogButtons")
-        button_box.accepted.connect(self.accept)
-        button_box.rejected.connect(self.reject)
-        layout.addWidget(button_box)
-    
-    def get_selected_columns(self):
-        selected = [column for column, check in self.column_checks.items() if check.isChecked()]
-        if not selected:
-            QMessageBox.warning(self, "Warning", "Please select at least one measurement column!")
-        return {
-            "columns": selected,
-            "multi_dataset": self.multi_dataset_check.isChecked(),
-            "combine": False
-        }
-
-
-class PairwiseComparisonDialog(QDialog):
-    """Dialog for selecting groups for pairwise comparisons"""
-    def __init__(self, available_groups, parent=None):
-        if not available_groups or len(available_groups) < 2:
-            QMessageBox.critical(parent, "Error", "At least 2 groups are required for pairwise comparisons!")
-            raise ValueError("Too few groups passed to PairwiseComparisonDialog.")
-        super().__init__(parent)
-        _configure_dialog(self, object_name="pairwiseComparisonDialog")
-        self.setWindowTitle("Pairwise Comparisons")
-        self.resize(400, 300)
-
-        main_layout = QVBoxLayout(self)
-        main_layout.setObjectName("lyoPairwiseComparison")
-
-        # --- Scrollable content widget ---
-        content_widget = QWidget()
-        content_layout = QVBoxLayout(content_widget)
-        content_layout.setContentsMargins(0, 0, 0, 0)
-
-        # Explanation
-        label = QLabel("Select two groups between which a significance line should be displayed:")
-        label.setObjectName("lblComparisonHelp")
-        content_layout.addWidget(label)
-
-        # Selection for group 1
-        group1_layout = QHBoxLayout()
-        group1_layout.setObjectName("lyoGroup1Selection")
-        group1_label = QLabel("Group 1:")
-        group1_label.setObjectName("lblGroup1")
-        group1_layout.addWidget(group1_label)
-        self.group1_combo = QComboBox()
-        self.group1_combo.setObjectName("cboGroup1")
-        self.group1_combo.addItems([str(g) for g in available_groups])
-        group1_layout.addWidget(self.group1_combo)
-        content_layout.addLayout(group1_layout)
-
-        # Selection for group 2
-        group2_layout = QHBoxLayout()
-        group2_layout.setObjectName("lyoGroup2Selection")
-        group2_label = QLabel("Group 2:")
-        group2_label.setObjectName("lblGroup2")
-        group2_layout.addWidget(group2_label)
-        self.group2_combo = QComboBox()
-        self.group2_combo.setObjectName("cboGroup2")
-        self.group2_combo.addItems([str(g) for g in available_groups])
-        if len(available_groups) > 1:
-            self.group2_combo.setCurrentIndex(1)
-        group2_layout.addWidget(self.group2_combo)
-        content_layout.addLayout(group2_layout)
-
-        # Hint text for explanation
-        hint_label = QLabel("Note: Significance is automatically taken from the post-hoc tests.")
-        hint_label.setObjectName("lblSignificanceHint")
-        content_layout.addWidget(hint_label)
-
-        # Dependent samples with better description
-        dependent_layout = QHBoxLayout()
-        dependent_layout.setObjectName("lyoDependentOption")
-
-        self.dependent_check = QCheckBox("Dependent samples (paired test)")
-        self.dependent_check.setObjectName("chkDependentSamples")
-        dependent_layout.addWidget(self.dependent_check)
-
-        # Info button
-        dependent_info = QPushButton("?")
-        dependent_info.setObjectName("btnPairwiseDependentInfo")
-        dependent_info.setMaximumWidth(20)
-        dependent_info.clicked.connect(self.show_dependent_info)
-        dependent_layout.addWidget(dependent_info)
-        dependent_layout.addStretch()
-
-        content_layout.addLayout(dependent_layout)
-
-        # --- QScrollArea setup ---
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setWidget(content_widget)
-        main_layout.addWidget(scroll_area)
-
-        # --- Dialog buttons (not inside scroll area) ---
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        button_box.setObjectName("btnDialogButtons")
-        button_box.accepted.connect(self.accept)
-        button_box.rejected.connect(self.reject)
-        main_layout.addWidget(button_box)
-    
-    def get_comparison(self):
-        g1 = self.group1_combo.currentText()
-        g2 = self.group2_combo.currentText()
-        if g1 == g2:
-            QMessageBox.warning(self, "Warning", "The two groups must be different!")
-            return None
-        return {
-            'group1': g1,
-            'group2': g2,
-            'dependent': self.dependent_check.isChecked()
-        }
-    def show_dependent_info(self):
-        QMessageBox.information(
-            self, "Dependent samples for pairwise comparisons",
-            "Select this option if the groups to be compared are dependent samples "
-            "(e.g. measurements on the same subject at different time points).\n\n"
-            "For dependent samples, a paired t-test (parametric) or "
-            "a Wilcoxon signed-rank test (non-parametric) is performed.\n\n"
-            "Note: The groups must have the same number of measurements and "
-            "the order of measurements must match."
-        )
-        
-class TwoWayAnovaDialog(QDialog):
-    """Dialog for configuring a Two-Way ANOVA"""
-    def __init__(self, groups, parent=None):
-        if not groups or len(groups) < 2:
-            QMessageBox.critical(parent, "Error", "At least 2 groups are required for a Two-Way ANOVA!")
-            raise ValueError("Too few groups passed to TwoWayAnovaDialog.")
-        super().__init__(parent)
-        _configure_dialog(self, object_name="twoWayAnovaDialog")
-        self.setWindowTitle("Configure Two-Way ANOVA")
-        self.resize(500, 400)
-        self.groups = groups
-        
-        layout = QVBoxLayout(self)
-        layout.setObjectName("lyoTwoWayAnova")
-        
-        # Explanation
-        label = QLabel("Define additional factors for the Two-Way ANOVA:")
-        label.setObjectName("lblTwoWayAnovaHelp")
-        layout.addWidget(label)
-        
-        # Factor definition
-        factor_group = QGroupBox("Factor definition")
-        factor_group.setObjectName("grpFactorDefinition")
-        factor_layout = QGridLayout(factor_group)
-        factor_layout.setObjectName("lyoFactorDefinition")
-        
-        # Factor name
-        factor_label = QLabel("Factor name:")
-        factor_label.setObjectName("lblFactorName")
-        factor_layout.addWidget(factor_label, 0, 0)
-        
-        self.factor_name = QLineEdit()
-        self.factor_name.setObjectName("edtFactorName")
-        self.factor_name.setPlaceholderText("e.g. Treatment, Gender, etc.")
-        factor_layout.addWidget(self.factor_name, 0, 1)
-        
-        layout.addWidget(factor_group)
-        
-        # Factor values per group
-        value_group = QGroupBox("Factor values per group")
-        value_group.setObjectName("grpFactorValues")
-        value_layout = QGridLayout(value_group)
-        value_layout.setObjectName("lyoFactorValues")
-        
-        # Header
-        group_header = QLabel("Group")
-        group_header.setObjectName("lblGroupHeader")
-        value_layout.addWidget(group_header, 0, 0)
-        
-        factor_header = QLabel("Factor value")
-        factor_header.setObjectName("lblFactorHeader")
-        value_layout.addWidget(factor_header, 0, 1)
-        
-        # Input fields for each group
-        self.factor_values = {}
-        for i, group in enumerate(groups):
-            group_label = QLabel(str(group))
-            group_label.setObjectName(f"lblGroup_{str(group).replace(' ', '_')}")
-            value_layout.addWidget(group_label, i+1, 0)
-            
-            value_field = QLineEdit()
-            value_field.setObjectName(f"edtFactorValue_{str(group).replace(' ', '_')}")
-            value_field.setPlaceholderText("Value for this group")
-            self.factor_values[group] = value_field
-            value_layout.addWidget(value_field, i+1, 1)
-        
-        layout.addWidget(value_group)
-        
-        # Buttons
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        button_box.setObjectName("btnDialogButtons")
-        button_box.accepted.connect(self.accept)
-        button_box.rejected.connect(self.reject)
-        layout.addWidget(button_box)
-    
-    def get_factor_data(self):
-        import re
-        factor_name = self.factor_name.text().strip()
-        if not factor_name:
-            QMessageBox.warning(self, "Warning", "Please specify a factor name!")
-            return None
-        if len(factor_name) > 50:
-            QMessageBox.warning(self, "Warning", "Factor name must be 50 characters or fewer.")
-            return None
-        if not re.match(r'^[A-Za-z0-9_\- ]+$', factor_name):
-            QMessageBox.warning(self, "Warning",
-                "Factor name may only contain letters, digits, spaces, hyphens, and underscores.")
-            return None
-
-        factor_data = {}
-        for group, field in self.factor_values.items():
-            value = field.text().strip()
-            if value:  # Only add values if a value was entered
-                try:
-                    # Try to convert the value to a number if possible
-                    numeric_value = float(value)
-                    if numeric_value.is_integer():
-                        numeric_value = int(numeric_value)
-                    factor_data[group] = {factor_name: numeric_value}
-                except ValueError:
-                    # If not a number, use the string value
-                    factor_data[group] = {factor_name: value}
-        if not factor_data:
-            return None            
-        
-        return factor_data
 
 class OutlierDetectionDialog(QDialog):
     def __init__(self, df, parent=None):
@@ -714,12 +517,38 @@ class OutlierDetectionDialog(QDialog):
 
         self.modz_check = QCheckBox("Modified Z-Score Test (robust detection using median)")
         self.grubbs_check = QCheckBox("Grubbs' Test (for normally distributed data)")
-        self.modz_check.setChecked(True)
-        self.grubbs_check.setChecked(False)
+        # Grubbs is the default: it holds its nominal ~5% false-positive rate
+        # across n=3..30, whereas the Modified Z-Score's median/MAD scale is
+        # unstable at small n and flags a phantom outlier in ~29% of clean n=3
+        # samples (the common triplicate size). ModZ stays available as a
+        # deliberate choice, but is no longer the default.
+        self.modz_check.setChecked(False)
+        self.grubbs_check.setChecked(True)
 
         test_layout.addWidget(self.modz_check)
         test_layout.addWidget(self.grubbs_check)
-        
+
+        # Small-n caution for Modified Z-Score. The report already warns after
+        # detection runs (outlier_core surfaces it via self.warnings); this makes
+        # the same caution visible up front, the moment a user selects ModZ on
+        # groups too small for its median/MAD scale, so they are not led into
+        # deleting valid data before ever seeing the export.
+        self.modz_smalln_warning = QLabel(
+            "⚠ Modified Z-Score is unreliable at small n: its median/MAD "
+            "scale flags a normal point as an outlier in ~29% of clean n=3 "
+            "samples. Grubbs' test is better calibrated here — keep "
+            "Modified Z-Score only if you have a specific reason.")
+        self.modz_smalln_warning.setWordWrap(True)
+        self.modz_smalln_warning.setObjectName("lblModzSmallN")
+        self.modz_smalln_warning.setStyleSheet("color: #9a6700; font-size: 11px;")
+        self.modz_smalln_warning.setVisible(False)
+        test_layout.addWidget(self.modz_smalln_warning)
+
+        # Re-evaluate the caution whenever the method or the group column changes.
+        self.modz_check.toggled.connect(self._update_modz_smalln_warning)
+        self.group_col_combo.currentTextChanged.connect(self._update_modz_smalln_warning)
+        self._update_modz_smalln_warning()
+
         params_layout.addLayout(test_layout)
         
         layout.addWidget(params_group)
@@ -731,7 +560,7 @@ class OutlierDetectionDialog(QDialog):
         # File path selection
         file_layout = QHBoxLayout()
         file_label = QLabel("Output File:")
-        self.file_path_label = QLabel("outlier_analysis_results.xlsx")
+        self.file_path_label = QLabel("outlier_analysis_results.html")
         browse_button = QPushButton("Browse...")
         browse_button.clicked.connect(self.browse_output_file)
         
@@ -751,6 +580,28 @@ class OutlierDetectionDialog(QDialog):
         # Initial UI update
         self.update_dataset_selection()
         
+    def _min_group_size(self):
+        """Smallest per-group row count for the selected group column -- a cheap
+        upper bound on n. The authoritative n<8 check runs at detection time in
+        OutlierDetector; this only decides whether to raise the UI caution."""
+        try:
+            gcol = self.group_col_combo.currentText()
+            if not gcol or gcol not in self.df.columns:
+                return None
+            sizes = self.df.groupby(gcol).size()
+            return int(sizes.min()) if len(sizes) else None
+        except Exception:
+            return None
+
+    def _update_modz_smalln_warning(self):
+        """Show the small-n caution iff Modified Z-Score is selected on groups
+        below the size where its median/MAD scale is reliable."""
+        from analysis.outlier_core import OutlierDetector
+        min_n = self._min_group_size()
+        show = bool(self.modz_check.isChecked() and min_n is not None
+                    and min_n < OutlierDetector.MODZ_MIN_RELIABLE_N)
+        self.modz_smalln_warning.setVisible(show)
+
     def update_dataset_selection(self):
         """Update UI based on selected analysis mode"""
         is_single = self.single_dataset_radio.isChecked()
@@ -771,11 +622,13 @@ class OutlierDetectionDialog(QDialog):
         """Browse for output file location"""
         file_path, _ = QFileDialog.getSaveFileName(
             self, 
-            "Save Outlier Analysis Results", 
-            "outlier_analysis_results.xlsx",
-            "Excel Files (*.xlsx);;All Files (*)"
+            "Save Outlier Analysis Results",
+            "outlier_analysis_results.html",
+            "HTML Report (*.html);;All Files (*)"
         )
         if file_path:
+            if not file_path.lower().endswith(".html"):
+                file_path += ".html"
             self.file_path_label.setText(file_path)
     
     def get_config(self):
@@ -819,7 +672,7 @@ class ExploratoryMatrixDialog(QDialog):
 
     Lets the user select variables, choose correlation method and missing-data
     handling, apply multiple-testing correction, and optionally stratify by a
-    categorical column.  Results are exported to Excel.
+    categorical column.  Results are exported as an HTML report.
     """
 
     def __init__(self, df, output_dir=None, parent=None):
@@ -939,126 +792,19 @@ class ExploratoryMatrixDialog(QDialog):
                              stratify_by=stratify_by)
             results = matrix_model.as_results_dict()
 
-            # Export to Excel
+            # Export as HTML report
             import os
             from export.export_dispatcher import ExportDispatcher
             out_file = os.path.join(self.output_dir,
-                                    "exploratory_correlation_matrix.xlsx")
+                                    "exploratory_correlation_matrix.html")
             results["pairwise_comparisons"] = []
             export_result = ExportDispatcher.export_analysis_results(results, out_file)
             if export_result.get("warning"):
-                print(f"WARNING: {export_result['warning']}")
+                logger.warning(f"WARNING: {export_result['warning']}")
 
             self._status_label.setText(
                 f"Done! Saved to:\n{out_file}"
             )
         except Exception as exc:
             self._status_label.setText(f"Error: {exc}")
-
-
-# ---------------------------------------------------------------------------
-# Debug Console — redirects sys.stdout/stderr to a floating Qt window
-# ---------------------------------------------------------------------------
-class _DebugStream(QObject):
-    """Wraps sys.stdout/stderr and emits each write() call as a Qt signal."""
-    text_written = pyqtSignal(str)
-
-    def write(self, text):
-        if text:
-            self.text_written.emit(text)
-
-    def flush(self):
-        pass
-
-
-class DebugConsoleWindow(QWidget):
-    """
-    Floating log window that captures all print() / DEBUG: output.
-    Color-coded: DEBUG=blue, ERROR=red, WARNING=orange, rest=default.
-    Toggle with Ctrl+D or View > Debug Console.
-    """
-
-    def __init__(self, parent=None):
-        super().__init__(parent, Qt.Window)
-        self.setObjectName("debugLogWindow")
-        self.setWindowTitle("Debug Console")
-        self.resize(700, 400)
-        self.setWindowFlags(
-            Qt.Window |
-            Qt.WindowStaysOnTopHint |
-            Qt.WindowCloseButtonHint |
-            Qt.WindowMinimizeButtonHint
-        )
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(4)
-
-        self.text_edit = QTextEdit()
-        self.text_edit.setObjectName("debugConsoleText")
-        self.text_edit.setReadOnly(True)
-        self.text_edit.setFont(__import__('PyQt5.QtGui', fromlist=['QFont']).QFont("Courier", 10))
-        layout.addWidget(self.text_edit)
-
-        btn_row = QHBoxLayout()
-        clear_btn = QPushButton("Clear")
-        clear_btn.setFixedWidth(70)
-        clear_btn.clicked.connect(self.text_edit.clear)
-        btn_row.addWidget(clear_btn)
-        btn_row.addStretch()
-
-        self._line_count_label = QLabel("0 lines")
-        btn_row.addWidget(self._line_count_label)
-        layout.addLayout(btn_row)
-
-        self._line_count = 0
-
-        # Redirect stdout and stderr
-        self._stdout_stream = _DebugStream()
-        self._stderr_stream = _DebugStream()
-        self._stdout_stream.text_written.connect(self._append)
-        self._stderr_stream.text_written.connect(self._append)
-        self._orig_stdout = sys.stdout
-        self._orig_stderr = sys.stderr
-        sys.stdout = self._stdout_stream
-        sys.stderr = self._stderr_stream
-
-    def _append(self, text):
-        if not text.strip():
-            return
-        color = "#d4d4d4"
-        lower = text.lower()
-        if "error" in lower or "traceback" in lower or "exception" in lower:
-            color = "#f48771"   # red
-        elif "warning" in lower or "warn" in lower:
-            color = "#ce9178"   # orange
-        elif lower.startswith("debug") or "debug:" in lower:
-            color = "#9cdcfe"   # blue
-        elif lower.startswith("success") or "success" in lower:
-            color = "#4ec9b0"   # teal
-
-        import html
-        safe = html.escape(text.rstrip())
-        self.text_edit.append(f'<span style="color:{color};">{safe}</span>')
-
-        # Auto-scroll
-        sb = self.text_edit.verticalScrollBar()
-        sb.setValue(sb.maximum())
-
-        self._line_count += 1
-        self._line_count_label.setText(f"{self._line_count} lines")
-
-    def closeEvent(self, event):
-        # Restore streams on close so the process doesn't lose output
-        sys.stdout = self._orig_stdout
-        sys.stderr = self._orig_stderr
-        super().closeEvent(event)
-
-    def toggle(self):
-        if self.isVisible():
-            self.hide()
-        else:
-            self.show()
-            self.raise_()
-
 

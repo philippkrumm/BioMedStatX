@@ -1,10 +1,166 @@
+import itertools
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Mapping, Sequence
 
 import numpy as np
+import pandas as pd
 
-MIN_N_HARD = 5    # Absolute minimum before blocking or critical warnings
+MIN_N_BLOCK = 3   # Absolute minimum to run a test at all (variance/df need n>=3)
+MIN_N_HARD = 5    # Small-sample warning threshold (n<5 => low power, interpret with caution)
 MIN_N_SMALL = 20  # Threshold for forcing robust defaults (exact methods, non-parametric)
+
+# Relative+absolute tolerance for constancy (zero-variance) detection. A static
+# global epsilon is unusable across arbitrary biomed scales (proportions 0-1,
+# fluorescence ~1e6, cell counts), so np.allclose-style rtol/atol is used.
+VAR_RTOL = 1e-05
+VAR_ATOL = 1e-08
+# Flag a design as severely unbalanced when the largest group is this many times
+# the smallest (warning only, not blocking).
+IMBALANCE_RATIO = 10.0
+
+
+def transformed_pairs_up(
+    raw: Mapping[str, Sequence[float]],
+    transformed: Mapping[str, Sequence[float]],
+    keys: Iterable[str] | None = None,
+) -> bool:
+    """Whether the transformed values can be printed BESIDE the raw ones.
+
+    The raw-data table prints ``raw[g][i]`` next to ``transformed[g][i]``, one
+    row per index, which is a claim about a single measurement. The two dicts
+    come from different extractions and disagree about missing values -- one
+    drops a NaN row, the other keeps it -- so a group can hold nine raw values
+    against ten transformed ones, and every row after the first gap then names
+    the wrong measurement.
+
+    True only when every group named on the raw side is present on the
+    transformed side with the same length. A caller that gets False must DROP
+    the transformed column rather than realign it: guessing which value belongs
+    to which is exactly what produced the defect, and an absent column says
+    nothing while a misaligned one says something false.
+
+    Kept here, next to ``grouped_samples_changed``, because four separate
+    writers populate ``raw_data_transformed`` -- the standard path, both
+    branches of the advanced pipeline, and the tester's own -- and guarding one
+    of them leaves the column reaching the page through the others. That is not
+    hypothetical: it is how fuzz seed 51307 printed a Box-Cox column against a
+    raw column of a different length after the standard path had already been
+    guarded.
+    """
+    if not isinstance(raw, Mapping) or not isinstance(transformed, Mapping):
+        return False
+    if keys is None:
+        keys = list(raw)
+    keys = [k for k in keys]
+    if not keys:
+        return False
+    for key in keys:
+        if key not in raw or key not in transformed:
+            return False
+        try:
+            if len(raw[key]) != len(transformed[key]):
+                return False
+        except TypeError:
+            return False
+    return True
+
+
+def drop_unpaired_transformed(results: Dict[str, Any]) -> List[str]:
+    """Remove a transformed column that does not pair with the raw one kept.
+
+    Four writers populate these keys and the raw half is CHOSEN between two
+    extractions after they have run, so a write that paired correctly at the
+    time can be left unpaired by that choice. Guarding the writers alone is
+    therefore not enough -- fuzz seed 51307 printed a Box-Cox column against a
+    raw column of a different length with every writer already guarded.
+
+    Returns the keys that were dropped, so the caller can say so in the log.
+    """
+    raw = results.get("raw_data")
+    if not isinstance(raw, Mapping) or not raw:
+        return []
+    dropped = []
+    for key in ("raw_data_transformed", "transformed_data"):
+        existing = results.get(key)
+        if isinstance(existing, Mapping) and not transformed_pairs_up(raw, existing):
+            results.pop(key, None)
+            dropped.append(key)
+    return dropped
+
+
+def grouped_samples_changed(
+    raw: Mapping[str, Sequence[float]],
+    transformed: Mapping[str, Sequence[float]],
+    keys: Iterable[str] | None = None,
+) -> bool:
+    """Whether a transformation actually altered any value.
+
+    Returns True iff, for at least one group, ``transformed`` differs from
+    ``raw``. Used to gate ``raw_data_transformed`` / ``transformed_data`` in the
+    result dict: a transformation that was merely *named* but left the data
+    untouched — a ``None``/``"None"``/``"Keine"`` selection, an unrecognised
+    label such as ``"No further"``, or an effective identity (e.g. Box-Cox with
+    lambda 1) — must NOT surface a transformed column that only mirrors the raw
+    one (report bug 2026-08: an untransformed independent t-test showed a
+    Transformed-value column identical to Raw).
+
+    Mirrors the intent of statisticaltester.py's ``original != transformed``
+    guard, but is safe against ndarray element containers (a plain ``!=`` on
+    numpy arrays raises the ambiguous-truth error) and treats a NaN in the same
+    position on both sides as unchanged, so an identity copy of NaN-containing
+    data is still recognised as a no-op.
+
+    Compared as multisets, not position by position. A repeated-measures run
+    hands back the same values in a different order, and an element-wise
+    comparison read that permutation as a transformation -- so an untransformed
+    RM analysis emitted a Transformed column, a transformed-scale means note and
+    two "After transformation" diagnostic charts, all of them showing the raw
+    numbers, beside a badge correctly reading "Transformation: None" (fuzz seed
+    116, 2026-08-27). "The values at these positions differ" is not what "a
+    value was altered" means, and it is the second time this gate has been wrong
+    about which question it is asking.
+
+    This cannot hide a real transformation. A transformation that leaves the
+    multiset intact has altered no value, which is precisely the case the gate
+    exists to suppress.
+    """
+    if not isinstance(raw, Mapping) or not isinstance(transformed, Mapping):
+        return False
+    if keys is None:
+        keys = set(raw) & set(transformed)
+    for key in keys:
+        if key not in raw or key not in transformed:
+            continue
+        try:
+            a = np.asarray(raw[key], dtype=float).ravel()
+            b = np.asarray(transformed[key], dtype=float).ravel()
+        except (TypeError, ValueError):
+            # Non-numeric payload: fall back to a plain element comparison,
+            # order-insensitively for the same reason. sorted() can still refuse
+            # a mixed-type sequence, in which case the element comparison is all
+            # that is available.
+            try:
+                changed = sorted(raw[key]) != sorted(transformed[key])
+            except TypeError:
+                changed = list(raw[key]) != list(transformed[key])
+            if changed:
+                return True
+            continue
+        if a.shape != b.shape:
+            return True
+        # np.sort puts NaN last on both sides, so an identity copy of
+        # NaN-containing data still compares equal under equal_nan.
+        if not np.array_equal(np.sort(a), np.sort(b), equal_nan=True):
+            return True
+    return False
+
+
+def _max_safe_abs(n: int) -> float:
+    """Safe per-element magnitude bound for a variance / sum-of-squares over n
+    points. Variance sums n squared terms, so the safe bound is
+    sqrt(float64_max / n), NOT sqrt(float64_max) — otherwise adding n near-limit
+    squares overflows the global float64 max (~1.79e308)."""
+    return float(np.sqrt(np.finfo(np.float64).max / max(int(n), 1)))
 
 class ValidationError(Exception):
     """Base class for statistical input validation failures."""
@@ -32,6 +188,22 @@ class GroupValidationError(ValidationError):
 
 class ModelDesignError(ValidationError):
     """Raised when model design parameters are invalid for a chosen test."""
+
+
+class DataQualityError(ValidationError):
+    """Raised when a sample fails a pre-flight data-quality check (zero variance,
+    overflow risk, constant paired differences, etc.)."""
+
+
+class AnalysisCancelledError(BaseException):
+    """User backed out of a mid-analysis dialog that must abort the whole run
+    (e.g. the post-hoc selection). Deliberately derived from BaseException, NOT
+    Exception, so the many ``except Exception`` handlers between the raise site
+    (deep inside the post-hoc engines) and analyze()'s dedicated handler cannot
+    swallow it and convert a user cancel into a defaulted method or an error
+    result. analyze() catches it explicitly, writes no report, and returns a
+    ``{"cancelled": True}`` result the pipeline honours (no render, no confetti,
+    back to the mapping state). Nothing went wrong -- the user simply cancelled."""
 
 
 @dataclass(frozen=True)
@@ -176,6 +348,42 @@ def bounded_boxcox_lambda(data, bounds: tuple = (-3.0, 3.0)) -> tuple:
     return lam, False
 
 
+def validate_arcsin_domain(values, declared_type: str, *, tol: float = 1e-9) -> None:
+    """Hard-check that data matches its declared arcsin-sqrt domain.
+
+    arcsin(sqrt(p)) stabilises variance ONLY for true proportions
+    (Var(p_hat) = p(1-p)/n). The user declares whether the data are proportions
+    ([0, 1]) or percents ([0, 100]); values outside the declared range are
+    REJECTED — this raises, no transform is applied, there is no silent fallback.
+    A value-range guess is deliberately avoided: it would wave through data that
+    merely lands in range without being a proportion.
+
+    Returns None when every value is in range; otherwise raises
+    GroupValidationError naming the offending values.
+    """
+    if declared_type == "proportion":
+        lo, hi, label = 0.0, 1.0, "proportion (0-1)"
+    elif declared_type == "percent":
+        lo, hi, label = 0.0, 100.0, "percent (0-100)"
+    else:
+        raise ValueError(
+            f"Unknown arcsin domain type {declared_type!r}; expected 'proportion' or 'percent'."
+        )
+
+    arr = np.asarray(list(values), dtype=float)
+    arr = arr[np.isfinite(arr)]
+    bad = arr[(arr < lo - tol) | (arr > hi + tol)]
+    if bad.size:
+        sample = ", ".join(f"{v:g}" for v in bad[:5])
+        more = "" if bad.size <= 5 else f", … (+{bad.size - 5} more)"
+        raise GroupValidationError(
+            f"arcsin-sqrt was declared as {label}, but {bad.size} value(s) fall outside "
+            f"[{lo:g}, {hi:g}] ({sample}{more}). arcsin-sqrt is variance-stabilizing only "
+            f"for true proportions — use a log or Box-Cox transformation for this data."
+        )
+    return None
+
+
 def validate_group_count(groups: Iterable[str], *, min_groups: int = 2, label: str = "groups") -> List[str]:
     normalized_groups = [str(group) for group in groups]
     if len(normalized_groups) < min_groups:
@@ -230,6 +438,8 @@ def validate_test_design(
     if test_name == "mixed_anova":
         if not between or not within:
             raise ModelDesignError("Mixed ANOVA requires between and within factor.")
+        if subject is None:
+            raise ModelDesignError("Mixed ANOVA requires subject column.")
     elif test_name == "repeated_measures_anova":
         if not within:
             raise ModelDesignError("RM-ANOVA requires within factor.")
@@ -238,6 +448,8 @@ def validate_test_design(
     elif test_name == "two_way_anova":
         if len(between) != 2:
             raise ModelDesignError("Two-Way ANOVA requires two between factors.")
+    elif test_name in ("ancova", "two_way_ancova", "lmm", "logistic_regression"):
+        pass # The specialized model classes will perform their own specific validation
     else:
         raise ModelDesignError(f"Unknown/invalid test type: {test_name}")
 
@@ -275,3 +487,135 @@ def validate_samples(samples: Dict[str, Sequence[float]], min_group_size: int = 
             issues.append(ValidationIssue(code="invalid_group", message=str(exc)))
 
     return issues
+
+
+# ---------------------------------------------------------------------------
+# Pre-flight sample quality gate (central chokepoint)
+# ---------------------------------------------------------------------------
+
+# Block code -> human-readable message template. Wording lives here so the UI
+# and the HTML report stay consistent with a single source of truth.
+BLOCK_MESSAGES: Dict[str, str] = {
+    "INF_VALUES": "Group '{group}' contains infinite (+/-Inf) values — cannot run a test.",
+    "EMPTY_GROUP": "Group '{group}' has no usable numeric values after removing missing data.",
+    "N_BELOW_MIN": "Group '{group}' has only n={n} usable value(s); a test needs at least n={min_n}.",
+    "NUM_OVERFLOW": "Group '{group}' has values too large for a numerically stable variance / sum-of-squares calculation.",
+    "VAR_ZERO": "Group '{group}' has (near) zero variance — all values are effectively identical, so a test is undefined.",
+    "TOO_FEW_GROUPS": "At least 2 groups with usable data are required, found {n_groups}.",
+    "PAIRED_SIZE_MISMATCH": "Paired/repeated-measures analysis requires equal group sizes; observed: {detail}.",
+    "VAR_DIFF_ZERO": "Paired differences between '{a}' and '{b}' are (near) constant — the test statistic is undefined (singular covariance).",
+}
+
+
+@dataclass(frozen=True)
+class SampleQualityReport:
+    """Result of the pre-flight gate. ``blocking_issue`` is the first hard-stop
+    reason (or None when the data may proceed). ``warnings`` are non-blocking
+    notes (small samples, severe imbalance)."""
+    blocking_issue: "ValidationIssue | None"
+    warnings: List[str]
+
+    @property
+    def ok(self) -> bool:
+        return self.blocking_issue is None
+
+
+def _coerce_quality_array(values: Sequence[Any]) -> np.ndarray:
+    """Coerce arbitrary cell values to a float array. Whitespace-only strings and
+    non-numeric text become NaN (never raise); +/-Inf is preserved so the Inf
+    guard can see it before NaN-dropping."""
+    series = pd.to_numeric(pd.Series(list(values), dtype="object"), errors="coerce")
+    return series.to_numpy(dtype=float)
+
+
+def validate_samples_for_test(
+    samples: Mapping[str, Sequence[Any]],
+    groups: Iterable[str],
+    *,
+    dependent: bool = False,
+    min_n_block: int = MIN_N_BLOCK,
+) -> SampleQualityReport:
+    """Central pre-flight gate. Returns the first blocking issue (if any) plus
+    soft warnings, WITHOUT raising. Run before any statistical test so that
+    pathological inputs become a clean labeled block instead of a crash or a
+    silently-wrong result (e.g. zero-variance Welch -> p=1.0)."""
+    normalized = [str(group) for group in groups]
+    warnings: List[str] = []
+    valid_by_group: Dict[str, np.ndarray] = {}
+
+    def issue(code: str, **fmt) -> SampleQualityReport:
+        return SampleQualityReport(
+            blocking_issue=ValidationIssue(code=code, message=BLOCK_MESSAGES[code].format(**fmt)),
+            warnings=warnings,
+        )
+
+    for group in normalized:
+        raw = samples.get(group, [])
+        arr = _coerce_quality_array(raw)
+
+        if np.isinf(arr).any():
+            return issue("INF_VALUES", group=group)
+
+        valid = arr[~np.isnan(arr)]
+        if valid.size == 0:
+            return issue("EMPTY_GROUP", group=group)
+        if valid.size < min_n_block:
+            return issue("N_BELOW_MIN", group=group, n=int(valid.size), min_n=min_n_block)
+        if float(np.max(np.abs(valid))) >= _max_safe_abs(valid.size):
+            return issue("NUM_OVERFLOW", group=group)
+        if np.allclose(valid, valid[0], rtol=VAR_RTOL, atol=VAR_ATOL):
+            return issue("VAR_ZERO", group=group)
+
+        valid_by_group[group] = valid
+        if valid.size < MIN_N_HARD:
+            warnings.append(
+                f"Group '{group}' is a small sample (n={int(valid.size)} < {MIN_N_HARD}); "
+                "statistical power is low — interpret with caution."
+            )
+
+    usable = list(valid_by_group)
+    if len(usable) < 2:
+        return issue("TOO_FEW_GROUPS", n_groups=len(usable))
+
+    sizes = {group: int(valid_by_group[group].size) for group in usable}
+    if max(sizes.values()) >= IMBALANCE_RATIO * min(sizes.values()):
+        warnings.append(
+            "Severely unbalanced group sizes "
+            f"({', '.join(f'{g}: {n}' for g, n in sizes.items())}); "
+            "power and assumption checks may be affected."
+        )
+
+    if dependent:
+        if len(set(sizes.values())) != 1:
+            detail = ", ".join(f"{g}: {n}" for g, n in sizes.items())
+            return issue("PAIRED_SIZE_MISMATCH", detail=detail)
+        # RM-ANOVA (k>=3) needs an invertible covariance matrix: a constant
+        # difference between ANY pair makes it singular, so check all pairs.
+        for a, b in itertools.combinations(usable, 2):
+            diff = valid_by_group[a] - valid_by_group[b]
+            if np.allclose(diff, diff[0], rtol=VAR_RTOL, atol=VAR_ATOL):
+                return issue("VAR_DIFF_ZERO", a=a, b=b)
+
+    return SampleQualityReport(blocking_issue=None, warnings=warnings)
+
+
+def validate_outcome(values, *, label="outcome", min_n_block=MIN_N_BLOCK):
+    """Single-vector degeneracy gate for regression-style models (ANCOVA, LMM,
+    logistic/linear regression, correlation) whose data shape doesn't fit
+    the group-based gate. Returns the first blocking ValidationIssue or None.
+    Catches a constant / empty / too-small / Inf / overflow outcome or predictor
+    that would make the fit meaningless or singular."""
+    arr = _coerce_quality_array(values)
+    if np.isinf(arr).any():
+        return ValidationIssue(code="INF_VALUES", message=BLOCK_MESSAGES["INF_VALUES"].format(group=label))
+    valid = arr[~np.isnan(arr)]
+    if valid.size == 0:
+        return ValidationIssue(code="EMPTY_GROUP", message=BLOCK_MESSAGES["EMPTY_GROUP"].format(group=label))
+    if valid.size < min_n_block:
+        return ValidationIssue(code="N_BELOW_MIN",
+                               message=BLOCK_MESSAGES["N_BELOW_MIN"].format(group=label, n=int(valid.size), min_n=min_n_block))
+    if float(np.max(np.abs(valid))) >= _max_safe_abs(valid.size):
+        return ValidationIssue(code="NUM_OVERFLOW", message=BLOCK_MESSAGES["NUM_OVERFLOW"].format(group=label))
+    if np.allclose(valid, valid[0], rtol=VAR_RTOL, atol=VAR_ATOL):
+        return ValidationIssue(code="VAR_ZERO", message=BLOCK_MESSAGES["VAR_ZERO"].format(group=label))
+    return None

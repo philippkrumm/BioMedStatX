@@ -20,6 +20,8 @@ def test_rm_anova_lmm_redirect():
         'Time': timepoints,
         'Value': values
     })
+    # Force a main effect so we get posthoc pairwise comparisons
+    df.loc[df['Time'] == 'T1', 'Value'] += 15
     
     # 1. 0% missing data -> should return RepeatedMeasuresANOVA
     res_complete = StatisticalTester()._run_repeated_measures_anova(
@@ -27,6 +29,14 @@ def test_rm_anova_lmm_redirect():
     )
     assert res_complete["model_type"] == "RepeatedMeasuresANOVA"
     assert "analysis_note" not in res_complete or "redirected to a Linear Mixed Model" not in str(res_complete.get("analysis_note", ""))
+    
+    # TV-1: Assert cohen_d_rm value/sign
+    pairs = res_complete.get("pairwise_comparisons", [])
+    assert len(pairs) == 3
+    t1_t2 = next(p for p in pairs if set([p['group1'], p['group2']]) == {'T1', 'T2'})
+    assert t1_t2['effect_size_type'] == "Cohen's d (RM)"
+    # The expected cohen d rm is ~1.226 (calculated with ddof=1)
+    assert abs(t1_t2['effect_size']) > 1.0
 
     # 2. Add > 5% missing data (e.g. drop 4 values from 4 different subjects -> 4/40 = 10% missing)
     df_missing = df.copy()
@@ -41,6 +51,7 @@ def test_rm_anova_lmm_redirect():
     assert res_redirect["model_type"] == "LMM"
     assert "redirected to a Linear Mixed Model" in res_redirect["analysis_note"]
     
-    # Check if the posthoc warning is included
+    # Check if the posthoc info warning is included
     warnings = res_redirect.get("warnings", [])
-    assert any("pairwise contrasts not automatically computed" in w for w in warnings)
+    assert any("pairwise contrasts computed via EMM" in w for w in warnings)
+    assert len(res_redirect.get("pairwise_comparisons", [])) > 0

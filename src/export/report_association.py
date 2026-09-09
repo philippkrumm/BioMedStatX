@@ -1,7 +1,7 @@
 """Association / regression tables and payload helpers for the HTML report.
 
 Extracted from ``html_exporter.py`` (Phase 4 of the god-file split): odds-ratio
-and beta-coefficient tables, the association data payload, and a simple OLS fit
+and regression-coefficient tables, the association data payload, and a simple OLS fit
 with confidence band. Stateless ``@staticmethod`` helpers mixed into
 ``HTMLExporter``; call sites unchanged via the MRO.
 """
@@ -24,14 +24,14 @@ class _AssociationMixin:
         rows_html = ""
         for row in or_table:
             p_val = row.get("p_value")
-            is_sig = isinstance(p_val, (int, float)) and p_val < 0.05
+            is_sig = _FormattingMixin._significant_at(p_val)
             or_display = _FormattingMixin._format_metric(row.get("odds_ratio"))
             if is_sig:
                 or_display = f"<strong>{or_display}</strong>"
             p_style = "color:var(--success)" if is_sig else "color:var(--muted)"
             rows_html += (
                 f"<tr>"
-                f"<td>{row.get('parameter', '')}</td>"
+                f"<td>{_FormattingMixin._esc(row.get('parameter', ''))}</td>"
                 f"<td class='num-cell'>{or_display}</td>"
                 f"<td class='num-cell'>{_FormattingMixin._format_metric(row.get('ci_lower'))}</td>"
                 f"<td class='num-cell'>{_FormattingMixin._format_metric(row.get('ci_upper'))}</td>"
@@ -68,26 +68,30 @@ class _AssociationMixin:
             "div_id": "biomedstatx-or-table",
         }
 
+
     @staticmethod
-    def _build_beta_coefficient_table_html(results: dict) -> dict | None:
-        """Renders the Beta Regression coefficient table as an inline HTML block."""
-        coef_table = results.get("coefficients") or []
+    def _build_linear_regression_coefficient_table_html(results: dict) -> dict | None:
+        """Renders the Linear Regression (OLS) coefficient table as an inline
+        HTML block. Reads coefficient_table (set by
+        SimpleLinearRegressionModel.as_results_dict) and uses a t-column, which
+        is what OLS reports -- not the z-column a GLM would."""
+        coef_table = results.get("coefficient_table") or []
         if not coef_table:
             return None
         rows_html = ""
         for row in coef_table:
             p_val = row.get("p_value")
-            is_sig = isinstance(p_val, (int, float)) and p_val < 0.05
+            is_sig = _FormattingMixin._significant_at(p_val)
             coef_display = _FormattingMixin._format_metric(row.get("coefficient"))
             if is_sig:
                 coef_display = f"<strong>{coef_display}</strong>"
             p_style = "color:var(--success)" if is_sig else "color:var(--muted)"
             rows_html += (
                 f"<tr>"
-                f"<td>{row.get('parameter', '')}</td>"
+                f"<td>{_FormattingMixin._esc(row.get('parameter', ''))}</td>"
                 f"<td class='num-cell'>{coef_display}</td>"
                 f"<td class='num-cell'>{_FormattingMixin._format_metric(row.get('std_err'))}</td>"
-                f"<td class='num-cell'>{_FormattingMixin._format_metric(row.get('z_value'))}</td>"
+                f"<td class='num-cell'>{_FormattingMixin._format_metric(row.get('t_value'))}</td>"
                 f"<td class='num-cell' style='{p_style}'>{_FormattingMixin._format_p_value(p_val)}</td>"
                 f"<td class='num-cell'>{_FormattingMixin._format_metric(row.get('ci_lower'))}</td>"
                 f"<td class='num-cell'>{_FormattingMixin._format_metric(row.get('ci_upper'))}</td>"
@@ -95,21 +99,19 @@ class _AssociationMixin:
             )
         html = (
             "<div class='table-shell'>"
-            "<p style='font-size:0.78rem;color:var(--muted);margin:0 0 6px 0'>"
-            "Coefficients on the logit scale. Bold = p &lt; 0.05.</p>"
             "<table>"
             "<thead><tr>"
-            "<th>Parameter</th><th>Coefficient</th><th>SE</th><th>z</th>"
+            "<th>Parameter</th><th>Coefficient</th><th>SE</th><th>t</th>"
             "<th>p-value</th><th>95% CI Lower</th><th>95% CI Upper</th>"
             "</tr></thead>"
             f"<tbody>{rows_html}</tbody>"
             "</table></div>"
         )
         return {
-            "title": "Coefficients (logit scale)",
-            "subtitle": "Log-odds scale coefficients with standard errors and 95% confidence intervals.",
+            "title": "Coefficients",
+            "subtitle": "OLS coefficients with standard errors and 95% confidence intervals.",
             "html": html,
-            "div_id": "biomedstatx-beta-coef-table",
+            "div_id": "biomedstatx-linreg-coef-table",
         }
 
     @staticmethod

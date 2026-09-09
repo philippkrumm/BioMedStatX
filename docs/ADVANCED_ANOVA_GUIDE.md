@@ -14,13 +14,13 @@ Three factorial ANOVA designs are available in BioMedStatX: Two-Way ANOVA, Repea
 | **Repeated Measures ANOVA** | categorical (within) | — | required |
 | **Mixed ANOVA** | categorical (within) | categorical (between) | required |
 
-Each design has a fully implemented nonparametric fallback. The parametric or nonparametric path is chosen based on Shapiro–Wilk residual normality — after any transformation attempt, not before.
+Each design has a fully implemented nonparametric fallback. The parametric or nonparametric path is chosen based on Shapiro–Wilk residual normality (after any transformation attempt, not before).
 
 ---
 
 ## Mixed ANOVA (Between × Within)
 
-Use this design when participants belong to different groups *and* are measured repeatedly across conditions or timepoints. Both sources of variation — between subjects and within subjects — enter the model simultaneously.
+Use this design when participants belong to different groups *and* are measured repeatedly across conditions or timepoints. Both sources of variation (between subjects and within subjects) enter the model simultaneously.
 
 **Example:** Blood pressure measured at `Pre` and `Post` (within-subject factor: `Timepoint`) in patients randomised to `Drug` vs. `Placebo` (between-subject factor: `Group`). Each patient contributes two rows.
 
@@ -29,11 +29,11 @@ Use this design when participants belong to different groups *and* are measured 
 | Bucket | Assign |
 |---|---|
 | **Dependent Variable** | Numeric outcome (e.g. `Value`) |
-| **Factor 1** | The **within-subject** factor — the repeated condition (e.g. `Timepoint`: `Pre`, `Post`) |
-| **Factor 2** | The **between-subject** factor — the independent grouping (e.g. `Group`: `Drug`, `Placebo`) |
+| **Factor 1** | The **within-subject** factor: the repeated condition (e.g. `Timepoint`: `Pre`, `Post`) |
+| **Factor 2** | The **between-subject** factor: the independent grouping (e.g. `Group`: `Drug`, `Placebo`) |
 | **Subject ID** | Individual identifier (e.g. `PatientID`) |
 
-Factor 1 carries the repeated-measures structure. Factor 2 carries the group structure. Swapping them produces a valid design but with the between/within labels reversed in the output — check the report carefully.
+Factor 1 carries the repeated-measures structure. Factor 2 carries the group structure. Swapping them produces a valid design, but with the between/within labels reversed in the output. Check the report carefully.
 
 ### Data structure
 
@@ -53,7 +53,7 @@ Each subject appears once per level of Factor 1. Missing cells (a subject with n
 
 ## Repeated Measures ANOVA (Within only)
 
-All participants are in the same group. The factor of interest is the within-subject factor — time, dose, condition, trial.
+All participants are in the same group. The factor of interest is the within-subject factor: time, dose, condition, trial.
 
 **Example:** Twelve mice tested at `Week1`, `Week2`, and `Week3`. The question is whether performance changes over time, not whether groups differ.
 
@@ -64,7 +64,7 @@ All participants are in the same group. The factor of interest is the within-sub
 | **Dependent Variable** | Numeric outcome |
 | **Factor 1** | The repeated factor (e.g. `Timepoint`: `Week1`, `Week2`, `Week3`) |
 | **Subject ID** | Individual identifier |
-| **Factor 2** | **Leave empty** — assigning Factor 2 switches to Mixed ANOVA |
+| **Factor 2** | **Leave empty**: assigning Factor 2 switches to Mixed ANOVA |
 
 ### Data structure
 
@@ -84,7 +84,7 @@ S002      | Week3     | 91
 
 Two independent categorical factors. No subject appears more than once. Each row is a distinct individual.
 
-**Example:** Weight loss outcomes in a 3 × 2 design — three diets (`Diet`) crossed with two exercise levels (`Exercise`). One measurement per participant.
+**Example:** Weight loss outcomes in a 3 × 2 design: three diets (`Diet`) crossed with two exercise levels (`Exercise`). One measurement per participant.
 
 ### Smart Mapping configuration
 
@@ -93,7 +93,7 @@ Two independent categorical factors. No subject appears more than once. Each row
 | **Dependent Variable** | Numeric outcome |
 | **Factor 1** | First independent grouping factor (e.g. `Diet`) |
 | **Factor 2** | Second independent grouping factor (e.g. `Exercise`) |
-| **Subject ID** | **Leave empty** — assigning Subject ID switches to Mixed ANOVA |
+| **Subject ID** | **Leave empty**: assigning Subject ID switches to Mixed ANOVA |
 
 ### Data structure
 
@@ -112,13 +112,13 @@ S004      | DrugB     | Female | 141
 ```
 Same subjects measured more than once?
 │
-├── YES — Is there also an independent groups factor?
+├── YES: Is there also an independent groups factor?
 │       ├── YES  →  Mixed ANOVA       (F1 = within, F2 = between, Subject ID required)
 │       └── NO   →  RM-ANOVA          (F1 = within, Subject ID required)
 │
-└── NO  — Two independent categorical factors?
+└── NO: Two independent categorical factors?
         ├── YES  →  Two-Way ANOVA     (F1 + F2, no Subject ID)
-        └── NO   →  One-Way / t-Test  (Factor 1 only — see HowTo.md Section 10)
+        └── NO   →  One-Way / t-Test  (Factor 1 only, see HowTo.md Section 10)
 ```
 
 ---
@@ -127,11 +127,38 @@ Same subjects measured more than once?
 
 | Error | Consequence | Fix |
 |---|---|---|
-| Mixed ANOVA without Subject ID | Repeated measurements treated as independent — inflated Type I error | Assign the subject identifier |
+| Mixed ANOVA without Subject ID | Repeated measurements treated as independent; inflated Type I error | Assign the subject identifier |
 | RM-ANOVA with Factor 2 assigned | Switches to Mixed ANOVA (intended?) | Remove Factor 2 if a pure within design was planned |
 | Two-Way ANOVA with Subject ID | Switches to Mixed ANOVA | Remove Subject ID if all measurements are independent |
 | Within-subject factor assigned to Factor 2 instead of Factor 1 | Between/within labels reversed in output | Verify which factor is repeated; assign it to Factor 1 |
-| Imbalanced design (missing cells) | Subject excluded from analysis | Impute or verify data completeness before importing |
+| Imbalanced design (unequal cell sizes) | Type III sums of squares are used; power differs between cells | Verify data completeness before importing |
+| Factorial design with an **empty** cell | Analysis is blocked, see below | Model the design with a mixed model, or analyse the cells that are present |
+
+### Empty cells in a factorial design
+
+A cell of a two-factor layout that was never run -- no untreated arm at the late
+timepoint, no knockout arm on the drug -- leaves the interaction **unestimable**.
+The design has no observations from which to separate the interaction from the
+main effects, and the sums of squares behind it are not identified.
+
+Such a run is stopped at the data-quality gate rather than reported. The
+alternative is worse than no answer: an unestimable interaction can return a
+negative sum of squares, which produces a *negative* $F$ and a *negative*
+partial $\eta^2$ -- quantities that cannot occur, since $F$ is a ratio of
+non-negative mean squares and partial $\eta^2$ lies in $[0, 1]$ -- printed
+beside a $p$-value that reads like an ordinary null result.
+
+What to do instead:
+
+- **Fit a model that can express the layout.** A linear mixed model does not
+  require every combination to be present. The app already recommends this when
+  it detects the missing combination.
+- **Analyse the cells that are present.** A one-way comparison across the cells
+  that were actually run answers a smaller question, honestly.
+
+The block quotes the impossible quantities it saw, so the reason is visible
+rather than implied. The count of missing combinations comes from the design
+check that runs earlier and appears among the report's warnings.
 
 ---
 
@@ -139,13 +166,13 @@ Same subjects measured more than once?
 
 ### Shared by all three designs
 
-**Normality** — Shapiro–Wilk on model residuals. The $F$-statistic:
+**Normality**: Shapiro–Wilk on model residuals. The $F$-statistic:
 
 $$F(df_1, df_2) = \frac{MS_{\text{effect}}}{MS_{\text{error}}}$$
 
 is robust to mild normality violations when groups are balanced and $n$ is moderate ($\geq 10$ per cell). With small or unbalanced samples, violations matter more.
 
-**Variance homogeneity** — Levene's test. Required for between-subjects comparisons.
+**Variance homogeneity**: Levene's test. Required for between-subjects comparisons.
 
 ### Additional for RM-ANOVA and Mixed ANOVA: Sphericity
 
@@ -159,18 +186,18 @@ BioMedStatX applies corrections based on the Greenhouse–Geisser epsilon estima
 
 | Condition | Correction applied |
 |---|---|
-| $\hat{\varepsilon}_{GG} < 0.75$ | **Greenhouse–Geisser** — more conservative; adjusted $df' = \hat{\varepsilon}_{GG} \cdot df_{\text{nominal}}$ |
-| $\hat{\varepsilon}_{GG} \geq 0.75$ | **Huynh–Feldt** — less conservative, higher power; $\hat{\varepsilon}_{HF} \geq \hat{\varepsilon}_{GG}$ |
+| $\hat{\varepsilon}_{GG} < 0.75$ | **Greenhouse–Geisser**: more conservative; adjusted $df' = \hat{\varepsilon}_{GG} \cdot df_{\text{nominal}}$ |
+| $\hat{\varepsilon}_{GG} \geq 0.75$ | **Huynh–Feldt**: less conservative, higher power; $\hat{\varepsilon}_{HF} \geq \hat{\varepsilon}_{GG}$ |
 
 Both corrections reduce the effective degrees of freedom, which raises the critical $F$-value. The correction applied is stated in the HTML report.
 
-**Practical guidance:** Sphericity is most likely to be violated when the within-subject factor has many levels (e.g. five or more timepoints) or when subjects show markedly different trajectories. With only two levels, sphericity is trivially satisfied.
+**Practical guidance:** Sphericity is most likely to be violated when the within-subject factor has many levels (e.g. five or more timepoints) or when subjects show markedly different trajectories. With only two levels, sphericity is trivially satisfied. When sphericity cannot be formally tested (e.g. due to indeterminate or incomplete ANOVA table outputs), BioMedStatX conservatively assumes it is violated and defaults to applying the Greenhouse-Geisser correction.
 
 ---
 
 ## Nonparametric Fallbacks
 
-When normality fails — after any transformation — the application switches automatically:
+When normality fails (after any transformation), the application switches automatically:
 
 | Design | Nonparametric Test | Reference |
 |---|---|---|
@@ -180,7 +207,7 @@ When normality fails — after any transformation — the application switches a
 
 No configuration is required. All fallbacks produce post-hoc comparisons, effect sizes, and descriptive statistics in the same HTML report format as the parametric path.
 
-### Welch's ANOVA — unequal variances, normal residuals
+### Welch's ANOVA: unequal variances, normal residuals
 
 For One-Way ANOVA designs where normality holds but Levene's test flags unequal variances, the application runs **Welch's ANOVA** instead of the standard $F$-test. Welch's version adjusts the degrees of freedom using the Welch–Satterthwaite approximation:
 
@@ -196,7 +223,7 @@ This produces a valid test even when group variances differ substantially.
 
 A **main effect** of Factor 1 means the outcome differs across the levels of Factor 1, averaged over all levels of Factor 2. A main effect of Factor 2 is the converse.
 
-An **interaction** (Factor 1 × Factor 2) means the effect of one factor depends on the level of the other. When the interaction is significant, the main effects are qualified — they describe marginal trends, not the full story.
+An **interaction** (Factor 1 × Factor 2) means the effect of one factor depends on the level of the other. When the interaction is significant, the main effects are qualified: they describe marginal trends, not the full story.
 
 Always interpret a significant interaction before the main effects. The interaction plot in the HTML report is the most direct way to see what is happening.
 
@@ -210,22 +237,72 @@ Cohen's benchmarks: $\eta^2_p = 0.01$ small, $0.06$ medium, $0.14$ large.
 
 | Comparison type | Parametric test | Nonparametric test |
 |---|---|---|
-| Between-subjects (groups) | Tukey HSD or Dunnett | Dunn's test (Holm correction) |
-| Within-subjects (timepoints) | Holm-corrected paired $t$-tests | Wilcoxon signed-rank (Holm) |
+| Between-subjects (groups) | Tukey HSD or Dunnett (Control-only) | Dunn's test (Holm-Šidák correction) |
+| Within-subjects (timepoints) | Holm-Šidák paired $t$-tests or Dunnett-RM (Control-only) | Conover-Iman (Holm), Wilcoxon signed-rank as fallback |
 
 Post-hoc tests are only run when the corresponding main effect or interaction is significant.
+
+**Two-Way ANOVA.** The post-hoc that follows a significant interaction is a set
+of pairwise $t$-tests with a Holm–Bonferroni adjustment, applied within each
+family separately: the levels of each factor, and the simple effects of one
+factor at each level of the other. This is **not** Tukey HSD — Tukey uses the
+studentized range distribution and gives different $p$-values — and the report
+names it accordingly.
+
+A family containing a single comparison, which is what a two-level factor gives,
+carries no adjustment: there is no multiplicity to correct. Each row of the
+table says whether it was adjusted, so the two cases are distinguishable rather
+than assumed from the heading.
+
+Simple-effect rows name the level they were measured at, as
+`B0 (FacA=A0)` against `B1 (FacA=A0)`. Without it the two simple effects of the
+same factor print identical labels with different $p$-values.
+
+### Precision of reported $p$-values
+
+Two of the reported $p$-values are estimated by simulation rather than from a
+closed-form formula, so each carries a resolution limit. Both are reproducible —
+the random seeds are pinned, so the same data always yields the same numbers —
+but reproducible is not the same as precise.
+
+**Multivariate-$t$ adjusted $p$ (Dunnett / EMM post-hoc).** The joint adjustment
+integrates a multivariate-$t$ distribution by Monte Carlo. For moderate effects
+the result is stable to several digits, but far out in the tail the estimate is
+good to roughly **one significant figure**: at $t = 8$ the adjusted $p$ ranges
+from $4.97\times10^{-9}$ to $8.26\times10^{-8}$ depending only on the random
+draw — a span that crosses a power of ten. Read any adjusted $p$ below about
+$10^{-6}$ as "$p < 10^{-6}$" rather than as the printed digits. Increasing the
+integration budget does not fix this at a usable speed. Note this never changes a
+significance decision: a $p$ anywhere in that range is highly significant at any
+conventional $\alpha$.
+
+The report no longer leaves this to the reader: below $10^{-6}$ it prints the
+bound $p < 1.00\times10^{-6}$ instead of the unresolvable digits. Above that
+threshold nothing changes, and the significance stars are unaffected.
+
+**Permutation $p$ (Freedman–Lane).** A permutation test cannot resolve a $p$
+smaller than $1/(N_{\text{perm}} + 1)$, which is $\approx 2.0\times10^{-4}$ at
+the default 5000 permutations. The reported value uses the add-one estimator, so
+$p = 0$ can never occur; a reported $2.0\times10^{-4}$ means "no permutation
+reached the observed $F$", i.e. $p \le 2\times10^{-4}$, not exactly that value.
+
+The report states this directly: when the estimate lands on the floor it is
+shown as $p < 2.00\times10^{-4}$. The bound is derived from the permutation
+count actually used, so running fewer or more permutations moves it accordingly
+rather than being compared against a fixed threshold.
+Raise the permutation count if a finer resolution is needed.
 
 ---
 
 ## Visualisations in the HTML Report
 
-**Two-Way ANOVA — interaction plot:**
+**Two-Way ANOVA (interaction plot):**
 x-axis = Factor 1 levels; one line per Factor 2 level; points show cell means ± SE. When the interaction is significant ($p < 0.05$), the interaction plot is the primary figure. When not significant, it appears as a secondary figure below the main bar chart.
 
-**RM-ANOVA — profile plot:**
-x-axis = within-factor levels; the group mean ± SE as a bold line; individual subject trajectories as thin grey lines in the background. Trajectories are omitted if the subject-level data is not available.
+**RM-ANOVA (profile plot):**
+x-axis = within-factor levels; the group mean ± SE as a bold line; individual subject trajectories as thin grey lines in the background. Trajectories are omitted when subject-level data is unavailable.
 
-**Mixed ANOVA — mixed profile plot + interaction plot:**
+**Mixed ANOVA (mixed profile plot and interaction plot):**
 One line per between-group over within-factor levels. When the interaction is significant, both the interaction plot and the profile plot are shown. When it is not, the profile plot is primary.
 
 ---
@@ -236,7 +313,7 @@ One line per between-group over within-factor levels. When the interaction is si
 2. Verify balance. In mixed designs, every subject must have one value per within-factor level. Missing cells exclude the whole subject.
 3. Report $\eta^2_p$ alongside $p$-values. A $p$-value without an effect size cannot tell you whether the result is scientifically meaningful.
 4. If the interaction is significant, do not interpret the main effects in isolation. Plot the cell means and look at the interaction plot first.
-5. Document which post-hoc test was used and why. Tukey and Dunnett answer different questions.
+5. Document which post-hoc test was used and why. Tukey answers all-pairwise questions, whereas Dunnett specifically compares all treatments against a single control group.
 
 ---
 

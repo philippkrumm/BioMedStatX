@@ -1,8 +1,10 @@
 import logging
+from core.level_order import natural_order
 from itertools import combinations
 from typing import Any, Mapping
 
 from ..models import StatisticalResult
+from ..validators import AnalysisCancelledError
 
 
 logger = logging.getLogger(__name__)
@@ -58,14 +60,14 @@ class AdvancedPostHocEngine:
             if test == "two_way_anova":
                 group_names = []
                 factors = between
-                for factor_a_val in sorted(df_transformed[factors[0]].unique()):
-                    for factor_b_val in sorted(df_transformed[factors[1]].unique()):
+                for factor_a_val in natural_order(df_transformed[factors[0]].unique()):
+                    for factor_b_val in natural_order(df_transformed[factors[1]].unique()):
                         group_names.append(f"{factors[0]}={factor_a_val}, {factors[1]}={factor_b_val}")
             elif test == "mixed_anova":
                 group_names = []
                 b_factor, w_factor = between[0], within[0]
-                for b_val in sorted(df_transformed[b_factor].unique()):
-                    for w_val in sorted(df_transformed[w_factor].unique()):
+                for b_val in natural_order(df_transformed[b_factor].unique()):
+                    for w_val in natural_order(df_transformed[w_factor].unique()):
                         group_names.append(f"{b_factor}={b_val}, {w_factor}={w_val}")
             elif test == "repeated_measures_anova":
                 w_factor = within[0]
@@ -75,41 +77,63 @@ class AdvancedPostHocEngine:
 
             all_comparisons = list(combinations(group_names, 2))
 
+            posthoc_method_callback = payload.get("posthoc_method_callback")
+            control_group_callback = payload.get("control_group_callback")
+            custom_pairs_callback = payload.get("custom_pairs_callback")
+
             posthoc_method = "paired_custom"
             control_group = None
             try:
-                default_method = "paired_custom" if test == "two_way_anova" else "tukey"
-                posthoc_method = UIDialogManager.select_posthoc_test_dialog(
-                    parent=None, progress_text=f"({test})", column_name=dv, default_method=default_method
-                )
-                if posthoc_method is None:
-                    posthoc_method = "paired_custom"
-                if posthoc_method == "dunnett":
-                    control_group = UIDialogManager.select_control_group_dialog(parent=None, groups=group_names)
+                # RM/Mixed default to paired_custom (Holm-Šidák over type-correct
+                # per-pair tests). The prior "tukey" default was a hand-rolled
+                # studentized-range that fed the paired-t df (n-1) and a per-pair
+                # SD into scipy's studentized_range — too-conservative p-values,
+                # and incoherent with the Greenhouse-Geisser-corrected omnibus
+                # (studentized range assumes the sphericity the omnibus corrects
+                # for). Removed pre-2.0 (audit SC2). Two-Way keeps its own,
+                # correct statsmodels Tukey via TwoWayPostHocAnalyzer.
+                default_method = "paired_custom"
+                if posthoc_method_callback:
+                    posthoc_method = posthoc_method_callback(test, dv, default_method)
+                    if posthoc_method is None:
+                        # User cancelled the post-hoc dialog -> abort the whole
+                        # analysis (BaseException, so the except-Exception guards
+                        # in this engine do not swallow it into a defaulted method).
+                        raise AnalysisCancelledError(
+                            "Post-hoc selection cancelled — analysis aborted."
+                        )
+                else:
+                    posthoc_method = default_method
+                
+                if posthoc_method in ("dunnett", "emm_mvt"):
+                    if control_group_callback:
+                        control_group = control_group_callback(group_names)
+                        if control_group is None:
+                            # Control-group selection cancelled: fall back to the
+                            # all-pairs default. Leaving method="dunnett"/"emm_mvt"
+                            # with control_group None selects all pairs but keeps a
+                            # control-referenced label -- an incoherent state. The
+                            # old dialog returned groups[0] here, silently running
+                            # against an arbitrary control the user never chose.
+                            posthoc_method = default_method
+                    elif group_names:
+                        control_group = group_names[0]
             except Exception as exc:
-                logger.warning("Could not show post-hoc method dialog: %s", exc)
+                logger.warning("Could not run posthoc_method_callback: %s", exc)
                 posthoc_method = "paired_custom"
 
-            if posthoc_method == "dunnett" and control_group:
+            if posthoc_method in ("dunnett", "emm_mvt") and control_group:
                 selected_comparisons = [(control_group, group) for group in group_names if group != control_group]
             elif posthoc_method == "tukey":
                 selected_comparisons = all_comparisons
             elif posthoc_method == "paired_custom":
                 try:
-                    from ui.dialogs.comparison_selection_dialog import ComparisonSelectionDialog
-                    import sys
-                    from PyQt5.QtWidgets import QApplication
-
-                    app = QApplication.instance()
-                    if app is None:
-                        app = QApplication(sys.argv)
-                    dialog = ComparisonSelectionDialog(all_comparisons, checked_by_default=False)
-                    if dialog.exec_() == dialog.Accepted:
-                        selected_comparisons = dialog.get_selected_comparisons()
+                    if custom_pairs_callback:
+                        selected_comparisons = custom_pairs_callback(all_comparisons, False)
                     else:
-                        selected_comparisons = []
+                        selected_comparisons = all_comparisons
                 except Exception as exc:
-                    logger.warning("Could not show comparison selection dialog: %s", exc)
+                    logger.warning("Could not run custom_pairs_callback: %s", exc)
                     selected_comparisons = all_comparisons
             else:
                 selected_comparisons = all_comparisons
@@ -141,10 +165,18 @@ class AdvancedPostHocEngine:
                 posthoc = None
 
             if posthoc and "pairwise_comparisons" in posthoc:
-                return {
+                _out = {
                     "posthoc_test": posthoc.get("posthoc_test"),
                     "pairwise_comparisons": posthoc.get("pairwise_comparisons", []),
                 }
+                # The Mixed analyzer reports which contrast family it chose and
+                # whether the omnibus gate could run at all. Narrowing the dict to
+                # two keys here dropped both before anything downstream could see
+                # them.
+                for _diag in ("posthoc_mode", "gating_applied", "gating_fallback_reason"):
+                    if _diag in posthoc:
+                        _out[_diag] = posthoc[_diag]
+                return _out
 
             return {
                 "posthoc_test": "No post-hoc tests performed",
@@ -163,17 +195,17 @@ class AdvancedPostHocEngine:
         within = payload.get("within")
         alpha = float(payload.get("alpha", 0.05))
 
-        print(f"DEBUG POSTHOC: res keys={list(res.keys())}, model_class={res.get('model_class')}, existing_comps={len(res.get('pairwise_comparisons', []))}")
-        print(f"DEBUG POSTHOC: test={test}, between={between}, df_original={'set' if df_original is not None else 'None'}")
+        logger.debug(f"DEBUG POSTHOC: res keys={list(res.keys())}, model_class={res.get('model_class')}, existing_comps={len(res.get('pairwise_comparisons', []))}")
+        logger.debug(f"DEBUG POSTHOC: test={test}, between={between}, df_original={'set' if df_original is not None else 'None'}")
 
         if res.get("error") is not None:
-            print(f"DEBUG POSTHOC: early exit - error={res.get('error')}")
+            logger.debug(f"DEBUG POSTHOC: early exit - error={res.get('error')}")
             return {}
 
         p_value = res.get("p_value")
-        print(f"DEBUG POSTHOC: p_value={p_value}, type={type(p_value)}")
+        logger.debug(f"DEBUG POSTHOC: p_value={p_value}, type={type(p_value)}")
         if not isinstance(p_value, (float, int)):
-            print(f"DEBUG POSTHOC: early exit - p_value not float/int")
+            logger.debug(f"DEBUG POSTHOC: early exit - p_value not float/int")
             return {}
 
         if p_value >= alpha:
@@ -187,33 +219,30 @@ class AdvancedPostHocEngine:
             from analysis.statisticaltester import StatisticalTester
 
             fallback_posthoc = None
-            marginaleffects_error = None
-            if test == "repeated_measures_anova" and within:
-                fallback_posthoc = StatisticalTester._run_rm_marginaleffects_posthoc(res, within[0], alpha=alpha)
-            elif (
+            posthoc_error = None
+            if (
                 test == "mixed_anova" and between and within
                 and df_original is not None
                 and res.get("model_class") == "Brunner-Langer ATS"
             ):
                 fallback_posthoc = self._brunner_langer_dialog_posthoc(
-                    res, df_original, dv, between, within, subject, alpha
+                    res, df_original, dv, between, within, subject, alpha,
+                    payload.get("custom_pairs_callback")
                 )
-            elif test == "mixed_anova" and between and within:
-                fallback_posthoc = StatisticalTester._run_mixed_marginaleffects_posthoc(res, between, within, alpha=alpha)
             elif (
                 test == "two_way_anova" and between and len(between) == 2
                 and df_original is not None
                 and res.get("model_class") == "Freedman-Lane Permutation"
             ):
-                fallback_posthoc = self._freedman_lane_dialog_posthoc(res, df_original, dv, between, alpha)
+                fallback_posthoc = self._freedman_lane_dialog_posthoc(res, df_original, dv, between, alpha, payload.get("custom_pairs_callback"))
 
             updates: dict[str, Any] = {}
             warnings_list = list(res.get("warnings", []))
 
             if fallback_posthoc and fallback_posthoc.get("error"):
-                marginaleffects_error = fallback_posthoc["error"]
-                if marginaleffects_error not in warnings_list:
-                    warnings_list.append(marginaleffects_error)
+                posthoc_error = fallback_posthoc["error"]
+                if posthoc_error not in warnings_list:
+                    warnings_list.append(posthoc_error)
 
             _nonparam_classes = {"Friedman", "Freedman-Lane Permutation", "Brunner-Langer ATS"}
             if res.get("model_class") not in _nonparam_classes and (
@@ -228,10 +257,10 @@ class AdvancedPostHocEngine:
                     within=within,
                     alpha=alpha,
                 )
-                if marginaleffects_error:
+                if posthoc_error:
                     fallback_note = (
                         " Post-hoc comparisons used a robust non-parametric fallback "
-                        "because the marginaleffects step failed. See warnings for details."
+                        "because the primary post-hoc step failed. See warnings for details."
                     )
                     analysis_note = str(res.get("analysis_note", ""))
                     if fallback_note.strip() not in analysis_note:
@@ -263,11 +292,11 @@ class AdvancedPostHocEngine:
         from itertools import combinations as _comb
 
         factor_a, factor_b = between[0], between[1]
-        a_levels = sorted(df[factor_a].dropna().unique())
-        b_levels = sorted(df[factor_b].dropna().unique())
+        a_levels = natural_order(df[factor_a].dropna().unique())
+        b_levels = natural_order(df[factor_b].dropna().unique())
 
         sig_a = sig_b = sig_ab = False
-        print(f"DEBUG SPECS: factor_a={factor_a}, factor_b={factor_b}, factors={res.get('factors', [])}")
+        logger.debug(f"DEBUG SPECS: factor_a={factor_a}, factor_b={factor_b}, factors={res.get('factors', [])}")
         for f in res.get("factors", []):
             if f.get("p_value") is None:
                 continue
@@ -278,7 +307,7 @@ class AdvancedPostHocEngine:
         for it in res.get("interactions", []):
             if it.get("p_value") is not None and it["p_value"] < alpha:
                 sig_ab = True
-        print(f"DEBUG SPECS: sig_a={sig_a}, sig_b={sig_b}, sig_ab={sig_ab}")
+        logger.debug(f"DEBUG SPECS: sig_a={sig_a}, sig_b={sig_b}, sig_ab={sig_ab}")
 
         specs = []
         if sig_a and len(a_levels) >= 2:
@@ -298,27 +327,19 @@ class AdvancedPostHocEngine:
         return specs
 
     @staticmethod
-    def _select_comparisons_dialog(all_pairs):
-        """Show the ComparisonSelectionDialog and return the chosen pairs.
+    def _select_comparisons_dialog(all_pairs, custom_pairs_callback=None):
+        """Invoke custom_pairs_callback or return all_pairs if not provided.
 
         Headless / cancelled / error -> return ``all_pairs`` unchanged, preserving
         the non-interactive all-candidates behaviour.
         """
         try:
-            import sys
-            from PyQt5.QtWidgets import QApplication
-            from ui.dialogs.comparison_selection_dialog import ComparisonSelectionDialog
-
-            app = QApplication.instance()
-            if app is None:
-                app = QApplication(sys.argv)
-            dialog = ComparisonSelectionDialog(all_pairs, checked_by_default=True)
-            if dialog.exec_() == dialog.Accepted:
-                chosen = dialog.get_selected_comparisons()
+            if custom_pairs_callback:
+                chosen = custom_pairs_callback(all_pairs, True)
                 return chosen if chosen else all_pairs
             return all_pairs
         except Exception as exc:
-            logger.warning("Could not show Freedman-Lane comparison dialog: %s", exc)
+            logger.warning("Could not run custom_pairs_callback: %s", exc)
             return all_pairs
 
     @staticmethod
@@ -363,7 +384,7 @@ class AdvancedPostHocEngine:
             "posthoc_test": "Pairwise Mann-Whitney U (marginal / cell simple effects, Holm-corrected)",
         }
 
-    def _freedman_lane_dialog_posthoc(self, res, df_original, dv, between, alpha):
+    def _freedman_lane_dialog_posthoc(self, res, df_original, dv, between, alpha, custom_pairs_callback=None):
         """Dialog-driven pairwise MWU post-hoc for the Freedman-Lane fallback.
 
         Builds the significance-gated candidate set, lets the user pick a subset
@@ -373,7 +394,7 @@ class AdvancedPostHocEngine:
         if not specs:
             return {"pairwise_comparisons": [], "posthoc_test": "No applicable post-hoc comparisons"}
         all_pairs = [(s[0], s[1]) for s in specs]
-        selected_pairs = self._select_comparisons_dialog(all_pairs)
+        selected_pairs = self._select_comparisons_dialog(all_pairs, custom_pairs_callback)
         return self._freedman_lane_compute(specs, selected_pairs, df_original, dv, between, alpha)
 
     @staticmethod
@@ -391,8 +412,8 @@ class AdvancedPostHocEngine:
         from itertools import combinations as _comb
 
         bf, wf = between[0], within[0]
-        b_levels = sorted(df[bf].dropna().unique())
-        w_levels = sorted(df[wf].dropna().unique())
+        b_levels = natural_order(df[bf].dropna().unique())
+        w_levels = natural_order(df[wf].dropna().unique())
 
         sig_b = sig_w = sig_bw = False
         for f in res.get("factors", []):
@@ -445,7 +466,7 @@ class AdvancedPostHocEngine:
         # Subject-aligned wide matrix for paired within comparisons.
         wide = None
         if subject is not None and any(s[2] == "within" for s in specs):
-            w_levels = sorted(df[wf].dropna().unique())
+            w_levels = natural_order(df[wf].dropna().unique())
             wide = (
                 df.pivot_table(index=subject, columns=wf, values=dv, aggfunc="mean")
                 .reindex(columns=w_levels)
@@ -488,7 +509,7 @@ class AdvancedPostHocEngine:
             "posthoc_test": "Pairwise Wilcoxon / Mann-Whitney U (within / between simple effects, Holm-corrected)",
         }
 
-    def _brunner_langer_dialog_posthoc(self, res, df_original, dv, between, within, subject, alpha):
+    def _brunner_langer_dialog_posthoc(self, res, df_original, dv, between, within, subject, alpha, custom_pairs_callback=None):
         """Dialog-driven pairwise post-hoc for the Brunner-Langer ATS fallback.
 
         Builds the significance-gated candidate set, lets the user pick a subset
@@ -499,7 +520,7 @@ class AdvancedPostHocEngine:
         if not specs:
             return {"pairwise_comparisons": [], "posthoc_test": "No applicable post-hoc comparisons"}
         all_pairs = [(s[0], s[1]) for s in specs]
-        selected_pairs = self._select_comparisons_dialog(all_pairs)
+        selected_pairs = self._select_comparisons_dialog(all_pairs, custom_pairs_callback)
         return self._brunner_langer_compute(
             specs, selected_pairs, df_original, dv, between, within, subject, alpha
         )

@@ -12,9 +12,11 @@ if TYPE_CHECKING:
 
 from statistical_testing.decision_logic import select_comparison_test, strategy_to_recommendation
 from statistical_testing.validators import (
+    AnalysisCancelledError,
     GroupValidationError,
     ValidationError,
     bounded_boxcox_lambda,
+    validate_arcsin_domain,
     validate_levene_inputs,
     validate_residuals_for_shapiro,
 )
@@ -23,13 +25,7 @@ from analysis.stats_functions import UIDialogManager
 logger = logging.getLogger(__name__)
 
 
-def _get_ui_dialog_manager():
-    """Resolve dialog manager through statisticaltester to honor test-time monkeypatches."""
-    try:
-        from analysis.statisticaltester import UIDialogManager as patched_dialog_manager
-        return patched_dialog_manager
-    except Exception:
-        return UIDialogManager
+from statistical_testing.dialog_access import get_ui_dialog_manager as _get_ui_dialog_manager  # shared: see statistical_testing/dialog_access.py
 
 
 class AssumptionCheckEngine:
@@ -312,10 +308,9 @@ class AssumptionCheckEngine:
                           f"Brown-Forsythe test yielded {_vp_str} \u2014 {_var_verdict}.",
                           detail=f"F={stat:.4f}, {_vp_str}" if isinstance(stat, (float, int)) else "")
 
-        need_transform = not (
-            test_info["pre_transformation"]["residuals_normality"]["is_normal"]
-            and test_info["pre_transformation"]["variance"]["equal_variance"]
-        )
+        # Welch-ANOVA (and RM corrections) handles variance heteroscedasticity.
+        # Transformation is strictly for correcting non-normality.
+        need_transform = not test_info["pre_transformation"]["residuals_normality"]["is_normal"]
 
         # Transformation if needed
         if need_transform:
@@ -323,16 +318,81 @@ class AssumptionCheckEngine:
                 test_info["transformation"] = "No further"
                 return transformed_samples, "non_parametric", test_info
 
-            transformation_type = None
             try:
                 transformation_type = ui_dialog_manager.select_transformation_dialog(
                     parent=None, progress_text=progress_text, column_name=column_name
                 )
             except Exception:
-                transformation_type = "log10"
-            if not transformation_type:
-                transformation_type = "log10"
-            test_info["transformation"] = transformation_type
+                # Dialog could not be shown (e.g. headless, or a resource failure
+                # in the shipped app): an infrastructure failure is not a user
+                # cancel, so do not abort. Fall back to the explicit "no transform"
+                # path (non-parametric) -- but LOG it, so a real production failure
+                # is not completely invisible.
+                logger.warning(
+                    "Transformation dialog could not be shown; continuing without a "
+                    "transformation (non-parametric test).", exc_info=True,
+                )
+                transformation_type = "skip"
+
+            if transformation_type is None:
+                # User CANCELLED the transformation dialog -> abort the whole
+                # analysis, consistent with the post-hoc dialog. "No transform" is
+                # a distinct explicit option ("skip"), so Cancel is unambiguous.
+                raise AnalysisCancelledError(
+                    "Transformation selection cancelled — analysis aborted."
+                )
+
+            if transformation_type in ("skip", "none"):
+                # Explicit "continue without transformation": keep the raw data,
+                # which is non-normal (that is why this dialog was shown), so it
+                # routes to the non-parametric test. No silent transform, no false
+                # "Transformation: log10" label.
+                transformation_type = None
+                test_info["transformation"] = None
+                add_note(
+                    "No transformation applied (user chose to continue without one); "
+                    "the untransformed data is used (non-parametric test if residuals "
+                    "remain non-normal)."
+                )
+            else:
+                test_info["transformation"] = transformation_type
+
+            # For arcsin_sqrt, ask the user to declare the data domain
+            # (proportion 0-1 vs percent 0-100) so out-of-range data is
+            # hard-rejected below.
+            if transformation_type == "arcsin_sqrt":
+                try:
+                    _declared = ui_dialog_manager.select_arcsin_domain_type(parent=None)
+                except Exception:
+                    # Infra failure (not a user cancel): drop the arcsin transform
+                    # and continue non-parametric, logged so it is not invisible.
+                    logger.warning(
+                        "Arcsin domain dialog could not be shown; dropping the arcsin "
+                        "transform and continuing without one (non-parametric test).",
+                        exc_info=True,
+                    )
+                    transformation_type = None
+                    test_info["transformation"] = None
+                    add_note(
+                        "Arcsin domain dialog unavailable; no transformation was applied."
+                    )
+                else:
+                    # select_arcsin_domain_type returns "proportion"/"percent" for a
+                    # valid choice, None on cancel (or OK with no selection). Test
+                    # `is None` explicitly -- matching the transformation block -- so
+                    # a future non-empty-but-falsy return could never be misread as a
+                    # cancel on this now thrice-hardened path.
+                    if _declared is None:
+                        # User CANCELLED the domain declaration -> abort the whole
+                        # analysis, consistent with the transformation and post-hoc
+                        # dialogs (this dialog was the reference case Bug 1 copied;
+                        # aligning it keeps Cancel == abort everywhere). To run
+                        # non-parametric without a transform, pick "Continue without
+                        # transformation" in the main dialog instead.
+                        raise AnalysisCancelledError(
+                            "Arcsin domain declaration cancelled — analysis aborted."
+                        )
+                    test_info["arcsin_declared_type"] = _declared
 
             # Calculate a uniform global shift across the entire raw dependent variable column vector in df_raw
             global_min = df_raw["Value"].min() if (not df_raw.empty and "Value" in df_raw.columns) else 0
@@ -381,11 +441,29 @@ class AssumptionCheckEngine:
                     add_note("Box-Cox: insufficient valid data globally; falling back to log10.")
                     transformation_type = "log10"
 
+            # arcsin_sqrt rescales against the GLOBAL data range, not per group.
+            # A per-group min-max maps every group onto [0,1] independently and
+            # erases the between-group location differences the test is about
+            # (Wave-4 BLOCKER 1: on within-group-uniform data a raw one-way
+            # p~1e-120 was reported as a non-significant Welch result). The
+            # advanced TransformationEngine already rescales globally; match it.
+            _arcsin_global_min = _arcsin_global_max = None
+            if transformation_type == "arcsin_sqrt":
+                _arcsin_all = [v for g in valid_groups for v in samples[g]]
+                _arcsin_declared = test_info.get("arcsin_declared_type")
+                if _arcsin_declared:
+                    # Hard-reject data outside the declared domain: raises, no
+                    # transform, no silent fallback. Same central validator the
+                    # advanced TransformationEngine uses.
+                    validate_arcsin_domain(_arcsin_all, _arcsin_declared)
+                if _arcsin_all:
+                    _arcsin_global_min = min(_arcsin_all)
+                    _arcsin_global_max = max(_arcsin_all)
+
             # Apply transformation
             for group in valid_groups:
                 values = samples[group]
-                min_val = min(values)
-                
+
                 if transformation_type == "log10":
                     transformed_samples[group] = [np.log10(v + global_shift) for v in values]
                     if global_shift > 0:
@@ -406,22 +484,25 @@ class AssumptionCheckEngine:
                             transformed.append(float(boxcox(fv + global_shift, _boxcox_lambda)))
                     transformed_samples[group] = transformed
                 elif transformation_type == "arcsin_sqrt":
-                    max_val = max(values)
-                    # Scale to 0-1 if needed
-                    if min_val < 0 or max_val > 1:
+                    g_min, g_max = _arcsin_global_min, _arcsin_global_max
+                    # Scale to 0-1 against the GLOBAL range if any data is outside
+                    # [0,1]; a per-group range would collapse each group onto [0,1].
+                    if g_min is not None and (g_min < 0 or g_max > 1):
                         if trace and group == valid_groups[0]:
-                            trace.add(2, "Transformation Validation", 
-                                      "Data contained values outside [0, 1]. Data was min-max scaled to [0, 1] before arcsin-sqrt transformation.")
-                        # CRITICAL-4: guard against zero variance (min == max)
-                        if max_val == min_val:
-                            variance_warning = GroupValidationError(
-                                f"Group '{group}': arcsin-sqrt transformation received zero variance data; using 0.5 fallback."
-                            )
-                            add_note(str(variance_warning))
-                            logger.warning(str(variance_warning))
+                            trace.add(2, "Transformation Validation",
+                                      "Data contained values outside [0, 1]. Data was min-max scaled to [0, 1] "
+                                      "using the global range across all groups before arcsin-sqrt transformation.")
+                        # CRITICAL-4: guard against zero variance across ALL data
+                        if g_max == g_min:
+                            if group == valid_groups[0]:
+                                variance_warning = GroupValidationError(
+                                    "arcsin-sqrt transformation received zero variance data (global range); using 0.5 fallback."
+                                )
+                                add_note(str(variance_warning))
+                                logger.warning(str(variance_warning))
                             scaled = [0.5] * len(values)
                         else:
-                            scaled = [(v - min_val) / (max_val - min_val) for v in values]
+                            scaled = [(v - g_min) / (g_max - g_min) for v in values]
                     else:
                         # Values already in [0,1] — still guard against zero variance
                         if len(set(values)) == 1:
@@ -583,11 +664,19 @@ class AssumptionCheckEngine:
             decision_strategy = select_comparison_test(
                 is_normal=post_norm,
                 is_homoscedastic=post_var,
-                is_paired=False,
+                # is_paired is already in scope (model_type == "paired"). Hardcoding
+                # False here logged welch_ttest / mann_whitney_u for a paired design,
+                # contradicting both the executed test and the "Paired t-test" leaf
+                # the report draws from the same metadata.
+                is_paired=is_paired,
                 group_count=len(valid_groups),
             )
             test_recommendation = strategy_to_recommendation(decision_strategy)
-            if decision_strategy == "welch_ttest":
+            if decision_strategy == "paired_ttest":
+                test_info["note"] = "Within-pair differences are normal - a paired t-test will be used."
+            elif decision_strategy == "wilcoxon":
+                test_info["note"] = "Within-pair differences are non-normal - a Wilcoxon signed-rank test will be used."
+            elif decision_strategy == "welch_ttest":
                 if post_var:
                     test_info["note"] = "Residuals are normal and variances are equal - Welch's t-test will be used (robust default)."
                 else:

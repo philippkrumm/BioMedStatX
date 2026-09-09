@@ -8,6 +8,7 @@ call sites unchanged via the MRO.
 """
 
 import numpy as np
+from core.level_order import natural_order, order_is_defined
 from scipy import stats
 
 from export.report_charts import _ChartsMixin
@@ -34,68 +35,18 @@ class _SummariesMixin:
         rows = []
         model_type = results.get("model_type", "")
 
-        # --- Beta Regression: residual normality, S-V transformation, EPV ---
-        if model_type == "BetaRegression":
-            residuals = _FormattingMixin._coerce_numeric_sequence(results.get("residuals"))
-            if residuals and len(residuals) >= 3:
-                try:
-                    from scipy import stats as _stats
-                    sw_stat, sw_p = _stats.shapiro(residuals)
-                    sw_normal = sw_p >= 0.05
-                    rows.append({
-                        "name": "Residual normality (Shapiro-Wilk)",
-                        "statistic": _FormattingMixin._format_metric(sw_stat),
-                        "p_value": _FormattingMixin._format_p_value(sw_p),
-                        "p_value_style": _FormattingMixin._p_heat_style(sw_p),
-                        "status_label": _FormattingMixin._bool_label(sw_normal),
-                        "status_class": _FormattingMixin._bool_class(sw_normal),
-                    })
-                except Exception:
-                    rows.append({
-                        "name": "Residual normality (Shapiro-Wilk)",
-                        "statistic": "—",
-                        "p_value": "—",
-                        "p_value_style": "",
-                        "status_label": "Assessed visually via Q-Q plot",
-                        "status_class": "is-neutral",
-                    })
-            else:
-                rows.append({
-                    "name": "Residual normality (Shapiro-Wilk)",
-                    "statistic": "—",
-                    "p_value": "—",
-                    "p_value_style": "",
-                    "status_label": "Assessed visually via Q-Q plot",
-                    "status_class": "is-neutral",
-                })
+        # C6-1: Model-agnostic converged row
+        converged = results.get("converged")
+        if converged is not None:
+            rows.append({
+                "name": "Model Convergence",
+                "statistic": "—",
+                "p_value": "—",
+                "p_value_style": "",
+                "status_label": "Model converged successfully" if converged else "Did NOT converge — results may be unreliable",
+                "status_class": "is-significant" if converged else "is-error",
+            })
 
-            if results.get("sv_transformed"):
-                rows.append({
-                    "name": "Smithson-Verkuilen transformation",
-                    "statistic": "Applied",
-                    "p_value": "—",
-                    "p_value_style": "",
-                    "status_label": "Boundary values present — squeezed from [0,1] to strictly (0,1)",
-                    "status_class": "is-neutral",
-                })
-
-            epv = results.get("epv")
-            if epv is not None:
-                epv_f = float(epv)
-                if epv_f < 10:
-                    epv_label = f"EPV = {_FormattingMixin._format_metric(epv)} — Small sample relative to predictors — bias-corrected estimation applied"
-                    epv_class = "is-danger"
-                else:
-                    epv_label = f"EPV = {_FormattingMixin._format_metric(epv)} — Adequate sample size"
-                    epv_class = "is-significant"
-                rows.append({
-                    "name": "Events per variable (EPV)",
-                    "statistic": _FormattingMixin._format_metric(epv),
-                    "p_value": "—",
-                    "p_value_style": "",
-                    "status_label": epv_label,
-                    "status_class": epv_class,
-                })
 
         # --- CorrelationMatrix: method justification ---
         if model_type == "CorrelationMatrix":
@@ -103,7 +54,7 @@ class _SummariesMixin:
             method_map = {
                 "pearson": "Pearson",
                 "spearman": "Spearman",
-                "auto": "Auto (Pearson or Spearman selected per pair based on Shapiro-Wilk normality test)",
+                "auto": "Auto (Pearson or Spearman selected per pair by skewness/kurtosis tiers)",
             }
             method_label = method_map.get(method, method or "—")
             if method == "pearson":
@@ -113,7 +64,8 @@ class _SummariesMixin:
                 status_label = "Spearman is distribution-free — no normality required"
                 status_class = "is-significant"
             else:
-                status_label = "Method auto-selected per pair — verify individual pair choices"
+                status_label = ("Method chosen per pair by skewness/kurtosis; see the "
+                                "per-pair method matrix (Shapiro-Wilk is informational, not decisive)")
                 status_class = "is-neutral"
             rows.append({
                 "name": f"Correlation method: {method_label}",
@@ -144,7 +96,24 @@ class _SummariesMixin:
                     "status_class": "is-neutral",
                 })
 
-        # --- Correlation: normality_check (Shapiro-Wilk per variable for method selection) ---
+        # --- Correlation: method-selection basis (honest about what decides) ---
+        if model_type == "Correlation":
+            corr_method = str(results.get("method") or "").lower()
+            if corr_method in ("pearson", "spearman"):
+                rows.append({
+                    "name": f"Correlation method: {corr_method.capitalize()}",
+                    "statistic": "—",
+                    "p_value": "—",
+                    "p_value_style": "",
+                    "status_label": ("Selected by skewness/kurtosis tiers "
+                                     "(Shapiro-Wilk below is informational, not decisive)"),
+                    "status_class": "is-neutral",
+                })
+
+        # --- Correlation: normality_check (Shapiro-Wilk per variable, informational) ---
+        # The method is chosen by skewness/kurtosis tiers (see
+        # _select_correlation_method); the per-variable Shapiro-Wilk shown here
+        # documents distributional shape but does not drive Pearson vs Spearman.
         normality_check = results.get("normality_check") or {}
         if model_type == "Correlation" and normality_check:
             x_var = results.get("x_variable", "")
@@ -198,41 +167,74 @@ class _SummariesMixin:
                 })
 
         # --- Linear Regression: diagnostics (Shapiro-Wilk residuals, Breusch-Pagan, Ramsey RESET) ---
-        elif model_type == "LinearRegression":
+        if model_type == "LinearRegression":
             diag = results.get("diagnostics") or {}
+            
             norm_d = diag.get("normality") or {}
-            if norm_d and "p_value" in norm_d:
-                rows.append({
-                    "name": "Normality of residuals (Shapiro-Wilk)",
-                    "statistic": _FormattingMixin._format_metric(norm_d.get("statistic")),
-                    "p_value": _FormattingMixin._format_p_value(norm_d.get("p_value")),
-                    "p_value_style": _FormattingMixin._p_heat_style(norm_d.get("p_value")),
-                    "status_label": _FormattingMixin._bool_label(norm_d.get("assumption_holds")),
-                    "status_class": _FormattingMixin._bool_class(norm_d.get("assumption_holds")),
-                })
+            if norm_d:
+                if "error" in norm_d:
+                    rows.append({
+                        "name": "Normality of residuals (Shapiro-Wilk)",
+                        "statistic": "N/A",
+                        "p_value": "—",
+                        "p_value_style": "",
+                        "status_label": f"Test failed: {norm_d.get('error')}",
+                        "status_class": "is-neutral",
+                    })
+                elif "p_value" in norm_d:
+                    rows.append({
+                        "name": "Normality of residuals (Shapiro-Wilk)",
+                        "statistic": _FormattingMixin._format_metric(norm_d.get("statistic")),
+                        "p_value": _FormattingMixin._format_p_value(norm_d.get("p_value")),
+                        "p_value_style": _FormattingMixin._p_heat_style(norm_d.get("p_value")),
+                        "status_label": _FormattingMixin._bool_label(norm_d.get("assumption_holds")),
+                        "status_class": _FormattingMixin._bool_class(norm_d.get("assumption_holds")),
+                    })
+                    
             homo_d = diag.get("homoscedasticity") or {}
-            if homo_d and "p_value" in homo_d:
-                rows.append({
-                    "name": "Homoscedasticity (Breusch-Pagan)",
-                    "statistic": _FormattingMixin._format_metric(homo_d.get("statistic")),
-                    "p_value": _FormattingMixin._format_p_value(homo_d.get("p_value")),
-                    "p_value_style": _FormattingMixin._p_heat_style(homo_d.get("p_value")),
-                    "status_label": _FormattingMixin._bool_label(homo_d.get("assumption_holds")),
-                    "status_class": _FormattingMixin._bool_class(homo_d.get("assumption_holds")),
-                })
+            if homo_d:
+                if "error" in homo_d:
+                    rows.append({
+                        "name": "Homoscedasticity (Breusch-Pagan)",
+                        "statistic": "N/A",
+                        "p_value": "—",
+                        "p_value_style": "",
+                        "status_label": f"Test failed: {homo_d.get('error')}",
+                        "status_class": "is-neutral",
+                    })
+                elif "p_value" in homo_d:
+                    rows.append({
+                        "name": "Homoscedasticity (Breusch-Pagan)",
+                        "statistic": _FormattingMixin._format_metric(homo_d.get("statistic")),
+                        "p_value": _FormattingMixin._format_p_value(homo_d.get("p_value")),
+                        "p_value_style": _FormattingMixin._p_heat_style(homo_d.get("p_value")),
+                        "status_label": _FormattingMixin._bool_label(homo_d.get("assumption_holds")),
+                        "status_class": _FormattingMixin._bool_class(homo_d.get("assumption_holds")),
+                    })
+                    
             lin_d = diag.get("linearity") or {}
-            if lin_d and "p_value" in lin_d:
-                rows.append({
-                    "name": "Linearity (Ramsey RESET)",
-                    "statistic": _FormattingMixin._format_metric(lin_d.get("statistic")),
-                    "p_value": _FormattingMixin._format_p_value(lin_d.get("p_value")),
-                    "p_value_style": _FormattingMixin._p_heat_style(lin_d.get("p_value")),
-                    "status_label": _FormattingMixin._bool_label(lin_d.get("assumption_holds")),
-                    "status_class": _FormattingMixin._bool_class(lin_d.get("assumption_holds")),
-                })
+            if lin_d:
+                if "error" in lin_d:
+                    rows.append({
+                        "name": "Linearity (Ramsey RESET)",
+                        "statistic": "N/A",
+                        "p_value": "—",
+                        "p_value_style": "",
+                        "status_label": f"Test failed: {lin_d.get('error')}",
+                        "status_class": "is-neutral",
+                    })
+                elif "p_value" in lin_d:
+                    rows.append({
+                        "name": "Linearity (Ramsey RESET)",
+                        "statistic": _FormattingMixin._format_metric(lin_d.get("statistic")),
+                        "p_value": _FormattingMixin._format_p_value(lin_d.get("p_value")),
+                        "p_value_style": _FormattingMixin._p_heat_style(lin_d.get("p_value")),
+                        "status_label": _FormattingMixin._bool_label(lin_d.get("assumption_holds")),
+                        "status_class": _FormattingMixin._bool_class(lin_d.get("assumption_holds")),
+                    })
 
         # --- Logistic Regression: Hosmer-Lemeshow goodness-of-fit + AUC interpretation ---
-        elif model_type == "LogisticRegression":
+        if model_type == "LogisticRegression":
             hl = results.get("hosmer_lemeshow") or {}
             if hl and "p_value" in hl:
                 hl_p = hl.get("p_value")
@@ -268,7 +270,7 @@ class _SummariesMixin:
                 })
 
         # --- ANCOVA: residual normality + slope homogeneity ---
-        elif model_type == "ANCOVA":
+        if model_type == "ANCOVA":
             normality_tests = results.get("normality_tests") or {}
             if normality_tests:
                 for label, payload in normality_tests.items():
@@ -308,15 +310,29 @@ class _SummariesMixin:
                 })
 
         # --- LMM: convergence + ICC + residual normality ---
-        elif model_type == "LMM":
-            rows.append({
-                "name": "Residual Normality",
-                "statistic": "—",
-                "p_value": "—",
-                "p_value_style": "",
-                "status_label": "Assessed visually via Q-Q plot",
-                "status_class": "is-neutral",
-            })
+        if model_type == "LMM":
+            normality_tests = results.get("normality_tests") or {}
+            if normality_tests:
+                for label, payload in normality_tests.items():
+                    if not isinstance(payload, dict):
+                        continue
+                    rows.append({
+                        "name": f"Normality: {_FormattingMixin._prettify_label(label)} (Shapiro-Wilk)",
+                        "statistic": _FormattingMixin._format_metric(payload.get("statistic")),
+                        "p_value": _FormattingMixin._format_p_value(payload.get("p_value")),
+                        "p_value_style": _FormattingMixin._p_heat_style(payload.get("p_value")),
+                        "status_label": _FormattingMixin._bool_label(payload.get("is_normal")),
+                        "status_class": _FormattingMixin._bool_class(payload.get("is_normal")),
+                    })
+            else:
+                rows.append({
+                    "name": "Residual Normality",
+                    "statistic": "—",
+                    "p_value": "—",
+                    "p_value_style": "",
+                    "status_label": "Assessed visually via Q-Q plot",
+                    "status_class": "is-neutral",
+                })
             converged = results.get("converged")
             conv_holds = bool(converged) if converged is not None else None
             rows.append({
@@ -340,17 +356,16 @@ class _SummariesMixin:
             })
 
         # --- Standard tests: normality_tests + fallback from test_info ---
-        elif model_type == "BetaRegression":
-            pass  # handled above in dedicated Beta Regression block
-        elif model_type == "CorrelationMatrix":
-            pass  # handled above in dedicated CorrelationMatrix block
-        else:
+        if model_type not in ("CorrelationMatrix", "Correlation", "LinearRegression", "LogisticRegression", "ANCOVA", "LMM"):
             normality_tests = results.get("normality_tests", {}) or {}
             # Fallback: extract from nested test_info structure used by one-way ANOVA path
             test_info_raw = results.get("test_info", {}) or {}
             if not normality_tests and test_info_raw:
-                _has_tr = test_info_raw.get("transformation") not in (None, "None", "No further")
-                _phase = "post_transformation" if _has_tr else "pre_transformation"
+                # Fill-gate, not name-gate (presence-vs-value audit 2026-08): read post
+                # only when the post block is present -- today absent only on the
+                # already-transformed "No further" early-return, and robust if a future
+                # engine skips the post recompute when no transform was needed.
+                _phase = "post_transformation" if test_info_raw.get("post_transformation") else "pre_transformation"
                 _norm = test_info_raw.get(_phase, {}).get("residuals_normality", {})
                 if _norm:
                     normality_tests = {"Model residuals": _norm}
@@ -368,8 +383,11 @@ class _SummariesMixin:
             variance_test = results.get("variance_test", {}) or {}
             # Fallback: extract from nested test_info structure
             if not variance_test and test_info_raw:
-                _has_tr = test_info_raw.get("transformation") not in (None, "None", "No further")
-                _phase = "post_transformation" if _has_tr else "pre_transformation"
+                # Fill-gate, not name-gate (presence-vs-value audit 2026-08): read post
+                # only when the post block is present -- today absent only on the
+                # already-transformed "No further" early-return, and robust if a future
+                # engine skips the post recompute when no transform was needed.
+                _phase = "post_transformation" if test_info_raw.get("post_transformation") else "pre_transformation"
                 variance_test = test_info_raw.get(_phase, {}).get("variance", {}) or {}
             if isinstance(variance_test, dict) and variance_test:
                 _var_name = variance_test.get("test_name", "Levene")
@@ -422,7 +440,20 @@ class _SummariesMixin:
         else:
             sphericity_correction_note = None
 
-        sphericity = results.get("sphericity_test", {}) or {}
+        # RM writes "sphericity_test"; Mixed writes the same information under a
+        # "within_" prefix, because a mixed design has two effect families and the
+        # within verdict has to be qualified. Reading only the RM key rendered an
+        # EMPTY assumption summary for Mixed even at Mauchly p = 1.6e-22.
+        #
+        # Keyed on PRESENCE, not truthiness: an RM payload whose sphericity_test is
+        # an empty-but-present dict must stay on the RM branch instead of silently
+        # borrowing the mixed field. `x or y` would fall through in that case.
+        if "sphericity_test" in results:
+            sphericity = results.get("sphericity_test") or {}
+            _corr_key, _corr_block_key = "correction_used", "sphericity_corrections"
+        else:
+            sphericity = results.get("within_sphericity_test") or {}
+            _corr_key, _corr_block_key = "within_correction_used", "within_sphericity_corrections"
         if isinstance(sphericity, dict) and sphericity:
             status_value = sphericity.get("sphericity_met")
             if status_value is None and sphericity.get("p_value") is not None:
@@ -436,29 +467,77 @@ class _SummariesMixin:
                 "status_class": _FormattingMixin._bool_class(status_value),
             })
             if status_value is False:
-                corr = (sphericity.get("correction") or sphericity.get("correction_applied") or "").lower()
-                gg_eps = sphericity.get("greenhouse_geisser") or sphericity.get("gg_epsilon") or sphericity.get("epsilon_gg")
-                hf_eps = sphericity.get("huynh_feldt") or sphericity.get("hf_epsilon") or sphericity.get("epsilon_hf")
+                # Primary source: statisticaltester.py writes the correction label
+                # to the top-level "correction_used" key and the epsilon values
+                # nested under "sphericity_corrections", NOT into the
+                # "sphericity_test" sub-dict this function reads for W/p_value.
+                # _corr_key/_corr_block_key point at the RM or the Mixed spelling,
+                # chosen above by the same presence check.
+                top_correction = str(results.get(_corr_key) or "")
+                sph_corrections = results.get(_corr_block_key) or {}
+                gg_block = sph_corrections.get("greenhouse_geisser") or {}
+                hf_block = sph_corrections.get("huynh_feldt") or {}
+                if not (gg_block or hf_block):
+                    # Mixed nests its epsilon one level deeper, under the effect it
+                    # belongs to.
+                    _main = sph_corrections.get("main_effect") or {}
+                    if isinstance(_main, dict):
+                        gg_block = _main.get("greenhouse_geisser") or {}
+                        hf_block = _main.get("huynh_feldt") or {}
+                gg_eps = gg_block.get("epsilon") if isinstance(gg_block, dict) else None
+                hf_eps = hf_block.get("epsilon") if isinstance(hf_block, dict) else None
+                corr = top_correction.lower()
+                if not corr:
+                    # Fallback for older/serialized payloads that only populated
+                    # the sphericity_test sub-dict directly.
+                    corr = (sphericity.get("correction") or sphericity.get("correction_applied") or "").lower()
+                    if gg_eps is None:
+                        gg_eps = sphericity.get("greenhouse_geisser") or sphericity.get("gg_epsilon") or sphericity.get("epsilon_gg")
+                    if hf_eps is None:
+                        hf_eps = sphericity.get("huynh_feldt") or sphericity.get("hf_epsilon") or sphericity.get("epsilon_hf")
                 if "huynh" in corr or "hf" in corr:
                     label = "Huynh-Feldt"
-                    eps = hf_eps or gg_eps
-                elif gg_eps or "greenhouse" in corr or "gg" in corr:
+                    eps = hf_eps if hf_eps is not None else gg_eps
+                elif gg_eps is not None or "greenhouse" in corr or "gg" in corr:
                     label = "Greenhouse-Geisser"
                     eps = gg_eps
                 else:
                     label, eps = "Greenhouse-Geisser", gg_eps
                 if label:
-                    eps_str = f" (ε = {_FormattingMixin._format_metric(eps)})" if eps else ""
+                    eps_str = f" (ε = {_FormattingMixin._format_metric(eps)})" if eps is not None else ""
                     sphericity_correction_note = f"Sphericity violated → {label} correction applied{eps_str}"
         _icons = {"is-significant": "✓ ", "is-danger": "✗ ", "is-neutral": "~ "}
         for row in rows:
             row["status_label"] = _icons.get(row["status_class"], "") + row["status_label"]
         _trafo_label = str(results.get("transformation") or "").strip()
-        _has_transform = _trafo_label.lower() not in ("", "none", "identity", "no transformation")
+        # Gate the transformed-data plots on an ACTUAL value change, not the label
+        # (presence-vs-value audit 2026-08): mirror the value-comparison already used
+        # for the transformed COLUMN below, so a named-but-inert transform does not
+        # spawn a transformed Q-Q / distribution plot identical to the raw one.
+        from statistical_testing.validators import grouped_samples_changed
+        _has_transform = grouped_samples_changed(
+            results.get("raw_data", {}) or {},
+            results.get("raw_data_transformed") or results.get("transformed_data") or {},
+        )
         _test_info = results.get("test_info") if isinstance(results.get("test_info"), dict) else {}
         transform_warning = results.get("transform_warning") or _test_info.get("transform_warning")
+        # Level-ordering transparency. This note used to fire on every composite
+        # interaction-cell label, because the old test asked whether a label was
+        # *entirely* numeric rather than whether a number had decided its
+        # position; it was muted rather than corrected. With order_is_defined()
+        # it speaks only when the order really is alphabetical guesswork, which
+        # is worth saying: it is also the reason a plot will not connect
+        # individual subjects across those levels.
+        order_defined, order_note = order_is_defined(results.get("groups") or [])
         return {
             "rows": rows,
+            # Kept out of data_health_warnings on purpose: that block is the
+            # red "pre-analysis data quality" table, and a level order being
+            # alphabetical is neither a data defect nor a danger. It is a
+            # statement about how the axis was arranged, so it renders as a
+            # plain note.
+            "level_order_note": "" if order_defined else order_note,
+            "data_health_warnings": _SummariesMixin._build_data_health_warnings(results),
             "transformation": _trafo_label or "None",
             "interpretation": _SummariesMixin._build_assumption_interpretation(results, rows),
             "sphericity_correction_note": sphericity_correction_note,
@@ -470,6 +549,21 @@ class _SummariesMixin:
             "residual_plot_html": _SummariesMixin._build_residuals_vs_fitted_chart(results),
             "transformation_label": _trafo_label,
         }
+
+    @staticmethod
+    def _build_data_health_warnings(results: dict) -> list[str]:
+        """Pre-analysis data-quality findings from DataHealthScanner.
+
+        The scanner runs on every clinical model (covariate outliers, Little's
+        MCAR, VIF, quasi-separation, group sizes) and writes into
+        ``results["data_health"]``. Returns an empty list when the data is
+        clean, so the template renders nothing rather than an empty block.
+        """
+        health = results.get("data_health") or {}
+        if not isinstance(health, dict):
+            return []
+        warnings_list = health.get("warnings") or []
+        return [str(w) for w in warnings_list if str(w).strip()]
 
     @staticmethod
     def _build_descriptive_summary(results: dict) -> dict:
@@ -517,15 +611,19 @@ class _SummariesMixin:
                     if not vals:
                         continue
                     arr = np.array(vals, dtype=float)
+                    stats_dict = {
+                        "mean": float(np.mean(arr)),
+                        "median": float(np.median(arr)),
+                        "sd": float(np.std(arr, ddof=1)) if len(arr) > 1 else None,
+                        "sem": float(stats.sem(arr)) if len(arr) > 1 else None,
+                        "min": float(np.min(arr)),
+                        "max": float(np.max(arr)),
+                    }
+                    formatted = _FormattingMixin._format_metric_row(stats_dict)
                     rows.append({
                         "group": str(label),
                         "n": len(arr),
-                        "mean": _FormattingMixin._format_metric(float(np.mean(arr))),
-                        "median": _FormattingMixin._format_metric(float(np.median(arr))),
-                        "sd": _FormattingMixin._format_metric(float(np.std(arr, ddof=1)) if len(arr) > 1 else None),
-                        "sem": _FormattingMixin._format_metric(float(stats.sem(arr)) if len(arr) > 1 else None),
-                        "min": _FormattingMixin._format_metric(float(np.min(arr))),
-                        "max": _FormattingMixin._format_metric(float(np.max(arr))),
+                        **formatted
                     })
             return {
                 "rows": rows,
@@ -612,35 +710,60 @@ class _SummariesMixin:
                 numeric = _FormattingMixin._coerce_numeric_sequence(values)
                 if not numeric:
                     continue
+                stats_dict = {
+                    "mean": np.mean(numeric),
+                    "median": np.median(numeric),
+                    "sd": np.std(numeric, ddof=1) if len(numeric) > 1 else None,
+                    "sem": stats.sem(numeric) if len(numeric) > 1 else None,
+                    "min": np.min(numeric),
+                    "max": np.max(numeric),
+                }
+                formatted = _FormattingMixin._format_metric_row(stats_dict)
                 rows.append({
                     "group": str(group_name),
                     "n": len(numeric),
-                    "mean": _FormattingMixin._format_metric(np.mean(numeric)),
-                    "median": _FormattingMixin._format_metric(np.median(numeric)),
-                    "sd": _FormattingMixin._format_metric(np.std(numeric, ddof=1) if len(numeric) > 1 else None),
-                    "sem": _FormattingMixin._format_metric(stats.sem(numeric) if len(numeric) > 1 else None),
-                    "min": _FormattingMixin._format_metric(np.min(numeric)),
-                    "max": _FormattingMixin._format_metric(np.max(numeric)),
+                    **formatted
                 })
         if not rows and results.get("descriptive"):
             for group_name, payload in (results.get("descriptive") or {}).items():
                 if not isinstance(payload, dict):
                     continue
+                stats_dict = {
+                    "mean": payload.get("mean"),
+                    "median": payload.get("median"),
+                    "sd": payload.get("sd") or payload.get("std"),
+                    "sem": payload.get("sem"),
+                    "min": payload.get("min"),
+                    "max": payload.get("max"),
+                }
+                formatted = _FormattingMixin._format_metric_row(stats_dict)
                 rows.append({
                     "group": str(group_name),
                     "n": _FormattingMixin._format_metric(payload.get("n")),
-                    "mean": _FormattingMixin._format_metric(payload.get("mean")),
-                    "median": _FormattingMixin._format_metric(payload.get("median")),
-                    "sd": _FormattingMixin._format_metric(payload.get("sd") or payload.get("std")),
-                    "sem": _FormattingMixin._format_metric(payload.get("sem")),
-                    "min": _FormattingMixin._format_metric(payload.get("min")),
-                    "max": _FormattingMixin._format_metric(payload.get("max")),
+                    **formatted
                 })
+        has_tr = bool(transformed and transformed != raw_data)
+        note_str = None
+        if has_tr:
+            tr_notes = []
+            for group_name, values in transformed.items():
+                numeric = _FormattingMixin._coerce_numeric_sequence(values)
+                if not numeric:
+                    continue
+                mean = np.mean(numeric)
+                sd = np.std(numeric, ddof=1) if len(numeric) > 1 else 0.0
+                mean_str = _FormattingMixin._format_metric(float(mean))
+                sd_str = _FormattingMixin._format_metric(float(sd))
+                tr_notes.append(f"{group_name}: {mean_str} ± {sd_str}")
+            if tr_notes:
+                note_str = "Transformed-scale means (Mean ± SD): " + "; ".join(tr_notes)
+
         return {
             "rows": rows,
-            "has_transformed": bool(transformed and transformed != raw_data),
+            "has_transformed": has_tr,
             "title": "Group-level summary",
             "group_col_label": "Group",
+            "note": note_str,
         }
 
     @staticmethod
@@ -667,6 +790,9 @@ class _SummariesMixin:
         # Group-mode: group-based analyses embed raw data keyed by group name
         raw_data = results.get("raw_data") or results.get("samples") or {}
         transformed = results.get("raw_data_transformed") or results.get("transformed_data") or {}
+        subjects = results.get("raw_data_subjects") or {}
+        if not isinstance(subjects, dict):
+            subjects = {}
         rows = []
         if isinstance(raw_data, dict):
             for group_name, values in raw_data.items():
@@ -674,20 +800,41 @@ class _SummariesMixin:
                 transformed_source = transformed.get(group_name, []) if isinstance(transformed, dict) else []
                 transformed_values = list(transformed_source) if transformed_source is not None else []
                 max_len = max(len(raw_values), len(transformed_values), 1)
+                # A per-group row number is deliberately absent. In an
+                # independent design the order inside a group is import order
+                # and carries nothing; in a repeated-measures design a shared
+                # row number reads across levels as "the same subject" and is
+                # not, because the values are filtered per level in whatever
+                # order the frame holds. Where the design actually has subjects
+                # the extractor hands them over and they are printed instead --
+                # a real identity rather than a position that resembles one.
+                subject_ids = subjects.get(group_name) or []
                 for index in range(max_len):
                     raw_value = raw_values[index] if index < len(raw_values) else None
                     transformed_value = transformed_values[index] if index < len(transformed_values) else None
-                    rows.append({
+                    row = {
                         "group": str(group_name),
-                        "index": index + 1,
                         "raw_value": _FormattingMixin._format_metric(raw_value, digits=6),
                         "transformed_value": _FormattingMixin._format_metric(transformed_value, digits=6),
-                    })
+                    }
+                    if index < len(subject_ids):
+                        row["subject"] = str(subject_ids[index])
+                    rows.append(row)
         return {
             "rows": rows,
-            "has_transformed": any(row["transformed_value"] != "N/A" for row in rows),
+            # Show the transformed column only when a transformation actually
+            # changed the values. Some engines populate raw_data_transformed
+            # with a no-op copy of the raw data (transformation selected but
+            # identity, e.g. Box-Cox with lambda 1); a transformed column that
+            # merely mirrors the raw column is meaningless and confusing.
+            "has_transformed": any(
+                row["transformed_value"] != "N/A"
+                and row["transformed_value"] != row["raw_value"]
+                for row in rows
+            ),
             "column_mode": False,
             "columns": [],
+            "has_subjects": any("subject" in row for row in rows),
         }
 
     @staticmethod
@@ -747,16 +894,12 @@ class _SummariesMixin:
                     name="Reference",
                 )
             )
-            figure.update_layout(
-                template="plotly_white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#fffdf8",
+            figure.update_layout(**_ChartsMixin._base_layout(
                 margin=dict(l=56, r=16, t=30, b=60),
-                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", size=11, color="#16313a"),
                 xaxis=dict(title=dict(text="Theoretical quantiles", font=dict(size=11), standoff=8)),
                 yaxis=dict(title=dict(text="Observed quantiles", font=dict(size=11), standoff=8)),
-                legend=dict(orientation="h", y=1.08, x=0),
-            )
+                legend=dict(orientation="h", y=1.08, x=0)
+            ))
             div_id = "biomedstatx-qq-chart" if source == "raw" else "biomedstatx-qq-chart-transformed"
             return _ChartsMixin._figure_to_html(figure, div_id=div_id)
         except Exception as exc:
@@ -785,7 +928,7 @@ class _SummariesMixin:
                 figure.add_trace(
                     go.Box(
                         y=numeric,
-                        name=str(group_name),
+                        name=_FormattingMixin._esc(group_name),
                         marker=dict(color=color, size=7, opacity=0.7),
                         line=dict(color=color),
                         fillcolor="rgba(15,118,110,0.12)" if idx == 0 else None,
@@ -799,14 +942,10 @@ class _SummariesMixin:
                 added += 1
             if added == 0:
                 return None
-            figure.update_layout(
-                template="plotly_white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#fffdf8",
+            figure.update_layout(**_ChartsMixin._base_layout(
                 margin=dict(l=48, r=20, t=24, b=48),
-                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
-                height=500,
-            )
+                height=500
+            ))
             figure.update_xaxes(title_text="Groups")
             figure.update_yaxes(title_text="Observed values", zeroline=False)
             return _ChartsMixin._figure_to_html(figure)
@@ -836,15 +975,11 @@ class _SummariesMixin:
                 ]
             )
             figure.add_hline(y=0, line=dict(color="#9f3a38", dash="dash"))
-            figure.update_layout(
-                template="plotly_white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#fffdf8",
+            figure.update_layout(**_ChartsMixin._base_layout(
                 margin=dict(l=48, r=20, t=24, b=42),
-                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
                 xaxis_title="Fitted values",
-                yaxis_title="Residuals",
-            )
+                yaxis_title="Residuals"
+            ))
             return _ChartsMixin._figure_to_html(figure)
         except Exception as exc:
             logger.warning("residual-vs-fitted chart generation failed: %s", exc, exc_info=True)

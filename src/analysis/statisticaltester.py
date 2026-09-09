@@ -4,6 +4,7 @@ import logging
 from scipy import stats
 from analysis.stats_functions import get_pingouin_module, PostHocAnalyzer, UIDialogManager
 from core.methodology_trace import MethodologyTrace
+from analysis.clinical_models import DesignType
 from statistical_testing.decision_logic import (
     extract_assumption_state,
     select_comparison_test,
@@ -27,6 +28,7 @@ from statistical_testing.validators import (
     validate_paired_data,
     validate_test_design,
     MIN_N_HARD,
+    MIN_N_BLOCK,
 )
 
 # LOW-1: module-level logger (use logging.getLogger in each method for context)
@@ -38,7 +40,145 @@ NORMALITY_THRESHOLD = 0.05
 CI_LEVEL = 0.95
 MIN_GROUP_SIZE = 2
 
+# Written by both the mixed and the repeated-measures wrapper, and read back out
+# of ``data_health`` by the report. It lived as the same literal in two places:
+# a rename of the KEY these two writers use once left the reader looking at a
+# field nobody wrote, and two copies of the TEXT are the same shape of trap one
+# level down.
+REPLICATE_AVERAGING_WARNING = (
+    "Technical replicates detected (several measurements per subject x "
+    "timepoint). The data were averaged to subject level before the analysis."
+)
+
+
 class StatisticalTester:
+    @staticmethod
+    def make_blocked_result(reason, *, code, details=None, warnings=None):
+        """Build a standardized 'blocked' result for a data-quality pre-flight
+        failure. Callers (analysis_core) return this instead of running a test so
+        the UI/report can surface a clear reason rather than a crash or a
+        silently-wrong number. ``blocked=True`` is the detection flag."""
+        blocked = {
+            "test": "Not performed",
+            "blocked": True,
+            "block_reason": reason,
+            "block_code": code,
+            "error": reason,
+            "p_value": None,
+            "statistic": None,
+            "pairwise_comparisons": [],
+            "warnings": list(warnings or []),
+            "data_quality": details or {},
+        }
+        return StatisticalTester._standardize_results(blocked)
+
+    @staticmethod
+    def nonfinite_block(results):
+        """Safety net for advanced engines (LMM, RM/Mixed/Two-Way ANOVA, ANCOVA)
+        that can emit a non-finite statistic / p-value on a degenerate design
+        (zero variance, collinear covariate, rank-deficient model) WITHOUT raising.
+        Returns a standardized block if `results` carries such a value and is not
+        already blocked, else None. Keeps the silent-wrong-number from reaching
+        the UI/report."""
+        if not isinstance(results, dict) or results.get("blocked"):
+            return None
+
+        def _nonfinite(x):
+            return (isinstance(x, (int, float)) and not isinstance(x, bool)
+                    and not bool(np.isfinite(x)))
+
+        def _invalid_p(p):
+            return (isinstance(p, (int, float)) and not isinstance(p, bool)
+                    and (p < 0 or p > 1 or not bool(np.isfinite(p))))
+
+        if _nonfinite(results.get("statistic")) or _invalid_p(results.get("p_value")):
+            reason = (
+                f"{results.get('test') or 'The test'} produced a non-finite result "
+                "(infinite or undefined). This indicates a degenerate design — e.g. "
+                "zero variance, perfectly collinear covariates, or a rank-deficient "
+                "model — for which the test is not defined."
+            )
+            return StatisticalTester.make_blocked_result(
+                reason, code="NON_FINITE_RESULT", details={"test": results.get("test")},
+            )
+
+        impossible = StatisticalTester._impossible_quantities(results)
+        if impossible:
+            reason = (
+                f"{results.get('test') or 'The test'} reported "
+                + "; ".join(impossible)
+                + ". These quantities cannot take those values, so the term they "
+                "describe is not estimable from this design — most often an "
+                "empty cell in a factorial layout, where the interaction has no "
+                "data to be estimated from. Fit a model that can express the "
+                "design (a linear mixed model handles incomplete layouts), or "
+                "analyse the cells that are present."
+            )
+            return StatisticalTester.make_blocked_result(
+                reason, code="NOT_ESTIMABLE",
+                details={"test": results.get("test"), "quantities": impossible},
+                warnings=results.get("warnings") or [],
+            )
+        return None
+
+    # Effect sizes that are a ratio of sums of squares, so bounded in [0, 1] by
+    # construction. Deliberately narrow: Cohen's d, Hedges' g, r and the rank
+    # biserial are SIGNED, and omega squared is a bias-corrected estimator that
+    # is legitimately negative in small samples, so none of them belong here.
+    _BOUNDED_EFFECT_SIZES = frozenset({
+        "partial_eta_squared", "partial η²", "eta_squared", "epsilon_squared",
+    })
+
+    @staticmethod
+    def _impossible_quantities(results):
+        """Reported values that no correct computation can produce.
+
+        F is a ratio of mean squares and both are non-negative, so F < 0 cannot
+        happen; partial eta squared is a ratio of sums of squares and lies in
+        [0, 1]. A factorial design with an empty cell leaves the interaction
+        unestimable, and pingouin returns a NEGATIVE sum of squares for it --
+        measured at F = -3.07 with partial eta squared = -0.28 on a 2x2 layout
+        missing one cell, reported with p = 1.0 beside it.
+
+        Both values are finite, which is exactly why the non-finite net above let
+        them through: "not a number" and "a number that cannot be" are different
+        failures, and only the first was being caught.
+
+        The headline ``statistic`` is deliberately NOT tested on its own sign --
+        t, r and z are signed and negative values are the ordinary case. Only
+        quantities whose own name fixes their range are judged.
+        """
+        found = []
+
+        def _number(value):
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return None
+            value = float(value)
+            return value if np.isfinite(value) else None
+
+        def _check(label, term):
+            f_value = _number(term.get("F"))
+            if f_value is not None and f_value < 0:
+                found.append(f"a negative F statistic ({f_value:.4g}) for {label}")
+            size = _number(term.get("effect_size"))
+            kind = str(term.get("effect_size_type") or "").strip()
+            if (size is not None and kind in StatisticalTester._BOUNDED_EFFECT_SIZES
+                    and not 0.0 <= size <= 1.0):
+                found.append(f"{kind} = {size:.4g} for {label}, outside [0, 1]")
+
+        terms = list(results.get("factors") or []) + list(results.get("interactions") or [])
+        for term in results.get("factors") or []:
+            _check(str(term.get("factor") or "a main effect"), term)
+        for term in results.get("interactions") or []:
+            factors = term.get("factors") or []
+            _check(" x ".join(str(f) for f in factors) or "the interaction", term)
+        # The headline is copied from one of the rows above wherever rows exist,
+        # so checking it as well would report the same defect twice under two
+        # names. Engines that report no per-term breakdown are still covered.
+        if not terms:
+            _check("the reported result", results)
+        return found
+
     @staticmethod
     def _standardize_results(results):
         """
@@ -75,7 +215,8 @@ class StatisticalTester:
             "effect_size_type": None,
             "error": None,
             "df1": None,
-            "df2": None
+            "df2": None,
+            "design_type": None
         }
         
         # Debug logging
@@ -126,8 +267,8 @@ class StatisticalTester:
                 n = grp_stats.get("n", 0) if isinstance(grp_stats, dict) else 0
                 if 0 < n < MIN_N_HARD:
                     standardized.setdefault("warnings", []).append(
-                        f"CRITICAL: N={n} for group '{group}' is below minimum (MIN_N_HARD={MIN_N_HARD}). "
-                        "Results have near-zero statistical power and should not be interpreted."
+                        f"WARNING: N={n} for group '{group}' is a small sample (< {MIN_N_HARD}). "
+                        "Statistical power is low; interpret results with caution."
                     )
 
         return standardized
@@ -208,13 +349,26 @@ class StatisticalTester:
         results["descriptive"] = {g: StatisticalTester._compute_descriptive_stats(original_samples[g]) for g in valid_groups}
         
         # IMPORTANT: Always include transformed descriptive stats when transformation was performed
-        if any(original_samples[g] != transformed_samples[g] for g in valid_groups):
+        if any(not np.array_equal(original_samples[g], transformed_samples[g]) for g in valid_groups):
             results["descriptive_transformed"] = {g: StatisticalTester._compute_descriptive_stats(transformed_samples[g]) for g in valid_groups}
         
         # Store raw data for both original and transformed values
         results["raw_data"] = {g: original_samples[g].copy() for g in valid_groups}
-        if original_samples != transformed_samples:
-            results["raw_data_transformed"] = {g: transformed_samples[g].copy() for g in valid_groups}
+        if any(not np.array_equal(original_samples[g], transformed_samples[g]) for g in valid_groups):
+            # Only where the two columns pair row by row. The table prints one
+            # against the other as a claim about a single measurement, and a
+            # transformation that drops a NaN row leaves them different lengths.
+            from statistical_testing.validators import transformed_pairs_up
+            if transformed_pairs_up(results["raw_data"], transformed_samples, valid_groups):
+                results["raw_data_transformed"] = {g: transformed_samples[g].copy() for g in valid_groups}
+            else:
+                logger.warning(
+                    "transformed values do not line up with the raw ones (%s); "
+                    "the Transformed column is dropped rather than printed "
+                    "against the wrong measurements.",
+                    {g: (len(results["raw_data"].get(g, [])),
+                         len(transformed_samples.get(g, []))) for g in valid_groups},
+                )
 
         if len(valid_groups) == 0:
             return StatisticalTester._stat_test_no_valid_groups(results)
@@ -222,10 +376,6 @@ class StatisticalTester:
         if len(valid_groups) == 1:
             return StatisticalTester._stat_test_one_group(results, valid_groups, original_samples, transformed_samples)
 
-        # Descriptive statistics for all groups
-        results["descriptive"] = {g: StatisticalTester._compute_descriptive_stats(original_samples[g]) for g in valid_groups}
-        if original_samples != transformed_samples:
-            results["descriptive_transformed"] = {g: StatisticalTester._compute_descriptive_stats(transformed_samples[g]) for g in valid_groups}
 
         samples_to_use = transformed_samples if test_recommendation in {"parametric", "welch"} else original_samples
 
@@ -263,10 +413,10 @@ class StatisticalTester:
         data1, data2 = samples_to_use[g1], samples_to_use[g2]
         try:
             if dependent:
-                validate_paired_data(data1, data2, group_a_label=str(g1), group_b_label=str(g2), min_n=MIN_N_HARD)
+                validate_paired_data(data1, data2, group_a_label=str(g1), group_b_label=str(g2), min_n=MIN_N_BLOCK)
             else:
-                validate_minimum_n(data1, min_n=MIN_N_HARD, label=str(g1), allow_missing=False)
-                validate_minimum_n(data2, min_n=MIN_N_HARD, label=str(g2), allow_missing=False)
+                validate_minimum_n(data1, min_n=MIN_N_BLOCK, label=str(g1), allow_missing=False)
+                validate_minimum_n(data2, min_n=MIN_N_BLOCK, label=str(g2), allow_missing=False)
         except ValidationError as validation_error:
             results["test"] = "Error during test"
             results["error"] = str(validation_error)
@@ -406,7 +556,7 @@ class StatisticalTester:
             data2,
             group_a_label=str(g1),
             group_b_label=str(g2),
-            min_n=MIN_N_HARD,
+            min_n=MIN_N_BLOCK,
         )
         statistic, p_value = stats.ttest_rel(data1_arr, data2_arr)
         test_name = "Paired t-test"
@@ -421,14 +571,21 @@ class StatisticalTester:
         results["effect_size"] = cohen_d
         n = len(diff)
         stderr = std_diff / np.sqrt(n) if std_diff > 0 else 0
+        
+        mean_diff = np.mean(diff)
+        results["mean_difference"] = mean_diff
+        
         t = stats.t
-        ci = t.interval(0.95, n-1, loc=np.mean(diff), scale=stderr)
+        ci = t.interval(1 - alpha, n-1, loc=mean_diff, scale=stderr)
         results["confidence_interval"] = ci
         try:
-            from statsmodels.stats.power import TTestPower
-            effect_size = abs(cohen_d)
-            power_analysis = TTestPower()
-            results["power"] = float(power_analysis.power(effect_size=effect_size, nobs=n, alpha=alpha))
+            if cohen_d is not None:
+                from statsmodels.stats.power import TTestPower
+                effect_size = abs(cohen_d)
+                power_analysis = TTestPower()
+                results["power"] = float(power_analysis.power(effect_size=effect_size, nobs=n, alpha=alpha))
+            else:
+                results["power"] = None
         except Exception:
             results["power"] = None
         results["test"] = test_name
@@ -458,15 +615,34 @@ class StatisticalTester:
             data2,
             group_a_label=str(g1),
             group_b_label=str(g2),
-            min_n=MIN_N_HARD,
+            min_n=MIN_N_BLOCK,
         )
+        # scipy's exact null distribution assumes no zero differences and no ties
+        # in the absolute differences; with either present, method='exact' returns
+        # the p-value of no defined test (and scipy raises no warning). Downgrade
+        # to the asymptotic ('approx') method in that case, exactly as scipy's own
+        # method='auto' does — keeping the size threshold for clean data unchanged.
+        _diffs = data1_arr - data2_arr
+        _abs_nonzero = np.abs(_diffs[_diffs != 0])
+        _has_zeros = bool(np.any(_diffs == 0))
+        _has_ties = int(_abs_nonzero.size) != int(np.unique(_abs_nonzero).size)
+        _exact_valid = (len(data1_arr) <= 25) and not _has_zeros and not _has_ties
+        _wilcoxon_method = 'exact' if _exact_valid else 'approx'
+        if not _exact_valid and len(data1_arr) <= 25:
+            _reason = " and ".join(
+                r for r, present in (("zero differences", _has_zeros), ("ties", _has_ties)) if present
+            )
+            _msg = (f"Wilcoxon Warning: exact p-value not valid with {_reason}; "
+                    f"used the asymptotic (normal-approximation) method instead.")
+            if _msg not in results.setdefault("warnings", []):
+                results["warnings"].append(_msg)
         import warnings
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             statistic, p_value = stats.wilcoxon(
-                data1_arr, data2_arr, 
-                zero_method='pratt', 
-                method='exact' if len(data1_arr) <= 25 else 'approx'
+                data1_arr, data2_arr,
+                zero_method='pratt',
+                method=_wilcoxon_method,
             )
             if w:
                 for warn in w:
@@ -483,13 +659,7 @@ class StatisticalTester:
         results["effect_size"] = r
         results["effect_size_type"] = "r"
         results["confidence_interval"] = (None, None)
-        try:
-            from statsmodels.stats.power import TTestPower
-            effect_size_corrected = r * 0.955
-            power_analysis = TTestPower()
-            results["power"] = float(power_analysis.power(effect_size=effect_size_corrected, nobs=n_eff, alpha=alpha))
-        except Exception:
-            results["power"] = None
+        results["power"] = None
         results["test"] = test_name
         results["statistic"] = statistic
         results["p_value"] = p_value
@@ -512,8 +682,8 @@ class StatisticalTester:
     
     @staticmethod
     def _independent_ttest(results, g1, g2, data1, data2, alpha, equal_var=True):
-        data1_arr = validate_minimum_n(data1, min_n=MIN_N_HARD, label=str(g1), allow_missing=False)
-        data2_arr = validate_minimum_n(data2, min_n=MIN_N_HARD, label=str(g2), allow_missing=False)
+        data1_arr = validate_minimum_n(data1, min_n=MIN_N_BLOCK, label=str(g1), allow_missing=False)
+        data2_arr = validate_minimum_n(data2, min_n=MIN_N_BLOCK, label=str(g2), allow_missing=False)
         n1, n2 = len(data1_arr), len(data2_arr)
         statistic, p_value = stats.ttest_ind(data1_arr, data2_arr, equal_var=equal_var)
         test_name = "t-test (independent)"
@@ -536,12 +706,15 @@ class StatisticalTester:
             df = n1 + n2 - 2
         else:
             # HIGH-1: Welch's uses Hedges' g formula (df-weighted pooled SD)
+            # J-correction factor (1 - 3/(4*(n1+n2)-9)) is applied to correct for small sample bias
             s_pooled_hedges = np.sqrt(((n1-1)*s1 + (n2-1)*s2) / (n1+n2-2))
             if s_pooled_hedges == 0:
                 cohen_d = None
                 results["effect_size_type"] = "hedges_g (undefined — zero pooled variance)"
             else:
-                cohen_d = (np.mean(data1_arr) - np.mean(data2_arr)) / s_pooled_hedges
+                d_val = (np.mean(data1_arr) - np.mean(data2_arr)) / s_pooled_hedges
+                J = 1 - 3/(4*(n1+n2)-9)
+                cohen_d = d_val * J
                 results["effect_size_type"] = "hedges_g"
             stderr_diff = np.sqrt(s1/n1 + s2/n2)
             # Welch-Satterthwaite degrees of freedom (safe: n>=2 guaranteed above)
@@ -551,8 +724,9 @@ class StatisticalTester:
 
         results["effect_size"] = cohen_d
         mean_diff = np.mean(data1_arr) - np.mean(data2_arr)
+        results["mean_difference"] = mean_diff
         t = stats.t
-        ci = t.interval(0.95, df, loc=mean_diff, scale=stderr_diff)
+        ci = t.interval(1 - alpha, df, loc=mean_diff, scale=stderr_diff)
         results["confidence_interval"] = ci
         try:
             if cohen_d is not None:
@@ -580,11 +754,21 @@ class StatisticalTester:
 
     @staticmethod
     def _mannwhitney_test(results, g1, g2, data1, data2, alpha):
-        data1_arr = validate_minimum_n(data1, min_n=MIN_N_HARD, label=str(g1), allow_missing=False)
-        data2_arr = validate_minimum_n(data2, min_n=MIN_N_HARD, label=str(g2), allow_missing=False)
+        data1_arr = validate_minimum_n(data1, min_n=MIN_N_BLOCK, label=str(g1), allow_missing=False)
+        data2_arr = validate_minimum_n(data2, min_n=MIN_N_BLOCK, label=str(g2), allow_missing=False)
         n1, n2 = len(data1_arr), len(data2_arr)
         from statistical_testing.validators import MIN_N_SMALL
-        _mwu_method = 'exact' if (n1 + n2) < MIN_N_SMALL else 'asymptotic'
+        # scipy's exact U distribution is not corrected for ties (and scipy raises
+        # no warning). When the pooled data contain ties, fall back to the
+        # tie-corrected asymptotic method, matching scipy's own method='auto'.
+        _pooled = np.concatenate([data1_arr, data2_arr])
+        _has_ties = int(_pooled.size) != int(np.unique(_pooled).size)
+        _mwu_method = 'exact' if ((n1 + n2) < MIN_N_SMALL and not _has_ties) else 'asymptotic'
+        if _has_ties and (n1 + n2) < MIN_N_SMALL:
+            _msg = ("Mann-Whitney Warning: exact p-value is not tie-corrected; "
+                    "used the asymptotic (tie-corrected) method instead.")
+            if _msg not in results.setdefault("warnings", []):
+                results["warnings"].append(_msg)
         statistic, p_value = stats.mannwhitneyu(data1_arr, data2_arr, alternative='two-sided', method=_mwu_method)
         test_name = f"Mann-Whitney-U ({'exact' if _mwu_method == 'exact' else 'asymptotic'})"
         u = statistic
@@ -620,7 +804,7 @@ class StatisticalTester:
             validate_group_count(valid_groups, min_groups=3, label="multi_group_tests")
             if isinstance(samples_to_use, dict):
                 for group in valid_groups:
-                    validate_minimum_n(samples_to_use.get(group, []), min_n=MIN_N_HARD, label=str(group), allow_missing=False)
+                    validate_minimum_n(samples_to_use.get(group, []), min_n=MIN_N_BLOCK, label=str(group), allow_missing=False)
         except ValidationError as validation_error:
             results["test"] = "Error during test"
             results["error"] = str(validation_error)
@@ -665,7 +849,7 @@ class StatisticalTester:
             logger.debug("DEBUG DECISION: using Welch ANOVA path")
             welch_result = StatisticalTester._welch_anova_test(results, valid_groups, samples_to_use, alpha)
             if welch_result is not None:
-                return welch_result
+                return StatisticalTester._standardize_results(welch_result)
             else:
                 logger.debug("DEBUG DECISION: Welch ANOVA returned None, falling back to regular ANOVA")
                 # Fall through to regular ANOVA
@@ -861,9 +1045,9 @@ class StatisticalTester:
                 "posthoc_tests": None  # We'll add post-hoc separately if needed
             }]
             
-            # Cohen's f (approx.) — no MS_within available for Welch, so use F*df/N
-            n_total = len(df_pg)
-            cohens_f = float(np.sqrt(max(F_value * df1 / n_total, 0.0)))
+            # Cohen's f for Welch: eta2 = F*df1 / (F*df1 + df2); f = sqrt(eta2 / (1-eta2))
+            eta2 = (F_value * df1) / (F_value * df1 + df2) if (F_value * df1 + df2) > 0 else 0.0
+            cohens_f = float(np.sqrt(max(eta2 / (1 - eta2) if 1 - eta2 > 0 else 0.0, 0.0)))
             results["effects"][0]["effect_size"] = cohens_f
 
             # Add test-level results
@@ -898,139 +1082,6 @@ class StatisticalTester:
             results["df1"] = None
             results["df2"] = None
             return results
-
-    @staticmethod
-    def _perform_dunnett_t3_posthoc(valid_groups, samples_to_use, alpha=0.05):
-        """
-        Performs Dunnett's T3 post-hoc test for unequal variances.
-        
-        Parameters:
-        -----------
-        valid_groups : list
-            List of group names
-        samples_to_use : dict
-            Dictionary with group names as keys and lists of values as values
-        alpha : float
-            Significance level
-            
-        Returns:
-        --------
-        list
-            List of pairwise comparison results
-        """
-        try:
-            from itertools import combinations
-
-            pairwise_results = []
-            
-            # Create all possible pairs of groups
-            pairs = list(combinations(valid_groups, 2))
-            
-            for group1, group2 in pairs:
-                # Extract data for the two groups
-                data1 = np.array(samples_to_use[group1])
-                data2 = np.array(samples_to_use[group2])
-                
-                # Sample sizes
-                n1 = len(data1)
-                n2 = len(data2)
-                
-                # Calculate means
-                mean1 = np.mean(data1)
-                mean2 = np.mean(data2)
-                
-                # Calculate variances (with correction for sample size)
-                var1 = np.var(data1, ddof=1)
-                var2 = np.var(data2, ddof=1)
-                
-                # Standard error of the difference
-                se = np.sqrt(var1/n1 + var2/n2)
-                
-                # T-statistic
-                t_stat = (mean1 - mean2) / se
-                
-                # Degrees of freedom using Welch-Satterthwaite equation
-                df_num = (var1/n1 + var2/n2)**2
-                df_den = (var1/n1)**2/(n1-1) + (var2/n2)**2/(n2-1)
-                # HIGH-2: guard against degenerate df (n=1 in a group)
-                if df_den == 0 or np.isnan(df_den) or np.isinf(df_den):
-                    df = min(n1, n2) - 1
-                    df_warning = GroupValidationError(
-                        f"Dunnett T3 df calculation degenerate for {group1} vs {group2}; using conservative df={df}."
-                    )
-                    logger.warning(str(df_warning))
-                else:
-                    df = df_num / df_den
-                
-                # Number of groups for the critical value calculation
-                k = len(valid_groups)
-                
-                # Get critical value from studentized range distribution and transform for SMM
-                try:
-                    # For p-value: use studentized range distribution
-                    # First, convert t-statistic to q-statistic format
-                    q_stat = abs(t_stat) * np.sqrt(2)
-                    
-                    # Calculate p-value from studentized range distribution
-                    # We use 1-cdf because we want P(q > |q_stat|)
-                    p_value = 1 - stats.studentized_range.cdf(q_stat, k, df)
-                    
-                    # Get critical value
-                    q_crit = stats.studentized_range.ppf(1-alpha, k, df)
-                    crit_value = q_crit / np.sqrt(2)
-                    
-                    # Determine significance
-                    significant = abs(t_stat) > crit_value
-                    
-                    # Calculate effect size (Cohen's d with pooled SD)
-                    cohens_d = (mean1 - mean2) / np.sqrt((var1 + var2) / 2)
-                    
-                    # Calculate confidence interval
-                    # For the CI, we use the critical value from the studentized range distribution
-                    ci_lower = (mean1 - mean2) - crit_value * se
-                    ci_upper = (mean1 - mean2) + crit_value * se
-                    
-                    # Add the result to our list
-                    pairwise_results.append({
-                        "group1": group1,
-                        "group2": group2,
-                        "test": "Dunnett's T3",
-                        "statistic": float(t_stat),
-                        "p_value": float(p_value),
-                        "significant": significant,
-                        "corrected": True,
-                        "effect_size": float(cohens_d),
-                        "effect_size_type": "cohen_d",
-                        "confidence_interval": (float(ci_lower), float(ci_upper))
-                    })
-                    
-                except Exception as err:
-                    critical_value_warning = ValidationError(
-                        f"Dunnett T3 critical-value calculation failed ({err}); using t-approximation fallback."
-                    )
-                    logger.warning(str(critical_value_warning))
-                    # Fallback: use t-distribution (conservative)
-                    p_value = 2 * (1 - stats.t.cdf(abs(t_stat), df))
-                    significant = p_value < (alpha / len(pairs))  # Bonferroni correction
-                    
-                    pairwise_results.append({
-                        "group1": group1,
-                        "group2": group2,
-                        "test": "Dunnett's T3 (t approximation)",
-                        "statistic": float(t_stat),
-                        "p_value": float(p_value),
-                        "significant": significant,
-                        "corrected": True,
-                        "effect_size": None,
-                        "effect_size_type": None,
-                        "confidence_interval": (None, None)
-                    })
-            
-            return pairwise_results
-        
-        except Exception as e:
-            logger.error(f"ERROR in Dunnett's T3 post-hoc: {str(e)}")
-            return []
 
     @staticmethod
     def _compute_descriptive_stats(values):
@@ -1128,9 +1179,10 @@ class StatisticalTester:
                         subset = df[(df[b_factor] == b_val) & (df[w_factor] == w_val)]
                         samples[group_label] = subset[dv].tolist()
                 groups = list(samples.keys())
+                import re
                 # Formula for Mixed ANOVA (for assumption checking) - use sanitized names
-                sanitized_b_factor = b_factor.replace(' ', '') if ' ' in b_factor else b_factor
-                sanitized_w_factor = w_factor.replace(' ', '') if ' ' in w_factor else w_factor
+                sanitized_b_factor = re.sub(r'\W+', '_', str(b_factor))
+                sanitized_w_factor = re.sub(r'\W+', '_', str(w_factor))
                 formula = f"Value ~ C({sanitized_b_factor}) * C({sanitized_w_factor})"
 
             elif test == 'repeated_measures_anova':
@@ -1138,8 +1190,9 @@ class StatisticalTester:
                 for lvl in df[w_factor].unique():
                     samples[lvl] = df[df[w_factor] == lvl][dv].tolist()
                 groups = list(samples.keys())
+                import re
                 # Formula for RM-ANOVA (for assumption checking) - use sanitized names
-                sanitized_w_factor = w_factor.replace(' ', '') if ' ' in w_factor else w_factor
+                sanitized_w_factor = re.sub(r'\W+', '_', str(w_factor))
                 formula = f"Value ~ C({sanitized_w_factor})"
 
             elif test == 'two_way_anova':
@@ -1150,9 +1203,10 @@ class StatisticalTester:
                         subset = df[(df[fA] == a_val) & (df[fB] == b_val)]
                         samples[group_label] = subset[dv].tolist()
                 groups = list(samples.keys())
+                import re
                 # Formula for Two-Way ANOVA (for assumption checking) - use sanitized names
-                sanitized_fA = fA.replace(' ', '') if ' ' in fA else fA
-                sanitized_fB = fB.replace(' ', '') if ' ' in fB else fB
+                sanitized_fA = re.sub(r'\W+', '_', str(fA))
+                sanitized_fB = re.sub(r'\W+', '_', str(fB))
                 formula = f"Value ~ C({sanitized_fA}) * C({sanitized_fB})"
 
             else:
@@ -1185,17 +1239,18 @@ class StatisticalTester:
                 "groups": groups
             }
 
-        except ValidationError as e:
-            return {"error": str(e)}
         except Exception as e:
             return {"error": str(e)} 
         
     @staticmethod
     def perform_advanced_test(
-        df, test, dv, subject, between=None, within=None, alpha=0.05,
+        df, test, dv, subject, between=None, within=None, covariates=None, random_slope=None, alpha=0.05,
         transformed_samples=None, recommendation=None, test_info=None,
         transform_fn=None, force_parametric=False, file_name=None, manual_transform=None,
-        analysis_log=None  # Add this parameter
+        analysis_log=None,
+        posthoc_method_callback=None,
+        control_group_callback=None,
+        custom_pairs_callback=None
     ):
         return perform_advanced_test_pipeline(
             df=df,
@@ -1204,6 +1259,8 @@ class StatisticalTester:
             subject=subject,
             between=between,
             within=within,
+            covariates=covariates,
+            random_slope=random_slope,
             alpha=alpha,
             transformed_samples=transformed_samples,
             recommendation=recommendation,
@@ -1213,6 +1270,9 @@ class StatisticalTester:
             file_name=file_name,
             manual_transform=manual_transform,
             analysis_log=analysis_log,
+            posthoc_method_callback=posthoc_method_callback,
+            control_group_callback=control_group_callback,
+            custom_pairs_callback=custom_pairs_callback,
         )
 
     @staticmethod
@@ -1328,7 +1388,19 @@ class StatisticalTester:
         # 5. Extract raw data
         if extract_raw:
             log_step("Extracting raw data for DV and factors...")
-            results["raw_data"] = extract_raw(df, dv, between, within, subject)
+            extracted = extract_raw(df, dv, between, within, subject)
+            # Within-subject designs also hand back the subject each value came
+            # from. The raw-data table used to print a per-group row number,
+            # which reads across columns as "the same subject" and is not: the
+            # values are filtered per level in whatever order the frame holds,
+            # so the k-th value of two levels can belong to different subjects.
+            # Between-only designs have nothing to pair and return None.
+            if isinstance(extracted, tuple):
+                results["raw_data"], subjects = extracted
+                if subjects:
+                    results["raw_data_subjects"] = subjects
+            else:
+                results["raw_data"] = extracted
 
         # 6. Add main ANOVA results to log
         # Main and interaction effects
@@ -1364,9 +1436,27 @@ class StatisticalTester:
         return StatisticalTester._standardize_results(results)
     
     @staticmethod
-    def _run_mixed_anova_logged(df, dv, subject, between, within, alpha=0.05):
-        # 'extract_raw' can be a function that extracts raw data
-        return StatisticalTester._run_any_parametric_test(
+    def _run_mixed_anova_logged(df, dv, subject, between, within, alpha=0.05, test_info=None, **kwargs):
+        averaged_replicates = False
+        group_cols = [subject] + within
+        if df.duplicated(subset=group_cols).any():
+            import logging
+            from analysis.emm_posthoc import UnsupportedDesignError
+            logger = logging.getLogger(__name__)
+            # A between factor is constant per subject by definition, so it must
+            # be a grouping key when averaging technical replicates -- otherwise
+            # groupby([subject] + within).mean() drops the between column and the
+            # Mixed ANOVA raises KeyError downstream. Guard the constancy first
+            # (same contract and message as emm_posthoc): a mis-entered subject
+            # carrying two between values is rejected loudly instead of being
+            # silently split into two pseudo-subjects by the grouping.
+            if (df.groupby(subject)[between[0]].nunique() > 1).any():
+                raise UnsupportedDesignError("each subject must belong to one between group")
+            logger.info("Technical replicates detected for Mixed ANOVA. Averaging values per subject.")
+            df = df.groupby([subject] + between + within, as_index=False)[dv].mean()
+            averaged_replicates = True
+
+        results = StatisticalTester._run_any_parametric_test(
             df=df,
             dv=dv,
             subject=subject,
@@ -1374,19 +1464,33 @@ class StatisticalTester:
             within=within,
             alpha=alpha,
             test_func=StatisticalTester._run_mixed_anova,
-            extract_raw=StatisticalTester._extract_raw_data_mixed_anova
+            extract_raw=StatisticalTester._extract_raw_data_mixed_anova,
+            test_info=test_info,
+            **kwargs
         )
+
+        if averaged_replicates:
+            if "data_health" not in results:
+                results["data_health"] = {}
+            if "warnings" not in results["data_health"]:
+                results["data_health"]["warnings"] = []
+            results["data_health"]["warnings"].append(REPLICATE_AVERAGING_WARNING)
+            
+        return results
     
     @staticmethod
     def _extract_raw_data_mixed_anova(df, dv, between, within, subject):
         # Example implementation: return all individual values per group
-        raw = {}
+        raw, subjects = {}, {}
         b, w = between[0], within[0]
         for b_val in df[b].unique():
             for w_val in df[w].unique():
                 key = f"{b}={b_val}, {w}={w_val}"
-                raw[key] = df[(df[b] == b_val) & (df[w] == w_val)][dv].tolist()
-        return raw
+                block = df[(df[b] == b_val) & (df[w] == w_val)]
+                raw[key] = block[dv].tolist()
+                if subject and subject in block.columns:
+                    subjects[key] = [str(v) for v in block[subject].tolist()]
+        return raw, (subjects or None)
     
     @staticmethod
     def _run_repeated_measures_anova_logged(df, dv, subject, within, alpha=0.05, force_posthoc=False, custom_posthoc_alpha=None, **kwargs):
@@ -1396,6 +1500,15 @@ class StatisticalTester:
         test_info = None
         if 'test_info' in kwargs:
             test_info = kwargs.pop('test_info')
+            
+        averaged_replicates = False
+        group_cols = [subject] + within
+        if df.duplicated(subset=group_cols).any():
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info("Technical replicates detected for RM ANOVA. Averaging values per subject.")
+            df = df.groupby(group_cols, as_index=False)[dv].mean()
+            averaged_replicates = True
             
         results = StatisticalTester._run_any_parametric_test(
             df=df,
@@ -1411,6 +1524,13 @@ class StatisticalTester:
             test_info=test_info  # Pass the test_info parameter
         )
         
+        if averaged_replicates:
+            if "data_health" not in results:
+                results["data_health"] = {}
+            if "warnings" not in results["data_health"]:
+                results["data_health"]["warnings"] = []
+            results["data_health"]["warnings"].append(REPLICATE_AVERAGING_WARNING)
+            
         # Ensure test_info is added to results
         if test_info is not None and "test_info" not in results:
             results["test_info"] = test_info
@@ -1419,11 +1539,24 @@ class StatisticalTester:
     
     @staticmethod
     def _extract_raw_data_rm_anova(df, dv, between, within, subject):
-        raw = {}
+        # Keyed by the bare level, not "factor=level". Every other extraction of
+        # a repeated-measures design uses the bare level -- ExtractionEngine,
+        # prepare_advanced_test, and the group_names the post-hoc builds its
+        # comparisons from -- and the advanced pipeline overwrites raw_data with
+        # one of those while leaving these subjects behind. The two halves then
+        # described the same values under different names, so nothing could pair
+        # them: the raw table dropped its Subject column and the figure refused
+        # subject lines with "No subject was measured at more than one level",
+        # which was false about every subject in the design.
+        raw, subjects = {}, {}
         w = within[0]
         for lvl in df[w].unique():
-            raw[f"{w}={lvl}"] = df[df[w] == lvl][dv].tolist()
-        return raw
+            block = df[df[w] == lvl]
+            key = lvl
+            raw[key] = block[dv].tolist()
+            if subject and subject in block.columns:
+                subjects[key] = [str(v) for v in block[subject].tolist()]
+        return raw, (subjects or None)
     
     @staticmethod
     def _run_two_way_anova_logged(df, dv, between, alpha=0.05, test_info=None):
@@ -1440,6 +1573,54 @@ class StatisticalTester:
         )
     
     @staticmethod
+    def _run_ancova_logged(df, dv, between, covariates, alpha=0.05, test_info=None, control_group=None):
+        def _test_func(df, dv, subject=None, between=None, within=None, alpha=0.05):
+            return StatisticalTester._run_ancova(df, dv, between, covariates, alpha, control_group=control_group)
+        return StatisticalTester._run_any_parametric_test(
+            df=df,
+            dv=dv,
+            subject=None,
+            between=between,
+            within=covariates, # Use within to pass covariates temporarily for extraction compatibility if needed, or modify _run_any_parametric_test
+            alpha=alpha,
+            test_func=_test_func,
+            extract_raw=StatisticalTester._extract_raw_data_ancova,
+            test_info=test_info
+        )
+
+    @staticmethod
+    def _run_lmm_logged(df, dv, subject, between, within, covariates, random_slope, alpha=0.05, test_info=None, control_group=None):
+        def _test_func(df, dv, subject=None, between=None, within=None, alpha=0.05):
+            return StatisticalTester._run_lmm(df, dv, subject, between, within, covariates, random_slope, alpha, control_group=control_group)
+        return StatisticalTester._run_any_parametric_test(
+            df=df,
+            dv=dv,
+            subject=subject,
+            between=between,
+            within=within,
+            alpha=alpha,
+            test_func=_test_func,
+            extract_raw=StatisticalTester._extract_raw_data_mixed_anova, # Similar extraction
+            test_info=test_info
+        )
+
+    @staticmethod
+    def _run_logistic_regression_logged(df, dv, between, covariates, alpha=0.05, test_info=None):
+        def _test_func(df, dv, subject=None, between=None, within=None, alpha=0.05):
+            return StatisticalTester._run_logistic_regression(df, dv, between, covariates)
+        return StatisticalTester._run_any_parametric_test(
+            df=df,
+            dv=dv,
+            subject=None,
+            between=between,
+            within=covariates,
+            alpha=alpha,
+            test_func=_test_func,
+            extract_raw=StatisticalTester._extract_raw_data_ancova,
+            test_info=test_info
+        )
+
+    @staticmethod
     def _extract_raw_data_two_way_anova(df, dv, between, within, subject):
         raw = {}
         a, b = between
@@ -1450,11 +1631,115 @@ class StatisticalTester:
         return raw
         
     @staticmethod
+    def _extract_raw_data_ancova(df, dv, between, within, subject):
+        raw = {}
+        if between:
+            a = between[0]
+            for a_val in df[a].unique():
+                key = f"{a}={a_val}"
+                raw[key] = df[df[a] == a_val][dv].tolist()
+        return raw
+
+    @staticmethod
+    def _run_ancova(df, dv, between, covariates, alpha=0.05, control_group=None):
+        from analysis.clinical_models import ANCOVAModel
+        try:
+            model = ANCOVAModel()
+            model.fit(df, dv=dv, between_factors=between, covariates=covariates or [],
+                      alpha=alpha, control_group=control_group)
+            return StatisticalTester._standardize_results(model.as_results_dict())
+        except Exception as e:
+            return {"error": str(e), "test": "ANCOVA"}
+
+    @staticmethod
+    def _run_lmm(df, dv, subject, between, within, covariates, random_slope, alpha=0.05, control_group=None):
+        from analysis.clinical_models import LinearMixedModel
+        try:
+            model = LinearMixedModel()
+            fixed_effects = (between or []) + (within or [])
+            model.fit(df, dv=dv, fixed_effects=fixed_effects, random_intercept=subject, covariates=covariates or [], random_slope=random_slope, alpha=alpha, control_group=control_group)
+            return StatisticalTester._standardize_results(model.as_results_dict())
+        except Exception as e:
+            return {"error": str(e), "test": "Linear Mixed Model"}
+
+    @staticmethod
+    def _run_logistic_regression(df, dv, between, covariates):
+        from analysis.clinical_models import LogisticRegressionModel
+        try:
+            model = LogisticRegressionModel()
+            model.fit(df, dv=dv, predictors=between, covariates=covariates or [])
+            fitted = model.as_results_dict()
+
+            # A fit whose omnibus is not a number has produced no test, and
+            # everything else it produced -- AUC, ROC curve, calibration plot --
+            # comes from the same unidentified model. Reporting those beside a
+            # "no result" note leaves a quotable 0.92 AUC on the page, so this
+            # stops at the data-quality gate the way the rest of the pipeline
+            # does rather than labelling the output at the end.
+            #
+            # Firth is the reason this is a block and not a warning: penalised
+            # likelihood exists to survive separation, so a Firth fit that still
+            # returns nothing is evidence about the design, not a numerical
+            # stumble. Only the omnibus decides -- converged=False on its own
+            # (non-finite standard errors, usable test) stays a warning.
+            if not StatisticalTester._omnibus_is_usable(fitted):
+                return StatisticalTester.blocked_unidentified_logistic(fitted)
+            return StatisticalTester._standardize_results(fitted)
+        except Exception as e:
+            return {"error": str(e), "test": "Logistic Regression"}
+
+    @staticmethod
+    def blocked_unidentified_logistic(fitted):
+        """The blocked result for a logistic fit that produced no test.
+
+        Shared by both entry points -- ``_run_logistic_regression`` and the
+        clinical branch in ``analysis_core`` -- so the reason and the block code
+        cannot drift apart, and so a fix here does not have to be made twice.
+        """
+        return StatisticalTester.make_blocked_result(
+            "The logistic model produced no usable test statistic. This usually "
+            "means near-complete separation or collinear predictors, and "
+            "penalised (Firth) estimation was already applied, so it cannot be "
+            "the remedy. Check the group sizes and whether a predictor separates "
+            "the outcome perfectly.",
+            code="LOGISTIC_UNIDENTIFIED",
+            details={"model_variant": fitted.get("model_variant"),
+                     "n_observations": fitted.get("n_observations")},
+            warnings=fitted.get("warnings") or [],
+        )
+
+    @staticmethod
+    def _omnibus_is_usable(result) -> bool:
+        """Whether the fit produced a statistic and a p-value that are numbers.
+
+        Not the same question as convergence: an optimizer can report success
+        and still hand back NaN, which is how a diverged Firth fit reached the
+        report as an ordinary result (fuzz seed 20).
+        """
+        for key in ("statistic", "p_value"):
+            value = result.get(key)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return False
+            if not np.isfinite(float(value)):
+                return False
+        return True
+
+    @staticmethod
+    def _sm_anova_df(anova_row):
+        """Integer degrees of freedom from one row (Series) of a statsmodels
+        ``anova_lm()`` table. The df column is named ``"df"`` (not ``"d"``);
+        centralized here so this key lives in exactly one place. Guards against
+        the recurring ``"d"``-vs-``"df"`` typo (commit fbdc675 patched one site,
+        stat_fix.patch another; this helper replaced the remaining eight)."""
+        return int(anova_row["df"])
+
+    @staticmethod
     def _run_mixed_anova(df, dv, subject, between, within, alpha=0.05):
         """
         Performs a Mixed ANOVA. Prefers pingouin, fallback to statsmodels.
         """
         results = {
+            "design_type": DesignType.MIXED.value,
             "test": "Mixed ANOVA",
             "model_type": "MixedANOVA",
             "p_value": None,
@@ -1484,11 +1769,11 @@ class StatisticalTester:
 
         try:
             if has_pingouin:
-                print("DEBUG: DataFrame columns:", df.columns)
-                print("DEBUG: Unique values for within factor:", df[within[0]].unique())
-                print("DEBUG: Unique values for subject:", df[subject].unique())
-                print("DEBUG: First few rows of df:\n", df.head())
-                print("DEBUG: Using Pingouin for Mixed ANOVA")
+                logger.debug("DEBUG: DataFrame columns: %s", df.columns)
+                logger.debug("DEBUG: Unique values for within factor: %s", df[within[0]].unique())
+                logger.debug("DEBUG: Unique values for subject: %s", df[subject].unique())
+                logger.debug("DEBUG: First few rows of df:\n %s", df.head())
+                logger.debug("DEBUG: Using Pingouin for Mixed ANOVA")
                 aov = pg.mixed_anova(data=df, dv=dv, within=rm_factor, between=between_factor, subject=subject)
                 p_col = "p_unc" if "p_unc" in aov.columns else "p-unc" if "p-unc" in aov.columns else None
                 if p_col is None:
@@ -1511,7 +1796,8 @@ class StatisticalTester:
                     else:
                         results.setdefault("warnings", []).append(f"No result for factor '{factor}' found in Mixed-ANOVA.")
                 
-                interaction_name = f"{rm_factor} * {between_factor}"
+                # In Pingouin, the interaction source is always literally "Interaction"
+                interaction_name = "Interaction"
                 mask_int = aov["Source"] == interaction_name
                 if mask_int.any():
                     row = aov.loc[mask_int].iloc[0]
@@ -1548,144 +1834,75 @@ class StatisticalTester:
                     df, dv, between_factor, rm_factor, subject, aov, alpha
                 )
                 results.update(interaction_assumptions)
-                #  POST-HOC: pairwise t-tests (Bonferroni) if interaction is significant
-                try:
-                    # 1. Check if interaction is significant
-                    int_row = aov.loc[aov["Source"] == interaction_name]
-                    if not int_row.empty and float(int_row[p_col].iloc[0]) < alpha:
-                        # Interaction is significant: t-tests for all combinations
-                        ph = pg.pairwise_tests(
-                            data=df,
-                            dv=dv,
-                            between=between_factor,
-                            within=rm_factor,
-                            subject=subject,
-                            padjust="holm"  # Changed from "bon" to "holm"
-                        )
-                        results["posthoc_test"] = "Pairwise t-tests for interaction (Holm-Bonferroni)"  # Changed from "Bonferroni" to "Holm-Bonferroni"
-                        for _, r in ph.iterrows():
-                            results.setdefault("pairwise_comparisons", []).append({
-                                "group1": f"{between_factor}={r['A']}, {rm_factor}={r['Time']}",
-                                "group2": f"{between_factor}={r['B']}, {rm_factor}={r['Time']}",
-                                "test": "Paired t-test" if r['Type'] == 'within' else "Independent t-test",
-                                "statistic": float(r["T"]),
-                                "p_value": float(r["p-corr"]),
-                                "significant": bool(r["significant"]),
-                                "corrected": True,
-                                "effect_size": float(r["hedges"]) if "hedges" in r else None,
-                                "effect_size_type": "hedges_g"
-                            })
-                    else:
-                        # 2. Interaction not significant, check main effects
-                        # Between-factor post-hoc with Tukey (if significant)
-                        between_row = aov.loc[aov["Source"] == between_factor]
-                        if not between_row.empty and float(between_row[p_col].iloc[0]) < alpha:
-                            # Tukey HSD for between-factor
-                            from statsmodels.stats.multicomp import pairwise_tukeyhsd
-                            between_groups = df[between_factor].unique()
-                            if len(between_groups) > 1:
-                                tukey = pairwise_tukeyhsd(
-                                    endog=df[dv],
-                                    groups=df[between_factor],
-                                    alpha=alpha
-                                )
-                                results["between_posthoc_test"] = "Tukey HSD"
-                
-                                # More robust way to handle various versions of statsmodels
-                                try:
-                                    # First try with the pairindices attribute
-                                    for i in range(len(tukey.pvalues)):
-                                        group1 = tukey.groupsunique[tukey.pairindices[i, 0]]
-                                        group2 = tukey.groupsunique[tukey.pairindices[i, 1]]
-                                        p_val = tukey.pvalues[i]
-                                        is_significant = tukey.reject[i]
-                                        
-                                        results.setdefault("between_pairwise_comparisons", []).append({
-                                            "group1": f"{between_factor}={group1}",
-                                            "group2": f"{between_factor}={group2}",
-                                            "test": "Tukey HSD",
-                                            "p_value": float(p_val),
-                                            "significant": bool(is_significant),
-                                            "corrected": True
-                                        })
-                                except (AttributeError, IndexError):
-                                    # Fall back to using summary() method, which works in newer versions
-                                    summary = tukey.summary()
-                                    for i in range(len(summary.data) - 1):  # Skip header row
-                                        row = summary.data[i+1]
-                                        group1, group2 = row[0], row[1]
-                                        p_val = row[3]
-                                        is_significant = row[6]  # reject column
-                                        
-                                        results.setdefault("between_pairwise_comparisons", []).append({
-                                            "group1": f"{between_factor}={group1}",
-                                            "group2": f"{between_factor}={group2}",
-                                            "test": "Tukey HSD",
-                                            "p_value": float(p_val),
-                                            "significant": bool(is_significant),
-                                            "corrected": True
-                                        })
-
-                        # Within-factor post-hoc with paired t-tests (if significant)
-                        within_row = aov.loc[aov["Source"] == rm_factor]
-                        if not within_row.empty and float(within_row[p_col].iloc[0]) < alpha:
-                            # Paired t-tests for within-factor with Bonferroni
-                            from itertools import combinations
-                            within_groups = df[rm_factor].unique()
-                            results["within_posthoc_test"] = "Paired t-tests (Holm-Bonferroni)"  # Changed from "Bonferroni" to "Holm-Bonferroni"
-                            
-                            # Perform paired t-tests and store p-values for Holm-Bonferroni correction
-                            p_values = []
-                            t_stats = []
-                            data_pairs = []
-                            for group1, group2 in combinations(within_groups, 2):
-                                # Prepare data for paired t-tests
-                                data1 = df[df[rm_factor] == group1][dv].values
-                                data2 = df[df[rm_factor] == group2][dv].values
-                                
-                                # Store data pairs for later calculations
-                                data_pairs.append((group1, group2, data1, data2))
-                                
-                                # Calculate t-statistic and p-value
-                                t_stat, p_val = stats.ttest_rel(data1, data2)
-                                p_values.append(p_val)
-                                t_stats.append(t_stat)
-
-                            # Apply Holm-Bonferroni correction to all p-values at once
-                            corrected_p_values = PostHocAnalyzer._holm_correction(p_values)
-
-                            # Create comparison results using corrected p-values
-                            for i, (group1, group2, data1, data2) in enumerate(data_pairs):
-                                t_stat = t_stats[i]
-                                p_val = p_values[i]  # Original p-value
-                                corrected_p = corrected_p_values[i]  # Holm-Bonferroni corrected p-value
-                                
-                                # Calculate effect size (Cohen's d)
-                                d = (np.mean(data1) - np.mean(data2)) / np.std(np.array(data1) - np.array(data2))
-                                
-                                results.setdefault("within_pairwise_comparisons", []).append({
-                                    "group1": f"{rm_factor}={group1}",
-                                    "group2": f"{rm_factor}={group2}",
-                                    "test": "Paired t-test (Holm-Bonferroni)",  # Changed from "Bonferroni" to "Holm-Bonferroni"
-                                    "statistic": float(t_stat),
-                                    "p_value": float(corrected_p),
-                                    "original_p": float(p_val),
-                                    "significant": corrected_p < alpha,
-                                    "corrected": True,
-                                    "effect_size": float(d),
-                                    "effect_size_type": "cohen_d"
-                                })
-                except Exception as ph_err:
-                    results["warnings"] = results.get("warnings", []) + [f"Post-hoc failed: {ph_err}"]
-                    
                 # Enhanced Within-Factor Sphericity Testing for Mixed ANOVA
                 rm_factor = within[0]
                 within_sphericity_results = StatisticalTester._test_mixed_anova_within_sphericity(
                     df, dv, subject, rm_factor, aov, alpha
                 )
                 results.update(within_sphericity_results)
+
+                # E1 (Mixed ANOVA): if sphericity was violated, wire the
+                # Greenhouse-Geisser corrected p-value into the canonical
+                # fields the verdict/post-hoc dispatch actually reads -
+                # mirrors RM-ANOVA's existing fix one function away (tagged
+                # "E1" below). The Interaction row gets the SAME epsilon as
+                # the within-factor row: pingouin never computes a separate
+                # one for it, but both terms share the same error term/
+                # denominator df (confirmed from pingouin's mixed_anova()
+                # source), so this is the standard SPSS/afex/JASP
+                # convention, not an approximation.
+                main_effect_corr = within_sphericity_results.get(
+                    "within_sphericity_corrections", {}
+                ).get("main_effect")
+                if main_effect_corr is not None:
+                    epsilon = main_effect_corr["greenhouse_geisser"]["epsilon"]
+
+                    for f in results["factors"]:
+                        if f["factor"] == rm_factor:
+                            f["p_unc"] = f["p_value"]
+                            f["p_value"] = main_effect_corr["final_p_value"]
+                            f["df1"] = main_effect_corr["greenhouse_geisser"]["corrected_df1"]
+                            f["df2"] = main_effect_corr["greenhouse_geisser"]["corrected_df2"]
+
+                    if results["interactions"]:
+                        inter = results["interactions"][0]
+                        inter_df1_corr = inter["df1"] * epsilon
+                        inter_df2_corr = inter["df2"] * epsilon
+                        inter_p_corr = float(stats.f.sf(inter["F"], inter_df1_corr, inter_df2_corr))
+
+                        inter["p_unc"] = inter["p_value"]
+                        inter["p_value"] = inter_p_corr
+                        inter["df1"] = inter_df1_corr
+                        inter["df2"] = inter_df2_corr
+
+                        interaction_key = f"{rm_factor} * {between_factor}"
+                        results["within_sphericity_corrections"]["interactions"] = {
+                            interaction_key: {
+                                "effect": f"interaction ({interaction_key})",
+                                "greenhouse_geisser": {
+                                    "epsilon": epsilon,
+                                    "corrected_df1": inter_df1_corr,
+                                    "corrected_df2": inter_df2_corr,
+                                    "p_value": inter_p_corr,
+                                    "conservative": True,
+                                    "description": f"Greenhouse-Geisser correction for interaction ({interaction_key})"
+                                },
+                                "recommended_correction": "greenhouse_geisser",
+                                "final_p_value": inter_p_corr,
+                                "correction_used": f"Greenhouse-Geisser (ε = {epsilon:.3f})"
+                            }
+                        }
+
+                        # Top-level canonical fields: the Interaction row
+                        # currently always drives these (see the "Set
+                        # top-level fields" block earlier in this function).
+                        # F itself does not change under a sphericity
+                        # correction - only df/p do.
+                        results["p_value"] = inter_p_corr
+                        results["df1"] = inter_df1_corr
+                        results["df2"] = inter_df2_corr
             else:
-                print("DEBUG: Using statsmodels for Mixed ANOVA")
+                logger.debug("DEBUG: Using statsmodels for Mixed ANOVA")
                 # Fallback with statsmodels
                 
                 # Sanitize column names for statsmodels compatibility
@@ -1715,8 +1932,8 @@ class StatisticalTester:
                         "type": "within" if orig_factor == rm_factor else "between",
                         "F": float(row["F"]),
                         "p_value": float(row["PR(>F)"]),
-                        "df1": int(row["d"]),
-                        "df2": int(anova.loc["Residual", "d"]),
+                        "df1": int(row["df"]),
+                        "df2": int(anova.loc["Residual", "df"]),
                         "effect_size": None,
                         "effect_size_type": None
                     })
@@ -1727,8 +1944,8 @@ class StatisticalTester:
                     "factors": [rm_factor, between_factor],
                     "F": float(row["F"]),
                     "p_value": float(row["PR(>F)"]),
-                    "df1": int(row["d"]),
-                    "df2": int(anova.loc["Residual", "d"]),
+                    "df1": StatisticalTester._sm_anova_df(row),
+                    "df2": StatisticalTester._sm_anova_df(anova.loc["Residual"]),
                     "effect_size": None,
                     "effect_size_type": None
                 }
@@ -1800,14 +2017,12 @@ class StatisticalTester:
         if "pairwise_comparisons" not in results:
             results["pairwise_comparisons"] = []
 
-        # Consolidate all post-hoc results into the main pairwise_comparisons array
-        if "between_pairwise_comparisons" in results and results["between_pairwise_comparisons"]:
-            results["pairwise_comparisons"].extend(results["between_pairwise_comparisons"])
-            
-        if "within_pairwise_comparisons" in results and results["within_pairwise_comparisons"]:
-            results["pairwise_comparisons"].extend(results["within_pairwise_comparisons"])
-            
-        return StatisticalTester._standardize_results(results)          
+        # The between_/within_pairwise_comparisons merge that used to live here fed
+        # on the inline mixed post-hoc, which was removed: its within branch paired
+        # observations by dataframe position rather than by subject. Mixed contrasts
+        # now come from AdvancedPostHocEngine, which writes pairwise_comparisons
+        # directly.
+        return StatisticalTester._standardize_results(results)
     
     @staticmethod
     def _run_repeated_measures_anova(df, dv, subject, within, alpha=0.05):
@@ -1816,6 +2031,7 @@ class StatisticalTester:
         Prefers pingouin, fallback to statsmodels.
         """
         results = {
+            "design_type": DesignType.REPEATED.value,
             "test": "Repeated Measures ANOVA",
             "model_type": "RepeatedMeasuresANOVA",
             "p_value": None,
@@ -1845,7 +2061,7 @@ class StatisticalTester:
                     f"because > 5% of subjects ({n_excluded} out of {n_total}) had missing data. "
                     "LMMs handle unbalanced longitudinal data without listwise deletion."
                 )
-                msg_posthoc = "LMM redirect: pairwise contrasts not automatically computed. Interpret fixed effects table directly or re-run with complete data for post-hoc tests."
+                msg_posthoc = "LMM redirect: pairwise contrasts computed via EMM (Between-Within heuristic, Holm-Bonferroni adjusted)."
                 
                 logger.info(msg_redirect)
                 # Trace: LMM-Redirect (2b)
@@ -1857,7 +2073,7 @@ class StatisticalTester:
                                        f"{n_excluded} of {n_total} subjects ({_lmm_pct}) had incomplete data. "
                                        "LMMs handle unbalanced longitudinal data without listwise deletion "
                                        "and are valid under Missing At Random (MAR) assumptions. "
-                                       "Pairwise contrasts not auto-computed — interpret fixed effects table."))
+                                       "Pairwise contrasts computed via EMM (Between-Within heuristic, Holm-Bonferroni adjusted)."))
                 results["methodology_trace"] = _lmm_trace
                 try:
                     from analysis.clinical_models import LinearMixedModel
@@ -1905,11 +2121,11 @@ class StatisticalTester:
 
         try:
             if has_pingouin:
-                print("DEBUG: DataFrame columns:", df.columns)
-                print("DEBUG: Unique values for within factor:", df[within[0]].unique())
-                print("DEBUG: Unique values for subject:", df[subject].unique())
-                print("DEBUG: First few rows of df:\n", df.head())
-                print("DEBUG: Using Pingouin for RM ANOVA")    
+                logger.debug("DEBUG: DataFrame columns: %s", df.columns)
+                logger.debug("DEBUG: Unique values for within factor: %s", df[within[0]].unique())
+                logger.debug("DEBUG: Unique values for subject: %s", df[subject].unique())
+                logger.debug("DEBUG: First few rows of df:\n %s", df.head())
+                logger.debug("DEBUG: Using Pingouin for RM ANOVA")    
                 if len(within) == 1:
                     factor = within[0]
                     # Add correction=True to apply corrections for sphericity violation
@@ -1917,8 +2133,8 @@ class StatisticalTester:
                     p_col = "p_unc" if "p_unc" in aov.columns else "p-unc" if "p-unc" in aov.columns else None
                     if p_col is None:
                         raise KeyError("No pingouin p-value column found in RM ANOVA table")
-                    print("DEBUG: ANOVA result:", aov)
-                    print("DEBUG: Results structure:", results)
+                    logger.debug("DEBUG: ANOVA result: %s", aov)
+                    logger.debug("DEBUG: Results structure: %s", results)
                     results["anova_table"] = aov.copy()
                     row = aov.iloc[0]
                     error_row = aov[aov["Source"] == "Error"].iloc[0]
@@ -1958,11 +2174,16 @@ class StatisticalTester:
                     _mauchly_p = sphericity_results.get("mauchly_p")
                     _epsilon = sphericity_results.get("epsilon")
                     _correction = sphericity_results.get("correction_applied", "none")
-                    _mp_str = f"p = {_mauchly_p:.3f}" if isinstance(_mauchly_p, (float, int)) else "p = N/A"
+                    
+                    if isinstance(_mauchly_p, (float, int)):
+                        _mp_str = f"p = {_mauchly_p:.3f}"
+                        _mp_detail_assumed = f"Mauchly's test: sphericity assumed ({_mp_str}). No correction applied."
+                    else:
+                        _mp_str = "not applicable (only 2 levels)"
+                        _mp_detail_assumed = "Mauchly's test: sphericity assumed (only 2 levels, test not applicable). No correction applied."
+
                     if _spher_met:
-                        _trace.add(3, "Sphericity",
-                                   f"Mauchly's test: sphericity assumed ({_mp_str}). No correction applied.",
-                                   detail=_mp_str)
+                        _trace.add(3, "Sphericity", _mp_detail_assumed, detail=_mp_str)
                     else:
                         _corr_name = "Greenhouse-Geisser" if "GG" in str(_correction).upper() else "Huynh-Feldt"
                         _eps_str = f"ε = {_epsilon:.3f}" if isinstance(_epsilon, (float, int)) else "ε = N/A"
@@ -1974,15 +2195,21 @@ class StatisticalTester:
                     # Automatic post-hoc tests for significant main effect
                     if results["p_value"] is not None and results["p_value"] < alpha:
                         try:
-                            # Extract data for post-hoc tests
-                            factor_levels = df[factor].unique()
-                            factor_data = {}
-                            for level in factor_levels:
-                                factor_data[level] = df[df[factor] == level][dv].tolist()
-                            
+                            # Build subject-aligned paired samples. A plain
+                            # df[df[factor]==level][dv].tolist() per level pairs
+                            # row i of one level with row i of the next, so the
+                            # paired t-test depended on the sheet's row order --
+                            # reorder within a level and the pairing silently
+                            # changes subject. _build_rm_aligned_samples pivots and
+                            # sorts by subject (and drops incomplete subjects), the
+                            # same aligner the non-parametric RM fallback uses.
+                            factor_levels, factor_data = PosthocFallbackEngine._build_rm_aligned_samples(
+                                df, dv, subject, factor
+                            )
+
                             # Perform paired t-tests with Holm-Bonferroni correction
                             posthoc_results = StatisticalTester.perform_dependent_posthoc_tests(
-                                factor_data, list(factor_levels), alpha=alpha, parametric=True
+                                factor_data, factor_levels, alpha=alpha, parametric=True
                             )
                             logger.debug(f"DEBUG: Post-hoc for RM-ANOVA created with {len(posthoc_results.get('pairwise_comparisons', []))} comparisons")
                             results["posthoc_test"] = posthoc_results.get("posthoc_test", "Paired t-tests (Holm-Bonferroni)")
@@ -2039,7 +2266,7 @@ class StatisticalTester:
                         "test": "Repeated Measures ANOVA (multiple factors)"
                     })
             else:
-                print("DEBUG: Using statsmodels for RM ANOVA")
+                logger.debug("DEBUG: Using statsmodels for RM ANOVA")
                 # Only simple fallback for one factor
                 if len(within) != 1:
                     results["error"] = "Multiple within factors only possible with pingouin"
@@ -2070,7 +2297,7 @@ class StatisticalTester:
                     "type": "within",
                     "F": float(row["F"]),
                     "p_value": float(row["PR(>F)"]),
-                    "df1": int(row["d"]),
+                    "df1": StatisticalTester._sm_anova_df(row),
                     "df2": int(anova.loc['Residual', 'df']),
                     "effect_size": None,
                     "effect_size_type": None
@@ -2078,7 +2305,7 @@ class StatisticalTester:
                 results.update({
                     "p_value": float(row["PR(>F)"]),
                     "statistic": float(row["F"]),
-                    "df1": int(row["d"]),
+                    "df1": StatisticalTester._sm_anova_df(row),
                     "df2": int(anova.loc['Residual', 'df']),
                     "test": f"Repeated Measures ANOVA ({factor}) [statsmodels]"
                 })
@@ -2182,6 +2409,7 @@ class StatisticalTester:
             Results including main effects, interaction, effect sizes
         """
         results = {
+            "design_type": DesignType.INDEPENDENT.value,
             "test": f"Two-Way ANOVA ({between[0]} * {between[1]})",
             "model_type": "TwoWayANOVA",
             "factors": [],
@@ -2305,7 +2533,41 @@ class StatisticalTester:
                                     if len(parts) == 2:
                                         g1_label = parts[0].strip()
                                         g2_label = parts[1].strip()
-                                pval_col = 'p_corr' if 'p_corr' in ph_row else ('p_unc' if 'p_unc' in ph_row else 'p-unc')
+                                # A simple-effect row compares two levels of
+                                # one factor AT one level of the other, and
+                                # pingouin reports that level in a column named
+                                # after the conditioning factor. Dropping it
+                                # printed every simple effect under the same two
+                                # labels: a 2x2 table showed "B0 vs B1" twice,
+                                # with different p-values and nothing to tell
+                                # the reader which comparison each row was.
+                                contrast = str(ph_row.get('Contrast', ''))
+                                if '*' in contrast:
+                                    stratum_col = between[0]
+                                    stratum = ph_row.get(stratum_col)
+                                    if stratum is not None and str(stratum) != '-':
+                                        at = f" ({stratum_col}={stratum})"
+                                        g1_label += at
+                                        g2_label += at
+                                # p_corr is a COLUMN of the frame, so it is
+                                # present on every row -- and pingouin leaves it
+                                # NaN for a family with only one comparison,
+                                # where there is nothing to correct. Asking
+                                # whether the key exists therefore always said
+                                # yes, and a 2x2 design took NaN for both main
+                                # effects: a main effect at p_unc = 0.000175 was
+                                # reported as p = NaN and "not significant".
+                                # Ask for the VALUE, and fall back to the
+                                # uncorrected p only where no correction was
+                                # applied.
+                                p_corr = ph_row.get('p_corr')
+                                was_corrected = (isinstance(p_corr, (int, float))
+                                                 and not pd.isna(p_corr))
+                                if was_corrected:
+                                    p_value_row = float(p_corr)
+                                else:
+                                    p_unc = ph_row.get('p_unc', ph_row.get('p-unc'))
+                                    p_value_row = float(p_unc) if p_unc is not None else float('nan')
                                 confidence_interval = (None, None)
                                 if 'CI95%' in ph_row and isinstance(ph_row['CI95%'], (list, np.ndarray)) and len(ph_row['CI95%']) == 2:
                                     confidence_interval = tuple(ph_row['CI95%'])
@@ -2319,16 +2581,25 @@ class StatisticalTester:
                                     "group1": g1_label,
                                     "group2": g2_label,
                                     "test": "Pairwise t-test",
-                                    "p_value": float(ph_row[pval_col]),
+                                    "p_value": p_value_row,
                                     "statistic": float(ph_row["T"]) if "T" in ph_row else None,
-                                    "significant": float(ph_row[pval_col]) < alpha,
-                                    "corrected": "Holm-Bonferroni",
+                                    "significant": p_value_row < alpha,
+                                    "corrected": "Holm-Bonferroni" if was_corrected else None,
                                     "confidence_interval": confidence_interval
                                 })
                             
                             # Only set posthoc_test and add comparisons if we successfully processed all rows
                             if temp_comparisons:
-                                results["posthoc_test"] = "Tukey HSD Test (Pingouin)"
+                                # Name the procedure that RAN. pairwise_tests
+                                # with padjust='holm' is a set of pairwise
+                                # t-tests with a Holm-Bonferroni adjustment,
+                                # not Tukey HSD: Tukey uses the studentized
+                                # range and would give different p-values. The
+                                # rows have always recorded "Pairwise t-test";
+                                # only the heading claimed otherwise, and a
+                                # reader quoting the method from it would have
+                                # misreported it.
+                                results["posthoc_test"] = "Pairwise t-tests (Holm-Bonferroni)"
                                 results["pairwise_comparisons"].extend(temp_comparisons)
                         else:
                             results.setdefault("warnings", []).append("Pingouin pairwise_tests for interaction returned empty.")
@@ -2338,8 +2609,8 @@ class StatisticalTester:
             else: # Fallback to statsmodels
                 import statsmodels.api as sm
                 from statsmodels.formula.api import ols
-                print("DEBUG: WARNING! Two-Way ANOVA uses statsmodels fallback!")
-                print("DEBUG: Pingouin not installed or import failed.")
+                logger.debug("DEBUG: WARNING! Two-Way ANOVA uses statsmodels fallback!")
+                logger.debug("DEBUG: Pingouin not installed or import failed.")
 
                 # Sanitize column names for statsmodels compatibility
                 sanitized_df, column_mapping = StatisticalTester._sanitize_column_names_for_statsmodels(
@@ -2359,7 +2630,7 @@ class StatisticalTester:
                 if "Residual" not in aov.index:
                     results["error"] = "Residuals not found in statsmodels ANOVA output."
                     return StatisticalTester._standardize_results(results)
-                residual_df = int(aov.loc["Residual", "d"])
+                residual_df = StatisticalTester._sm_anova_df(aov.loc["Residual"])
 
                 # Main effects
                 for factor in [factor_a, factor_b]:
@@ -2374,7 +2645,7 @@ class StatisticalTester:
                         "type": "between",
                         "F": float(row["F"]),
                         "p_value": float(row["PR(>F)"]),
-                        "df1": int(row["d"]),
+                        "df1": StatisticalTester._sm_anova_df(row),
                         "df2": residual_df,
                         "effect_size": None,
                         "effect_size_type": None
@@ -2390,7 +2661,7 @@ class StatisticalTester:
                         "factors": [factor_a, factor_b],
                         "F": float(row["F"]),
                         "p_value": float(row["PR(>F)"]),
-                        "df1": int(row["d"]),
+                        "df1": StatisticalTester._sm_anova_df(row),
                         "df2": residual_df,
                         "effect_size": None,
                         "effect_size_type": None
@@ -2398,7 +2669,7 @@ class StatisticalTester:
                     results["interactions"].append(interaction_result)
                     results["p_value"] = float(row["PR(>F)"])
                     results["statistic"] = float(row["F"])
-                    results["df1"] = int(row["d"])
+                    results["df1"] = StatisticalTester._sm_anova_df(row)
                     results["df2"] = residual_df
                     results["effect_size"] = None
                     results["test"] += " [statsmodels]"
@@ -2546,11 +2817,6 @@ class StatisticalTester:
 
     _prefix_pairwise_labels = staticmethod(PosthocFallbackEngine._prefix_pairwise_labels)
     _build_rm_aligned_samples = staticmethod(PosthocFallbackEngine._build_rm_aligned_samples)
-    _apply_pairwise_multiplicity = staticmethod(PosthocFallbackEngine._apply_pairwise_multiplicity)
-    _map_marginaleffects_to_exporter = staticmethod(PosthocFallbackEngine._map_marginaleffects_to_exporter)
-    _run_two_way_marginaleffects_posthoc = staticmethod(PosthocFallbackEngine._run_two_way_marginaleffects_posthoc)
-    _run_rm_marginaleffects_posthoc = staticmethod(PosthocFallbackEngine._run_rm_marginaleffects_posthoc)
-    _run_mixed_marginaleffects_posthoc = staticmethod(PosthocFallbackEngine._run_mixed_marginaleffects_posthoc)
     _run_modern_fallback_posthoc = staticmethod(PosthocFallbackEngine._run_modern_fallback_posthoc)
     perform_dependent_posthoc_tests = staticmethod(PosthocFallbackEngine.perform_dependent_posthoc_tests)
     perform_refactored_posthoc_testing = staticmethod(PosthocFallbackEngine.perform_refactored_posthoc_testing)
@@ -2666,17 +2932,27 @@ class StatisticalTester:
             results.update(corrections_applied)
             
         except Exception as e:
-            # Comprehensive fallback
+            # Per CHANGELOG.md: "When sphericity cannot be formally tested,
+            # the Greenhouse-Geisser correction is now applied by default."
+            # Attempt that same conservative default here, not just in the
+            # inner fallback — falls back to the uncorrected p-value only if
+            # _apply_sphericity_corrections itself also can't be computed.
             results["sphericity_test"] = {
                 "test_name": "Mauchly's Test for Sphericity",
                 "W": None,
                 "p_value": None,
                 "sphericity_assumed": None,
                 "note": f"Sphericity test failed: {str(e)}",
-                "interpretation": "Could not determine sphericity - proceeding with caution"
+                "interpretation": "Could not determine sphericity - applying conservative correction"
             }
-            results["corrected_p_value"] = StatisticalTester._pingouin_p_value(row)
-            results["correction_used"] = "None (sphericity test failed)"
+            try:
+                corrections_applied = StatisticalTester._apply_sphericity_corrections(
+                    row, error_row, True, aov
+                )
+                results.update(corrections_applied)
+            except Exception:
+                results["corrected_p_value"] = StatisticalTester._pingouin_p_value(row)
+                results["correction_used"] = "None (sphericity test failed)"
             
         return results
     
@@ -2743,19 +3019,19 @@ class StatisticalTester:
                     "test_name": "Mauchly's Test for Sphericity",
                     "W": None,
                     "p_value": None,
-                    "sphericity_assumed": True,  # Conservative assumption
+                    "sphericity_assumed": False,  # Conservative assumption (Apply GG)
                     "d": int((k * (k - 1)) / 2 - 1) if k > 2 else None,
                     "note": "No sphericity information in ANOVA table",
-                    "interpretation": "Assuming sphericity (could not test)"
+                    "interpretation": "Indeterminate (Defaulting to GG correction)"
                 }
         except Exception:
             return {
                 "test_name": "Mauchly's Test for Sphericity",
                 "W": None,
                 "p_value": None,
-                "sphericity_assumed": True,
+                "sphericity_assumed": False,
                 "note": "Failed to extract sphericity information",
-                "interpretation": "Defaulting to sphericity assumption"
+                "interpretation": "Indeterminate (Defaulting to GG correction)"
             }
     
     @staticmethod
@@ -2832,18 +3108,11 @@ class StatisticalTester:
             
             # Intelligent correction selection
             if gg_epsilon is not None and hf_epsilon is not None:
-                if gg_epsilon > 0.75:
-                    # Use Huynh-Feldt for higher epsilon values
-                    corrections["corrected_p_value"] = hf_p_value
-                    corrections["correction_used"] = f"Huynh-Feldt (ε = {hf_epsilon:.3f} > 0.75)"
-                    corrections["final_p_value"] = hf_p_value
-                    corrections["recommendation"] = "Huynh-Feldt correction recommended (less conservative)"
-                else:
-                    # Use Greenhouse-Geisser for lower epsilon values
-                    corrections["corrected_p_value"] = gg_p_value
-                    corrections["correction_used"] = f"Greenhouse-Geisser (ε = {gg_epsilon:.3f} ≤ 0.75)"
-                    corrections["final_p_value"] = gg_p_value
-                    corrections["recommendation"] = "Greenhouse-Geisser correction recommended (more conservative)"
+                # Use Greenhouse-Geisser unconditionally (as requested by user / conservative default)
+                corrections["corrected_p_value"] = gg_p_value
+                corrections["correction_used"] = f"Greenhouse-Geisser (ε = {gg_epsilon:.3f})"
+                corrections["final_p_value"] = gg_p_value
+                corrections["recommendation"] = "Greenhouse-Geisser correction recommended (more conservative)"
             elif gg_epsilon is not None:
                 corrections["corrected_p_value"] = gg_p_value
                 corrections["correction_used"] = f"Greenhouse-Geisser (ε = {gg_epsilon:.3f})"
@@ -2877,10 +3146,6 @@ class StatisticalTester:
     _perform_welch_anova = staticmethod(MixedAnovaAssumptionEngine._perform_welch_anova)
     _generate_between_assumption_recommendations = staticmethod(MixedAnovaAssumptionEngine._generate_between_assumption_recommendations)
     _test_mixed_anova_within_sphericity = staticmethod(MixedAnovaAssumptionEngine._test_mixed_anova_within_sphericity)
-    _extract_mixed_sphericity_from_anova_table = staticmethod(MixedAnovaAssumptionEngine._extract_mixed_sphericity_from_anova_table)
-    _apply_mixed_anova_sphericity_corrections = staticmethod(MixedAnovaAssumptionEngine._apply_mixed_anova_sphericity_corrections)
-    _apply_corrections_to_effect_row = staticmethod(MixedAnovaAssumptionEngine._apply_corrections_to_effect_row)
-    _generate_within_factor_recommendations = staticmethod(MixedAnovaAssumptionEngine._generate_within_factor_recommendations)
     _test_mixed_anova_interaction_assumptions = staticmethod(MixedAnovaAssumptionEngine._test_mixed_anova_interaction_assumptions)
     _test_interaction_sphericity = staticmethod(MixedAnovaAssumptionEngine._test_interaction_sphericity)
     _test_interaction_cell_homogeneity = staticmethod(MixedAnovaAssumptionEngine._test_interaction_cell_homogeneity)

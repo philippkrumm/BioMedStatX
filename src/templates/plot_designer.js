@@ -33,8 +33,59 @@
     plotStats = parseJsonNode("pd-data-stats", {});
   }
   var pairwiseData = parseJsonNode("pd-data-pairs", []);
+  var pairedLines = parseJsonNode("pd-data-paired-lines", {supported: false, reason: "", trajectories: [], max_subjects: 30});
   var groupOrder = parseJsonNode("pd-data-order", []);
   var groupFactorMapPayload = parseJsonNode("pd-data-group-factor-map", {});
+
+  // Shared style tokens injected by html_exporter.py from visualization/style_tokens.py.
+  // Each field falls back to the historical literal so an older report still renders.
+  // These are DEFAULTS; the user can still change palette / colours interactively.
+  var styleTokens = parseJsonNode("pd-data-style", {});
+  function _numOr(v, d) { return (typeof v === "number" && isFinite(v)) ? v : d; }
+  var plotStyle = {
+    palettes: (styleTokens.palettes && typeof styleTokens.palettes === "object") ? styleTokens.palettes : {
+      Nature:  ["#4E79A7", "#F28E2B", "#E15759", "#76B7B2", "#59A14F", "#EDC948", "#B07AA1", "#FF9DA7"],
+      Science: ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#56B4E9", "#E69F00", "#999999"],
+      NEJM:    ["#BC3C29", "#0072B5", "#E18727", "#20854E", "#7876B1", "#6F99AD", "#FFDC91"],
+      Lancet:  ["#00468B", "#ED0000", "#42B540", "#0099B4", "#925E9F", "#FDAF91", "#AD002A"],
+      Tab10:   ["#1F77B4", "#FF7F0E", "#2CA02C", "#D62728", "#9467BD", "#8C564B", "#E377C2", "#7F7F7F", "#BCBD22", "#17BECF"]
+    },
+    defaultPalette: styleTokens.default_palette || "grayscale",
+    grayscaleFloor: styleTokens.grayscale_floor || "#404040",
+    pointFillColor: styleTokens.point_fill_color || "#000000",
+    pointEdgeColor: styleTokens.point_edge_color || "#000000",
+    pointEdgeWidth: _numOr(styleTokens.point_edge_width, 1),
+    pointSize: _numOr(styleTokens.point_size, 6),
+    shapeOutlineColor: styleTokens.shape_outline_color || "#000000",
+    shapeOutlineWidth: _numOr(styleTokens.shape_outline_width, 2),
+    frameColor: styleTokens.frame_color || "rgba(22,49,58,0.75)",
+    frameLinewidth: _numOr(styleTokens.frame_linewidth, 0.7)
+  };
+  // The frame styling below used to be copy-pasted into every axis of every
+  // plot type (Bar/Box/Violin, Raincloud, Forest, plus the value axis), so a
+  // change had to be made in six places and in practice never was — that is how
+  // the x-label clipping survived several fixes. Build every axis through this.
+  // tickMode/axisMirror are per-render locals, so they are passed in.
+  function axisFrame(tickMode, axisMirror) {
+    return {
+      showline: true,
+      linecolor: plotStyle.frameColor,
+      linewidth: Math.max(0.5, state.axisThickness),
+      ticks: tickMode,
+      tickwidth: Math.max(0.5, state.axisThickness),
+      ticklen: Math.max(4, Math.round(4 + state.axisThickness * 2)),
+      mirror: axisMirror
+    };
+  }
+
+  function grayFloorChannel() {
+    var v = parseInt(String(plotStyle.grayscaleFloor).replace("#", "").slice(0, 2), 16);
+    return isFinite(v) ? v : 64;
+  }
+  // Data points: always solid black (fill + edge), independent of the palette.
+  function pointEdge() {
+    return { width: plotStyle.pointEdgeWidth, color: plotStyle.pointEdgeColor };
+  }
 
   function normalizeReferenceLines(rawLines) {
     if (!Array.isArray(rawLines)) {
@@ -132,12 +183,47 @@
     return;
   }
 
-  var defaultPalette = [
-    "#0f766e", "#1f7a5a", "#b7791f", "#9f3a38", "#1d4ed8", "#7c3aed", "#0ea5e9", "#ef4444"
-  ];
+  // Curated colour palettes, selectable via Style > Colors > "Palette".
+  // These mirror the desktop app's journal palettes (datavisualizer.py /
+  // plot_aesthetics_dialog.py) so the HTML report and the app agree. The
+  // default is a grayscale ramp (like the desktop "Greys" default), generated
+  // black -> white across however many groups the design has, so a t-test
+  // (2 groups) and an ANOVA (>2 groups) both look right.
+  // Palettes come from the shared source (visualization/style_tokens.py) via the
+  // injected pd-data-style blob; plotStyle.palettes carries a fallback copy.
+  var PALETTES = plotStyle.palettes;
+  var DEFAULT_PALETTE_NAME = plotStyle.defaultPalette;
+  // Evenly spaced greys from the shared floor (not pure black, so black data
+  // points stay legible on the darkest segment) up to white, for n groups.
+  function grayscaleRamp(n) {
+    var floor = grayFloorChannel();
+    var ceil = 255;
+    if (n <= 1) { var hf = ("0" + floor.toString(16)).slice(-2); return ["#" + hf + hf + hf]; }
+    var out = [];
+    for (var i = 0; i < n; i++) {
+      var v = Math.round(floor + (ceil - floor) * i / (n - 1));
+      var h = ("0" + v.toString(16)).slice(-2);
+      out.push("#" + h + h + h);
+    }
+    return out;
+  }
+  // "grayscale" is generated per group count; every other name is a fixed list.
+  function resolvePalette(name, n) {
+    if (name === "grayscale") return grayscaleRamp(n);
+    return PALETTES[name] || grayscaleRamp(n);
+  }
+  // Outline for filled shapes (bar/box/violin/raincloud): black, with a
+  // user-adjustable width, applied uniformly so a white/light fill always has a
+  // visible border on every plot type.
+  function shapeOutline() {
+    return { color: plotStyle.shapeOutlineColor, width: state.outlineWidth };
+  }
   // Prioritize combinations that remain separable in dense grayscale exports.
   var defaultPatternCycle = ["x", "\\", "/", "-", "|", "+", "."];
-  var defaultSymbolCycle = ["diamond", "square", "circle", "cross", "triangle-up"];
+  // Default point symbol is a circle for every group. Other shapes stay
+  // available per group via the Style > Colors symbol dropdowns; circle is
+  // listed first so the fallback is also a circle.
+  var defaultSymbolCycle = ["circle", "square", "diamond", "cross", "triangle-up"];
   var fontStacks = {
     "Arial": 'Arial, "Helvetica Neue", Helvetica, sans-serif',
     "Helvetica": '"Helvetica Neue", Helvetica, Arial, sans-serif',
@@ -213,8 +299,8 @@
     titleSize: 16,
     axisSize: 12,
     alpha: 0.85,
+    outlineWidth: plotStyle.shapeOutlineWidth,
     showPoints: true,
-    showPairedLines: false,
     showErrorBars: true,
     centralMeasure: "mean",
     errorType: "sd",
@@ -241,7 +327,8 @@
     legendY: 1.0,
     legendXAnchor: "left",
     legendYAnchor: "top",
-    showSignificance: true,
+    significanceMode: "brackets",
+    showPairedLines: false,
     significanceLineWidth: 1.7,
     significanceSpacingScale: 1.0,
     significanceStarSize: 14,
@@ -255,7 +342,6 @@
     autoPatternsEnabled: false,
     visiblePairIds: [],
     groupLabels: {},
-    spaghettiOpacity: 0.35,
     pointLayout: "jitter",
     grouping: {
       enabled: false,
@@ -276,23 +362,31 @@
   }
 
   function updatePairedLineControlState() {
-    var wrapper = document.getElementById("pd-paired-lines-wrap");
-    var checkbox = document.getElementById("pd-show-paired-lines");
-    var opacityRow = document.getElementById("pd-spaghetti-opacity-row");
-    if (!wrapper || !checkbox) {
-      return;
-    }
-    var available = hasUsableSubjectTrajectories();
-    var raincloudMode = state.plotType === "Raincloud";
-    wrapper.style.display = available ? "flex" : "none";
-    checkbox.disabled = !available || raincloudMode;
-    wrapper.classList.toggle("is-disabled", checkbox.disabled);
-    if (!available || raincloudMode) {
-      checkbox.checked = false;
+    // Kept as the name the rest of the file calls; the work is in
+    // updatePairedLineAvailability(), which runs from updateControlAvailability
+    // once the plot type and state have been read.
+  }
+
+  function updatePairedLineAvailability() {
+    var toggle = document.getElementById("pd-show-paired-lines");
+    var note = document.getElementById("pd-paired-lines-note");
+    if (!toggle) return;
+    var info = pairedLineState(groupIndexMap());
+    var raincloud = state.plotType === "Raincloud";
+    setControlDisabled("pd-show-paired-lines", !info.usable || raincloud);
+    if (!info.usable && state.showPairedLines) {
       state.showPairedLines = false;
+      setChecked("pd-show-paired-lines", false);
     }
-    if (opacityRow) {
-      opacityRow.style.display = (available && !raincloudMode && checkbox.checked) ? "" : "none";
+    if (!note) return;
+    if (raincloud) {
+      note.textContent = "Raincloud draws each group on its own row, so a line between groups has nowhere to go.";
+    } else if (!info.usable) {
+      note.textContent = info.reason;
+    } else if (state.showPairedLines) {
+      note.textContent = "Each line follows one subject across the levels \u2014 what a paired test actually analyses.";
+    } else {
+      note.textContent = "";
     }
   }
 
@@ -320,6 +414,44 @@
     }
   }
 
+  // Letters are refused when the post-hoc did not compare every pair, and the
+  // pair checkboxes are meaningless in letters mode (see buildLetters). Both are
+  // explained rather than silently removed -- a greyed-out control with a reason
+  // teaches; a missing one confuses.
+  function updateSignificanceAvailability() {
+    var noteNode = document.getElementById("pd-significance-note");
+    var lettersOption = document.querySelector("#pd-significance-mode option[value=\"letters\"]");
+    var pairRoot = document.getElementById("pd-pair-controls");
+    var support = lettersSupported(pairsForPlot(groupIndexMap()));
+    var lettersUsable = support.ok && state.plotType !== "Forest";
+
+    if (lettersOption) lettersOption.disabled = !lettersUsable;
+    if (!lettersUsable && state.significanceMode === "letters") {
+      state.significanceMode = "brackets";
+      setSelect("pd-significance-mode", "brackets");
+    }
+
+    var lettersActive = state.significanceMode === "letters";
+    if (pairRoot) {
+      pairRoot.classList.toggle("is-disabled", lettersActive);
+      Array.from(pairRoot.querySelectorAll(".pd-pair-toggle")).forEach(function (node) {
+        node.disabled = lettersActive;
+      });
+    }
+
+    if (!noteNode) return;
+    if (state.plotType === "Forest") {
+      noteNode.textContent = "Forest rows are contrasts, not groups \u2014 no significance layer applies.";
+    } else if (!support.ok) {
+      noteNode.textContent = support.reason;
+    } else if (lettersActive) {
+      noteNode.textContent = "Groups sharing a letter are not significantly different. "
+        + "Letters use all comparisons, so individual pairs cannot be hidden.";
+    } else {
+      noteNode.textContent = "";
+    }
+  }
+
   function applyPlotTypeVisibility() {
     var currentType = state.plotType;
     var elements = document.querySelectorAll("[data-plot-types]");
@@ -341,74 +473,141 @@
     }
   }
 
+  // A plot type that cannot render a setting has it switched off, so the value
+  // never reaches a builder that would choke on it — but the user's choice is
+  // REMEMBERED and restored as soon as they return to a type that supports it.
+  // Before this, one visit to Forest permanently wiped the log axes, reference
+  // lines, y-limits and significance brackets: switching back left every box
+  // unchecked and the user had to redo the whole configuration. The same trap
+  // had already been fixed once for error bars (see below); this generalises it.
+  var hiddenControlStash = {};
+
+  function suspendWhileUnsupported(name, supported, capture, clear, restore) {
+    if (!supported) {
+      if (!(name in hiddenControlStash)) {
+        hiddenControlStash[name] = capture();
+      }
+      clear();
+    } else if (name in hiddenControlStash) {
+      restore(hiddenControlStash[name]);
+      delete hiddenControlStash[name];
+    }
+  }
+
+  function setChecked(id, value) {
+    var el = document.getElementById(id);
+    if (el) el.checked = !!value;
+  }
+
+  function setSelect(id, value) {
+    var el = document.getElementById(id);
+    if (el) el.value = String(value);
+  }
+
+  function setValue(id, value) {
+    var el = document.getElementById(id);
+    if (el) el.value = (value === null || value === undefined) ? "" : String(value);
+  }
+
   function resetStateForHiddenControls() {
     var type = state.plotType;
     var barBoxViolin = ["Bar", "Box", "Violin"];
     var barBoxViolinRaincloud = ["Bar", "Box", "Violin", "Raincloud"];
 
-    // Error bars + auto-pattern: Bar only
-    if (type !== "Bar") {
-      state.showErrorBars = false;
-      var showErrEl = document.getElementById("pd-show-error-bars");
-      if (showErrEl) showErrEl.checked = false;
-
-      state.autoPatternsEnabled = false;
-      var autoPatEl = document.getElementById("pd-auto-pattern");
-      if (autoPatEl) autoPatEl.checked = false;
-    }
+    // Error bars and auto-pattern render only for Bar (the trace builders guard
+    // on plotType), so we deliberately do NOT force them off here — doing that
+    // silently dropped the user's choice when switching type and back.
 
     // Reference lines: Bar, Box, Violin only
-    if (barBoxViolin.indexOf(type) === -1) {
-      state.showZeroReferenceLine = false;
-      state.showUnitReferenceLine = false;
-      state.showThresholdReferenceLines = false;
-      ["pd-ref-zero", "pd-ref-unit", "pd-ref-thresholds"].forEach(function (id) {
-        var el = document.getElementById(id);
-        if (el) el.checked = false;
+    suspendWhileUnsupported("referenceLines", barBoxViolin.indexOf(type) !== -1,
+      function () {
+        return {
+          zero: state.showZeroReferenceLine,
+          unit: state.showUnitReferenceLine,
+          thresholds: state.showThresholdReferenceLines
+        };
+      },
+      function () {
+        state.showZeroReferenceLine = false;
+        state.showUnitReferenceLine = false;
+        state.showThresholdReferenceLines = false;
+        ["pd-ref-zero", "pd-ref-unit", "pd-ref-thresholds"].forEach(function (id) {
+          setChecked(id, false);
+        });
+      },
+      function (saved) {
+        state.showZeroReferenceLine = saved.zero;
+        state.showUnitReferenceLine = saved.unit;
+        state.showThresholdReferenceLines = saved.thresholds;
+        setChecked("pd-ref-zero", saved.zero);
+        setChecked("pd-ref-unit", saved.unit);
+        setChecked("pd-ref-thresholds", saved.thresholds);
       });
-    }
-
-    // Paired lines: Bar, Box, Violin only
-    if (barBoxViolin.indexOf(type) === -1) {
-      state.showPairedLines = false;
-      var pairEl = document.getElementById("pd-show-paired-lines");
-      if (pairEl) pairEl.checked = false;
-    }
 
     // Grouping: Bar, Box, Violin, Raincloud only
-    if (barBoxViolinRaincloud.indexOf(type) === -1) {
-      state.grouping.enabled = false;
-      var grpEl = document.getElementById("pd-group-enabled");
-      if (grpEl) grpEl.checked = false;
-    }
+    suspendWhileUnsupported("grouping", barBoxViolinRaincloud.indexOf(type) !== -1,
+      function () { return { enabled: state.grouping.enabled }; },
+      function () {
+        state.grouping.enabled = false;
+        setChecked("pd-group-enabled", false);
+      },
+      function (saved) {
+        state.grouping.enabled = saved.enabled;
+        setChecked("pd-group-enabled", saved.enabled);
+      });
 
     // Log axes + Y range/format: Bar, Box, Violin, Raincloud only
-    if (barBoxViolinRaincloud.indexOf(type) === -1) {
-      state.logX = false;
-      state.logY = false;
-      var logXEl = document.getElementById("pd-log-x");
-      var logYEl = document.getElementById("pd-log-y");
-      if (logXEl) logXEl.checked = false;
-      if (logYEl) logYEl.checked = false;
+    suspendWhileUnsupported("axisScale", barBoxViolinRaincloud.indexOf(type) !== -1,
+      function () {
+        return { logX: state.logX, logY: state.logY, yMin: state.yMin, yMax: state.yMax };
+      },
+      function () {
+        state.logX = false;
+        state.logY = false;
+        state.yMin = null;
+        state.yMax = null;
+        setChecked("pd-log-x", false);
+        setChecked("pd-log-y", false);
+        setValue("pd-y-min", "");
+        setValue("pd-y-max", "");
+      },
+      function (saved) {
+        state.logX = saved.logX;
+        state.logY = saved.logY;
+        state.yMin = saved.yMin;
+        state.yMax = saved.yMax;
+        setChecked("pd-log-x", saved.logX);
+        setChecked("pd-log-y", saved.logY);
+        setValue("pd-y-min", saved.yMin);
+        setValue("pd-y-max", saved.yMax);
+      });
 
-      state.yMin = null;
-      state.yMax = null;
-      var yMinEl = document.getElementById("pd-y-min");
-      var yMaxEl = document.getElementById("pd-y-max");
-      if (yMinEl) yMinEl.value = "";
-      if (yMaxEl) yMaxEl.value = "";
-    }
+    // Subject lines: Bar, Box, Violin. Raincloud puts each group on its own
+    // row, so a line between groups would cross the layout rather than follow a
+    // subject; Forest and Estimation plot contrasts, not groups.
+    suspendWhileUnsupported("pairedLines", barBoxViolin.indexOf(type) !== -1,
+      function () { return { show: state.showPairedLines }; },
+      function () {
+        state.showPairedLines = false;
+        setChecked("pd-show-paired-lines", false);
+      },
+      function (saved) {
+        state.showPairedLines = saved.show;
+        setChecked("pd-show-paired-lines", saved.show);
+      });
 
-    // Show points: not available for Forest
-    if (type === "Forest") {
-      state.showPoints = false;
-      var spEl = document.getElementById("pd-show-points");
-      if (spEl) spEl.checked = false;
-
-      state.showSignificance = false;
-      var sigEl = document.getElementById("pd-show-significance");
-      if (sigEl) sigEl.checked = false;
-    }
+    // Forest ignores showPoints in its builder, so leave the user's choice
+    // intact across switches; only the significance layer is not drawn there.
+    suspendWhileUnsupported("significance", type !== "Forest",
+      function () { return { mode: state.significanceMode }; },
+      function () {
+        state.significanceMode = "none";
+        setSelect("pd-significance-mode", "none");
+      },
+      function (saved) {
+        state.significanceMode = saved.mode;
+        setSelect("pd-significance-mode", saved.mode);
+      });
   }
 
   function updateControlAvailability() {
@@ -439,6 +638,12 @@
 
     // Reference note text
     updateReferenceNote();
+
+    // Significance form: availability, fallback and the reason shown to the user
+    updateSignificanceAvailability();
+
+    // Subject lines: same treatment -- refuse with a reason rather than in silence
+    updatePairedLineAvailability();
   }
 
   var errorOptionsByCentral = {
@@ -475,15 +680,15 @@
     state.errorType = resolved;
   }
 
+  var defaultColors = resolvePalette(DEFAULT_PALETTE_NAME, groupOrder.length);
   groupOrder.forEach(function (group, index) {
-    state.colors[group] = defaultPalette[index % defaultPalette.length];
+    state.colors[group] = defaultColors[index % defaultColors.length];
     state.patterns[group] = "";
-    state.symbols[group] = defaultSymbolCycle[index % defaultSymbolCycle.length];
+    state.symbols[group] = "circle";
     state.groupLabels[group] = group;
   });
 
   if (hasUsableSubjectTrajectories()) {
-    state.showPairedLines = true;
   }
 
   function buildGroupingControls() {
@@ -570,6 +775,8 @@
     document.getElementById("pd-title-size").value = state.titleSize;
     document.getElementById("pd-axis-size").value = state.axisSize;
     document.getElementById("pd-alpha").value = state.alpha;
+    var owDefEl = document.getElementById("pd-outline-width");
+    if (owDefEl) owDefEl.value = state.outlineWidth;
     document.getElementById("pd-show-points").checked = state.showPoints;
     
     var pointLayoutEl = document.getElementById("pd-point-layout");
@@ -577,7 +784,6 @@
       pointLayoutEl.value = state.pointLayout || "jitter";
     }
 
-    document.getElementById("pd-show-paired-lines").checked = state.showPairedLines;
     document.getElementById("pd-show-error-bars").checked = state.showErrorBars;
     document.getElementById("pd-central-measure").value = state.centralMeasure;
     syncErrorMetricOptions(state.errorType);
@@ -604,7 +810,8 @@
     document.getElementById("pd-legend-y").value = state.legendY;
     document.getElementById("pd-legend-xanchor").value = state.legendXAnchor;
     document.getElementById("pd-legend-yanchor").value = state.legendYAnchor;
-    document.getElementById("pd-show-significance").checked = state.showSignificance;
+    setSelect("pd-significance-mode", state.significanceMode);
+    setChecked("pd-show-paired-lines", state.showPairedLines);
     document.getElementById("pd-significance-line-width").value = state.significanceLineWidth;
     document.getElementById("pd-significance-spacing").value = state.significanceSpacingScale;
     document.getElementById("pd-significance-size").value = state.significanceStarSize;
@@ -613,8 +820,6 @@
     document.getElementById("pd-export-width").value = state.exportWidth;
     document.getElementById("pd-export-height").value = state.exportHeight;
     document.getElementById("pd-png-scale").value = String(state.pngScale);
-    var spaghettiOpacityEl = document.getElementById("pd-spaghetti-opacity");
-    if (spaghettiOpacityEl) spaghettiOpacityEl.value = state.spaghettiOpacity;
     
     var groupEnabledEl = document.getElementById("pd-group-enabled");
     if (groupEnabledEl) {
@@ -641,15 +846,91 @@
     updateFontPreviewStatus();
   }
 
+  // The container is a fixed 680px and Plotly clips nothing: a vertical legend
+  // with more rows than the box is tall gets drawn straight past its bottom
+  // edge. A forty-group two-factor design exported with nineteen of its forty
+  // entries outside the frame -- found by the visual fuzzer, not by eye.
+  //
+  // Measured after the render rather than predicted from the entry count. Row
+  // height depends on the font, the label text and the wrapping, and a formula
+  // for it would be exactly the hand-tuned constant this file has already had
+  // to remove from the axis margins and the legend margin.
+  //
+  // Grows the box instead of drawing outside it, up to a cap -- past the cap a
+  // figure is no longer a figure, so the legend is dropped and the warning line
+  // says so, which is the contract the designer already uses everywhere it
+  // cannot honour a setting.
+  var _PD_PLOT_BASE_H = 680;
+  var _PD_PLOT_MAX_H = 1600;
+
+  function _pdFitLegend(node, warningNode) {
+    if (!node || !node.querySelector) return;
+    var legend = node.querySelector(".infolayer .legend");
+    if (!legend) { _pdSetPlotHeight(node, _PD_PLOT_BASE_H); return; }
+
+    // From the legend's OWN height plus the vertical margins, not from how far
+    // it currently sticks out. An overflow-driven number only ever grows, so a
+    // box that grew for forty groups would stay tall after switching to a plot
+    // with three, and it would creep towards the right size over several
+    // renders instead of landing on it in one.
+    var margin = (node._fullLayout || {}).margin || {};
+    var needed = Math.round((margin.t || 58)
+                            + legend.getBoundingClientRect().height
+                            + (margin.b || 68) + 16);
+    needed = Math.max(_PD_PLOT_BASE_H, needed);
+
+    if (needed <= _PD_PLOT_MAX_H) {
+      _pdSetPlotHeight(node, needed);
+      return;
+    }
+    // Too tall to be a figure any more. Say what was dropped rather than
+    // shipping a frame with the legend hanging out of it.
+    _pdSetPlotHeight(node, _PD_PLOT_MAX_H);
+    Plotly.relayout(node, { showlegend: false });
+    if (warningNode) {
+      var note = "Legend hidden: too many groups to fit the figure.";
+      if (warningNode.textContent.indexOf(note) === -1) {
+        warningNode.textContent = (warningNode.textContent + " " + note).trim();
+      }
+    }
+  }
+
+  function _pdSetPlotHeight(node, px) {
+    if (Math.round(node.getBoundingClientRect().height) === px) return;
+    node.style.height = px + "px";
+    Plotly.Plots.resize(node);
+  }
+
+  // Hold a numeric control to the bounds the control itself declares.
+  //
+  // Every one of these inputs carries min/max in the HTML, and none of them was
+  // enforced: only the spinner arrows respect max, while typing a number past
+  // it -- or a script setting .value -- passes straight through. pd-axis-size
+  // declares max 32; the figure builder applied 65 without complaint, and at 65
+  // the horizontal legend wraps to a second row and leaves the plot container.
+  //
+  // The bounds are read off the element rather than repeated here, because a
+  // bound duplicated in JS is a bound that drifts away from the one the user
+  // is shown. NaN is passed through so each caller's own `|| fallback` keeps
+  // behaving exactly as it did.
+  function _pdNum(id, value) {
+    var el = document.getElementById(id);
+    if (!el || !isFinite(value)) return value;
+    var lo = parseFloat(el.min), hi = parseFloat(el.max);
+    if (isFinite(lo) && value < lo) value = lo;
+    if (isFinite(hi) && value > hi) value = hi;
+    return value;
+  }
+
   function readStateFromControls() {
     state.plotType = document.getElementById("pd-plot-type").value;
     state.title = document.getElementById("pd-title").value || "";
     state.xLabel = document.getElementById("pd-x-label").value || "";
     state.yLabel = document.getElementById("pd-y-label").value || "";
     state.fontFamily = document.getElementById("pd-font-family").value || "Arial";
-    state.titleSize = parseInt(document.getElementById("pd-title-size").value, 10) || 16;
-    state.axisSize = parseInt(document.getElementById("pd-axis-size").value, 10) || 12;
-    state.alpha = parseFloat(document.getElementById("pd-alpha").value) || 0.85;
+    state.titleSize = _pdNum("pd-title-size", parseInt(document.getElementById("pd-title-size").value, 10)) || 16;
+    state.axisSize = _pdNum("pd-axis-size", parseInt(document.getElementById("pd-axis-size").value, 10)) || 12;
+    state.alpha = _pdNum("pd-alpha", parseFloat(document.getElementById("pd-alpha").value)) || 0.85;
     state.showPoints = document.getElementById("pd-show-points").checked;
     
     var pointLayoutEl = document.getElementById("pd-point-layout");
@@ -657,14 +938,17 @@
       state.pointLayout = pointLayoutEl.value || "jitter";
     }
 
-    state.showPairedLines = document.getElementById("pd-show-paired-lines").checked;
     if (!hasUsableSubjectTrajectories()) {
-      state.showPairedLines = false;
     }
     state.showErrorBars = document.getElementById("pd-show-error-bars").checked;
     state.centralMeasure = document.getElementById("pd-central-measure").value || "mean";
     if (["mean", "median"].indexOf(state.centralMeasure) === -1) {
       state.centralMeasure = "mean";
+    }
+    var owEl = document.getElementById("pd-outline-width");
+    if (owEl) {
+      var owVal = parseFloat(owEl.value);
+      state.outlineWidth = Number.isFinite(owVal) ? Math.min(6, Math.max(0, owVal)) : 2;
     }
     syncErrorMetricOptions(document.getElementById("pd-error-type").value);
     state.errorType = document.getElementById("pd-error-type").value || state.errorType || "sd";
@@ -676,14 +960,14 @@
     state.logY = document.getElementById("pd-log-y").checked;
     state.minorTicks = document.getElementById("pd-minor-ticks").checked;
     state.gridStyle = document.getElementById("pd-grid-style").value || "none";
-    state.gridAlpha = parseFloat(document.getElementById("pd-grid-alpha").value);
+    state.gridAlpha = _pdNum("pd-grid-alpha", parseFloat(document.getElementById("pd-grid-alpha").value));
     if (!Number.isFinite(state.gridAlpha)) state.gridAlpha = 0.3;
     state.gridAlpha = Math.min(1, Math.max(0.05, state.gridAlpha));
-    state.axisThickness = parseFloat(document.getElementById("pd-axis-thickness").value);
+    state.axisThickness = _pdNum("pd-axis-thickness", parseFloat(document.getElementById("pd-axis-thickness").value));
     if (!Number.isFinite(state.axisThickness)) state.axisThickness = 0.7;
     state.axisThickness = Math.min(4, Math.max(0.3, state.axisThickness));
     state.tickDirection = document.getElementById("pd-tick-direction").value || "out";
-    state.xTickAngle = parseInt(document.getElementById("pd-x-tick-angle").value, 10);
+    state.xTickAngle = _pdNum("pd-x-tick-angle", parseInt(document.getElementById("pd-x-tick-angle").value, 10));
     if (!Number.isFinite(state.xTickAngle)) state.xTickAngle = 0;
     state.xTickAngle = Math.min(90, Math.max(-90, state.xTickAngle));
     state.yAxisFormat = document.getElementById("pd-y-axis-format").value || "auto";
@@ -700,41 +984,38 @@
     if (["solid", "dash", "dot", "dashdot"].indexOf(state.referenceLineDash) === -1) {
       state.referenceLineDash = "dash";
     }
-    state.referenceLineWidth = parseFloat(document.getElementById("pd-ref-width").value);
+    state.referenceLineWidth = _pdNum("pd-ref-width", parseFloat(document.getElementById("pd-ref-width").value));
     if (!Number.isFinite(state.referenceLineWidth)) state.referenceLineWidth = 1.5;
     state.referenceLineWidth = Math.min(4, Math.max(0.6, state.referenceLineWidth));
     state.showLegend = document.getElementById("pd-show-legend").checked;
     state.legendOrientation = document.getElementById("pd-legend-orientation").value || "h";
-    state.legendX = parseFloat(document.getElementById("pd-legend-x").value);
+    state.legendX = _pdNum("pd-legend-x", parseFloat(document.getElementById("pd-legend-x").value));
     if (!Number.isFinite(state.legendX)) state.legendX = 0;
-    state.legendY = parseFloat(document.getElementById("pd-legend-y").value);
+    state.legendY = _pdNum("pd-legend-y", parseFloat(document.getElementById("pd-legend-y").value));
     if (!Number.isFinite(state.legendY)) state.legendY = 1.1;
     state.legendXAnchor = document.getElementById("pd-legend-xanchor").value || "left";
     state.legendYAnchor = document.getElementById("pd-legend-yanchor").value || "bottom";
-    state.showSignificance = document.getElementById("pd-show-significance").checked;
-    state.significanceLineWidth = parseFloat(document.getElementById("pd-significance-line-width").value);
+    state.significanceMode = document.getElementById("pd-significance-mode").value || "brackets";
+    var pairedToggle = document.getElementById("pd-show-paired-lines");
+    state.showPairedLines = !!(pairedToggle && pairedToggle.checked);
+    state.significanceLineWidth = _pdNum("pd-significance-line-width", parseFloat(document.getElementById("pd-significance-line-width").value));
     if (!Number.isFinite(state.significanceLineWidth)) state.significanceLineWidth = 1.7;
     state.significanceLineWidth = Math.min(4, Math.max(0.8, state.significanceLineWidth));
-    state.significanceSpacingScale = parseFloat(document.getElementById("pd-significance-spacing").value);
+    state.significanceSpacingScale = _pdNum("pd-significance-spacing", parseFloat(document.getElementById("pd-significance-spacing").value));
     if (!Number.isFinite(state.significanceSpacingScale)) state.significanceSpacingScale = 1.0;
     state.significanceSpacingScale = Math.min(2.2, Math.max(0.7, state.significanceSpacingScale));
-    state.significanceStarSize = parseFloat(document.getElementById("pd-significance-size").value);
+    state.significanceStarSize = _pdNum("pd-significance-size", parseFloat(document.getElementById("pd-significance-size").value));
     if (!Number.isFinite(state.significanceStarSize)) state.significanceStarSize = 14;
     state.significanceStarSize = Math.min(36, Math.max(10, state.significanceStarSize));
-    state.significanceStarOffset = parseInt(document.getElementById("pd-significance-star-offset").value, 10);
+    state.significanceStarOffset = _pdNum("pd-significance-star-offset", parseInt(document.getElementById("pd-significance-star-offset").value, 10));
     if (!Number.isFinite(state.significanceStarOffset)) state.significanceStarOffset = 2;
     state.significanceStarOffset = Math.min(30, Math.max(0, state.significanceStarOffset));
     state.autoPatternsEnabled = document.getElementById("pd-auto-pattern").checked;
-    state.exportWidth = parseFloat(document.getElementById("pd-export-width").value) || 8;
-    state.exportHeight = parseFloat(document.getElementById("pd-export-height").value) || 6;
-    state.pngScale = parseFloat(document.getElementById("pd-png-scale").value) || 3;
+    state.exportWidth = _pdNum("pd-export-width", parseFloat(document.getElementById("pd-export-width").value)) || 8;
+    state.exportHeight = _pdNum("pd-export-height", parseFloat(document.getElementById("pd-export-height").value)) || 6;
+    state.pngScale = _pdNum("pd-png-scale", parseFloat(document.getElementById("pd-png-scale").value)) || 3;
     updateFontPreviewStatus();
 
-    var spaghettiOpacityEl = document.getElementById("pd-spaghetti-opacity");
-    if (spaghettiOpacityEl) {
-      var parsedSpaghettiOpacity = parseFloat(spaghettiOpacityEl.value);
-      state.spaghettiOpacity = Number.isFinite(parsedSpaghettiOpacity) ? Math.min(0.9, Math.max(0.05, parsedSpaghettiOpacity)) : 0.35;
-    }
     Array.from(document.querySelectorAll(".pd-node-label-input")).forEach(function (node) {
       if (node.dataset.group) state.groupLabels[node.dataset.group] = node.value;
     });
@@ -752,6 +1033,16 @@
     state.visiblePairIds = Array.from(document.querySelectorAll(".pd-pair-toggle:checked")).map(function (node) {
       return parseInt(node.value, 10);
     });
+  }
+
+  function applyPalette(name) {
+    var pal = resolvePalette(name, groupOrder.length);
+    state.paletteName = name;
+    groupOrder.forEach(function (group, index) {
+      state.colors[group] = pal[index % pal.length];
+    });
+    buildColorControls();
+    buildPlot();
   }
 
   function buildColorControls() {
@@ -913,8 +1204,7 @@
         option.textContent = symbol;
         select.appendChild(option);
       });
-      var fallbackSymbol = defaultSymbolCycle[index % defaultSymbolCycle.length];
-      select.value = state.symbols[group] || fallbackSymbol;
+      select.value = state.symbols[group] || "circle";
       select.addEventListener("change", function () {
         state.symbols[group] = select.value;
         buildPlot();
@@ -945,7 +1235,7 @@
   }
 
   function getSymbolForGroup(group, groupIndex) {
-    return state.symbols[group] || defaultSymbolCycle[groupIndex % defaultSymbolCycle.length];
+    return state.symbols[group] || "circle";
   }
 
   function buildPairControls() {
@@ -1024,59 +1314,8 @@
   }
 
   function buildPairedLineTraces(idxMap) {
-    if (!state.showPairedLines || !hasUsableSubjectTrajectories()) {
-      return [];
-    }
-
-    var traces = [];
-    subjectTrajectories.forEach(function (trajectory) {
-      if (!trajectory || !Array.isArray(trajectory.points)) {
-        return;
-      }
-      var points = trajectory.points
-        .map(function (point) {
-          if (!point) return null;
-          var group = String(point.group || "");
-          var xValue = idxMap[group];
-          var yValue = Number(point.value);
-          if (!xValue || !Number.isFinite(yValue)) {
-            return null;
-          }
-          return { x: xValue, y: yValue };
-        })
-        .filter(Boolean)
-        .sort(function (a, b) { return a.x - b.x; });
-
-      if (points.length < 2) {
-        return;
-      }
-
-      var lineOpacity = state.spaghettiOpacity;
-      var markerOpacity = Math.min(0.95, lineOpacity + 0.12);
-      var lineColor = "rgba(22,49,58," + lineOpacity.toFixed(2) + ")";
-      var markerColor = "rgba(22,49,58," + markerOpacity.toFixed(2) + ")";
-      traces.push({
-        type: "scatter",
-        mode: "lines+markers",
-        x: points.map(function (p) { return p.x; }),
-        y: points.map(function (p) { return p.y; }),
-        connectgaps: false,
-        line: {
-          color: lineColor,
-          width: 1.1
-        },
-        marker: {
-          color: markerColor,
-          size: 4,
-          symbol: "circle"
-        },
-        hovertemplate: "Subject: " + String(trajectory.subject_id || "") + "<br>x=%{x}<br>y=%{y:.4g}<extra></extra>",
-        showlegend: false,
-        name: "Subject trajectory"
-      });
-    });
-
-    return traces;
+    // Paired-line (spaghetti) overlay was removed from the plot designer.
+    return [];
   }
 
   function getErrorMetricLabel() {
@@ -1274,6 +1513,7 @@
           marker: {
             color: state.colors[group],
             opacity: state.alpha,
+            line: shapeOutline(),
             pattern: {
               shape: getPatternForGroup(group, groupIndex),
               solidity: 0.4,
@@ -1293,11 +1533,11 @@
           x: getPointXOffsets(group, values, 0, 0.22, groupIndex),
           y: values,
           marker: {
-            color: state.colors[group],
+            color: plotStyle.pointFillColor,
             symbol: getSymbolForGroup(group, groupIndex),
-            size: 6,
+            size: plotStyle.pointSize,
             opacity: 0.7,
-            line: { width: 0.5, color: "#16313a" }
+            line: pointEdge()
           },
           legendgroup: group,
           name: group + " points",
@@ -1322,7 +1562,7 @@
             upperfence: [summary.upperFence],
             boxpoints: false,
             marker: { color: state.colors[group], size: 6, opacity: 0.7 },
-            line: { color: state.colors[group] },
+            line: shapeOutline(),
             fillcolor: state.colors[group],
             opacity: state.alpha,
             showlegend: state.showLegend
@@ -1338,7 +1578,7 @@
             jitter: 0.3,
             pointpos: 0,
             marker: { color: state.colors[group], size: 6, opacity: 0.7 },
-            line: { color: state.colors[group] },
+            line: shapeOutline(),
             fillcolor: state.colors[group],
             opacity: state.alpha,
             showlegend: state.showLegend
@@ -1352,11 +1592,11 @@
           x: getPointXOffsets(group, values, 0, 0.22, undefined),
           y: values,
           marker: {
-            color: state.colors[group],
+            color: plotStyle.pointFillColor,
             symbol: getSymbolForGroup(group, groupIndex),
-            size: 6,
+            size: plotStyle.pointSize,
             opacity: 0.7,
-            line: { width: 0.5, color: "#16313a" }
+            line: pointEdge()
           },
           legendgroup: group,
           name: group + " points",
@@ -1380,12 +1620,13 @@
           box: { visible: true },
           meanline: { visible: true },
           marker: {
-            color: state.colors[group],
+            color: plotStyle.pointFillColor,
             symbol: getSymbolForGroup(group, groupIndex),
-            size: 5,
-            opacity: 0.65
+            size: plotStyle.pointSize,
+            opacity: 0.65,
+            line: pointEdge()
           },
-          line: { color: state.colors[group] },
+          line: shapeOutline(),
           fillcolor: state.colors[group],
           opacity: state.alpha,
           showlegend: state.showLegend
@@ -1412,7 +1653,7 @@
           width: 0.88,
           alignmentgroup: "raincloud-" + group,
           offsetgroup: "raincloud-" + group,
-          line: { color: state.colors[group] },
+          line: shapeOutline(),
           fillcolor: state.colors[group],
           opacity: Math.min(0.75, state.alpha),
           showlegend: false
@@ -1429,7 +1670,7 @@
           alignmentgroup: "raincloud-" + group,
           offsetgroup: "raincloud-" + group,
           marker: { color: state.colors[group] },
-          line: { color: "rgba(22,49,58,0.85)", width: 1.2 },
+          line: shapeOutline(),
           fillcolor: "rgba(255,255,255,0.28)",
           width: 0.24,
           opacity: 1,
@@ -1443,11 +1684,16 @@
             x: values,
             y: getPointXOffsets(group, values, pointOffset, pointJitter, groupIndex),
             marker: {
+              // Raincloud is the one plot type whose points take the group's own
+              // colour instead of the shared black fill: the cloud, the box and
+              // the rain read as one unit that way. Bar/Box/Violin keep black
+              // points, where the fill is the group colour and black reads best
+              // against it. The black outline from pointEdge() stays either way.
               color: state.colors[group],
               symbol: getSymbolForGroup(group, groupIndex),
-              size: 5,
+              size: plotStyle.pointSize,
               opacity: 0.6,
-              line: { width: 0.4, color: "#16313a" }
+              line: pointEdge()
             },
             legendgroup: group,
             name: group,
@@ -1518,11 +1764,11 @@
           x: getPointXOffsets(group, values, 0, 0.22, groupIndex),
           y: values,
           marker: {
-            color: state.colors[group],
+            color: plotStyle.pointFillColor,
             symbol: getSymbolForGroup(group, groupIndex),
-            size: 6,
+            size: plotStyle.pointSize,
             opacity: 0.7,
-            line: { width: 0.5, color: "#16313a" }
+            line: pointEdge()
           },
           legendgroup: group,
           name: group,
@@ -1578,10 +1824,6 @@
       };
     }
 
-    if (state.showPairedLines && state.plotType !== "Raincloud" && state.plotType !== "Forest" && state.plotType !== "Estimation") {
-      traces = traces.concat(buildPairedLineTraces(idxMap));
-    }
-
     return {
       traces: traces,
       yMin: Math.min.apply(null, lowerBounds),
@@ -1590,44 +1832,55 @@
     };
   }
 
-  function bracketYBase() {
-    var candidates = [];
-    if (state.plotType === "Bar") {
-      groupOrder.forEach(function (group) {
+  // Upper edge of each group as drawn, error bars included. Mirrors
+  // _group_tops() in report_charts.py. Brackets collapse this to a single
+  // baseline; the letter display needs it per group.
+  function groupTops() {
+    var tops = {};
+    groupOrder.forEach(function (group) {
+      var top;
+      if (state.plotType === "Bar") {
         var barSummary = getBarSummaryAndErrors(group);
-        if (!barSummary) {
-          return;
-        }
-        var top = barSummary.center;
-        if (state.showErrorBars) {
-          top += barSummary.upperErr;
-        }
-        candidates.push(top);
-      });
-    } else {
-      groupOrder.forEach(function (group) {
-        var top = getStat(group, "max");
-        if (isFiniteNumber(top)) {
-          candidates.push(top);
-        }
-      });
-    }
+        if (!barSummary) return;
+        top = barSummary.center;
+        if (state.showErrorBars) top += barSummary.upperErr;
+      } else {
+        top = getStat(group, "max");
+      }
+      if (isFiniteNumber(top)) tops[group] = top;
+    });
+    return tops;
+  }
+
+  // The violin body is a KDE that overshoots the data extremes, so any
+  // annotation placed at the data max lands inside the visible tip. Raincloud
+  // draws a violin too -- along x rather than y -- and needs the same buffer;
+  // leaving it out is what put the letters inside the cloud. Single owner of
+  // the rule: the bracket layer reads it from here as well.
+  function violinHeadroom(tops) {
+    if (state.plotType !== "Violin" && state.plotType !== "Raincloud") return 0;
+    var values = Object.keys(tops).map(function (g) { return tops[g]; });
+    if (!values.length) return 0;
+    var lower = [];
+    groupOrder.forEach(function (group) {
+      var mn = getStat(group, "min");
+      if (isFiniteNumber(mn)) lower.push(mn);
+    });
+    var dataMin = lower.length ? Math.min.apply(null, lower) : 0;
+    return Math.max((Math.max.apply(null, values) - dataMin) * 0.30, 1.5);
+  }
+
+  function bracketYBase() {
+    var tops = groupTops();
+    var candidates = groupOrder.map(function (g) { return tops[g]; })
+      .filter(function (v) { return isFiniteNumber(v); });
     if (!candidates.length) return null;
     var dataMax = Math.max.apply(null, candidates);
     // Violin KDE rendering overshoots the data maximum; add buffer so brackets
     // start above the visible violin tip rather than colliding with it.
     // KDE bandwidth can push the violin tip well beyond the data max, especially
     // when data is clustered near the extremes — use a larger buffer (30 %).
-    if (state.plotType === "Violin") {
-      var lowerCandidates = [];
-      groupOrder.forEach(function (group) {
-        var mn = getStat(group, "min");
-        if (isFiniteNumber(mn)) lowerCandidates.push(mn);
-      });
-      var dataMin = lowerCandidates.length ? Math.min.apply(null, lowerCandidates) : 0;
-      return dataMax + Math.max((dataMax - dataMin) * 0.30, 1.5);
-    }
-    return dataMax;
+    return dataMax + violinHeadroom(tops);
   }
 
   function assignLanes(activePairs, yBase, yMin, yMax) {
@@ -1704,32 +1957,300 @@
     return placed;
   }
 
+  // Canonical pair list behind every significance layer (brackets today, the
+  // letter display below). Mirrors _pairs_for_plot() in report_charts.py so the
+  // static report and this designer can never disagree on which comparisons
+  // count. Both significant and non-significant pairs come back: brackets take
+  // the significant ones, the letter display needs the full matrix.
+  function pairsForPlot(idxMap) {
+    return pairwiseData.filter(function (pair) {
+      return pair && idxMap[pair.group1] && idxMap[pair.group2];
+    }).map(function (pair) {
+      return {
+        pair_id: pair.pair_id,
+        group1: pair.group1,
+        group2: pair.group2,
+        stars: pair.stars || (pair.significant ? "*" : ""),
+        significant: !!pair.significant,
+        i1: idxMap[pair.group1],
+        i2: idxMap[pair.group2]
+      };
+    });
+  }
+
+  // Brackets additionally honour the per-pair checkboxes: hiding one bracket is
+  // pure decluttering, every remaining bracket stays true on its own. The letter
+  // display must NOT use this filter -- see buildLetters().
+  function visibleSignificantPairs(idxMap) {
+    return pairsForPlot(idxMap).filter(function (pair) {
+      return pair.significant && state.visiblePairIds.indexOf(pair.pair_id) !== -1;
+    });
+  }
+
+  // ---- Compact letter display -------------------------------------------
+  // Mirror of src/analysis/compact_letters.py. Both sides must agree letter for
+  // letter on the same data, so keep the two in step: same completeness gate,
+  // same Bron-Kerbosch cliques, same sort_by ordering rule.
+
+  // Letters assert something about EVERY pair on the plot ("same letter = not
+  // different"). A pair that was never tested is unknown, not equal -- but the
+  // clique algorithm cannot tell the two apart. So letters are only honest when
+  // the comparisons cover the complete graph. Structural on purpose: it settles
+  // every post-hoc the project has, including paired_custom where the user picks
+  // the pairs by hand, and any test added later, without a name list to forget.
+  function lettersSupported(pairs) {
+    var k = groupOrder.length;
+    if (k < 2) return { ok: false, reason: "A letter display needs at least two groups." };
+    var known = {};
+    groupOrder.forEach(function (g) { known[g] = true; });
+    var tested = {};
+    (pairs || []).forEach(function (pair) {
+      if (!known[pair.group1] || !known[pair.group2] || pair.group1 === pair.group2) return;
+      var key = [pair.group1, pair.group2].sort().join("\u0000");
+      tested[key] = true;
+    });
+    var required = k * (k - 1) / 2;
+    var have = Object.keys(tested).length;
+    if (have < required) {
+      return {
+        ok: false,
+        reason: "Letters require all " + required + " pairwise comparisons between the "
+          + k + " groups shown; this post-hoc provides " + have
+          + ". Comparisons that were never run cannot be shown as \u2018not different\u2019."
+      };
+    }
+    return { ok: true, reason: "" };
+  }
+
+  // Two groups share a letter IFF they are not significantly different --
+  // equivalently, they sit in a common maximal clique of the non-significance
+  // graph. A star ({group} + its non-different partners) is NOT a substitute:
+  // on an intransitive pattern (A~B, B~C, A#C) it collapses A, B, C onto one
+  // letter and hides the real A-C difference.
+  function compactLetters(pairs, sortBy) {
+    var n = groupOrder.length;
+    if (n === 0) return {};
+    if (n === 1) { var one = {}; one[groupOrder[0]] = "a"; return one; }
+
+    var indexOf = {};
+    groupOrder.forEach(function (g, i) { indexOf[g] = i; });
+
+    // notDiff[i][j] true = not significantly different. Untested pairs stay
+    // true, which is why lettersSupported() has to gate this.
+    var notDiff = [];
+    for (var i = 0; i < n; i++) {
+      notDiff.push([]);
+      for (var j = 0; j < n; j++) notDiff[i].push(true);
+    }
+    (pairs || []).forEach(function (pair) {
+      if (!pair.significant) return;
+      var a = indexOf[pair.group1], b = indexOf[pair.group2];
+      if (a === undefined || b === undefined) return;
+      notDiff[a][b] = notDiff[b][a] = false;
+    });
+
+    var adj = [];
+    for (var v = 0; v < n; v++) {
+      var neighbours = {};
+      for (var w = 0; w < n; w++) if (w !== v && notDiff[v][w]) neighbours[w] = true;
+      adj.push(neighbours);
+    }
+
+    function intersect(setObj, neighbours) {
+      var out = {};
+      Object.keys(setObj).forEach(function (key) { if (neighbours[key]) out[key] = true; });
+      return out;
+    }
+
+    var cliques = [];
+    (function expand(R, P, X) {
+      var pKeys = Object.keys(P), xKeys = Object.keys(X);
+      if (!pKeys.length && !xKeys.length) { cliques.push(Object.keys(R).map(Number)); return; }
+      pKeys.forEach(function (vKey) {
+        var nextR = {};
+        Object.keys(R).forEach(function (key) { nextR[key] = true; });
+        nextR[vKey] = true;
+        expand(nextR, intersect(P, adj[vKey]), intersect(X, adj[vKey]));
+        delete P[vKey];
+        X[vKey] = true;
+      });
+    })({}, (function () { var all = {}; for (var q = 0; q < n; q++) all[q] = true; return all; })(), {});
+
+    // Deterministic order so letter 'a' lands on the leading group.
+    var rank = {};
+    for (var r = 0; r < n; r++) {
+      rank[r] = sortBy ? [-(sortBy[groupOrder[r]] || 0), r] : [r, r];
+    }
+    function rankLess(a, b) {
+      return rank[a][0] - rank[b][0] || rank[a][1] - rank[b][1];
+    }
+    cliques.forEach(function (clique) { clique.sort(rankLess); });
+    cliques.sort(function (c1, c2) {
+      for (var idx = 0; idx < Math.min(c1.length, c2.length); idx++) {
+        var cmp = rankLess(c1[idx], c2[idx]);
+        if (cmp) return cmp;
+      }
+      return c1.length - c2.length;
+    });
+
+    var alphabet = "abcdefghijklmnopqrstuvwxyz";
+    var letters = {};
+    groupOrder.forEach(function (g) { letters[g] = ""; });
+    cliques.forEach(function (clique, k) {
+      var letter = k < 26 ? alphabet[k]
+        : alphabet[Math.floor(k / 26) - 1] + alphabet[k % 26];
+      clique.forEach(function (memberIndex) {
+        letters[groupOrder[memberIndex]] += letter;
+      });
+    });
+    return letters;
+  }
+
+  // Default annotation form, shared with _significance_mode() in report_charts.py.
+  // Brackets grow as k(k-1)/2 -- 3 at three groups, 6 at four, 15 at six -- so
+  // four groups is where letters start paying for themselves. k >= 4 is the only
+  // size condition; two and three groups fall through to brackets on their own
+  // rather than through a special case.
+  function defaultSignificanceMode(pairs) {
+    if (lettersSupported(pairs).ok && groupOrder.length >= 4) return "letters";
+    return "brackets";
+  }
+
+  // Letters are computed from the FULL comparison matrix, never from
+  // state.visiblePairIds. Hiding a bracket is decluttering -- every remaining
+  // bracket stays true on its own. Dropping a comparison from a letter display
+  // is not: two groups that do differ would merge onto a shared letter, so the
+  // plot would state the opposite of the result. The pair checkboxes are
+  // disabled in this mode (see updateControlAvailability).
+  function buildLetters(yMin, yMax, idxMap) {
+    var empty = { shapes: [], annotations: [], yAxisMax: yMax };
+    if (state.significanceMode !== "letters") return empty;
+
+    var pairs = pairsForPlot(idxMap);
+    var support = lettersSupported(pairs);
+    if (!support.ok) {
+      return { shapes: [], annotations: [], yAxisMax: yMax, warning: support.reason };
+    }
+
+    var tops = groupTops();
+    var values = groupOrder.map(function (g) { return tops[g]; })
+      .filter(function (v) { return isFiniteNumber(v); });
+    if (!values.length) return empty;
+
+    var letters = compactLetters(pairs, tops);
+    var headroomBase = violinHeadroom(tops);
+    var span = Math.max(Math.abs(Math.max.apply(null, values) - Math.min.apply(null, values)), 1e-9);
+    var step = Math.max(span * 0.08, Math.abs(Math.max.apply(null, values)) * 0.04, 1e-9)
+      * state.significanceSpacingScale;
+
+    var isHorizontal = state.plotType === "Raincloud";
+    var annotations = [];
+    var axisMax = Math.max.apply(null, values);
+    groupOrder.forEach(function (group) {
+      var code = letters[group];
+      var top = tops[group];
+      if (!code || !isFiniteNumber(top)) return;
+      var placed = top + headroomBase + step;
+      axisMax = Math.max(axisMax, placed);
+      annotations.push({
+        x: isHorizontal ? placed : idxMap[group],
+        y: isHorizontal ? idxMap[group] : placed,
+        text: "<b>" + code + "</b>",
+        showarrow: false,
+        xref: "x",
+        yref: "y",
+        xanchor: isHorizontal ? "left" : "center",
+        yanchor: isHorizontal ? "middle" : "bottom",
+        xshift: isHorizontal ? state.significanceStarOffset : 0,
+        yshift: isHorizontal ? 0 : state.significanceStarOffset,
+        font: { size: state.significanceStarSize, color: "#16313a" }
+      });
+    });
+
+    if (isHorizontal) {
+      return { shapes: [], annotations: annotations, yAxisMax: yMax, xAxisMax: axisMax };
+    }
+    return { shapes: [], annotations: annotations, yAxisMax: axisMax };
+  }
+
+  // One entry point for the significance layer, whichever form it takes.
+  function buildSignificanceLayer(yMin, yMax, idxMap) {
+    if (state.significanceMode === "letters") return buildLetters(yMin, yMax, idxMap);
+    return buildBrackets(yMin, yMax, idxMap);
+  }
+
+  // Subject lines. The eligibility verdict is computed server-side (see
+  // analysis/paired_lines.py) because it leans on the level-order tables; what
+  // has to happen here is filtering the trajectories to the groups currently on
+  // screen and re-checking the readability limit, since hiding a group changes
+  // both. A subject left with a single visible point is dropped rather than
+  // drawn as a lone marker pretending to be a line.
+  function visibleTrajectories(idxMap) {
+    var out = [];
+    (pairedLines.trajectories || []).forEach(function (trajectory) {
+      var points = (trajectory.points || []).filter(function (point) {
+        return idxMap[point.group] !== undefined;
+      });
+      if (points.length >= 2) out.push({subject: trajectory.subject, points: points});
+    });
+    return out;
+  }
+
+  function pairedLineState(idxMap) {
+    if (!pairedLines.supported) {
+      return {usable: false, reason: pairedLines.reason || "", trajectories: []};
+    }
+    var trajectories = visibleTrajectories(idxMap);
+    if (!trajectories.length) {
+      return {usable: false, reason: "No subject spans two of the groups shown.", trajectories: []};
+    }
+    var limit = pairedLines.max_subjects || 30;
+    if (trajectories.length > limit) {
+      return {usable: false, trajectories: [],
+              reason: trajectories.length + " subjects exceed the " + limit
+                + " that stay readable as individual lines."};
+    }
+    return {usable: true, reason: "", trajectories: trajectories};
+  }
+
+  function buildPairedLineTraces(idxMap) {
+    if (!state.showPairedLines || state.plotType === "Raincloud") return [];
+    var info = pairedLineState(idxMap);
+    if (!info.usable) return [];
+    var xs = [], ys = [], hover = [];
+    info.trajectories.forEach(function (trajectory) {
+      trajectory.points.forEach(function (point) {
+        xs.push(idxMap[point.group]);
+        ys.push(point.value);
+        hover.push(trajectory.subject + " \u2014 " + point.group);
+      });
+      xs.push(null); ys.push(null); hover.push(null);
+    });
+    return [{
+      type: "scatter", mode: "lines+markers", x: xs, y: ys,
+      line: {color: "rgba(22,49,58,0.38)", width: 1.1},
+      marker: {size: 4, color: "rgba(22,49,58,0.55)"},
+      hovertext: hover, hoverinfo: "text",
+      name: "Subject", showlegend: false, connectgaps: false
+    }];
+  }
+
   function buildBrackets(yMin, yMax, idxMap) {
-    if (!state.showSignificance || !state.visiblePairIds.length) {
+    if (state.significanceMode !== "brackets" || !state.visiblePairIds.length) {
       return { shapes: [], annotations: [], yAxisMax: yMax };
     }
 
     if (state.plotType === "Raincloud") {
-      var horizontalPairs = pairwiseData.filter(function (pair) {
-        if (!pair || !pair.significant) return false;
-        if (state.visiblePairIds.indexOf(pair.pair_id) === -1) return false;
-        return idxMap[pair.group1] && idxMap[pair.group2];
-      }).map(function (pair) {
-        return {
-          stars: pair.stars || "*",
-          i1: idxMap[pair.group1],
-          i2: idxMap[pair.group2]
-        };
-      });
+      var horizontalPairs = visibleSignificantPairs(idxMap);
 
       if (!horizontalPairs.length) {
         return { shapes: [], annotations: [], yAxisMax: yMax, xAxisMax: null };
       }
 
-      // Raincloud KDE also overshoots the data maximum on the x-axis — apply
-      // the same 30 % range buffer used for vertical Violin plots.
-      var dataRangeRaincloud = Math.abs(yMax - yMin) || Math.abs(yMax) || 1;
-      var xBase = yMax + Math.max(dataRangeRaincloud * 0.30, 1.5);
+      // Raincloud KDE also overshoots the data maximum on the x-axis; the
+      // buffer comes from violinHeadroom() so brackets and letters clear the
+      // cloud by the same amount.
+      var xBase = yMax + violinHeadroom(groupTops());
       if (!Number.isFinite(xBase)) {
         return { shapes: [], annotations: [], yAxisMax: yMax, xAxisMax: null };
       }
@@ -1769,19 +2290,7 @@
       return { shapes: shapesHorizontal, annotations: annotationsHorizontal, yAxisMax: yMax, xAxisMax: xAxisMax };
     }
 
-    var visiblePairs = pairwiseData.filter(function (pair) {
-      if (!pair || !pair.significant) return false;
-      if (state.visiblePairIds.indexOf(pair.pair_id) === -1) return false;
-      return idxMap[pair.group1] && idxMap[pair.group2];
-    }).map(function (pair) {
-      return {
-        group1: pair.group1,
-        group2: pair.group2,
-        stars: pair.stars || "*",
-        i1: idxMap[pair.group1],
-        i2: idxMap[pair.group2]
-      };
-    });
+    var visiblePairs = visibleSignificantPairs(idxMap);
 
     if (!visiblePairs.length) {
       return { shapes: [], annotations: [], yAxisMax: yMax };
@@ -1995,6 +2504,20 @@
     var traces = built.traces;
     if (!traces.length) {
       if (warningNode) warningNode.textContent = "No plottable data found.";
+      // Returning here used to leave the previous figure standing, which makes
+      // the refusal a lie: pick Forest on a design that has no effect sizes to
+      // draw and the plot-type control reads "Forest" while a bar chart is
+      // still on screen -- with its significance letters, at their old
+      // coordinates, under a significance control that has switched itself to
+      // "none". Clearing the canvas makes the warning the whole story.
+      Plotly.react("pd-plot", [], {
+        template: "plotly_white",
+        font: { family: resolveFontFamilyStack(state.fontFamily), size: state.axisSize,
+                color: "#16313a" },
+        xaxis: { visible: false },
+        yaxis: { visible: false },
+        margin: { l: 40, r: 24, t: 40, b: 40 }
+      }, { responsive: true, displaylogo: false });
       return;
     }
 
@@ -2027,13 +2550,7 @@
       axisMirror = "ticks";
     }
 
-    yAxis.showline = true;
-    yAxis.linecolor = "rgba(22,49,58,0.75)";
-    yAxis.linewidth = Math.max(0.5, state.axisThickness);
-    yAxis.ticks = tickMode;
-    yAxis.tickwidth = Math.max(0.5, state.axisThickness);
-    yAxis.ticklen = Math.max(4, Math.round(4 + state.axisThickness * 2));
-    yAxis.mirror = axisMirror;
+    Object.assign(yAxis, axisFrame(tickMode, axisMirror));
     if (state.gridStyle !== "none") {
       yAxis.gridwidth = Math.max(0.5, state.axisThickness * 0.75);
       yAxis.gridcolor = "rgba(22,49,58," + state.gridAlpha + ")";
@@ -2073,7 +2590,9 @@
       }
     }
 
-    var bracketLayer = buildBrackets(built.yMin, built.yMax, built.idxMap);
+    traces = traces.concat(buildPairedLineTraces(built.idxMap));
+
+    var bracketLayer = buildSignificanceLayer(built.yMin, built.yMax, built.idxMap);
     if (bracketLayer.warning && warningNode) {
       warningMessages.push(bracketLayer.warning);
     }
@@ -2105,10 +2624,26 @@
         yAxis.autorange = true;
       }
     } else if (!isHorizontalRaincloud && !(state.yMin != null && state.yMax != null && state.yMax > state.yMin)) {
-      var autoMin = Math.min.apply(null, combinedCandidates);
-      var autoMax = Math.max.apply(null, combinedCandidates);
-      var autoSpan = Math.max(Math.abs(autoMax - autoMin), 1e-9);
-      yAxis.range = [autoMin - autoSpan * 0.08, autoMax + autoSpan * 0.06];
+      if (state.plotType === "Violin") {
+        // The violin body is a KDE that overshoots the data extremes by ~2
+        // bandwidths on BOTH ends (Plotly spanmode "soft"). combinedCandidates
+        // only carries the raw data min/max (built.yMin/yMax) plus any bracket /
+        // reference tops, so the fixed 6-8% pad below clips the violin tips:
+        // visibly at the top when no brackets stretch it, and the lower tail is
+        // never accounted for at all. The overshoot is data-dependent (it can
+        // exceed half the data span for tightly clustered groups), so no
+        // constant buffer is safe. Hand framing to Plotly autorange instead --
+        // it fits its own rendered violin exactly and still expands to cover the
+        // bracket / reference annotations (they carry yref:"y"). Manual y-limits
+        // and log-Y are resolved by the branches above.
+        yAxis.autorange = true;
+        yAxis.range = undefined;
+      } else {
+        var autoMin = Math.min.apply(null, combinedCandidates);
+        var autoMax = Math.max.apply(null, combinedCandidates);
+        var autoSpan = Math.max(Math.abs(autoMax - autoMin), 1e-9);
+        yAxis.range = [autoMin - autoSpan * 0.08, autoMax + autoSpan * 0.06];
+      }
     }
 
     if (state.logX && groupOrder.length < 2) {
@@ -2124,15 +2659,9 @@
         title: { text: state.xLabel, font: { size: state.axisSize } },
         tickangle: state.xTickAngle,
         showgrid: state.gridStyle === "major" || state.gridStyle === "both",
-        zeroline: false,
-        showline: true,
-        linecolor: "rgba(22,49,58,0.75)",
-        linewidth: Math.max(0.5, state.axisThickness),
-        ticks: tickMode,
-        tickwidth: Math.max(0.5, state.axisThickness),
-        ticklen: Math.max(4, Math.round(4 + state.axisThickness * 2)),
-        mirror: axisMirror
+        zeroline: false
       };
+      Object.assign(xAxisConfig, axisFrame(tickMode, axisMirror));
       
       if (state.grouping.enabled) {
         xAxisConfig.type = "multicategory";
@@ -2147,7 +2676,15 @@
       template: "plotly_white",
       title: { text: state.title, font: { family: resolvedFontFamily, size: state.titleSize } },
       font: { family: resolvedFontFamily, size: state.axisSize, color: "#16313a" },
-      margin: { l: 64, r: Math.max(legendOutsideRight ? 160 : 24, hasReferenceAnnotations ? 130 : 24), t: 58, b: legendBottom ? 120 : 68 },
+      // The top margin has to grow with the title, because the title is not an
+      // axis and the automargin loop at the end of this function only covers
+      // axes. With a fixed t the title was already clipped by the top edge at
+      // the largest size the control itself offers (42), and 58 is exactly the
+      // room a 16pt title needs -- so the formula reproduces today's default
+      // and only ever adds space above it. Plotly's own title.automargin is
+      // not the fix here: it reserves space inside the plotting area instead of
+      // growing the margin, which leaves the clipping and moves the default.
+      margin: { l: 64, r: Math.max(legendOutsideRight ? 160 : 24, hasReferenceAnnotations ? 130 : 24), t: Math.max(58, Math.round(state.titleSize * 2.2) + 22), b: legendBottom ? 120 : 68 },
       xaxis: xAxisConfig,
       yaxis: yAxis,
       showlegend: state.showLegend,
@@ -2188,29 +2725,21 @@
       layout.yaxis = {
         title: { text: "", font: { size: state.axisSize } },
         type: "category",
+        // Forest is drawn horizontally, so the group labels live on the y-axis
+        // (same as Raincloud). The label-angle control drives them here too, so
+        // rotating labels works on every plot type that has any.
+        tickangle: state.xTickAngle,
         showgrid: true,
-        zeroline: false,
-        showline: true,
-        linecolor: "rgba(22,49,58,0.75)",
-        linewidth: Math.max(0.5, state.axisThickness),
-        ticks: tickMode,
-        tickwidth: Math.max(0.5, state.axisThickness),
-        ticklen: Math.max(4, Math.round(4 + state.axisThickness * 2)),
-        mirror: axisMirror
+        zeroline: false
       };
+      Object.assign(layout.yaxis, axisFrame(tickMode, axisMirror));
       layout.xaxis = {
         title: { text: "Effect Size", font: { size: state.axisSize } },
         type: built.isRatioEffect ? "log" : "linear",
         showgrid: true,
-        zeroline: false,
-        showline: true,
-        linecolor: "rgba(22,49,58,0.75)",
-        linewidth: Math.max(0.5, state.axisThickness),
-        ticks: tickMode,
-        tickwidth: Math.max(0.5, state.axisThickness),
-        ticklen: Math.max(4, Math.round(4 + state.axisThickness * 2)),
-        mirror: axisMirror
+        zeroline: false
       };
+      Object.assign(layout.xaxis, axisFrame(tickMode, axisMirror));
       layout.shapes = [{
         type: "line",
         xref: "x",
@@ -2225,21 +2754,30 @@
     }
 
     if (isHorizontalRaincloud) {
+      // Log needs positive values, and the raincloud is the one layout that
+      // does not degrade gracefully without them. The vertical types put the
+      // values on y, where Plotly drops non-positive points by itself; the
+      // raincloud draws its violins from x, and a log x axis with a value <= 0
+      // produces a path with a missing coordinate -- Chromium reports
+      // '<path> attribute d: Expected number, "M,402.91L-6127.5..."' and the
+      // shape lands thousands of pixels off-canvas. Same precondition the
+      // significance layer already states, so state it here rather than render
+      // a broken figure.
+      var logValuesUsable = Number.isFinite(built.yMin) && built.yMin > 0;
+      var useLogValues = state.logY && logValuesUsable;
+      if (state.logY && !logValuesUsable) {
+        warningMessages.push("Log scale ignored: log requires positive values.");
+      }
+
       var horizontalXAxis = {
         title: { text: state.yLabel, font: { size: state.axisSize } },
-        type: state.logY ? "log" : "linear",
+        type: useLogValues ? "log" : "linear",
         showgrid: state.gridStyle === "major" || state.gridStyle === "both",
-        zeroline: !state.logY,
-        showline: true,
-        linecolor: "rgba(22,49,58,0.75)",
-        linewidth: Math.max(0.5, state.axisThickness),
-        ticks: tickMode,
-        tickwidth: Math.max(0.5, state.axisThickness),
-        ticklen: Math.max(4, Math.round(4 + state.axisThickness * 2)),
-        mirror: axisMirror
+        zeroline: !useLogValues
       };
+      Object.assign(horizontalXAxis, axisFrame(tickMode, axisMirror));
 
-      if (!state.logY && state.yMin != null && state.yMax != null && state.yMax > state.yMin) {
+      if (!useLogValues && state.yMin != null && state.yMax != null && state.yMax > state.yMin) {
         horizontalXAxis.range = [state.yMin, state.yMax];
       }
 
@@ -2247,15 +2785,9 @@
         title: { text: state.xLabel, font: { size: state.axisSize } },
         tickangle: state.xTickAngle,
         showgrid: state.gridStyle === "major" || state.gridStyle === "both",
-        zeroline: false,
-        showline: true,
-        linecolor: "rgba(22,49,58,0.75)",
-        linewidth: Math.max(0.5, state.axisThickness),
-        ticks: tickMode,
-        tickwidth: Math.max(0.5, state.axisThickness),
-        ticklen: Math.max(4, Math.round(4 + state.axisThickness * 2)),
-        mirror: axisMirror
+        zeroline: false
       };
+      Object.assign(horizontalYAxis, axisFrame(tickMode, axisMirror));
       
       if (state.grouping.enabled) {
         horizontalYAxis.type = "multicategory";
@@ -2266,23 +2798,21 @@
         horizontalYAxis.range = state.logX ? [Math.max(0.8, 1 - 0.2), groupOrder.length + 0.6] : [0.4, groupOrder.length + 0.6];
       }
 
-      var xCandidatesHorizontal = [built.yMin, built.yMax];
-      if (Number.isFinite(bracketLayer.xAxisMax)) {
-        xCandidatesHorizontal.push(bracketLayer.xAxisMax);
-      }
-      xCandidatesHorizontal = xCandidatesHorizontal.filter(function (value) { return Number.isFinite(value); });
-
       if (state.yMin != null && state.yMax != null && state.yMax > state.yMin) {
         if (state.logX && state.yMin <= 0) {
           warningMessages.push("Y limits ignored: log scale requires y-min > 0.");
         } else {
           horizontalXAxis.range = state.logX ? [Math.log10(state.yMin), Math.log10(state.yMax)] : [state.yMin, state.yMax];
         }
-      } else if (xCandidatesHorizontal.length >= 2) {
-        var autoMinH = Math.min.apply(null, xCandidatesHorizontal);
-        var autoMaxH = Math.max.apply(null, xCandidatesHorizontal);
-        var autoSpanH = Math.max(Math.abs(autoMaxH - autoMinH), 1e-9);
-        horizontalXAxis.range = [autoMinH - autoSpanH * 0.05, autoMaxH + autoSpanH * 0.12];
+      } else {
+        // Raincloud draws a horizontal one-sided KDE whose density overshoots
+        // the data extremes on the value axis by ~2 bandwidths, exactly like the
+        // vertical Violin. A fixed 5-12% pad clips those tails, so hand the value
+        // axis to Plotly autorange -- it frames its own rendered density and
+        // still expands to cover the bracket annotations. Manual limits and log
+        // scale are resolved by the branches above.
+        horizontalXAxis.autorange = true;
+        horizontalXAxis.range = undefined;
       }
 
       if (state.gridStyle !== "none") {
@@ -2310,22 +2840,30 @@
       layout.xaxis.gridwidth = Math.max(0.5, state.axisThickness * 0.75);
       layout.xaxis.gridcolor = "rgba(22,49,58," + state.gridAlpha + ")";
     }
-    if (state.minorTicks) {
-      layout.xaxis.minor = {
-        ticks: tickMode,
-        tickwidth: Math.max(0.5, state.axisThickness * 0.75),
-        ticklen: Math.max(3, Math.round(3 + state.axisThickness)),
-        showgrid: state.gridStyle === "minor" || state.gridStyle === "both"
-      };
-      if (state.gridStyle === "minor" || state.gridStyle === "both") {
-        layout.xaxis.minor.gridcolor = "rgba(22,49,58," + Math.max(0.05, state.gridAlpha * 0.7) + ")";
-        layout.xaxis.minor.gridwidth = Math.max(0.5, state.axisThickness * 0.6);
-      }
-    }
+    // Minor ticks belong on the numeric value axis only, never the categorical
+    // group-name axis. The value axis already got them above: yAxis for vertical
+    // Bar/Box/Violin, horizontalXAxis for Raincloud. layout.xaxis here is the
+    // categorical axis for vertical plots (group names) -- adding minor ticks to
+    // it dropped stray ticks between the group labels -- and is the already-set
+    // value axis for Raincloud, so no minor block is needed at this point.
 
     if (warningNode) {
       warningNode.textContent = warningMessages.join(" ");
     }
+
+    // Every axis grows its own margin to fit its tick labels AND its axis title,
+    // at any tick angle (0/45/90), on every plot type -- so long x/y-axis titles
+    // and long rotated group labels are never clipped by the fixed-size #pd-plot
+    // container. A fixed pixel margin can never fit arbitrary-length rotated text,
+    // which is why the clipping kept coming back after every hand-tuned margin.
+    // Centralised here (after all plot-type branches have built their axes, and
+    // covering x/y/x2/y2 alike) so a new plot type or a second axis can never
+    // silently miss it.
+    Object.keys(layout).forEach(function (axisKey) {
+      if (/^[xy]axis\d*$/.test(axisKey) && layout[axisKey] && typeof layout[axisKey] === "object") {
+        layout[axisKey].automargin = true;
+      }
+    });
 
     Plotly.react("pd-plot", traces, layout, {
       responsive: true,
@@ -2335,6 +2873,7 @@
       if (typeof window.BioMedStatXTypesetMath === "function") {
         window.BioMedStatXTypesetMath(plotNode);
       }
+      _pdFitLegend(plotNode, warningNode);
     });
   }
 
@@ -2358,6 +2897,12 @@
   buildPatternControls();
   buildSymbolControls();
   buildPairControls();
+
+  // Resolve the initial significance form from the result itself: an all-pairs
+  // post-hoc on four or more groups opens in letters, everything else in
+  // brackets. The user sees the right form before touching anything.
+  state.significanceMode = defaultSignificanceMode(pairsForPlot(groupIndexMap()));
+  setSelect("pd-significance-mode", state.significanceMode);
 
   Array.from(document.querySelectorAll("#plot-designer-panel input, #plot-designer-panel select")).forEach(function (node) {
     node.addEventListener("change", buildPlot);
@@ -2386,6 +2931,14 @@
       }
       buildPatternControls();
       buildPlot();
+    });
+  }
+
+  var paletteSelect = document.getElementById("pd-palette");
+  if (paletteSelect) {
+    paletteSelect.value = state.paletteName || DEFAULT_PALETTE_NAME;
+    paletteSelect.addEventListener("change", function () {
+      applyPalette(paletteSelect.value);
     });
   }
 

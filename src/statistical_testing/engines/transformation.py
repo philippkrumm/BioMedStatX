@@ -4,7 +4,12 @@ import numpy as np
 from scipy import stats
 
 from ..models import StatisticalResult
-from ..validators import ValidationError, validate_transformed_values, bounded_boxcox_lambda
+from ..validators import (
+    ValidationError,
+    validate_transformed_values,
+    bounded_boxcox_lambda,
+    validate_arcsin_domain,
+)
 
 
 class TransformationEngine:
@@ -86,6 +91,15 @@ class TransformationEngine:
                         np.where(mask.values, bc_vals, np.nan), index=df.index
                     )
                 elif transformation_type == "arcsin_sqrt":
+                    # Hard-reject data that does not match the user's declared
+                    # domain (proportion 0-1 / percent 0-100). Only for true
+                    # proportions is arcsin-sqrt variance-stabilizing; raising here
+                    # aborts with no transform and no silent fallback. Gated on a
+                    # declaration being present (undeclared callers keep prior
+                    # behaviour). The global-range rescale below is unchanged.
+                    _declared = test_info.get("arcsin_declared_type") if isinstance(test_info, Mapping) else None
+                    if _declared:
+                        validate_arcsin_domain(df[dv].dropna().values, _declared)
                     min_val = df[dv].min()
                     max_val = df[dv].max()
                     if min_val < 0 or max_val > 1:

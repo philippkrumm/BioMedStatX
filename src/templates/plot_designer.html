@@ -42,6 +42,8 @@
     .pd-row.is-disabled label, .pd-check.is-disabled { opacity: 0.5; }
     .pd-row.is-disabled input:not([type="checkbox"]):not([type="range"]), .pd-row.is-disabled select { background: rgba(22,49,58,0.05); color: var(--muted); cursor: not-allowed; }
     .pd-check.is-disabled input[type="checkbox"] { cursor: not-allowed; }
+    #pd-pair-controls.is-disabled { opacity: 0.45; }
+    #pd-pair-controls.is-disabled .pd-pair-toggle { cursor: not-allowed; }
     [data-plot-types].pd-hidden-by-type { display: none !important; }
     .pd-button-row { display: flex; flex-wrap: wrap; gap: 6px; }
     .pd-button-row button { border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; background: var(--surface); color: var(--ink); cursor: pointer; font-size: 0.78rem; }
@@ -113,6 +115,8 @@
               </select>
             </div>
             <label class="pd-check" data-plot-types="Bar,Box,Violin,Raincloud,Estimation"><input id="pd-show-points" type="checkbox" checked> Show points</label>
+            <label class="pd-check" id="pd-paired-lines-row" data-plot-types="Bar,Box,Violin"><input id="pd-show-paired-lines" type="checkbox"> Connect subjects</label>
+            <div id="pd-paired-lines-note" class="pd-note"></div>
             <div class="pd-row" id="pd-point-layout-row" data-plot-types="Bar,Box,Violin,Raincloud,Estimation">
               <label for="pd-point-layout">Point layout</label>
               <select id="pd-point-layout">
@@ -120,11 +124,7 @@
                 <option value="beeswarm">Beeswarm</option>
               </select>
             </div>
-            <label class="pd-check" id="pd-paired-lines-wrap" data-plot-types="Bar,Box,Violin"><input id="pd-show-paired-lines" type="checkbox"> Show individual subject lines (Spaghetti)</label>
-            <div class="pd-row" id="pd-spaghetti-opacity-row" data-plot-types="Bar,Box,Violin">
-              <label for="pd-spaghetti-opacity">Individual line opacity</label>
-              <input id="pd-spaghetti-opacity" type="range" min="0.05" max="0.9" step="0.05" value="0.35">
-            </div>
+
             <div id="pd-error-bar-section" data-plot-types="Bar">
               <label class="pd-check"><input id="pd-show-error-bars" type="checkbox" checked> Show error bars</label>
               <div class="pd-row">
@@ -199,7 +199,7 @@
                 </select>
               </div>
             </div>
-            <div class="pd-row" data-plot-types="Bar,Box,Violin,Raincloud,Estimation">
+            <div class="pd-row" data-plot-types="Bar,Box,Violin,Raincloud,Estimation,Forest">
               <label for="pd-x-tick-angle">X label angle</label>
               <select id="pd-x-tick-angle">
                 <option value="0">0°</option>
@@ -261,7 +261,7 @@
               </div>
             </div>
 
-            <details class="pd-subgroup" open data-plot-types="Bar,Box,Violin">
+            <details class="pd-subgroup" data-plot-types="Bar,Box,Violin">
               <summary>Reference lines</summary>
               <label class="pd-check"><input id="pd-ref-zero" type="checkbox"> Baseline y = 0</label>
               <label class="pd-check"><input id="pd-ref-unit" type="checkbox"> Unit line y = 1 (fold-change)</label>
@@ -319,10 +319,25 @@
               <label for="pd-alpha">Summary opacity</label>
               <input id="pd-alpha" type="range" min="0.2" max="1" step="0.05" value="0.85">
             </div>
+            <div class="pd-row" data-plot-types="Bar,Box,Violin,Raincloud">
+              <label for="pd-outline-width">Outline width (border, all plot types)</label>
+              <input id="pd-outline-width" type="number" min="0" max="6" step="0.5" value="2">
+            </div>
           </div>
 
           <div class="pd-group" data-plot-types="Bar,Box,Violin,Raincloud,Estimation">
             <h4>Colors</h4>
+            <div class="pd-row">
+              <label for="pd-palette">Palette</label>
+              <select id="pd-palette">
+                <option value="grayscale" selected>Grayscale (black &rarr; white)</option>
+                <option value="Nature">Nature</option>
+                <option value="Science">Science</option>
+                <option value="NEJM">NEJM</option>
+                <option value="Lancet">Lancet</option>
+                <option value="Tab10">Tab10</option>
+              </select>
+            </div>
             <div id="pd-color-controls"></div>
           </div>
 
@@ -343,7 +358,15 @@
         <section data-tab-panel="stats" role="tabpanel" class="is-hidden">
           <div class="pd-group" data-plot-types="Bar,Box,Violin,Raincloud,Estimation">
             <h4>Significance</h4>
-            <label class="pd-check"><input id="pd-show-significance" type="checkbox" checked> Show brackets</label>
+            <div class="pd-row">
+              <label for="pd-significance-mode">Significance display</label>
+              <select id="pd-significance-mode">
+                <option value="none">None</option>
+                <option value="brackets">Brackets + stars</option>
+                <option value="letters">Letters (a, b, ab)</option>
+              </select>
+            </div>
+            <div id="pd-significance-note" class="pd-note"></div>
             <div class="pd-row-inline">
               <div class="pd-row">
                 <label for="pd-significance-line-width">Bracket line width</label>
@@ -402,11 +425,13 @@
   </div>
 
   <script id="pd-data-plot" type="application/json">{{ context.plot_data_json | safe }}</script>
+  <script id="pd-data-style" type="application/json">{{ context.plot_style_json | safe }}</script>
   <script id="pd-data-subject-trajectories" type="application/json">{{ context.plot_subject_trajectories_json | safe }}</script>
   <script id="pd-data-reference-lines" type="application/json">{{ context.plot_reference_lines_json | safe }}</script>
   <script id="pd-data-stats-summary" type="application/json">{{ context.stats_summary_json | safe }}</script>
   <script id="pd-data-stats" type="application/json">{{ context.plot_stats_json | safe }}</script>
   <script id="pd-data-pairs" type="application/json">{{ context.pairwise_data_json | safe }}</script>
+  <script id="pd-data-paired-lines" type="application/json">{{ context.paired_lines_json | safe }}</script>
   <script id="pd-data-order" type="application/json">{{ context.group_order_json | safe }}</script>
   <script id="pd-data-group-factor-map" type="application/json">{{ context.group_factor_map_json | safe }}</script>
   <script>
@@ -448,10 +473,10 @@
 
     // Per-tab status dots — dirty if any owned control differs from default, invalid for y-min ≥ y-max
     var tabOwners = {
-      plot:   ["pd-plot-type","pd-show-points","pd-show-paired-lines","pd-spaghetti-opacity","pd-show-error-bars","pd-central-measure","pd-error-type","pd-error-direction"],
+      plot:   ["pd-plot-type","pd-show-points","pd-show-paired-lines","pd-show-error-bars","pd-central-measure","pd-error-type","pd-error-direction"],
       axes:   ["pd-log-x","pd-log-y","pd-minor-ticks","pd-grid-style","pd-grid-alpha","pd-axis-thickness","pd-tick-direction","pd-x-tick-angle","pd-y-axis-format","pd-y-min","pd-y-max","pd-ref-zero","pd-ref-unit","pd-ref-thresholds","pd-ref-style","pd-ref-width","pd-show-legend","pd-legend-orientation","pd-legend-x","pd-legend-y","pd-legend-xanchor","pd-legend-yanchor"],
       style:  ["pd-title","pd-x-label","pd-y-label","pd-font-family","pd-title-size","pd-axis-size","pd-alpha","pd-auto-pattern"],
-      stats:  ["pd-show-significance","pd-significance-line-width","pd-significance-spacing","pd-significance-size","pd-significance-star-offset"],
+      stats:  ["pd-significance-mode","pd-significance-line-width","pd-significance-spacing","pd-significance-size","pd-significance-star-offset"],
       export: ["pd-export-width","pd-export-height","pd-png-scale"]
     };
 

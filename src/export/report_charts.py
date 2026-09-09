@@ -8,12 +8,21 @@ HTML serialization, significance brackets and plot-data prep. Stateless
 """
 
 import math
+import re
+from core.level_order import natural_order
 
 import numpy as np
 from scipy import stats
 
 from export.report_association import _AssociationMixin
 from export.report_formatting import _FormattingMixin
+from export.report_stat_rows import _StatRowsMixin
+from analysis.compact_letters import letters_from_pairs, letters_supported
+from analysis.paired_lines import build_paired_trajectories, paired_lines_supported
+from visualization import style_tokens
+
+_AXIS_RE = re.compile(r"^[xy]axis\d*$")
+_AXIS_TITLE_RE = re.compile(r"^[xy]axis\d*_title$")
 
 try:
     from core.logger_config import get_logger
@@ -29,6 +38,65 @@ logger = get_logger(__name__)
 
 class _ChartsMixin:
     """Charts helpers mixed into ``HTMLExporter``."""
+
+    # ---- shared layout -------------------------------------------------
+    # Every chart in the report goes through _base_layout(). Before this the
+    # eleven charts each repeated their own template/font/background block, so
+    # a styling fix had to be applied eleven times and in practice never was:
+    # only the group chart had been migrated to style_tokens (commit eb717c3),
+    # leaving it rendering in Arial while the other ten stayed on a hardcoded
+    # "Segoe UI" — two different fonts in the same report. The same drift hit
+    # automargin, which four charts still lacked. Route new charts through this
+    # helper instead of writing another update_layout block by hand.
+    @staticmethod
+    def _axis(**overrides) -> dict:
+        """One axis, with the shared frame styling and automargin.
+
+        automargin lets Plotly measure the rendered tick labels and axis title
+        and grow the margin to fit them, so long or rotated labels cannot be
+        clipped by a fixed pixel margin.
+        """
+        axis = dict(
+            showline=True,
+            linewidth=style_tokens.FRAME_LINEWIDTH,
+            linecolor=style_tokens.FRAME_COLOR,
+            automargin=True,
+        )
+        axis.update(overrides)
+        return axis
+
+    @staticmethod
+    def _base_layout(**overrides) -> dict:
+        """Shared Plotly layout skeleton; per-chart values override it.
+
+        `xaxis`/`yaxis` (and their numbered variants) are merged onto _axis()
+        defaults, and the `xaxis_title`/`yaxis_title` shorthands are folded into
+        those dicts, so every axis of every chart is framed and automargined
+        even when the caller only passes a title.
+        """
+        layout = dict(
+            template="plotly_white",
+            paper_bgcolor=style_tokens.PAPER_BGCOLOR,
+            plot_bgcolor=style_tokens.PLOT_BGCOLOR,
+            font=dict(family=style_tokens.FONT_FAMILY_STACK,
+                      color=style_tokens.INK, size=style_tokens.AXIS_SIZE),
+        )
+        layout.update(overrides)
+
+        # fold `<axis>_title="..."` into the axis dict so both spellings work
+        for key in [k for k in list(layout) if _AXIS_TITLE_RE.match(k)]:
+            axis_key = key[: -len("_title")]
+            axis = dict(layout.get(axis_key) or {})
+            axis.setdefault("title", layout.pop(key))
+            layout[axis_key] = axis
+
+        # both axes always exist, so automargin is never silently skipped
+        for axis_key in ("xaxis", "yaxis"):
+            layout.setdefault(axis_key, {})
+        for axis_key in [k for k in list(layout) if _AXIS_RE.match(k)]:
+            layout[axis_key] = _ChartsMixin._axis(**(layout[axis_key] or {}))
+
+        return layout
 
     @staticmethod
     def _build_lmm_chart(results: dict) -> dict | None:
@@ -87,17 +155,13 @@ class _ChartsMixin:
                 hovertemplate="<b>%{y}</b><br>β = %{x:.4f}<extra></extra>",
                 name="Fixed effect",
             ))
-            figure.update_layout(
-                template="plotly_white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#fffdf8",
+            figure.update_layout(**_ChartsMixin._base_layout(
                 margin=dict(l=180, r=30, t=24, b=48),
-                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
                 xaxis_title="Coefficient (β)",
                 yaxis=dict(title="", automargin=True),
                 showlegend=False,
-                height=max(260, len(params) * 44 + 80),
-            )
+                height=max(260, len(params) * 44 + 80)
+            ))
             html = _ChartsMixin._figure_to_html(figure, div_id="biomedstatx-lmm-chart")
             if not html:
                 return None
@@ -179,12 +243,8 @@ class _ChartsMixin:
                 showlegend=True,
             ))
 
-            figure.update_layout(
-                template="plotly_white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#fffdf8",
+            figure.update_layout(**_ChartsMixin._base_layout(
                 margin=dict(l=48, r=20, t=24, b=56),
-                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
                 xaxis=dict(
                     tickmode="array",
                     tickvals=list(range(len(all_groups))),
@@ -192,8 +252,8 @@ class _ChartsMixin:
                     title="Condition / Timepoint",
                 ),
                 yaxis_title="Observed values",
-                legend=dict(orientation="h", x=0.01, y=1.08),
-            )
+                legend=dict(orientation="h", x=0.01, y=1.08)
+            ))
 
             html = _ChartsMixin._figure_to_html(figure, div_id="biomedstatx-trajectory-chart")
             if not html:
@@ -285,7 +345,8 @@ class _ChartsMixin:
                         y_vals.append(cell["mean"])
                         y_err.append(cell["se"])
                         hover_texts.append(
-                            f"{factor_x}={x_val}, {factor_line}={line_level}<br>"
+                            f"{_FormattingMixin._esc(factor_x)}={_FormattingMixin._esc(x_val)}, "
+                            f"{_FormattingMixin._esc(factor_line)}={_FormattingMixin._esc(line_level)}<br>"
                             f"Mean: {cell['mean']:.3f} ± {cell['se']:.3f} SE<br>n={cell['n']}"
                         )
                     else:
@@ -296,7 +357,7 @@ class _ChartsMixin:
                     x=x_levels_order,
                     y=y_vals,
                     mode="lines+markers",
-                    name=f"{factor_line}={line_level}",
+                    name=f"{_FormattingMixin._esc(factor_line)}={_FormattingMixin._esc(line_level)}",
                     line=dict(color=color, width=2),
                     marker=dict(size=8, color=color),
                     error_y=dict(type="data", array=y_err, visible=True,
@@ -313,12 +374,8 @@ class _ChartsMixin:
                         f"Interaction p = {_FormattingMixin._format_p_value(ip)}"
                         + (" — significant" if ip < 0.05 else "")
                     )
-            fig.update_layout(
-                template="plotly_white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#fffdf8",
+            fig.update_layout(**_ChartsMixin._base_layout(
                 margin=dict(l=56, r=20, t=36, b=64),
-                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
                 xaxis=dict(title=factor_x, automargin=True),
                 yaxis=dict(title="Cell Mean"),
                 legend=dict(title=dict(text=factor_line), orientation="h", x=0.01, y=1.1),
@@ -326,8 +383,8 @@ class _ChartsMixin:
                     x=0.5, y=-0.2, xref="paper", yref="paper",
                     text=interaction_note, showarrow=False,
                     font=dict(size=11, color="#b7791f" if interaction_sig else "#555"),
-                )] if interaction_note else [],
-            )
+                )] if interaction_note else []
+            ))
             html = _ChartsMixin._figure_to_html(fig, div_id="biomedstatx-interaction-plot")
             if not html:
                 return None
@@ -379,10 +436,7 @@ class _ChartsMixin:
         if not level_stats:
             return None
         levels = list(level_stats.keys())
-        try:
-            levels_sorted = sorted(levels, key=lambda x: float(x))
-        except (ValueError, TypeError):
-            levels_sorted = sorted(levels)
+        levels_sorted = natural_order(levels)
         means = [level_stats[lv].get("mean") for lv in levels_sorted]
         ses = [float(level_stats[lv].get("stderr") or level_stats[lv].get("se") or 0) for lv in levels_sorted]
         try:
@@ -429,12 +483,8 @@ class _ChartsMixin:
                 error_y=dict(type="data", array=ses, visible=True,
                              color=palette[0], thickness=1.5, width=5),
             ))
-            fig.update_layout(
-                template="plotly_white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#fffdf8",
+            fig.update_layout(**_ChartsMixin._base_layout(
                 margin=dict(l=56, r=20, t=36, b=60),
-                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
                 xaxis=dict(
                     tickmode="array",
                     tickvals=list(range(len(levels_sorted))),
@@ -443,8 +493,8 @@ class _ChartsMixin:
                     automargin=True,
                 ),
                 yaxis=dict(title="Observed values"),
-                legend=dict(orientation="h", x=0.01, y=1.1),
-            )
+                legend=dict(orientation="h", x=0.01, y=1.1)
+            ))
             n_subjects = len(trajectories)
             subtitle = f"Mean ± SE across {within_factor} levels"
             if n_subjects:
@@ -459,7 +509,7 @@ class _ChartsMixin:
                 "div_id": "biomedstatx-profile-plot",
                 "info": (
                     "Shows the group mean (±SE) at each level of the within-subject factor.\n"
-                    "Grey lines trace individual subject trajectories — they reveal whether each participant follows the overall group trend.\n"
+                    "Grey lines trace individual subject trajectories — they reveal whether each subject follows the overall group trend.\n"
                     "Stable, parallel individual trajectories support the assumption of a consistent within-subject effect.\n"
                     "Error bars show the standard error of the mean (SE).\n\n"
                     "Hover over any point to see exact mean, SE, and n."
@@ -532,7 +582,8 @@ class _ChartsMixin:
                         y_vals.append(cell["mean"])
                         y_err.append(cell["se"])
                         hover_texts.append(
-                            f"{factor_between}={b_level}, {factor_within}={w_level}<br>"
+                            f"{_FormattingMixin._esc(factor_between)}={_FormattingMixin._esc(b_level)}, "
+                            f"{_FormattingMixin._esc(factor_within)}={_FormattingMixin._esc(w_level)}<br>"
                             f"Mean: {cell['mean']:.3f} ± {cell['se']:.3f} SE<br>n={cell['n']}"
                         )
                     else:
@@ -543,7 +594,7 @@ class _ChartsMixin:
                     x=within_sorted,
                     y=y_vals,
                     mode="lines+markers",
-                    name=f"{factor_between}={b_level}",
+                    name=f"{_FormattingMixin._esc(factor_between)}={_FormattingMixin._esc(b_level)}",
                     line=dict(color=color, width=2.5),
                     marker=dict(size=9, color=color),
                     error_y=dict(type="data", array=y_err, visible=True,
@@ -551,16 +602,12 @@ class _ChartsMixin:
                     hovertext=hover_texts,
                     hoverinfo="text",
                 ))
-            fig.update_layout(
-                template="plotly_white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#fffdf8",
+            fig.update_layout(**_ChartsMixin._base_layout(
                 margin=dict(l=56, r=20, t=36, b=60),
-                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
                 xaxis=dict(title=factor_within, automargin=True),
                 yaxis=dict(title="Group mean"),
-                legend=dict(title=dict(text=factor_between), orientation="h", x=0.01, y=1.1),
-            )
+                legend=dict(title=dict(text=factor_between), orientation="h", x=0.01, y=1.1)
+            ))
             html = _ChartsMixin._figure_to_html(fig, div_id="biomedstatx-mixed-profile-plot")
             if not html:
                 return None
@@ -610,15 +657,12 @@ class _ChartsMixin:
             roc_block = _ChartsMixin._build_roc_chart(results)
             if roc_block:
                 charts.append(roc_block)
-        elif model_type == "BetaRegression":
-            # Coefficient table as inline HTML block
-            beta_coef_block = _AssociationMixin._build_beta_coefficient_table_html(results)
-            if beta_coef_block:
-                charts.append(beta_coef_block)
-            # Scatter + fitted curve replaces meaningless boxplot for proportion outcome
-            beta_chart = _ChartsMixin._build_beta_regression_chart(results)
-            if beta_chart:
-                charts.append(beta_chart)
+        elif model_type == "LinearRegression":
+            # Coefficient table as inline HTML block — was computed
+            # (correlation_models.py) but never rendered anywhere.
+            linreg_coef_block = _AssociationMixin._build_linear_regression_coefficient_table_html(results)
+            if linreg_coef_block:
+                charts.append(linreg_coef_block)
         elif model_type == "CorrelationMatrix":
             # Heatmaps replace meaningless boxplot — no group data, matrix data only
             charts.extend(_ChartsMixin._build_correlation_matrix_charts(results))
@@ -725,14 +769,20 @@ class _ChartsMixin:
                 return f"rgba({r},{g},{b},{alpha})"
 
             figure = go.Figure()
-            palette = ["#0f766e", "#1f7a5a", "#b7791f", "#9f3a38", "#1d4ed8", "#7c3aed"]
-            group_order = []
-            for idx, (group_name, values) in enumerate(raw_data.items()):
+            # Match the interactive designer's default: grayscale ramp sized to the
+            # group count, black outline on the boxes, always-black data points.
+            valid = []
+            for group_name, values in raw_data.items():
                 numeric = _FormattingMixin._coerce_numeric_sequence(values)
                 if not numeric:
                     continue
+                valid.append((group_name, numeric))
+            palette = style_tokens.resolve_palette(style_tokens.DEFAULT_PALETTE_NAME, len(valid))
+            group_order = []
+            for idx, (group_name, numeric) in enumerate(valid):
+                escaped_group_name = _FormattingMixin._esc(group_name)
                 group_order.append(str(group_name))
-                label = f"{group_name} (n={len(numeric)})"
+                label = f"{escaped_group_name} (n={len(numeric)})"
                 color = palette[idx % len(palette)]
                 figure.add_trace(
                     go.Box(
@@ -741,23 +791,40 @@ class _ChartsMixin:
                         boxpoints="all",
                         jitter=0.45,
                         pointpos=0,
-                        fillcolor=_hex_to_rgba(color, 0.18),
-                        line=dict(color=color),
-                        marker=dict(size=7, color=color, opacity=0.78),
+                        fillcolor=_hex_to_rgba(color, 0.85),
+                        line=dict(color=style_tokens.SHAPE_OUTLINE_COLOR,
+                                  width=style_tokens.SHAPE_OUTLINE_WIDTH),
+                        marker=dict(
+                            size=style_tokens.POINT_SIZE,
+                            color=style_tokens.POINT_FILL_COLOR,
+                            opacity=0.78,
+                            line=dict(width=style_tokens.POINT_EDGE_WIDTH,
+                                      color=style_tokens.POINT_EDGE_COLOR),
+                        ),
                     )
                 )
             if not figure.data:
                 return None
-            figure.update_layout(
-                template="plotly_white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#fffdf8",
+
+            # Paired designs first: the lines belong under the annotations, and
+            # they are what a within-subject test actually analysed.
+            _ChartsMixin._build_paired_line_layer(figure, results, group_order)
+
+            # The chart most readers actually look at showed no post-hoc result
+            # at all -- brackets existed only on the ANCOVA figure. Same layer,
+            # same default rule as the interactive designer, so a report and the
+            # figure builder never disagree about what was significant.
+            _ChartsMixin._build_significance_layer(
+                figure, results, group_order, brackets_drawn_client_side=True)
+
+            _frame = dict(showline=True, linewidth=style_tokens.FRAME_LINEWIDTH,
+                          linecolor=style_tokens.FRAME_COLOR)
+            figure.update_layout(**_ChartsMixin._base_layout(
                 margin=dict(l=40, r=20, t=24, b=56),
-                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
-                xaxis=dict(automargin=True),
-                yaxis_title="Observed values",
-                showlegend=False,
-            )
+                xaxis=dict(automargin=True, **_frame),
+                yaxis=dict(title="Observed values", **_frame),
+                showlegend=False
+            ))
             html = _ChartsMixin._figure_to_html(figure, div_id="biomedstatx-group-chart")
             if not html:
                 return None
@@ -813,19 +880,15 @@ class _ChartsMixin:
                     borderwidth=1,
                     borderpad=6,
                 )
-            figure.update_layout(
-                template="plotly_white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#fffdf8",
+            figure.update_layout(**_ChartsMixin._base_layout(
                 margin=dict(l=50, r=20, t=24, b=56),
-                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
                 xaxis_title="False Positive Rate",
                 yaxis_title="True Positive Rate",
                 xaxis=dict(range=[0, 1]),
                 yaxis=dict(range=[0, 1]),
                 showlegend=True,
-                legend=dict(x=0.55, y=0.06),
-            )
+                legend=dict(x=0.55, y=0.06)
+            ))
             html = _ChartsMixin._figure_to_html(figure, div_id="biomedstatx-roc-chart")
             if not html:
                 return None
@@ -840,67 +903,6 @@ class _ChartsMixin:
             logger.warning("ROC chart generation failed: %s", exc, exc_info=True)
             return None
 
-    @staticmethod
-    def _build_beta_regression_chart(results: dict) -> dict | None:
-        """Scatter plot of observed proportions vs primary predictor with fitted curve overlay."""
-        if results.get("model_type") != "BetaRegression":
-            return None
-        fitted = results.get("fitted_values") or []
-        xy_data = results.get("xy_data") or {}
-        x_values = _FormattingMixin._coerce_numeric_sequence(xy_data.get("x"))
-        y_values = _FormattingMixin._coerce_numeric_sequence(xy_data.get("y"))
-        if not x_values or not y_values or len(x_values) != len(fitted):
-            return None
-        try:
-            import plotly.graph_objects as go
-
-            x_arr = np.array(x_values, dtype=float)
-            y_arr = np.array(y_values, dtype=float)
-            fitted_arr = np.array(fitted, dtype=float)
-            sort_idx = np.argsort(x_arr)
-            x_label = _FormattingMixin._prettify_label(xy_data.get("x_label") or "Predictor")
-
-            figure = go.Figure()
-            figure.add_trace(go.Scatter(
-                x=x_arr,
-                y=y_arr,
-                mode="markers",
-                marker=dict(size=7, color="#0f766e", opacity=0.72),
-                name="Observed",
-                hovertemplate=f"{x_label}: %{{x:.3f}}<br>Observed: %{{y:.3f}}<extra></extra>",
-            ))
-            figure.add_trace(go.Scatter(
-                x=x_arr[sort_idx],
-                y=fitted_arr[sort_idx],
-                mode="lines",
-                line=dict(color="#b7791f", width=2.5),
-                name="Fitted",
-                hovertemplate="Fitted: %{y:.3f}<extra></extra>",
-            ))
-            figure.update_layout(
-                template="plotly_white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#fffdf8",
-                margin=dict(l=50, r=20, t=24, b=56),
-                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
-                xaxis_title=x_label,
-                yaxis_title="Proportion (outcome)",
-                yaxis=dict(range=[0, 1]),
-                showlegend=True,
-                legend=dict(x=0.75, y=0.06),
-            )
-            html = _ChartsMixin._figure_to_html(figure, div_id="biomedstatx-beta-chart")
-            if not html:
-                return None
-            return {
-                "title": "Beta Regression: Observed vs. Fitted",
-                "subtitle": "Proportion outcome (y-axis fixed [0, 1]). Orange line = model-fitted values.",
-                "html": html,
-                "div_id": "biomedstatx-beta-chart",
-            }
-        except Exception as exc:
-            logger.warning("Beta regression chart failed: %s", exc, exc_info=True)
-            return None
 
     @staticmethod
     def _build_correlation_matrix_charts(results: dict) -> list[dict]:
@@ -994,17 +996,13 @@ class _ChartsMixin:
                 colorbar=dict(title="r", thickness=14, len=0.8),
                 hovertemplate="<b>%{y}</b> × <b>%{x}</b><br>r = %{z:.3f}<extra></extra>",
             ))
-            fig_r.update_layout(
+            fig_r.update_layout(**_ChartsMixin._base_layout(
                 annotations=annots_r,
-                template="plotly_white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#fffdf8",
                 height=fig_h,
                 margin=dict(l=20, r=20, t=36, b=20),
-                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", size=12, color="#16313a"),
-                xaxis=dict(side="bottom", tickangle=-35),
-                yaxis=dict(autorange="reversed"),
-            )
+                xaxis=dict(side="bottom", tickangle=-35, automargin=True),
+                yaxis=dict(autorange="reversed", automargin=True)
+            ))
             div_r = f"biomedstatx-corrmat-r-{title_prefix.replace(' ', '-').lower()}"
             html_r = _ChartsMixin._figure_to_html(fig_r, div_id=div_r)
 
@@ -1061,17 +1059,13 @@ class _ChartsMixin:
                 colorbar=dict(title="p", thickness=14, len=0.8),
                 hovertemplate="<b>%{y}</b> × <b>%{x}</b><br>p = %{z:.4f}<extra></extra>",
             ))
-            fig_p.update_layout(
+            fig_p.update_layout(**_ChartsMixin._base_layout(
                 annotations=annots_p,
-                template="plotly_white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#fffdf8",
                 height=fig_h,
                 margin=dict(l=20, r=20, t=36, b=20),
-                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", size=12, color="#16313a"),
-                xaxis=dict(side="bottom", tickangle=-35),
-                yaxis=dict(autorange="reversed"),
-            )
+                xaxis=dict(side="bottom", tickangle=-35, automargin=True),
+                yaxis=dict(autorange="reversed", automargin=True)
+            ))
             div_p = f"biomedstatx-corrmat-p-{title_prefix.replace(' ', '-').lower()}"
             html_p = _ChartsMixin._figure_to_html(fig_p, div_id=div_p)
 
@@ -1191,17 +1185,13 @@ class _ChartsMixin:
                 )
             )
 
-            figure.update_layout(
-                template="plotly_white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#fffdf8",
+            figure.update_layout(**_ChartsMixin._base_layout(
                 margin=dict(l=40, r=20, t=24, b=40),
-                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
                 xaxis_title=str(payload.get("x_label") or "X"),
                 yaxis_title=str(payload.get("y_label") or "Y"),
                 showlegend=True,
-                legend=dict(orientation="h", x=0.01, y=1.08),
-            )
+                legend=dict(orientation="h", x=0.01, y=1.08)
+            ))
             html = _ChartsMixin._figure_to_html(figure, div_id=div_id)
             if not html:
                 return None
@@ -1238,6 +1228,7 @@ class _ChartsMixin:
 
             figure = go.Figure()
             palette = ["#0f766e", "#1f7a5a", "#b7791f", "#9f3a38", "#1d4ed8", "#7c3aed"]
+            group_order = []
 
             for _factor, levels in adjusted_means.items():
                 if not isinstance(levels, dict):
@@ -1259,28 +1250,29 @@ class _ChartsMixin:
                     figure.add_trace(go.Bar(
                         x=[label],
                         y=[mean],
-                        name=f"{label} (n={n})",
+                        name=f"{_FormattingMixin._esc(label)} (n={n})",
                         error_y=dict(type="data", array=[sd], visible=True, color=color),
                         marker_color=color,
                         marker_opacity=0.82,
                         width=0.45,
                     ))
+                    group_order.append(label)
 
             if not figure.data:
                 return None
 
+            # Overlay the EMM post-hoc significance layer (group labels match the
+            # contrast group1/group2, which are the adjusted-means level labels).
+            _ChartsMixin._build_significance_layer(figure, results, group_order)
+
             cov_str = ", ".join(covariates_used) if covariates_used else "none"
-            figure.update_layout(
-                template="plotly_white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#fffdf8",
+            figure.update_layout(**_ChartsMixin._base_layout(
                 margin=dict(l=48, r=20, t=24, b=56),
-                font=dict(family="Segoe UI, Helvetica Neue, sans-serif", color="#16313a"),
                 yaxis_title="Outcome",
                 xaxis_title="Group",
                 showlegend=True,
-                legend=dict(orientation="h", x=0.01, y=1.08),
-            )
+                legend=dict(orientation="h", x=0.01, y=1.08)
+            ))
             html = _ChartsMixin._figure_to_html(figure, div_id="biomedstatx-ancova-chart")
             if not html:
                 return None
@@ -1313,14 +1305,212 @@ class _ChartsMixin:
             return None
 
     @staticmethod
+    def _pairs_for_plot(results: dict, group_order: list) -> list[dict]:
+        """Canonical post-hoc pair list behind every significance layer.
+
+        Single source of truth: the rows come from ``_build_pairwise_rows`` --
+        the same builder that fills the interactive designer's payload -- so the
+        static and interactive annotations can never disagree on group names,
+        significance or star count. Previously the bracket layer re-derived the
+        stars from ``p_value`` with its own hardcoded thresholds, which is how a
+        divergence gets in unnoticed.
+
+        Pairs whose groups are not both on the plot are dropped. ``i1``/``i2``
+        are category indices with ``i1 < i2``. Both significant and
+        non-significant pairs are returned: brackets filter for the significant
+        ones, the letter display needs the full matrix.
+        """
+        index_of = {str(name): i for i, name in enumerate(group_order)}
+        pairs = []
+        for row in _StatRowsMixin._build_pairwise_rows(results):
+            i1 = index_of.get(str(row.get("group1") or ""))
+            i2 = index_of.get(str(row.get("group2") or ""))
+            if i1 is None or i2 is None or i1 == i2:
+                continue
+            if i1 > i2:
+                i1, i2 = i2, i1
+            significant = bool(row.get("significant"))
+            pairs.append({
+                "i1": i1,
+                "i2": i2,
+                "group1": group_order[i1],
+                "group2": group_order[i2],
+                "stars": row.get("stars") or ("*" if significant else ""),
+                "significant": significant,
+            })
+        return pairs
+
+    @staticmethod
+    def _build_paired_line_layer(figure, results: dict, group_order: list) -> str:
+        """Connect each subject across the levels, where that is defensible.
+
+        Returns the reason it was skipped, or an empty string when lines were
+        drawn -- the caller passes that on to the reader instead of leaving an
+        unexplained absence.
+
+        Drawn as one trace with gaps between subjects rather than one trace per
+        subject: a legend of thirty identical grey entries helps nobody, and the
+        subject is on the hover of every point anyway.
+        """
+        try:
+            raw_data = results.get("raw_data") or results.get("samples") or {}
+            subjects = results.get("raw_data_subjects") or {}
+            supported, reason = paired_lines_supported(group_order, subjects)
+            if not supported:
+                return reason
+
+            trajectories = build_paired_trajectories(group_order, raw_data, subjects)
+            if not trajectories:
+                return "No subject could be followed across levels."
+
+            xs, ys, hover = [], [], []
+            for trajectory in trajectories:
+                for point in trajectory["points"]:
+                    xs.append(point["level_index"])
+                    ys.append(point["value"])
+                    hover.append(f"{trajectory['subject']} — {point['group']}")
+                xs.append(None)
+                ys.append(None)
+                hover.append(None)
+
+            import plotly.graph_objects as go
+
+            figure.add_trace(go.Scatter(
+                x=xs, y=ys, mode="lines+markers",
+                line=dict(color="rgba(22,49,58,0.38)", width=1.1),
+                marker=dict(size=4, color="rgba(22,49,58,0.55)"),
+                hovertext=hover, hoverinfo="text",
+                name="Subject", showlegend=False,
+                connectgaps=False,
+            ))
+            return ""
+        except Exception as exc:
+            logger.warning("paired subject lines failed: %s", exc, exc_info=True)
+            return ""
+
+    @staticmethod
+    def _significance_mode(group_order: list, pairs: list) -> str:
+        """Pick the default annotation form. Shared with the interactive designer.
+
+        Letters need every pairwise comparison to exist (see
+        ``analysis.compact_letters.letters_supported``); on top of that they only
+        earn their keep once brackets get crowded. Brackets grow as k(k-1)/2 --
+        3 at three groups, 6 at four, 15 at six -- so four groups is where the
+        letter display starts paying for itself. ``k >= 4`` is the only size
+        condition; two and three groups fall through to brackets on their own
+        rather than through a special case.
+        """
+        supported, _reason = letters_supported(group_order, pairs)
+        if supported and len(group_order) >= 4:
+            return "letters"
+        return "brackets"
+
+    @staticmethod
+    def _build_significance_layer(figure, results: dict, group_order: list,
+                                  brackets_drawn_client_side: bool = False) -> None:
+        """Annotate a group figure with whichever significance form fits.
+
+        ``brackets_drawn_client_side`` is for the main group chart, where the
+        report page owns the brackets: it redraws them through Plotly.relayout
+        whenever the reader ticks a comparison off, so drawing them here as well
+        would only be overwritten. Letters have no such toggle and are always
+        rendered here, from the complete comparison set.
+        """
+        pairs = _ChartsMixin._pairs_for_plot(results, group_order)
+        if _ChartsMixin._significance_mode(group_order, pairs) == "letters":
+            _ChartsMixin._build_significance_letters(figure, results, group_order, pairs)
+        elif not brackets_drawn_client_side:
+            _ChartsMixin._build_significance_brackets(figure, results, group_order)
+
+    @staticmethod
+    def _group_tops(figure, group_order: list) -> dict:
+        """Per-group upper edge, error bars included, keyed by category index."""
+        tops = {}
+
+        def _record(index, value):
+            if index is None or index < 0 or index >= len(group_order):
+                return
+            tops[index] = max(tops.get(index, value), value)
+
+        for trace_index, trace in enumerate(figure.data):
+            ys = getattr(trace, "y", None)
+            if ys is None:
+                continue
+            xs = getattr(trace, "x", None)
+            error_y = getattr(trace, "error_y", None)
+            errors = getattr(error_y, "array", None) if error_y is not None else None
+
+            def _value(pos):
+                try:
+                    top = float(ys[pos])
+                except (TypeError, ValueError):
+                    return None
+                if errors is not None and pos < len(errors) and errors[pos] is not None:
+                    try:
+                        top += abs(float(errors[pos]))
+                    except (TypeError, ValueError):
+                        pass
+                return top
+
+            if xs is None:
+                # The whole trace sits on one category -- a box or violin drawn
+                # per group, where y holds that group's observations rather than
+                # one value per category. Traces are appended in group order.
+                values = [v for v in (_value(pos) for pos in range(len(ys))) if v is not None]
+                if values:
+                    _record(trace_index, max(values))
+                continue
+
+            # One point per category: the x entry names the group it belongs to.
+            for pos in range(len(ys)):
+                if ys[pos] is None or pos >= len(xs):
+                    continue
+                value = _value(pos)
+                label = str(xs[pos])
+                if value is None or label not in group_order:
+                    continue
+                _record(group_order.index(label), value)
+        return tops
+
+    @staticmethod
+    def _build_significance_letters(figure, results: dict, group_order: list,
+                                    pairs: list | None = None) -> None:
+        """Add a compact letter display: groups sharing a letter do not differ."""
+        try:
+            if pairs is None:
+                pairs = _ChartsMixin._pairs_for_plot(results, group_order)
+            supported, reason = letters_supported(group_order, pairs)
+            if not supported:
+                logger.debug("letter display skipped: %s", reason)
+                return
+            tops = _ChartsMixin._group_tops(figure, group_order)
+            if not tops:
+                return
+            sort_by = {str(name): tops.get(i, 0.0) for i, name in enumerate(group_order)}
+            letters = letters_from_pairs(group_order, pairs, sort_by=sort_by)
+            span = max(abs(max(tops.values()) - min(tops.values())), 1e-9)
+            headroom = max(span * 0.08, abs(max(tops.values())) * 0.04, 1e-9)
+            for index, name in enumerate(group_order):
+                code = letters.get(str(name))
+                if not code or index not in tops:
+                    continue
+                figure.add_annotation(
+                    x=index, y=tops[index] + headroom, text=f"<b>{code}</b>",
+                    showarrow=False, xref="x", yref="y", yshift=4,
+                    font=dict(size=13, color="#16313a"),
+                )
+            figure.update_yaxes(range=None, autorange=True)
+        except Exception as exc:
+            logger.warning("letter display failed: %s", exc, exc_info=True)
+
+    @staticmethod
     def _build_significance_brackets(figure, results: dict, group_order: list) -> None:
         """Add significance bracket annotations (*, **, ***) to a Plotly group comparison figure."""
         try:
-            pairwise = results.get("pairwise_comparisons") or []
-            sig_pairs = [p for p in pairwise if p.get("significant")]
+            sig_pairs = [p for p in _ChartsMixin._pairs_for_plot(results, group_order)
+                         if p["significant"]]
             if not sig_pairs:
                 return
-            group_to_idx = {name: i for i, name in enumerate(group_order)}
             y_vals = []
             for trace in figure.data:
                 if hasattr(trace, "y") and trace.y is not None:
@@ -1331,20 +1521,8 @@ class _ChartsMixin:
             y_range = max(abs(y_max - y_min), 1e-9)
             step = y_range * 0.13
             tick = step * 0.28
-            brackets = []
-            for pair in sig_pairs:
-                g1 = pair.get("group1") or pair.get("comparison", "").split(" vs ")[0].strip()
-                g2 = pair.get("group2") or pair.get("comparison", "").split(" vs ")[-1].strip()
-                i1, i2 = group_to_idx.get(str(g1)), group_to_idx.get(str(g2))
-                if i1 is None or i2 is None:
-                    continue
-                if i1 > i2:
-                    i1, i2 = i2, i1
-                p_val = pair.get("p_value")
-                if not isinstance(p_val, (int, float)):
-                    continue
-                stars = "***" if p_val < 0.001 else "**" if p_val < 0.01 else "*"
-                brackets.append((i1, i2, stars, i2 - i1))
+            brackets = [(p["i1"], p["i2"], p["stars"], p["i2"] - p["i1"])
+                        for p in sig_pairs]
             brackets.sort(key=lambda b: (b[3], b[0]))
             line_style = dict(color="rgba(22,49,58,0.65)", width=1.5)
             for level, (i1, i2, stars, _) in enumerate(brackets):

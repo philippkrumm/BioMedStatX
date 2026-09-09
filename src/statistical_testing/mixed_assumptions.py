@@ -2,7 +2,6 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from analysis.stats_functions import get_pingouin_module
 
 
 class MixedAnovaAssumptionEngine:
@@ -278,25 +277,38 @@ class MixedAnovaAssumptionEngine:
                 )
                 
                 welch_f = numerator / denominator
-                
+
                 # Approximate degrees of freedom
                 df1 = len(group_data) - 1
-                df2 = (len(group_data)**2 - 1) / (3 * sum((1 - w/sum(weights))**2 / (n - 1) 
+                df2 = (len(group_data)**2 - 1) / (3 * sum((1 - w/sum(weights))**2 / (n - 1)
                                                          for w, n in zip(weights, group_sizes)))
-                
+
+                # A zero-variance group makes weights/grand_mean/welch_f non-finite
+                # (numpy divide-by-zero warns and returns inf/nan, it doesn't raise) -
+                # force the except path below so this isn't silently returned as a
+                # valid Welch result.
+                if not (np.isfinite(welch_f) and np.isfinite(df2)):
+                    raise ValueError("non-finite Welch statistic (likely a zero-variance group)")
+
                 # P-value from F-distribution
                 f = stats.f
                 p_val_welch = 1 - f.cdf(welch_f, df1, df2)
-                
+                welch_calculation_degraded = False
+
             except Exception:
-                # Fallback to scipy's implementation if available
-                welch_f, p_val_welch = f_oneway(*group_data)
+                # Fallback to the standard f_oneway result computed above - this
+                # is NOT a variance-robust result, it's the standard f_oneway
+                # relabeled. welch_calculation_degraded (below) tells the
+                # caller so it isn't presented as if it were actually robust.
+                welch_f, p_val_welch = f_stat_standard, p_val_standard
+                welch_calculation_degraded = True
                 df1, df2 = len(group_data) - 1, sum(group_sizes) - len(group_data)
-            
+
             return {
                 "test_name": "Welch's ANOVA (Unequal Variances)",
                 "welch_f_statistic": float(welch_f),
                 "welch_p_value": float(p_val_welch),
+                "welch_calculation_degraded": welch_calculation_degraded,
                 "standard_f_statistic": float(f_stat_standard),
                 "standard_p_value": float(p_val_standard),
                 "df1": int(df1),
@@ -384,398 +396,176 @@ class MixedAnovaAssumptionEngine:
         return recommendations
 
     @staticmethod
+    def _interpret_sphericity_test(p_value, sphericity_met):
+        if p_value is None:
+            return "Sphericity not tested"
+        if sphericity_met:
+            return f"Sphericity assumption met (Mauchly's W, p = {p_value:.3f} >= 0.05)"
+        return f"Sphericity assumption violated (Mauchly's W, p = {p_value:.3f} < 0.05) - Greenhouse-Geisser correction applied"
+
+    @staticmethod
     def _test_mixed_anova_within_sphericity(df, dv, subject, within_factor, aov, alpha=0.05):
         """
-        Tests sphericity assumptions for within-subjects factors in Mixed ANOVA.
-        
-        Uses the comprehensive sphericity testing framework adapted for Mixed designs.
-        Includes interaction-specific sphericity testing when applicable.
-        
-        Parameters:
-        -----------
+        Reads the within-factor's Greenhouse-Geisser sphericity correction
+        directly from the aov table pingouin's mixed_anova() already computed
+        (mirrors StatisticalTester._apply_sphericity_corrections for RM-ANOVA,
+        which reads the same columns from pg.rm_anova(..., correction=True)).
+
+        No separate pg.sphericity() call: mixed_anova() calls rm_anova()
+        internally for the within-factor row, so eps/p_GG_corr/sphericity/
+        W_spher/p_spher are already present on that row whenever within has
+        >=3 levels. pingouin never computes a separate epsilon for the
+        Interaction row (confirmed from pingouin 0.6.1's own source) - the
+        caller (StatisticalTester._run_mixed_anova) applies this same within
+        row's epsilon to the Interaction row too, since both share the same
+        error term/denominator df.
+
+        Parameters
+        ----------
         df : DataFrame
-            Data containing mixed design variables
+            Data containing mixed design variables (used only for the k<=2
+            level-count shortcut; not used for a second sphericity call).
         dv : str
-            Dependent variable column name
+            Dependent variable column name (unused directly; kept for
+            signature parity with the previous implementation's callers).
         subject : str
-            Subject identifier column name
+            Subject identifier column name (unused directly; see dv).
         within_factor : str
-            Within-subjects factor column name
+            Within-subjects factor column name.
         aov : DataFrame
-            ANOVA results table from pingouin
+            ANOVA results table from pingouin's mixed_anova() call.
         alpha : float
-            Significance level for assumption tests
-            
-        Returns:
-        --------
+            Significance level (unused here; kept for signature parity).
+
+        Returns
+        -------
         dict
-            Comprehensive within-factor sphericity analysis results
+            within_sphericity_test, within_corrected_p_value,
+            within_correction_used, and (only when sphericity is violated)
+            within_sphericity_corrections["main_effect"] with the corrected
+            df1/df2/p_value the caller needs to also correct the Interaction
+            row.
         """
         sphericity_results = {}
-        
-        try:
-            # Get within-factor levels and check if sphericity testing is relevant
-            within_levels = df[within_factor].unique()
-            k = len(within_levels)
-            
-            if k <= 2:
-                # Sphericity always met with 2 levels
-                sphericity_results["within_sphericity_test"] = {
-                    "test_name": "Mauchly's Test for Sphericity (Within-Factor)",
-                    "factor": within_factor,
-                    "W": None,
-                    "chi_square": None,
-                    "df": None,
-                    "p_value": None,
-                    "sphericity_assumed": True,
-                    "note": "Sphericity assumption is always met with 2 levels",
-                    "interpretation": "No correction needed - only 2 conditions compared"
-                }
-                sphericity_results["within_corrected_p_value"] = None  # No correction needed
-                sphericity_results["within_correction_used"] = "None (sphericity assumption met)"
-                return sphericity_results
-            
-            # Perform comprehensive sphericity testing for within-factor
-            pg = get_pingouin_module()
-            
-            # Test sphericity for the within-factor
-            try:
-                sphericity_result = pg.sphericity(df, dv=dv, subject=subject, within=within_factor)
-                
-                # Handle different return formats
-                if isinstance(sphericity_result, tuple) and len(sphericity_result) >= 3:
-                    W, pval, spher = sphericity_result[:3]
-                    sphericity_violated = not bool(spher) if spher is not None else True
-                    
-                    sphericity_results["within_sphericity_test"] = {
-                        "test_name": "Mauchly's Test for Sphericity (Within-Factor)",
-                        "factor": within_factor,
-                        "W": float(W) if W is not None else None,
-                        "p_value": float(pval) if pval is not None else None,
-                        "sphericity_assumed": bool(spher) if spher is not None else None,
-                        "df": int((k * (k - 1)) / 2 - 1) if k > 2 else None,
-                        "interpretation": MixedAnovaAssumptionEngine._interpret_sphericity_test(pval, spher) if pval is not None else "Test failed",
-                        "levels_tested": k,
-                        "comparisons": int(k * (k - 1) / 2)
-                    }
-                else:
-                    raise ValueError("Unexpected sphericity test output format")
-                    
-            except Exception as e:
-                # Fallback: Extract from ANOVA table if available
-                sphericity_results["within_sphericity_test"] = MixedAnovaAssumptionEngine._extract_mixed_sphericity_from_anova_table(
-                    aov, within_factor, k
-                )
-                sphericity_violated = not sphericity_results["within_sphericity_test"].get("sphericity_assumed", True)
-                
-            # Apply corrections for within-factor effects in Mixed ANOVA
-            if sphericity_violated:
-                corrections_applied = MixedAnovaAssumptionEngine._apply_mixed_anova_sphericity_corrections(
-                    aov, within_factor, sphericity_violated
-                )
-                sphericity_results.update(corrections_applied)
-            else:
-                sphericity_results["within_sphericity_corrections"] = {
-                    "needed": False,
-                    "reason": "Sphericity assumption is met for within-factor"
-                }
-                sphericity_results["within_corrected_p_value"] = None  # No correction needed
-                sphericity_results["within_correction_used"] = "None (sphericity assumption met)"
-                
-        except Exception as e:
-            # Comprehensive fallback
+
+        within_levels = df[within_factor].unique()
+        k = len(within_levels)
+
+        if k <= 2:
+            sphericity_results["within_sphericity_test"] = {
+                "test_name": "Mauchly's Test for Sphericity (Within-Factor)",
+                "factor": within_factor,
+                "W": None,
+                "chi_square": None,
+                "df": None,
+                "p_value": None,
+                "sphericity_assumed": True,
+                "note": "Sphericity assumption is always met with 2 levels",
+                "interpretation": "No correction needed - only 2 conditions compared"
+            }
+            sphericity_results["within_corrected_p_value"] = None
+            sphericity_results["within_correction_used"] = "None (sphericity assumption met)"
+            sphericity_results["within_sphericity_corrections"] = {
+                "needed": False,
+                "reason": "Sphericity assumption is always met with 2 levels"
+            }
+            return sphericity_results
+
+        within_mask = aov["Source"] == within_factor
+        if not within_mask.any():
             sphericity_results["within_sphericity_test"] = {
                 "test_name": "Mauchly's Test for Sphericity (Within-Factor)",
                 "factor": within_factor,
                 "W": None,
                 "p_value": None,
                 "sphericity_assumed": None,
-                "note": f"Within-factor sphericity test failed: {str(e)}",
-                "interpretation": "Could not determine sphericity for within-factor - proceeding with caution"
+                "note": f"Within-factor '{within_factor}' not found in ANOVA table",
+                "interpretation": "Indeterminate - within-factor row missing"
             }
             sphericity_results["within_corrected_p_value"] = None
-            sphericity_results["within_correction_used"] = "None (sphericity test failed)"
-            
-        return sphericity_results
-    
-    @staticmethod
-    def _extract_mixed_sphericity_from_anova_table(aov, within_factor, k):
-        """
-        Extracts sphericity information for within-factor from Mixed ANOVA table.
-        
-        Parameters:
-        -----------
-        aov : DataFrame
-            ANOVA results table
-        within_factor : str
-            Within-subjects factor name
-        k : int
-            Number of within-factor levels
-            
-        Returns:
-        --------
-        dict
-            Sphericity test results for within-factor
-        """
-        try:
-            # Look for within-factor row in ANOVA table
-            within_mask = aov["Source"] == within_factor
-            if within_mask.any():
-                within_row = aov.loc[within_mask].iloc[0]
-                
-                # Check for sphericity columns
-                sphericity_cols = ['W-spher', 'p-spher', 'sphericity']
-                available_cols = [col for col in sphericity_cols if col in aov.columns]
-                
-                if available_cols:
-                    return {
-                        "test_name": "Mauchly's Test for Sphericity (Within-Factor)",
-                        "factor": within_factor,
-                        "W": float(within_row.get('W-spher', np.nan)) if 'W-spher' in aov.columns else None,
-                        "p_value": float(within_row.get('p-spher', np.nan)) if 'p-spher' in aov.columns else None,
-                        "sphericity_assumed": bool(within_row.get('sphericity', True)) if 'sphericity' in aov.columns else None,
-                        "df": int((k * (k - 1)) / 2 - 1) if k > 2 else None,
-                        "note": "Extracted from Mixed ANOVA table",
-                        "interpretation": "See p-value for significance",
-                        "levels_tested": k
-                    }
-                else:
-                    return {
-                        "test_name": "Mauchly's Test for Sphericity (Within-Factor)",
-                        "factor": within_factor,
-                        "W": None,
-                        "p_value": None,
-                        "sphericity_assumed": True,  # Conservative assumption
-                        "df": int((k * (k - 1)) / 2 - 1) if k > 2 else None,
-                        "note": "No sphericity information in Mixed ANOVA table",
-                        "interpretation": "Assuming sphericity for within-factor (could not test)",
-                        "levels_tested": k
-                    }
-            else:
-                raise ValueError(f"Within-factor '{within_factor}' not found in ANOVA table")
-                
-        except Exception as e:
-            return {
+            sphericity_results["within_correction_used"] = "None (within-factor not found in ANOVA table)"
+            sphericity_results["within_sphericity_corrections"] = {
+                "needed": False,
+                "reason": f"Within-factor '{within_factor}' not found in ANOVA table"
+            }
+            return sphericity_results
+
+        within_row = aov.loc[within_mask].iloc[0]
+        has_sphericity_data = "sphericity" in aov.columns and pd.notna(within_row.get("sphericity"))
+
+        if not has_sphericity_data:
+            sphericity_results["within_sphericity_test"] = {
                 "test_name": "Mauchly's Test for Sphericity (Within-Factor)",
                 "factor": within_factor,
                 "W": None,
                 "p_value": None,
-                "sphericity_assumed": True,
-                "note": f"Failed to extract within-factor sphericity: {str(e)}",
-                "interpretation": "Defaulting to sphericity assumption for within-factor",
-                "levels_tested": k
+                "sphericity_assumed": None,
+                "note": "pingouin did not compute a sphericity test for this design",
+                "interpretation": "Sphericity not tested"
             }
-    
-    @staticmethod
-    def _apply_mixed_anova_sphericity_corrections(aov, within_factor, sphericity_violated):
-        """
-        Applies sphericity corrections specifically for Mixed ANOVA within-factor effects.
-        
-        Handles both main effects and interaction effects that involve the within-factor.
-        
-        Parameters:
-        -----------
-        aov : DataFrame
-            ANOVA results table from pingouin
-        within_factor : str
-            Within-subjects factor name
-        sphericity_violated : bool
-            Whether sphericity assumption is violated
-            
-        Returns:
-        --------
-        dict
-            Correction results for within-factor effects
-        """
-        corrections = {}
-        
-        try:
-            if not sphericity_violated:
-                corrections["within_sphericity_corrections"] = {
-                    "needed": False,
-                    "reason": "Sphericity assumption is met for within-factor"
-                }
-                return corrections
-            
-            # Sphericity violated - apply corrections to within-factor effects
-            corrections["within_sphericity_corrections"] = {"needed": True}
-            
-            # Find within-factor main effect row
-            within_mask = aov["Source"] == within_factor
-            if within_mask.any():
-                within_row = aov.loc[within_mask].iloc[0]
-                
-                # Apply corrections to within-factor main effect
-                within_corrections = MixedAnovaAssumptionEngine._apply_corrections_to_effect_row(
-                    within_row, f"within-factor ({within_factor})"
-                )
-                corrections["within_sphericity_corrections"]["main_effect"] = within_corrections
-                
-            # Find interaction effects involving the within-factor
-            interaction_rows = aov[aov["Source"].str.contains(within_factor, regex=False) & 
-                                  aov["Source"].str.contains("*", regex=False)]
-            
-            if not interaction_rows.empty:
-                interaction_corrections = {}
-                for _, interaction_row in interaction_rows.iterrows():
-                    interaction_name = interaction_row["Source"]
-                    interaction_corrections[interaction_name] = MixedAnovaAssumptionEngine._apply_corrections_to_effect_row(
-                        interaction_row, f"interaction ({interaction_name})"
-                    )
-                corrections["within_sphericity_corrections"]["interactions"] = interaction_corrections
-            
-            # Overall recommendation for within-factor
-            corrections["within_correction_recommendation"] = MixedAnovaAssumptionEngine._generate_within_factor_recommendations(
-                corrections["within_sphericity_corrections"]
-            )
-                
-        except Exception as e:
-            corrections["within_sphericity_corrections"] = {
-                "needed": True,
-                "error": f"Failed to apply within-factor corrections: {str(e)}"
+            sphericity_results["within_corrected_p_value"] = None
+            sphericity_results["within_correction_used"] = "None (sphericity not tested)"
+            sphericity_results["within_sphericity_corrections"] = {
+                "needed": False,
+                "reason": "pingouin did not compute a sphericity test for this design"
             }
-            
-        return corrections
-    
-    @staticmethod
-    def _apply_corrections_to_effect_row(effect_row, effect_name):
-        """
-        Applies Greenhouse-Geisser and Huynh-Feldt corrections to a specific effect.
-        
-        Parameters:
-        -----------
-        effect_row : Series
-            Row from ANOVA table for specific effect
-        effect_name : str
-            Name/description of the effect
-            
-        Returns:
-        --------
-        dict
-            Correction results for this specific effect
-        """
-        corrections = {"effect": effect_name}
-        
-        try:
-            # Greenhouse-Geisser Correction
-            if 'GG-eps' in effect_row and 'p-GG' in effect_row:
-                gg_epsilon = float(effect_row["GG-eps"])
-                gg_p_value = float(effect_row["p-GG"])
-                
-                corrections["greenhouse_geisser"] = {
-                    "epsilon": gg_epsilon,
-                    "corrected_df1": float(effect_row["DF1"]) * gg_epsilon,
-                    "corrected_df2": float(effect_row["DF2"]) * gg_epsilon,
-                    "p_value": gg_p_value,
-                    "conservative": True,
-                    "description": f"Greenhouse-Geisser correction for {effect_name}"
-                }
-            else:
-                gg_epsilon = None
-                gg_p_value = MixedAnovaAssumptionEngine._pingouin_p_value(effect_row)
-            
-            # Huynh-Feldt Correction  
-            if 'HF-eps' in effect_row and 'p-HF' in effect_row:
-                hf_epsilon = float(effect_row["HF-eps"])
-                hf_p_value = float(effect_row["p-HF"])
-                
-                corrections["huynh_feldt"] = {
-                    "epsilon": hf_epsilon,
-                    "corrected_df1": float(effect_row["DF1"]) * hf_epsilon,
-                    "corrected_df2": float(effect_row["DF2"]) * hf_epsilon,
-                    "p_value": hf_p_value,
-                    "conservative": False,
-                    "description": f"Huynh-Feldt correction for {effect_name}"
-                }
-            else:
-                hf_epsilon = None
-                hf_p_value = MixedAnovaAssumptionEngine._pingouin_p_value(effect_row)
-            
-            # Intelligent correction selection
-            if gg_epsilon is not None and hf_epsilon is not None:
-                if gg_epsilon > 0.75:
-                    corrections["recommended_correction"] = "huynh_feldt"
-                    corrections["final_p_value"] = hf_p_value
-                    corrections["correction_used"] = f"Huynh-Feldt (ε = {hf_epsilon:.3f} > 0.75)"
-                    corrections["rationale"] = "ε > 0.75: Huynh-Feldt is less conservative and more appropriate"
-                else:
-                    corrections["recommended_correction"] = "greenhouse_geisser"
-                    corrections["final_p_value"] = gg_p_value
-                    corrections["correction_used"] = f"Greenhouse-Geisser (ε = {gg_epsilon:.3f} ≤ 0.75)"
-                    corrections["rationale"] = "ε ≤ 0.75: Greenhouse-Geisser is more conservative and safer"
-            elif gg_epsilon is not None:
-                corrections["recommended_correction"] = "greenhouse_geisser"
-                corrections["final_p_value"] = gg_p_value
-                corrections["correction_used"] = f"Greenhouse-Geisser (ε = {gg_epsilon:.3f})"
-            elif hf_epsilon is not None:
-                corrections["recommended_correction"] = "huynh_feldt"
-                corrections["final_p_value"] = hf_p_value
-                corrections["correction_used"] = f"Huynh-Feldt (ε = {hf_epsilon:.3f})"
-            else:
-                corrections["recommended_correction"] = "none"
-                corrections["final_p_value"] = MixedAnovaAssumptionEngine._pingouin_p_value(effect_row)
-                corrections["correction_used"] = "None (corrections not available)"
-                corrections["rationale"] = "Correction information not available - consider multivariate approach"
-                
-        except Exception as e:
-            corrections["error"] = f"Failed to apply corrections to {effect_name}: {str(e)}"
-            corrections["final_p_value"] = MixedAnovaAssumptionEngine._pingouin_p_value(effect_row)
-            corrections["correction_used"] = "None (correction failed)"
-            
-        return corrections
-    
-    @staticmethod
-    def _generate_within_factor_recommendations(sphericity_corrections):
-        """
-        Generates recommendations for within-factor sphericity violations in Mixed ANOVA.
-        
-        Parameters:
-        -----------
-        sphericity_corrections : dict
-            Sphericity correction results
-            
-        Returns:
-        --------
-        list
-            List of recommendation strings
-        """
-        recommendations = []
-        
-        try:
-            if not sphericity_corrections.get("needed", False):
-                recommendations.append("✅ Within-factor sphericity assumption is met")
-                recommendations.append("→ Standard Mixed ANOVA results are valid")
-                return recommendations
-            
-            # Sphericity violated - provide guidance
-            recommendations.append("⚠️ Within-factor sphericity assumption is violated")
-            
-            # Check main effect corrections
-            main_effect = sphericity_corrections.get("main_effect", {})
-            if main_effect:
-                rec_correction = main_effect.get("recommended_correction", "none")
-                if rec_correction != "none":
-                    epsilon_val = main_effect.get(rec_correction, {}).get("epsilon", None)
-                    if epsilon_val:
-                        recommendations.append(f"→ Apply {rec_correction.replace('_', '-').title()} correction (ε = {epsilon_val:.3f})")
-                
-            # Check interaction effect corrections
-            interactions = sphericity_corrections.get("interactions", {})
-            if interactions:
-                recommendations.append("→ Interaction effects also require sphericity corrections")
-                for interaction_name, interaction_data in interactions.items():
-                    rec_correction = interaction_data.get("recommended_correction", "none")
-                    if rec_correction != "none":
-                        recommendations.append(f"   • {interaction_name}: Use {rec_correction.replace('_', '-').title()} correction")
-            
-            # General recommendations
-            recommendations.append("→ Report both uncorrected and corrected p-values")
-            recommendations.append("→ Consider multivariate approach (MANOVA) as alternative")
-            
-        except Exception as e:
-            recommendations.append(f"⚠️ Error generating within-factor recommendations: {str(e)}")
-            
-        return recommendations
+            return sphericity_results
+
+        spher = bool(within_row["sphericity"])
+        W = float(within_row["W_spher"]) if pd.notna(within_row.get("W_spher")) else None
+        p_spher = float(within_row["p_spher"]) if pd.notna(within_row.get("p_spher")) else None
+
+        sphericity_results["within_sphericity_test"] = {
+            "test_name": "Mauchly's Test for Sphericity (Within-Factor)",
+            "factor": within_factor,
+            "W": W,
+            "p_value": p_spher,
+            "sphericity_assumed": spher,
+            "df": int((k * (k - 1)) / 2 - 1),
+            "interpretation": MixedAnovaAssumptionEngine._interpret_sphericity_test(p_spher, spher),
+            "levels_tested": k,
+            "comparisons": int(k * (k - 1) / 2)
+        }
+
+        if spher:
+            sphericity_results["within_corrected_p_value"] = None
+            sphericity_results["within_correction_used"] = "None (sphericity assumption met)"
+            sphericity_results["within_sphericity_corrections"] = {
+                "needed": False,
+                "reason": "Sphericity assumption is met for within-factor"
+            }
+            return sphericity_results
+
+        # Sphericity violated: pingouin always provides eps/p_GG_corr
+        # together with sphericity=False on this row.
+        epsilon = float(within_row["eps"])
+        gg_p_value = float(within_row["p_GG_corr"])
+        corrected_df1 = float(within_row["DF1"]) * epsilon
+        corrected_df2 = float(within_row["DF2"]) * epsilon
+
+        main_effect = {
+            "effect": f"within-factor ({within_factor})",
+            "greenhouse_geisser": {
+                "epsilon": epsilon,
+                "corrected_df1": corrected_df1,
+                "corrected_df2": corrected_df2,
+                "p_value": gg_p_value,
+                "conservative": True,
+                "description": f"Greenhouse-Geisser correction for within-factor ({within_factor})"
+            },
+            "recommended_correction": "greenhouse_geisser",
+            "final_p_value": gg_p_value,
+            "correction_used": f"Greenhouse-Geisser (ε = {epsilon:.3f})"
+        }
+
+        sphericity_results["within_sphericity_corrections"] = {
+            "needed": True,
+            "main_effect": main_effect
+        }
+        sphericity_results["within_corrected_p_value"] = gg_p_value
+        sphericity_results["within_correction_used"] = f"Greenhouse-Geisser (ε = {epsilon:.3f})"
+
+        return sphericity_results
 
     @staticmethod
     def _test_mixed_anova_interaction_assumptions(df, dv, between_factor, within_factor, subject, aov, alpha=0.05):
@@ -888,80 +678,84 @@ class MixedAnovaAssumptionEngine:
         from the main within-factor sphericity.
         """
         try:
-            interaction_name = f"{within_factor} * {between_factor}"
-            
-            # Check if interaction exists in ANOVA table
-            interaction_mask = aov["Source"] == interaction_name
+            # pingouin labels the interaction row literally "Interaction", not
+            # "<within> * <between>". Looking it up under the composed name made
+            # the function report "Interaction effect not found in ANOVA table" --
+            # a false diagnosis of a row that is present.
+            interaction_mask = aov["Source"] == "Interaction"
             if not interaction_mask.any():
                 return {
                     "test_name": "Interaction Sphericity Test",
-                    "interaction": interaction_name,
-                    "error": "Interaction effect not found in ANOVA table",
-                    "sphericity_assumed": None
+                    "interaction": "Interaction",
+                    "error": "No Interaction row in the pingouin ANOVA table",
+                    "sphericity_assumed": False,
                 }
-            
+
             interaction_row = aov.loc[interaction_mask].iloc[0]
-            
-            # Extract sphericity information for interaction
+
             sphericity_result = {
                 "test_name": "Mauchly's Test for Interaction Sphericity",
-                "interaction": interaction_name,
-                "factor_levels": len(df[within_factor].unique())
+                "interaction": "Interaction",
+                "factor_levels": len(df[within_factor].unique()),
             }
-            
-            # Try to get sphericity information from ANOVA table
-            if 'W-spher' in interaction_row and pd.notnull(interaction_row['W-spher']):
+
+            # pingouin renamed these between releases ("W-spher"/"p-spher" up to
+            # 0.5.x, "W_spher"/"p_spher" from 0.6), so accept both -- same shape
+            # as StatisticalTester._pingouin_p_column.
+            _w_col = next((c for c in ("W_spher", "W-spher") if c in interaction_row), None)
+            _p_col = next((c for c in ("p_spher", "p-spher") if c in interaction_row), None)
+
+            if _w_col is not None and pd.notnull(interaction_row[_w_col]):
                 sphericity_result.update({
-                    "W": float(interaction_row['W-spher']),
-                    "p_value": float(interaction_row['p-spher']) if 'p-spher' in interaction_row else None,
-                    "sphericity_assumed": bool(interaction_row['sphericity']) if 'sphericity' in interaction_row else None,
-                    "interpretation": "Interaction sphericity extracted from ANOVA table"
+                    "W": float(interaction_row[_w_col]),
+                    "p_value": float(interaction_row[_p_col]) if _p_col else None,
+                    "sphericity_assumed": (bool(interaction_row["sphericity"])
+                                           if "sphericity" in interaction_row else None),
+                    "interpretation": "Interaction sphericity extracted from ANOVA table",
                 })
             else:
-                # Attempt direct sphericity test for interaction
-                try:
-                    pg = get_pingouin_module()
-                    # Create interaction factor for sphericity testing
-                    df_interaction = df.copy()
-                    df_interaction['interaction_factor'] = df_interaction[within_factor].astype(str) + "_" + df_interaction[between_factor].astype(str)
-                    
-                    # Test sphericity on interaction factor
-                    sphericity_test = pg.sphericity(df_interaction, dv=dv, subject=subject, within='interaction_factor')
-                    if isinstance(sphericity_test, tuple) and len(sphericity_test) >= 3:
-                        W, pval, spher = sphericity_test[:3]
-                        sphericity_result.update({
-                            "W": float(W) if W is not None else None,
-                            "p_value": float(pval) if pval is not None else None,
-                            "sphericity_assumed": bool(spher) if spher is not None else None,
-                            "interpretation": "Direct interaction sphericity test performed"
-                        })
-                    else:
-                        raise ValueError("Unexpected sphericity test output")
-                        
-                except Exception as inner_e:
-                    sphericity_result.update({
-                        "W": None,
-                        "p_value": None,
-                        "sphericity_assumed": None,
-                        "note": f"Direct sphericity test failed: {str(inner_e)}",
-                        "interpretation": "Could not determine interaction sphericity"
-                    })
-            
-            # Add corrections if available
-            if 'GG-eps' in interaction_row and 'HF-eps' in interaction_row:
-                corrections = MixedAnovaAssumptionEngine._apply_corrections_to_effect_row(
-                    interaction_row, f"interaction ({interaction_name})"
-                )
-                sphericity_result["corrections"] = corrections
-            
+                # Expected path. pingouin computes no separate epsilon for the
+                # Interaction row -- see this module's _test_mixed_anova_within_sphericity
+                # docstring, confirmed against 0.6.1 -- so W_spher/p_spher are NaN there.
+                #
+                # There used to be a fallback here that crossed the two factors into a
+                # single "<within>_<between>" level and ran Mauchly on it. That cannot
+                # work in a mixed design: every subject belongs to exactly one
+                # between-group, so those cells are structurally empty and the
+                # covariance matrix is singular (LinAlgError by construction, not by
+                # data). It also mis-ordered pingouin's namedtuple -- whose fields are
+                # (spher, W, chi2, dof, pval) -- and so reported sphericity as MET
+                # whenever chi2 was non-zero, i.e. essentially always. Removed rather
+                # than repaired: the quantity it tried to produce is not defined here.
+                #
+                # The verdict stays conservative, and it is NOT the number that drives
+                # any correction: StatisticalTester._run_mixed_anova applies the
+                # within-factor epsilon to the interaction's degrees of freedom
+                # (stats.f.sf(F, df1*eps, df2*eps)). This path is reporting only -- its
+                # sole consumer is _generate_interaction_recommendations, which builds
+                # display strings.
+                sphericity_result.update({
+                    "W": None,
+                    "p_value": None,
+                    "sphericity_assumed": False,
+                    "note": (
+                        "pingouin computes no separate sphericity/epsilon for the "
+                        "Interaction row. Treated conservatively as violated; the "
+                        "correction actually applied to the interaction uses the "
+                        "within-factor epsilon in "
+                        "StatisticalTester._run_mixed_anova."
+                    ),
+                    "interpretation": "Not separately estimable (within-factor correction applies)",
+                })
+
             return sphericity_result
-            
+
         except Exception as e:
             return {
                 "test_name": "Interaction Sphericity Test",
-                "interaction": f"{within_factor} * {between_factor}",
+                "interaction": "Interaction",
                 "error": f"Interaction sphericity test failed: {str(e)}",
-                "sphericity_assumed": None
+                "sphericity_assumed": False,
             }
     
     @staticmethod

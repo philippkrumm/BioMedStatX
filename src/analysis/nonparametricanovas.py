@@ -1,93 +1,19 @@
-# --- Minimal test for posthoc_marginaleffects ---
-# (Moved to end of file to ensure all symbols are defined)
-# --- Utility: Modern post hoc analysis using marginaleffects ---
-def posthoc_marginaleffects(
-    result,
-    by=None,
-    variables=None,
-    plot=False,
-    plot_type="predictions",
-    to_pandas=True,
-    **kwargs
-):
-    """
-    Compute marginal means, pairwise comparisons, and optionally plot post hoc results
-    for a fitted GLMM/GEE/MixedLM model using the marginaleffects package.
-
-    Parameters
-    ----------
-    result : statsmodels result object
-        The fitted model result (e.g., from GLMMMixedANOVA, GLMMTwoWayANOVA, GEERMANOVA).
-    by : str or list, optional
-        Factor(s) to group by for marginal means (e.g., ["FactorA", "FactorB"])
-    variables : str or list, optional
-        Factor(s) for pairwise comparisons (e.g., "FactorB")
-    plot : bool, default False
-        If True, show a plot of marginal means or comparisons
-    plot_type : str, default "predictions"
-        "predictions" for marginal means, "comparisons" for pairwise contrasts
-    to_pandas : bool, default True
-        If True, convert results to pandas DataFrame
-    **kwargs :
-        Additional arguments passed to marginaleffects functions
-
-    Returns
-    -------
-    dict with keys:
-        "marginal_means": marginal means table
-        "comparisons": pairwise comparisons table
-        "plot": plot object (if plot=True)
-
-    Example
-    -------
-    >>> model = GLMMMixedANOVA().fit(df, dv="Value", between=["FactorA"], within=["FactorB"], subject="Subject")
-    >>> res = model.result
-    >>> out = posthoc_marginaleffects(res, by=["FactorA", "FactorB"], variables="FactorB", plot=True)
-    >>> print(out["marginal_means"])
-    >>> print(out["comparisons"])
-
-    Notes
-    -----
-    - Requires marginaleffects >= 0.12.0 (pip install marginaleffects)
-    - For MixedLM, only fixed effects are supported (see marginaleffects roadmap)
-    - Outputs are Polars DataFrames by default; set to_pandas=True to convert
-    - For more advanced options, see marginaleffects documentation
-    """
-    if avg_predictions is None or comparisons is None:
-        raise ImportError("marginaleffects is not installed. Please run 'pip install marginaleffects'.")
-    # Marginal means
-    mm = avg_predictions(result, by=by, **kwargs)
-    if to_pandas:
-        mm = mm.to_pandas()
-    # Pairwise comparisons
-    cmp = None
-    if variables is not None:
-        cmp = comparisons(result, variables=variables, by=by, **kwargs)
-        if to_pandas:
-            cmp = cmp.to_pandas()
-    # Plot
-    plt_obj = None
-    if plot:
-        if plot_type == "predictions":
-            plt_obj = plot_predictions(result, by=by)
-        elif plot_type == "comparisons" and variables is not None:
-            plt_obj = plot_comparisons(result, variables=variables, by=by)
-        if plt_obj is not None:
-            plt_obj.show()
-    return {"marginal_means": mm, "comparisons": cmp, "plot": plt_obj}
-# --- marginaleffects: modern post hoc analysis for GLMM/GEE ---
-# To use the post hoc utility below, install marginaleffects:
-#   pip install marginaleffects
-try:
-    from marginaleffects import avg_predictions, comparisons, plot_predictions, plot_comparisons
-except ImportError:
-    avg_predictions = comparisons = plot_predictions = plot_comparisons = None
-    # The posthoc_marginaleffects function will raise an error if called without marginaleffects
+import logging
+from core.level_order import natural_order
+logger = logging.getLogger(__name__)
+from analysis.clinical_models import DesignType
 import numpy as np
 import pandas as pd
 from scipy import stats as sp_stats
 from scipy.linalg import block_diag
 import statsmodels.formula.api as smf
+
+# The Freedman-Lane test estimates its p-values by permutation. Left unseeded
+# (default_rng(None)) the same data yields a different p on every run — Monte-
+# Carlo error is ~1/sqrt(n_permutations) (~0.014 at the default 5000), enough to
+# flip the verdict near alpha. Pinned so a reported p-value can be reproduced
+# from the same input; callers may still pass an explicit seed to override it.
+PERMUTATION_RANDOM_STATE = 0
 
 
 def _holm_correct(p_values):
@@ -116,25 +42,24 @@ def _wilcoxon_posthoc_comp(arr1, arr2, label1, label2, alpha, warnings_list=None
         import warnings
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            try:
-                stat, p_raw = sp_stats.wilcoxon(
-                    diffs, alternative='two-sided', zero_method='pratt',
-                    exact=True if n <= 25 else False,
-                )
-            except TypeError:
-                # scipy >= 1.17 removed `exact` kwarg; threshold handled internally
-                stat, p_raw = sp_stats.wilcoxon(
-                    diffs, alternative='two-sided', zero_method='pratt',
-                )
+            stat, p_raw = sp_stats.wilcoxon(
+                diffs, alternative='two-sided', zero_method='pratt',
+                method='exact' if n <= 25 else 'approx',
+            )
             if w and warnings_list is not None:
                 for warn in w:
                     msg = f"Wilcoxon Warning ({label1} vs {label2}): {str(warn.message)}"
                     if msg not in warnings_list:
                         warnings_list.append(msg)
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "Wilcoxon post-hoc comparison failed (%s vs %s): %s -- comparison dropped from table",
+            label1, label2, exc,
+        )
         return None
-    total = n * (n + 1) / 2.0
-    rbc = abs((2.0 * float(stat) - total) / total)   # rank-biserial correlation
+    n_eff = int(np.sum(diffs != 0))
+    total = n_eff * (n_eff + 1) / 2.0
+    rbc = abs(1.0 - 2.0 * float(stat) / total) if total > 0 else 0.0
     return {
         "group1": label1, "group2": label2,
         "test": "Wilcoxon Signed-Rank",
@@ -156,7 +81,11 @@ def _mwu_posthoc_comp(arr1, arr2, label1, label2, alpha):
         return None
     try:
         stat, p_raw = sp_stats.mannwhitneyu(a1, a2, alternative='two-sided', use_continuity=True)
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "Mann-Whitney post-hoc comparison failed (%s vs %s): %s -- comparison dropped from table",
+            label1, label2, exc,
+        )
         return None
     rbc = abs((2.0 * float(stat) - n1 * n2) / (n1 * n2))   # rank-biserial correlation
     return {
@@ -296,7 +225,7 @@ def perform_friedman_test(data, dv, within_factor, subject_col, alpha=0.05):
                         "group1": f"{within_factor}={c1}",
                         "group2": f"{within_factor}={c2}",
                         "test": "Conover-Iman",
-                        "p_value": p_val,
+                        "p_value": p_val,   # overwritten by _apply_holm below
                         "statistic": None,
                         "significant": p_val < alpha,
                         "corrected": False,
@@ -305,8 +234,18 @@ def perform_friedman_test(data, dv, within_factor, subject_col, alpha=0.05):
                         "confidence_interval": (None, None),
                         "power": None,
                     })
+                # posthoc_conover_friedman defaults to p_adjust=None, i.e. RAW
+                # pairwise p-values. Reporting those (and flagging significance
+                # on them) inflates the family-wise error rate on the default
+                # Friedman follow-up. Corrected here with the same Holm step-down
+                # the Wilcoxon fallback below already uses, per the app's C3b
+                # precedent: Holm-Bonferroni controls the FWER under arbitrary
+                # dependence, whereas Sidak-based step-down assumes an
+                # independence these contrasts do not have -- they share ranks,
+                # blocks and the error term.
+                posthoc_comps = _apply_holm(posthoc_comps, alpha)
                 if posthoc_comps:
-                    posthoc_name = f"Conover-Iman (n={n_subjects} subjects)"
+                    posthoc_name = f"Conover-Iman (n={n_subjects} subjects, Holm-corrected)"
             except Exception as _ph_err:
                 import logging
                 logging.getLogger(__name__).warning(f"Conover-Iman post-hoc failed ({_ph_err}); falling back to pairwise Wilcoxon.")
@@ -324,6 +263,7 @@ def perform_friedman_test(data, dv, within_factor, subject_col, alpha=0.05):
                     posthoc_name = f"Pairwise Wilcoxon Signed-Rank (Holm, fallback, n={n_subjects} subjects)"
 
         return {
+            "design_type": DesignType.REPEATED.value,
             "test": "Friedman Test",
             "p_value": p_value,
             "statistic": chi2_stat,
@@ -388,7 +328,29 @@ def perform_friedman_test(data, dv, within_factor, subject_col, alpha=0.05):
         }
 
 
-def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05, n_permutations=5000, seed=None):
+def _column_space(design):
+    """An orthonormal basis for a design matrix's column space.
+
+    Used to get a residual sum of squares without refitting: for a basis ``U``,
+    ``RSS = y'y - ||U'y||^2``, which is what OLS computes and costs one
+    matrix-vector product instead of a formula parse and a fit.
+
+    SVD rather than QR on purpose. ``numpy.linalg.qr`` returns a ``Q`` that spans
+    the column space only at full column rank, and these designs are exactly the
+    ones that lose rank -- an empty cell in a factorial layout is the case this
+    fallback exists to survive. The singular values give the rank as well as the
+    basis, at the same cost.
+    """
+    left, singular, _ = np.linalg.svd(np.asarray(design, dtype=float),
+                                      full_matrices=False)
+    if singular.size == 0:
+        return left[:, :0]
+    tolerance = max(np.shape(design)) * np.finfo(float).eps * float(singular[0])
+    return left[:, singular > tolerance]
+
+
+def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05,
+                               n_permutations=5000, seed=PERMUTATION_RANDOM_STATE):
     """
     Freedman-Lane permutation test as nonparametric fallback for Two-Way ANOVA.
 
@@ -408,7 +370,12 @@ def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05, n_permu
 
         # Sanitize column names for patsy formulas
         import re
-        _safe = lambda s: re.sub(r"\W+", "_", str(s)).strip("_") or "col"
+        def _safe(s):
+            res = re.sub(r"\W+", "_", str(s)).strip("_") or "col"
+            if res in ("C", "I", "Q"):
+                return f"{res}_safe"
+            return res
+            
         safe_dv = _safe(dv)
         safe_a  = _safe(factor_a)
         safe_b  = _safe(factor_b)
@@ -459,7 +426,7 @@ def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05, n_permu
             rss_red  = float(red_eff.ssr)
             df1 = int(round(red_eff.df_resid - full_eff.df_resid))
             if df1 < 1:
-                df1 = 1
+                raise ValueError("Degenerate design (df1 < 1): The model is rank-deficient or singular.")
             df2 = int(round(full_eff.df_resid))
             ss_eff = max(rss_red - rss_full, 0.0)
             F_obs  = ((ss_eff / df1) / (rss_full / df2)) if rss_full > 0 else 0.0
@@ -469,15 +436,29 @@ def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05, n_permu
             y_hat_red = red_eff.fittedvalues.values
             e_red     = red_eff.resid.values
 
+            # Freedman-Lane permutes the RESIDUALS, so the two design matrices
+            # are the same on every permutation and only y changes. The loop used
+            # to rebuild both from their formula strings each time -- a patsy
+            # parse and a categorical re-encode of the whole frame, twice, 5000
+            # times, for each of three effects: 30000 fits, and a measured 91
+            # seconds on a 28-row two-way. That is a hang in a desktop app whose
+            # analysis runs on the UI thread, and it was invisible until two-way
+            # designs started reaching this fallback at all.
+            #
+            # Projecting onto a basis built once gives the same residual sum of
+            # squares for one matrix-vector product per permutation. The rng is
+            # called in exactly the same order, so the permutations -- and the
+            # p-value -- are unchanged, not merely equivalent in distribution.
+            basis_full = _column_space(full_eff.model.exog)
+            basis_red  = _column_space(red_eff.model.exog)
+
             F_perm_arr = np.empty(n_permutations)
             for i in range(n_permutations):
                 e_perm  = rng.permutation(e_red)
                 y_perm  = y_hat_red + e_perm
-                df_perm = df.copy()
-                df_perm[safe_dv] = y_perm
-                fm = smf.ols(formula_full_eff, data=df_perm).fit()
-                rm = smf.ols(formula_reduced,  data=df_perm).fit()
-                rss_f = fm.ssr; rss_r = rm.ssr
+                total   = float(y_perm @ y_perm)
+                rss_f = max(total - float(np.square(basis_full.T @ y_perm).sum()), 0.0)
+                rss_r = max(total - float(np.square(basis_red.T @ y_perm).sum()), 0.0)
                 F_p = ((rss_r - rss_f) / df1) / (rss_f / df2) if rss_f > 0 else 0.0
                 F_perm_arr[i] = max(F_p, 0.0)
 
@@ -493,12 +474,12 @@ def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05, n_permu
         F_A,  df_A,  df2_A,  p_perm_A,  p_par_A,  eta2_A  = _f_obs_and_perm(formula_additive, formula_no_a)
         F_B,  df_B,  df2_B,  p_perm_B,  p_par_B,  eta2_B  = _f_obs_and_perm(formula_additive, formula_no_b)
         F_AB, df_AB, df2_AB, p_perm_AB, p_par_AB, eta2_AB = _f_obs_and_perm(formula_full,     formula_no_inter)
-        print(f"DEBUG FL: F_A={F_A:.3f} p_A={p_perm_A:.4f}, F_B={F_B:.3f} p_B={p_perm_B:.4f}, F_AB={F_AB:.3f} p_AB={p_perm_AB:.4f}, alpha={alpha}")
+        logger.debug(f"DEBUG FL: F_A={F_A:.3f} p_A={p_perm_A:.4f}, F_B={F_B:.3f} p_B={p_perm_B:.4f}, F_AB={F_AB:.3f} p_AB={p_perm_AB:.4f}, alpha={alpha}")
 
         # --- Descriptive stats ---
         descriptive = {}
-        for a_val in sorted(df[safe_a].unique()):
-            for b_val in sorted(df[safe_b].unique()):
+        for a_val in natural_order(df[safe_a].unique()):
+            for b_val in natural_order(df[safe_b].unique()):
                 subset = df[(df[safe_a] == a_val) & (df[safe_b] == b_val)][safe_dv].dropna()
                 key = f"{factor_a}={a_val}, {factor_b}={b_val}"
                 n = len(subset)
@@ -576,8 +557,8 @@ def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05, n_permu
         posthoc_name = None
         from itertools import combinations as _comb
         raw = []
-        a_levels = sorted(df[safe_a].unique())
-        b_levels = sorted(df[safe_b].unique())
+        a_levels = natural_order(df[safe_a].unique())
+        b_levels = natural_order(df[safe_b].unique())
 
         if p_perm_A < alpha and len(a_levels) >= 2:
             for v1, v2 in _comb(a_levels, 2):
@@ -616,8 +597,15 @@ def perform_freedman_lane_test(data, dv, factor_a, factor_b, alpha=0.05, n_permu
             posthoc_name = "Pairwise Mann-Whitney U (Holm-corrected)"
 
         return {
+            "design_type": DesignType.INDEPENDENT.value,
             "test": "Freedman-Lane Permutation Test",
             "p_value": primary_p,
+            # A permutation test cannot resolve below its own grid: with the
+            # add-one estimator the smallest attainable p is 1/(n_perm+1), and a
+            # p sitting exactly there means "no permutation beat the observed F",
+            # not a measured magnitude. Reports show that bound rather than a
+            # figure that is really the floor.
+            "p_value_resolution": 1.0 / (n_permutations + 1),
             "statistic": primary_F,
             "posthoc_test": posthoc_name,
             "pairwise_comparisons": posthoc_comps,
@@ -698,8 +686,8 @@ def perform_brunner_langer_ats(data, dv, between_factor, within_factor, subject_
     try:
         df = data[[dv, between_factor, within_factor, subject_col]].dropna().copy()
 
-        between_levels = sorted(df[between_factor].dropna().unique())
-        within_levels  = sorted(df[within_factor].dropna().unique())
+        between_levels = natural_order(df[between_factor].dropna().unique())
+        within_levels  = natural_order(df[within_factor].dropna().unique())
         a = len(between_levels)
         t = len(within_levels)
 
@@ -726,8 +714,12 @@ def perform_brunner_langer_ats(data, dv, between_factor, within_factor, subject_
             # Ensure columns are in sorted within_levels order
             wide = wide.reindex(columns=within_levels)
             # Drop subjects with any missing within-level
-            wide = wide.dropna()
-            n_i  = len(wide)
+            wide_clean = wide.dropna()
+            n_i  = len(wide_clean)
+            if n_i < len(wide):
+                dropped = len(wide) - n_i
+                warnings_list.append(f"Dropped {dropped} incomplete subjects in group '{b_val}'.")
+            wide = wide_clean
             group_ns.append(n_i)
 
             if n_i < 2:
@@ -766,10 +758,14 @@ def perform_brunner_langer_ats(data, dv, between_factor, within_factor, subject_
 
         # --- RTE vector p_hat (row-major: group0_time0, group0_time1, ..., group1_time0, ...) ---
         RTE_df  = pd.DataFrame(RTE_rows)
+        def _get_rte(b_val, w_val):
+            vals = RTE_df[(RTE_df['between_group'] == b_val) & (RTE_df['within_level'] == w_val)]['RTE'].values
+            return vals[0] if len(vals) > 0 else np.nan
+
         RTE_mat = np.array([[
-            RTE_df[(RTE_df['between_group'] == b_val) & (RTE_df['within_level'] == w_val)]['RTE'].values[0]
-            for w_val in within_levels
-        ] for b_val in between_levels])   # shape (a, t)
+            _get_rte(b_val, w_val)
+            for w_val in within_levels] for b_val in between_levels])
+
         p_hat = RTE_mat.flatten(order='C')   # (a*t,)
 
         # --- Idempotent projection matrices (a*t × a*t) ---
@@ -780,14 +776,18 @@ def perform_brunner_langer_ats(data, dv, between_factor, within_factor, subject_
         T_inter   = np.kron(I_a - J_a / a, I_t - J_t / t)  # Interaction: rank (a-1)(t-1)
 
         def _ats_and_df(T_mat):
-            """Compute ATS, Box df1, and trace product for a given projection matrix."""
-            TV     = T_mat @ V_N
+            # ATS = (N/tr(TV)) * (p_hat' T p_hat)
+            # f_hat = tr(TV)² / tr(TVV)
+            TV = T_mat @ V_N
             tr_TV  = np.trace(TV)
-            if tr_TV <= 0:
+            if np.isnan(tr_TV) or tr_TV <= 0:
                 return 0.0, 1.0
-            ATS  = float(N * (p_hat @ T_mat @ p_hat) / tr_TV)
+            p_T_p = p_hat @ T_mat @ p_hat
+            if np.isnan(p_T_p):
+                return 0.0, 1.0
+            ATS  = float(N * p_T_p / tr_TV)
             tr_TV2 = np.trace(TV @ TV)
-            f_hat  = float(tr_TV ** 2 / tr_TV2) if tr_TV2 > 0 else 1.0
+            f_hat  = float(tr_TV ** 2 / tr_TV2) if tr_TV2 > 0 and not np.isnan(tr_TV2) else 1.0
             return ATS, max(f_hat, 1.0)
 
         ATS_A,  f_A  = _ats_and_df(T_between)
@@ -881,7 +881,7 @@ def perform_brunner_langer_ats(data, dv, between_factor, within_factor, subject_
             "No standardized Cohen-style magnitude thresholds apply to rank-based longitudinal designs; "
             "the RTE table below is the appropriate effect metric."
         )
-        # Append RTE table so it appears in the Excel Summary sheet
+        # Append RTE table to analysis log
         rte_lines = ["Relative Treatment Effects (RTE, range 0–1; 0.5 = no effect):"]
         for _, rte_row in RTE_df.iterrows():
             rte_lines.append(
@@ -939,6 +939,7 @@ def perform_brunner_langer_ats(data, dv, between_factor, within_factor, subject_
             posthoc_name = "Pairwise Wilcoxon/MWU (Holm-corrected)"
 
         return {
+            "design_type": DesignType.MIXED.value,
             "test": "Brunner-Langer ATS Test",
             "p_value": primary_p,
             "statistic": primary_F,

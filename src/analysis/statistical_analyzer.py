@@ -21,8 +21,10 @@ from PyQt5.QtGui import QColor, QIcon, QPixmap, QDrag, QDesktopServices
 from PyQt5.QtCore import Qt, QMimeData, QPoint, pyqtSignal, QObject, QPropertyAnimation, QEasingCurve, QSequentialAnimationGroup, QTimer, QUrl
 
 # Initialize central logging before anything else may emit messages.
+import logging
 from core.logger_config import configure_logging
 configure_logging()
+logger = logging.getLogger(__name__)
 
 # Initialize lazy loading system
 from core.lazy_imports import preload_critical_modules, get_matplotlib_pyplot as get_matplotlib
@@ -37,15 +39,15 @@ try:
     UPDATE_AVAILABLE = True
 except ImportError:
     UPDATE_AVAILABLE = False
-    print("Warning: Updater module not available")
+    logger.info("Warning: Updater module not available")
 try:
     from core.help_content import HELP_RECIPES
 except ImportError as e:
     HELP_RECIPES = []
-    print(f"Warning: help content not available: {e}")
+    logger.info(f"Warning: help content not available: {e}")
 
 import traceback
-print(f"DEBUG: RUNNING FILE VERSION FROM {time.time()} - {os.path.abspath(__file__)}")
+logger.debug(f"DEBUG: RUNNING FILE VERSION FROM {time.time()} - {os.path.abspath(__file__)}")
 
 def resource_path(relative_path):
     """Get absolute path to resource, works for dev and for PyInstaller"""
@@ -61,28 +63,19 @@ def resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 
-def _apply_elevation(widget, radius=18, x_offset=0, y_offset=4, opacity=0.18):
-    """Apply a drop shadow to give a widget visual elevation. QSS cannot do this."""
-    shadow = QGraphicsDropShadowEffect(widget)
-    shadow.setBlurRadius(radius)
-    shadow.setOffset(x_offset, y_offset)
-    shadow.setColor(QColor(0, 0, 0, int(255 * opacity)))
-    widget.setGraphicsEffect(shadow)
+from ui.widget_style import apply_elevation as _apply_elevation  # shared: see ui/widget_style.py
 
-def _configure_dialog(dialog, object_name=None, remove_context_help=True):
-    """Apply common dialog defaults so all windows pick up the same QSS rules."""
-    if object_name:
-        dialog.setObjectName(object_name)
-    if remove_context_help and isinstance(dialog, QDialog):
-        dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+from ui.widget_style import configure_dialog as _configure_dialog  # shared: see ui/widget_style.py
 
 
 from ui.dialogs.statistical_analyzer_dialogs import (
-    DebugConsoleWindow,
     ExploratoryMatrixDialog,
     HelpHubDialog,
     OutlierDetectionDialog,
 )
+
+import logging
+logger = logging.getLogger(__name__)
 
 from autopilot.statistical_analyzer_autopilot_pipeline import (
     AutopilotMixin,
@@ -108,7 +101,9 @@ class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
             (_sh - height) // 2
         )
         self.setWindowTitle("BioMedStatX v2.0 - Comprehensive Statistical Analysis Tool")
-        self.setGeometry(100, 50, 1600, 1300)
+        # (window size comes from the screen-relative resize/move above; the app
+        # then showMaximized()s. A hardcoded setGeometry here used to override that
+        # with a fixed 1600x1300, which exceeded shorter screens.)
 
         # Set window icon
         try:
@@ -120,11 +115,11 @@ class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
 
             if icon_path:
                 self.setWindowIcon(QIcon(icon_path))
-                print(f"SUCCESS: Window icon set from {icon_path}")
+                logger.info(f"SUCCESS: Window icon set from {icon_path}")
             else:
-                print("WARNING: Icon file not found (checked .ico and .png variants)")
+                logger.warning("WARNING: Icon file not found (checked .ico and .png variants)")
         except Exception as e:
-            print(f"ERROR: Could not set window icon: {e}")
+            logger.error(f"ERROR: Could not set window icon: {e}")
 
         # Data attributes
         self.file_path = None
@@ -150,29 +145,26 @@ class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
         # Initialize updater
         self.setup_updater()
 
-        # Debug console — starts alongside the main window
-        self.debug_console = DebugConsoleWindow()
-        self._position_debug_console()
-        self.debug_console.show()
-
-    def _position_debug_console(self):
-        """Position the debug console to the right of the main window, or below if no space."""
-        _primary = QApplication.instance().primaryScreen() if QApplication.instance() else None
-        screen = _primary.geometry() if _primary else None
-        main_geo = self.geometry()
-        console_w = 700
-        console_h = 400
-        right_x = main_geo.right() + 8
-        if right_x + console_w <= screen.width():
-            self.debug_console.setGeometry(right_x, main_geo.top(), console_w, console_h)
-        else:
-            # Fall back to bottom of main window
-            bottom_y = main_geo.bottom() + 8
-            self.debug_console.setGeometry(main_geo.left(), bottom_y, console_w, console_h)
+        # First-run onboarding gate
+        from PyQt5.QtCore import QTimer, QSettings
+        from autopilot.statistical_analyzer_autopilot_pipeline import (
+            should_offer_tour, _current_app_version,
+        )
+        _stored = QSettings("BioMedStatX", "BioMedStatX").value(
+            "onboarding/completed_version", "")
+        if should_offer_tour(_stored, _current_app_version()):
+            QTimer.singleShot(400, self._maybe_offer_tour)
 
     def create_menu(self):
         """Creates the menu bar with help options"""
         menubar = self.menuBar()
+        # Keep the menu bar inside the window on every platform. On macOS Qt
+        # defaults to the native global menu bar, which lives outside the window
+        # and cannot be reached by the in-window guided-tour overlay -- so the
+        # final tour step ("Help Is Always One Click Away") had nothing to
+        # spotlight there. In-window keeps it consistent with Windows and lets
+        # the tour highlight (and pulse) the Help menu.
+        menubar.setNativeMenuBar(False)
 
         # File menu
         file_menu = menubar.addMenu('&File')
@@ -183,32 +175,22 @@ class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
         file_menu.addAction(exit_action)
 
         # Help menu
-        help_menu = menubar.addMenu('&Help')
+        self.help_menu = menubar.addMenu('&Help')
+        help_menu = self.help_menu
 
-        # Getting Started should be first
-        getting_started_action = QAction('Getting Started', self)
-        getting_started_action.triggered.connect(self.show_getting_started_help)
-        help_menu.addAction(getting_started_action)
+        tour_action = QAction('Interactive Tour', self)
+        tour_action.triggered.connect(self.start_tutorial)
+        help_menu.addAction(tour_action)
+
+        template_action = QAction('Save Example Template...', self)
+        template_action.triggered.connect(self.export_example_template)
+        help_menu.addAction(template_action)
+
+        help_menu.addSeparator()
 
         help_hub_action = QAction('Help Hub (Recipes)', self)
         help_hub_action.triggered.connect(self.show_help_hub)
         help_menu.addAction(help_hub_action)
-
-        help_menu.addSeparator()
-
-        dependent_help_action = QAction('Dependent Samples', self)
-        dependent_help_action.triggered.connect(self.show_dependent_samples_help)
-        help_menu.addAction(dependent_help_action)
-
-        # New: Graph Visualization help
-        graph_vis_action = QAction('Graph Visualization', self)
-        graph_vis_action.triggered.connect(self.show_graph_visualization_help)
-        help_menu.addAction(graph_vis_action)
-
-        # New: Statistical Tests & Excel Export help
-        stats_excel_action = QAction('Statistical Tests && Excel Export', self)
-        stats_excel_action.triggered.connect(self.show_statistical_tests_excel_help)
-        help_menu.addAction(stats_excel_action)
 
         help_menu.addSeparator()
 
@@ -217,20 +199,24 @@ class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
         update_action.triggered.connect(self.check_for_updates)
         help_menu.addAction(update_action)
 
+        # Report a problem — reveal the log folder so the user can send the log file
+        report_action = QAction('Report a Problem...', self)
+        report_action.triggered.connect(self.open_log_folder)
+        help_menu.addAction(report_action)
+
+        # Confetti toggle — celebratory burst after an analysis (on by default)
+        from PyQt5.QtCore import QSettings
+        confetti_action = QAction('Celebrate Results with Confetti', self)
+        confetti_action.setCheckable(True)
+        confetti_action.setChecked(
+            QSettings("BioMedStatX", "BioMedStatX").value("ui/confetti_enabled", True, type=bool))
+        confetti_action.toggled.connect(self._set_confetti_enabled)
+        help_menu.addAction(confetti_action)
+
         # About should be last
         about_action = QAction('About', self)
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
-
-        # View menu
-        view_menu = menubar.addMenu('&View')
-        debug_action = QAction('Debug Console', self)
-        debug_action.setShortcut('Ctrl+D')
-        debug_action.setCheckable(True)
-        debug_action.setChecked(True)
-        debug_action.triggered.connect(lambda checked: self.debug_console.show() if checked else self.debug_console.hide())
-        view_menu.addAction(debug_action)
-        self._debug_menu_action = debug_action
 
         # Analysis menu (create new or use existing)
         analysis_menu = menubar.addMenu('&Analysis')
@@ -254,7 +240,7 @@ class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
             "About BioMedStatX",
             """
             <h2>BioMedStatX</h2>
-            <p>Version 1.0</p>
+            <p>Version 2.0.0</p>
             <p>An application for statistical analysis and visualization of data.</p>
             <p>© 2025 Philipp Krumm &lt;philipp.krumm@rwth-aachen.de&gt;<br>
             Uniklinik RWTH Aachen<br>
@@ -285,111 +271,6 @@ class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
         self._help_hub_dialog.raise_()
         self._help_hub_dialog.activateWindow()
 
-    def show_graph_visualization_help(self):
-        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QTextBrowser, QPushButton
-        dlg = QDialog(self)
-        _configure_dialog(dlg, object_name="graphVisualizationHelpDialog")
-        dlg.setWindowTitle("Graph Visualization")
-        dlg.resize(800, 600)
-        layout = QVBoxLayout(dlg)
-        browser = QTextBrowser()
-        browser.setObjectName("helpDialogBrowser")
-        browser.setHtml("""
-            <h3>Graph Visualization</h3>
-            <ul>
-                <li><b>Plot types:</b> Bar, box, violin, and strip plots are generated from your data. Each type visualizes group distributions differently:
-                    <ul>
-                        <li><b>Bar:</b> Shows group means with error bars.</li>
-                        <li><b>Box:</b> Displays medians, quartiles, and outliers.</li>
-                        <li><b>Violin:</b> Combines boxplot with a kernel density estimate.</li>
-                        <li><b>Strip:</b> Shows all individual data points as dots.</li>
-                    </ul>
-                </li>
-                <li><b>Switching plot types:</b> Use the plot configuration or appearance dialog to select your preferred plot type.</li>
-                <li><b>Appearance adjustments:</b>
-                    <ul>
-                        <li>Change <b>colors</b> and <b>hatches</b> for each group.</li>
-                        <li>Choose <b>error bar type</b>: Standard deviation (SD) or standard error (SEM).</li>
-                        <li>Set <b>error bar style</b>: With caps or line only.</li>
-                        <li>Customize <b>fonts</b>, <b>axes</b>, and <b>grid lines</b> for clarity.</li>
-                    </ul>
-                </li>
-                <li><b>Overlay features:</b>
-                    <ul>
-                        <li>Show <b>individual data points</b> on box, violin, or strip plots.</li>
-                        <li>Add <b>statistical annotations</b>: Letters (grouping) or bars (significance lines) to highlight significant differences.</li>
-                    </ul>
-                </li>
-            </ul>
-        """)
-        layout.addWidget(browser)
-        btn = QPushButton("OK")
-        btn.clicked.connect(dlg.accept)
-        layout.addWidget(btn)
-        dlg.exec_()
-
-    def show_statistical_tests_excel_help(self):
-        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QTextBrowser, QPushButton
-        dlg = QDialog(self)
-        _configure_dialog(dlg, object_name="statsExcelHelpDialog")
-        dlg.setWindowTitle("Statistical Tests & Excel Export")
-        dlg.resize(900, 600)
-        layout = QVBoxLayout(dlg)
-        browser = QTextBrowser()
-        browser.setObjectName("helpDialogBrowser")
-        browser.setHtml("""
-            <h3>Statistical Tests & Excel Export</h3>
-            <ul>
-                <li><b>How does the program select the test?</b>
-                    <ul>
-                        <li>The program automatically detects the appropriate test based on group count and data structure.</li>
-                        <li><b>Two independent groups:</b>
-                            <ul>
-                                <li><b>t-Test</b> (parametric): Used when data is normally distributed and variances are comparable.</li>
-                                <li><b>Mann-Whitney-U Test</b> (non-parametric): Used when assumptions for t-test are not met.</li>
-                            </ul>
-                        </li>
-                        <li><b>Two dependent groups (e.g. paired measurements):</b>
-                            <ul>
-                                <li><b>Paired t-Test</b> (parametric): For normally distributed differences.</li>
-                                <li><b>Wilcoxon signed-rank test</b> (non-parametric): For non-normally distributed differences.</li>
-                            </ul>
-                        </li>
-                        <li><b>More than two independent groups:</b>
-                            <ul>
-                                <li><b>One-Way ANOVA</b> (parametric): For normally distributed data with equal variances.</li>
-                                <li><b>Kruskal-Wallis Test</b> (non-parametric): When ANOVA assumptions are violated.</li>
-                            </ul>
-                        </li>
-                        <li>The decision is based on normality tests (Shapiro-Wilk) and variance homogeneity (Levene test). When assumptions are violated, a non-parametric test is automatically selected.</li>
-                        <li>Post-hoc tests (e.g. pairwise comparisons) are automatically added when significant differences are found.</li>
-                        <li><i>Note: For detailed data templates (including long-format examples), open the Help Hub (Recipes) from the Help menu.</i></li>
-                    </ul>
-                </li>
-                <li><b>Interpreting Results:</b>
-                    <ul>
-                        <li><b>p-values</b> indicate the probability that observed differences are due to chance.</li>
-                        <li><b>Significance indicators</b> (letters or bars) show which groups differ significantly.</li>
-                        <li>Key statistics (means, standard deviations, test statistics) are clearly displayed.</li>
-                    </ul>
-                </li>
-                <li><b>Excel Export:</b>
-                    <ul>
-                        <li>Results are written to an Excel workbook with separate worksheets for each analysis.</li>
-                        <li>Sheet names reflect the test or plot type (e.g. "ANOVA Results", "Pairwise Comparisons").</li>
-                        <li>Each sheet contains clear columns: group names, means, test statistics, p-values, and significance markers.</li>
-                        <li>Open the exported file in Excel to review, print, or share results. Use the tabs to switch between analyses.</li>
-                    </ul>
-                </li>
-            </ul>
-            <p style='color:gray; font-size:90%'>Note: Use Help -> Help Hub (Recipes) for detailed long-format templates for advanced and basic models.</p>
-        """)
-        layout.addWidget(browser)
-        btn = QPushButton("OK")
-        btn.clicked.connect(dlg.accept)
-        layout.addWidget(btn)
-        dlg.exec_()
-
     def show_analysis_success_dialog(self, analysis_type, files, output_dir):
         """Central method for success dialogs after analyses with single clear confirmation"""
         if not files:
@@ -400,8 +281,8 @@ class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
 
         # Determine file types
         file_types = []
-        if any(f.endswith('.xlsx') for f in files):
-            file_types.append("Excel results")
+        if any(f.endswith('.html') for f in files):
+            file_types.append("HTML report")
         if any(f.endswith(('.pdf', '.png')) for f in files):
             file_types.append("plots")
 
@@ -422,144 +303,55 @@ class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
 
         return False
 
-    # Neue Methode für die Anzeige einer Hilfefunktion zu abhängigen Stichproben
-    def show_dependent_samples_help(self):
+    def _set_confetti_enabled(self, enabled):
+        """Persist the confetti preference per device (default on)."""
+        from PyQt5.QtCore import QSettings
+        QSettings("BioMedStatX", "BioMedStatX").setValue("ui/confetti_enabled", bool(enabled))
+
+    def open_log_folder(self):
+        """Reveal the log folder so the user can attach biomedstatx.log to a bug report."""
+        from PyQt5.QtWidgets import QMessageBox
+        from PyQt5.QtGui import QDesktopServices
+        from PyQt5.QtCore import QUrl
+        from core.logger_config import configure_logging
+        log_path = configure_logging()  # idempotent; returns the log Path or None
+        if log_path is None:
+            QMessageBox.warning(
+                self, "Report a Problem",
+                "No log file is available (logging to disk was disabled).",
+            )
+            return
+        folder = str(log_path.parent)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
         QMessageBox.information(
-            self,
-            "Help for Dependent Samples",
-            "<h3>When are samples dependent?</h3>"
-            "<p>Dependent samples arise when:</p>"
-            "<ul>"
-            "<li>Measurements are taken on the <b>same subject</b> at different time points</li>"
-            "<li>Measurements are naturally paired (e.g. left and right eye)</li>"
-            "<li>Experiments are conducted with repeated measurements</li>"
-            "</ul>"
-            "<h3>Data structure for dependent tests</h3>"
-            "<p>For dependent tests, each group must:</p>"
-            "<ul>"
-            "<li>Contain the <b>same number</b> of measurements</li>"
-            "<li>Have measurements in <b>matching order</b></li>"
-            "</ul>"
-            "<p>Example: Measurement 1 in group A and measurement 1 in group B must be from the same subject</p>"
-            "<h3>Available tests</h3>"
-            "<ul>"
-            "<li><b>Two groups:</b> Paired t-test or Wilcoxon signed-rank test</li>"
-            "<li><b>More than two groups:</b> Repeated Measures ANOVA or Friedman test</li>"
-            "</ul>"
+            self, "Report a Problem",
+            "Your log folder has been opened.\n\n"
+            "Please attach 'biomedstatx.log' to your message describing the "
+            f"problem and send it to the developer.\n\nLocation:\n{folder}",
         )
 
-    def show_getting_started_help(self):
-        """Shows a comprehensive getting started guide for first-time users."""
-        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QTextBrowser, QPushButton
-
-        dlg = QDialog(self)
-        _configure_dialog(dlg, object_name="gettingStartedHelpDialog")
-        dlg.setWindowTitle("Getting Started with BioMedStatX")
-        dlg.resize(1000, 800)
-        layout = QVBoxLayout(dlg)
-
-        browser = QTextBrowser()
-        browser.setObjectName("helpDialogBrowser")
-        browser.setHtml("""
-            <h2>Getting Started with BioMedStatX</h2>
-            <p><i>A step-by-step guide for first-time users</i></p>
-
-            <h3>Step 1: Prepare Your Data</h3>
-            <p>BioMedStatX works with <b>Excel files</b> (.xlsx or .xls). Your data should be organized in columns, in a long format:</p>
-            <ul>
-                <li><b>Group column:</b> Contains group names (e.g., "Control", "Treatment A", "Treatment B")</li>
-                <li><b>Value column:</b> Contains the measurements you want to analyze</li>
-                <li><b>Subject column (optional):</b> For dependent/paired data - unique identifiers for each subject</li>
-            <p>Take a look into the template excel file, if you need an idea of how to structure your data for the different types of analysis</p>
-            </ul>
-
-
-            <h3>Step 2: Upload Your Excel File</h3>
-            <p>1. Click the <b>"Browse"</b> button in the main window</p>
-            <p>2. Select your Excel file from your computer</p>
-            <p>3. The file path will appear in the text field</p>
-
-            <h3>Step 3: Select Your Worksheet</h3>
-            <p>If your Excel file has multiple sheets:</p>
-            <ul>
-                <li>Use the <b>Sheet dropdown</b> to choose the correct worksheet</li>
-                <li>The program will automatically detect available sheets</li>
-            </ul>
-
-            <h3>Step 4: Configure Your Columns</h3>
-            <p>Tell the program which columns contain your data:</p>
-            <ul>
-                <li><b>Group Column:</b> Select the column with your group names</li>
-                <li><b>Value Column:</b> Select the column with your measurements</li>
-            </ul>
-
-            <h3>Step 5: Choose Your Analysis Type</h3>
-
-            <h4>A) Basic Statistical Tests (Automatic Selection)</h4>
-            <p>Click <b>"Run Statistical Analysis"</b> for automatic test selection:</p>
-            <ul>
-                <li><b>2 groups:</b> t-test or Mann-Whitney U test</li>
-                <li><b>3+ groups:</b> One-way ANOVA or Kruskal-Wallis test</li>
-                <li>The program automatically chooses parametric vs. non-parametric based on your data</li>
-            </ul>
-
-            <h4>B) Complex ANOVA Designs</h4>
-            <p>For repeated and multi-factor designs, map your columns in Smart Mapping and then run <b>Start Auto Analysis</b>:</p>
-            <ul>
-                <li><b>Repeated Measures ANOVA:</b> Same subjects measured multiple times</li>
-                <li><b>Two-Way ANOVA:</b> Two independent factors (e.g., treatment × gender)</li>
-                <li><b>Mixed ANOVA:</b> Combination of between- and within-subject factors</li>
-            </ul>
-            <p>Need a template? Open <b>Help -> Help Hub (Recipes)</b> and copy the long-format example directly into Excel.</p>
-
-            <h3>Step 6: Additional Analysis Options</h3>
-
-            <h4>Outlier Detection</h4>
-            <p>After uploading your data, you can:</p>
-            <ul>
-                <li>Use <b>Analysis → Detect Outliers</b> to identify unusual data points</li>
-                <li>Choose from multiple outlier detection methods</li>
-                <li>Decide whether to keep or remove outliers</li>
-            </ul>
-
-            <h4>Multi-Dataset Analysis</h4>
-            <p>To compare multiple related datasets:</p>
-            <ul>
-                <li>Click <b>Multiple columns...</b> and click <b>Separate analysis per dataset with shared excel file</b> and all the groups you want to analyse
-                <li>Click <b>"Multi-Dataset Analysis"</b> in the main window</li>
-                <li>Each dataset gets its own analysis and plot</li>
-                <li>Results are combined in a single Excel report</li>
-            </ul>
-
-            <h3>Step 7: Customize Your Results</h3>
-
-            <h4>Plot Customization</h4>
-            <ul>
-                <li>Choose between <b>Bar, Box, Violin, or Strip plots</b></li>
-                <li>Customize colors, fonts, and error bars</li>
-                <li>Add statistical significance annotations</li>
-            </ul>
-
-            <p><b>Need more help?</b> Check the other help sections for specific topics!</p>
-        """)
-
-        layout.addWidget(browser)
-
-        btn = QPushButton("OK")
-        btn.clicked.connect(dlg.accept)
-        layout.addWidget(btn)
-
-        dlg.exec_()
+    def _maybe_offer_tour(self):
+        from PyQt5.QtWidgets import QMessageBox
+        box = QMessageBox(self)
+        box.setWindowTitle("Welcome to BioMedStatX")
+        box.setText("New here? Take a 60-second tour of the workflow.")
+        start_btn = box.addButton("Start tour", QMessageBox.AcceptRole)
+        box.addButton("Maybe later", QMessageBox.RejectRole)
+        box.exec_()
+        if box.clickedButton() is start_btn:
+            self.start_tutorial()
+        else:
+            self._mark_tour_seen()
 
     def closeEvent(self, event):
         """Cleanup temporäre Daten beim Schließen des Programms"""
-        print("DEBUG: Cleaning up temporary plot appearance settings...")
+        logger.debug("DEBUG: Cleaning up temporary plot appearance settings...")
         self.temp_plot_appearance_settings = None
         try:
             if hasattr(self, 'decision_tree_panel') and self.decision_tree_panel is not None:
                 self.decision_tree_panel.cleanup()
         except Exception as close_exc:
-            print(f"DEBUG: Decision tree cleanup warning during close: {close_exc}")
+            logger.debug(f"DEBUG: Decision tree cleanup warning during close: {close_exc}")
         super().closeEvent(event)
 
     def run_outlier_detection(self):
@@ -675,7 +467,7 @@ class StatisticalAnalyzerApp(AutopilotMixin, QMainWindow):
                 "Updates Not Available",
                 "Update functionality is not available in this build.\n\n"
                 "Please check the GitHub repository manually for updates:\n"
-                "https://github.com/philippkrumm/BioMedStatX---Code"
+                "https://github.com/philippkrumm/BioMedStatX/releases"
             )
 
 
@@ -704,15 +496,15 @@ def _install_global_excepthook():
                 f.write(f"\n=== {datetime.datetime.now()} ===\n{msg}\n")
         except Exception:
             pass
-        print(msg, file=sys.stderr)
+        logger.error("%s", msg)
         # Show dialog if a QApplication exists
         try:
             if QApplication.instance():
                 QMessageBox.critical(
                     None,
-                    "Unerwarteter Fehler",
-                    f"Ein Fehler ist aufgetreten:\n\n{exc_type.__name__}: {exc_value}\n\n"
-                    f"Details wurden in crash_log.txt gespeichert.",
+                    "Unexpected error",
+                    f"An error occurred:\n\n{exc_type.__name__}: {exc_value}\n\n"
+                    f"Details were saved to crash_log.txt.",
                 )
         except Exception:
             pass
@@ -720,11 +512,89 @@ def _install_global_excepthook():
     sys.excepthook = _excepthook
 
 
+def _run_import_smoke_if_requested():
+    """Exit after checking frozen-app imports when BIOMEDSTATX_SMOKE_IMPORTS=1."""
+    if os.environ.get("BIOMEDSTATX_SMOKE_IMPORTS", "").lower() not in {"1", "true", "yes"}:
+        return
+
+    import importlib
+
+    modules = [
+        "numpy",
+        "numpy.f2py",
+        "scipy.stats",
+        "scipy.sparse",
+        "scipy.linalg",
+        "pandas",
+        "statsmodels.api",
+        "statsmodels.formula.api",
+        "sklearn",
+        "pingouin",
+        "scikit_posthocs",
+        "matplotlib.backends.backend_qt5agg",
+        "PyQt5.QtPrintSupport",
+        "plotly.graph_objects",
+        "plotly.io",
+        "plotly.offline.offline",
+        "openpyxl",
+        "xlrd",
+        "PIL.Image",
+        "networkx",
+        "seaborn",
+        "jinja2",
+        "requests",
+        "packaging",
+        "analysis.analysis_core",
+        "analysis.posthoc_core",
+        "analysis.nonparametricanovas",
+        "analysis.clinical_models",
+        "analysis.correlation_models",
+        "analysis.effect_sizes",
+        "statistical_testing.advanced_pipeline",
+        "statistical_testing.assumption_checks",
+        "export.html_exporter",
+        "export.report_charts",
+        "export.report_summaries",
+        "visualization.flowchartvisualizer",
+        "ui.dialogs.comparison_selection_dialog",
+        "autopilot.statistical_analyzer_autopilot_pipeline",
+        "autopilot.statistical_analyzer_autopilot_ui",
+    ]
+
+    lines = []
+    failures = []
+    for module_name in modules:
+        try:
+            importlib.import_module(module_name)
+            lines.append(f"OK {module_name}")
+        except Exception as exc:
+            failures.append(module_name)
+            lines.append(f"FAIL {module_name}: {type(exc).__name__}: {exc}")
+
+    report_path = os.environ.get("BIOMEDSTATX_SMOKE_REPORT")
+    if report_path:
+        try:
+            with open(report_path, "w", encoding="utf-8") as handle:
+                handle.write("\n".join(lines) + "\n")
+        except Exception:
+            pass
+
+    for line in lines:
+        logger.info(line)
+
+    sys.exit(1 if failures else 0)
+
+
 if __name__ == "__main__":
     try:
         # Timer-Warnungen unterdrücken
         import os
         os.environ["QT_LOGGING_RULES"] = "qt.core.qobject.timer=false"
+
+        # Logging is configured once at import time via core.logger_config
+        # (console + rotating file at the OS log location). No second setup.
+
+        _run_import_smoke_if_requested()
 
         # Enforce high-DPI behavior before QApplication is created.
         if hasattr(Qt, "AA_EnableHighDpiScaling"):
@@ -737,16 +607,16 @@ if __name__ == "__main__":
         # Apply stylesheet if available
         try:
             stylesheet = _load_auto_pilot_stylesheet()
-            print("Stylesheet loaded successfully" if stylesheet else "No stylesheet found")
+            logger.info("Stylesheet loaded successfully" if stylesheet else "No stylesheet found")
         except:
             stylesheet = ""
-            print("No stylesheet found")
+            logger.info("No stylesheet found")
 
         app = _CrashSafeApp(sys.argv)
         app.setStyleSheet(stylesheet)
         window = StatisticalAnalyzerApp()
-        window.show()
+        window.showMaximized()
         sys.exit(app.exec_())
     except Exception as e:
-        print(f"Error starting application: {str(e)}")
+        logger.error(f"Error starting application: {str(e)}")
         traceback.print_exc()

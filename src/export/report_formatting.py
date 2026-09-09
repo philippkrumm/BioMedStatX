@@ -10,6 +10,7 @@ Internal cross-calls reference ``_FormattingMixin`` directly (not
 ``HTMLExporter``) to keep this module free of any import back into
 ``html_exporter`` (no circular import).
 """
+import html
 import math
 import random
 from pathlib import Path
@@ -33,6 +34,38 @@ logger = get_logger(__name__)
 
 class _FormattingMixin:
     """Stateless formatting / numeric helpers mixed into ``HTMLExporter``."""
+
+    @staticmethod
+    def _significant_at(value: Any, alpha: float = 0.05) -> bool:
+        """Whether a p-value is a real number below alpha.
+
+        ``isinstance(nan, float)`` is True and ``nan < 0.05`` is False, so the
+        usual ``isinstance(p, (int, float)) and p < 0.05`` reads a model that
+        produced no answer as one that produced a negative answer. A Firth
+        logistic fit that diverged on separated data returned p = nan and the
+        report badged it "Not significant" and wrote that the test "did not show
+        evidence against the null hypothesis" -- a claim about the data, made
+        from a number that does not exist.
+
+        Use ``_has_p_value`` to tell "not significant" apart from "no result";
+        this returns False for both.
+        """
+        return _FormattingMixin._has_p_value(value) and float(value) < alpha
+
+    @staticmethod
+    def _has_p_value(value: Any) -> bool:
+        """Whether there is a p-value at all -- a finite number, not NaN or inf."""
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return False
+        return math.isfinite(float(value))
+
+    @staticmethod
+    def _esc(value: Any) -> str:
+        """HTML-escape a value for safe interpolation into a raw f-string HTML
+        block (i.e. anywhere NOT already covered by Jinja's autoescape=True -
+        see report_association.py's chart-table builders, which render via
+        `{{ chart.html | safe }}` and therefore bypass autoescaping)."""
+        return html.escape(str(value))
 
     @staticmethod
     def _normalize_for_json(value: Any):
@@ -147,23 +180,42 @@ class _FormattingMixin:
         }
 
     @staticmethod
-    def _format_metric(value: Any, digits: int = 4) -> str:
+    def _format_metric(value: Any, digits: int = 4, force_sci: bool | None = None) -> str:
         if value is None:
             return "N/A"
         if isinstance(value, str):
             return value
         if isinstance(value, (list, tuple)):
-            return ", ".join(_FormattingMixin._format_metric(item, digits=digits) for item in value)
+            return ", ".join(_FormattingMixin._format_metric(item, digits=digits, force_sci=force_sci) for item in value)
         if isinstance(value, (int, float, np.generic)):
             numeric = float(value)
             if math.isnan(numeric):
                 return "N/A"
             if math.isinf(numeric):
                 return "Infinity" if numeric > 0 else "-Infinity"
-            if abs(numeric) >= 1000 or (abs(numeric) > 0 and abs(numeric) < 0.001):
+            use_sci = force_sci
+            if use_sci is None:
+                use_sci = abs(numeric) >= 1000 or (abs(numeric) > 0 and abs(numeric) < 0.001)
+            if use_sci:
                 return f"{numeric:.3e}"
             return f"{numeric:.{digits}f}"
         return str(value)
+
+    @staticmethod
+    def _format_metric_row(metrics: dict[str, Any], digits: int = 4) -> dict[str, str]:
+        """Format a dictionary of metrics consistently based on the maximum magnitude."""
+        use_sci = False
+        for val in metrics.values():
+            if isinstance(val, (int, float, np.generic)):
+                numeric = float(val)
+                if not math.isnan(numeric) and not math.isinf(numeric):
+                    if abs(numeric) >= 1000 or (abs(numeric) > 0 and abs(numeric) < 0.001):
+                        use_sci = True
+                        break
+        return {
+            k: _FormattingMixin._format_metric(v, digits=digits, force_sci=use_sci)
+            for k, v in metrics.items()
+        }
 
     @staticmethod
     def _sci_notation(value: float) -> str:
@@ -176,13 +228,39 @@ class _FormattingMixin:
         return f"{mantissa} × 10{sign}{digits}"
 
     @staticmethod
-    def _format_p_value(value: Any) -> str:
+    def _format_p_value(value: Any, resolution: float | None = None) -> str:
+        """Format a p-value, optionally bounded by what the method can resolve.
+
+        ``resolution`` is the smallest p a simulation-based method can actually
+        distinguish, and it must be passed wherever such a p is displayed. A
+        permutation test with the add-one estimator cannot report below
+        1/(n_perm+1); a Monte-Carlo integration of the multivariate-t CDF loses
+        the leading digit long before the exponent settles. Printing the raw
+        figure there invents precision -- two runs can differ by more than an
+        order of magnitude while both round to the same "p < 0.001" verdict --
+        so below the resolution the bound is shown instead of a number that
+        would not reproduce. Analytic p-values pass no resolution and are
+        unaffected.
+        """
         if not isinstance(value, (int, float, np.generic)):
             return "N/A" if value in (None, "", "N/A") else str(value)
         numeric = float(value)
         if math.isnan(numeric):
             return "N/A"
+        if not (0.0 <= numeric <= 1.0):
+            return f"invalid (p={numeric:.4f})"
+        numeric = max(0.0, min(1.0, numeric))
         stars = " ***" if numeric < 0.001 else " **" if numeric < 0.01 else " *" if numeric < 0.05 else " ns"
+
+        floor = None
+        if isinstance(resolution, (int, float)) and not math.isnan(float(resolution)):
+            floor = float(resolution)
+            if not (0.0 < floor < 1.0):
+                floor = None
+
+        if floor is not None and numeric <= floor:
+            return f"p < {_FormattingMixin._sci_notation(floor)}{stars}"
+
         if numeric < 0.001:
             if numeric > 0:
                 p_str = f"p < 0.001 (p = {_FormattingMixin._sci_notation(numeric)})"
@@ -204,7 +282,7 @@ class _FormattingMixin:
 
     @staticmethod
     def _bool_label(value: Any) -> str:
-        if value is None:
+        if value is None or (isinstance(value, str) and value.strip().upper() in ("N/A", "NA", "", "NONE", "NAN")):
             return "Not available"
         try:
             return "Passed" if bool(value) else "Flagged"
@@ -213,7 +291,7 @@ class _FormattingMixin:
 
     @staticmethod
     def _bool_class(value: Any) -> str:
-        if value is None:
+        if value is None or (isinstance(value, str) and value.strip().upper() in ("N/A", "NA", "", "NONE", "NAN")):
             return "is-neutral"
         try:
             return "is-significant" if bool(value) else "is-danger"

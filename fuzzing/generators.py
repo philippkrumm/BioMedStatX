@@ -1,0 +1,460 @@
+"""Seed-based deterministic dataset generator for the BioMedStatX fuzzer.
+
+Every case is a pure function of its integer seed, so any crash the orchestrator
+finds is reproducible by re-running that one seed. The generator builds a clean
+design for a randomly chosen test type, then layers statistical / parser
+mutations on top (skew, heteroscedasticity, zero variance, NaN/Inf, huge values,
+collinear covariates, unicode/control chars in labels, comma decimals, tiny
+groups, ...).
+
+`build_case(seed)` returns a `FuzzCase`; `case_to_analyze_kwargs(case)` turns it
+into the kwargs dict for `AnalysisManager.analyze`. The DataFrame travels inside
+`analysis_context["injected_df"]` — the documented single-source-of-truth path.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Dict, List
+
+import numpy as np
+import pandas as pd
+
+# Test designs the fuzzer drives.
+TEST_TYPES = [
+    "oneway", "ttest", "rm_anova", "two_way_anova", "mixed_anova", "ancova",
+    "correlation", "regression", "firth_logistic", "lmm",
+]
+
+MUTATIONS = [
+    "none", "nan_scatter", "nan_group", "inf", "zero_variance_group",
+    "huge_values", "outlier_10sigma", "unicode_labels", "control_chars",
+    "comma_decimals", "tiny_groups", "high_cardinality", "collinear_covariate",
+    "heavy_skew", "mild_skew", "heteroscedastic", "all_constant",
+    # rank-deficiency / structural mutations (target (X^T X)^-1 singularity)
+    # rank-deficiency / structural mutations (target (X^T X)^-1 singularity)
+    "empty_factor_cell", "cross_level_missing", "rank_ties",
+]
+
+# Effect sizes the designs draw from, in units of the residual SD. Zero is in the
+# list twice so a fair share of seeds still carry no effect at all -- both the
+# null and the real case are things users bring.
+EFFECT_SIZES = (0.0, 0.0, 1.0, 2.0, 3.0)
+
+# Simple categorical palette so plotting (when enabled) gets valid colors/hatches.
+_PALETTE = ["#0f766e", "#d97706", "#0369a1", "#be123c", "#7e22ce", "#65a30d", "#0891b2", "#475569"]
+_HATCHES = ["", "/", "\\", "x", ".", "o", "+", "*"]
+
+
+@dataclass
+class FuzzCase:
+    seed: int
+    test_label: str
+    df: pd.DataFrame
+    mutations: List[str]
+    analyze_kwargs: Dict[str, Any] = field(default_factory=dict)
+    datasets: int = 1  # >1 drives the multi-dataset path and its combined report
+    # The effects the data were BUILT with, in units of the residual SD. Drawn
+    # per seed and, until now, thrown away -- so the fuzzer varied the one thing
+    # it could have graded itself against and never looked. A design whose true
+    # effect is zero should be called significant about as often as alpha says,
+    # and one built with a large effect should usually be found; neither is a
+    # statement about a single seed, which is why it is carried here and judged
+    # over a whole run.
+    truth: Dict[str, float] = field(default_factory=dict)
+
+
+def _rng(seed: int) -> np.random.Generator:
+    return np.random.default_rng(seed)
+
+
+def _draw_design(rng: np.random.Generator) -> str:
+    """The generator's first draw: which design this seed gets."""
+    return TEST_TYPES[int(rng.integers(0, len(TEST_TYPES)))]
+
+
+def design_for_seed(seed: int) -> str:
+    """Which design a seed selects, without building anything.
+
+    A run that can only learn from some designs uses this to skip the rest
+    before paying for a subprocess. It goes through the same _draw_design as
+    build_case does, so the two cannot drift apart -- a second copy of the
+    selection rule would filter on a rule the generator had stopped following.
+    """
+    return _draw_design(_rng(seed))
+
+
+def _base_design(rng: np.random.Generator, test_label: str):
+    """Return (df, context, kwargs, truth) for a clean design of the chosen type.
+
+    ``truth`` names the effects the data were built with. Empty means the design
+    carries no drawn effect -- correlation and regression are always built with
+    one, LMM never is.
+    """
+    truth: Dict[str, float] = {}
+    n_groups = int(rng.integers(2, 5)) if test_label != "ttest" else 2
+    n_per = int(rng.integers(3, 12))
+    group_names = [f"G{i+1}" for i in range(n_groups)]
+
+    rows = []
+    if test_label in ("oneway", "ttest"):
+        for gi, g in enumerate(group_names):
+            for _ in range(n_per):
+                rows.append({"Grp": g, "Val": float(rng.normal(gi, 1.0))})
+        df = pd.DataFrame(rows)
+        ctx = {"factor_columns": ["Grp"], "dv_columns": ["Val"],
+               "group_labels": group_names, "mode": "single", "inferred_test": "one_way_anova"}
+        kwargs = {"group_col": "Grp", "groups": group_names, "value_cols": ["Val"],
+                  "dependent": bool(rng.integers(0, 2)) if test_label == "ttest" else False}
+
+    elif test_label in ("rm_anova", "mixed_anova"):
+        # Four subjects leaves a mixed model roughly two residual df, so even a
+        # large effect rarely clears the omnibus and the post-hoc branch behind
+        # it stays unreached. The lower bound is kept -- small studies are real
+        # -- and the tiny_groups mutation still shrinks designs deliberately.
+        n_subj = int(rng.integers(4, 16))
+        within_levels = [f"T{i}" for i in range(int(rng.integers(2, 4)))]
+        between = [f"B{i%2}" for i in range(n_subj)]
+        # Effects, and a subject random intercept, both drawn per seed. Without
+        # them every repeated-measures and mixed case was pure noise: the
+        # omnibus was significant only by type-I error, so the post-hoc branch
+        # -- the whole advanced pipeline, its pair dialog and its EMM/mvt option
+        # -- was reached by almost no seed. Zero is kept in the draw so the null
+        # case still occurs; a design with no subject effect at all also gives
+        # the repeated-measures model no within-subject variance to work with.
+        within_effect = float(rng.choice(EFFECT_SIZES))
+        between_effect = float(rng.choice(EFFECT_SIZES))
+        # Keyed by the FACTOR the effect was built into, so a run can hold each
+        # effect against the p-value for that same term. Keying it "within" /
+        # "between" invited comparing it against whatever the headline
+        # happened to be -- and for a mixed design the headline is the
+        # INTERACTION, which these data are built without. Measured that way
+        # the run reported 7% "power" and was really reporting the
+        # interaction's type-I error.
+        truth = {"Time": within_effect, "Between": between_effect}
+        subject_sd = float(rng.choice([0.5, 1.0, 2.0]))
+        subject_offsets = rng.normal(0, subject_sd, size=n_subj)
+        for s in range(n_subj):
+            for li, lvl in enumerate(within_levels):
+                group_index = int(between[s][1:])
+                rows.append({
+                    "Subject": f"S{s}", "Time": lvl, "Between": between[s],
+                    "Val": float(within_effect * li
+                                 + between_effect * group_index
+                                 + subject_offsets[s]
+                                 + rng.normal(0, 1)),
+                })
+        df = pd.DataFrame(rows)
+        if test_label == "rm_anova":
+            # The between column is built for both designs, but a repeated-
+            # measures analysis never sees it -- it enters as a constant offset
+            # per subject and is absorbed into the subject effect. Claiming it
+            # as a built term would have the run looking for a p-value that
+            # nothing reports.
+            truth = {"Time": within_effect}
+            ctx = {"factor_columns": ["Time"], "dv_columns": ["Val"],
+                   "group_labels": within_levels, "subject_column": "Subject", "mode": "single",
+                   "inferred_test": "repeated_measures_anova", "within_factors": ["Time"]}
+            kwargs = {"group_col": "Time", "groups": within_levels, "value_cols": ["Val"],
+                      "dependent": True, "subject_column": "Subject"}
+        else:
+            ctx = {"factor_columns": ["Between", "Time"], "dv_columns": ["Val"],
+                   "group_labels": sorted(set(between)), "subject_column": "Subject",
+                   "mode": "single",
+                   "selected_group_column": "Between", "selected_groups": [],
+                   "inferred_test": "mixed_anova", "between_factors": ["Between"],
+                   "within_factors": ["Time"], "_cell_factors": ["Between", "Time"]}
+            kwargs = {"group_col": "Between", "groups": sorted(set(between)), "value_cols": ["Val"],
+                      "dependent": True, "subject_column": "Subject"}
+
+    elif test_label == "two_way_anova":
+        fa = [f"A{i}" for i in range(2)]
+        fb = [f"B{i}" for i in range(2)]
+        # Same reason as the repeated-measures block: null-only cells meant the
+        # two-way post-hoc, and with it the permutation fallback whose p-value
+        # has a resolution to respect, were effectively never run.
+        effect_a = float(rng.choice(EFFECT_SIZES))
+        effect_b = float(rng.choice(EFFECT_SIZES))
+        interaction = float(rng.choice([0.0, 0.0, 1.5]))
+        truth = {"FacA": effect_a, "FacB": effect_b, "FacA:FacB": interaction}
+        for ai, a in enumerate(fa):
+            for bi, b in enumerate(fb):
+                for _ in range(n_per):
+                    rows.append({"FacA": a, "FacB": b,
+                                 "Val": float(effect_a * ai + effect_b * bi
+                                              + interaction * ai * bi
+                                              + rng.normal(0, 1))})
+        df = pd.DataFrame(rows)
+        ctx = {"factor_columns": ["FacA", "FacB"], "dv_columns": ["Val"],
+               "group_labels": fa, "mode": "single", "inferred_test": "two_way_anova",
+               "selected_group_column": "FacA", "selected_groups": [],
+               "_cell_factors": ["FacA", "FacB"]}
+        kwargs = {"group_col": "FacA", "groups": fa, "value_cols": ["Val"],
+                  "dependent": False}
+
+    elif test_label == "ancova":
+        for gi, g in enumerate(group_names):
+            for _ in range(n_per):
+                cov = float(rng.normal(0, 1))
+                rows.append({"Grp": g, "Cov": cov, "Val": float(gi + 0.5 * cov + rng.normal(0, 1))})
+        df = pd.DataFrame(rows)
+        ctx = {"factor_columns": ["Grp"], "dv_columns": ["Val"],
+               "group_labels": group_names, "covariates": ["Cov"], "mode": "single",
+               "inferred_test": "ancova"}
+        kwargs = {"group_col": "Grp", "groups": group_names, "value_cols": ["Val"],
+                  "dependent": False, "covariates": ["Cov"]}
+
+    elif test_label == "correlation":
+        n = int(rng.integers(10, 30))
+        x = rng.normal(0, 1, size=n)
+        y = 0.6 * x + rng.normal(0, 0.8, size=n)
+        df = pd.DataFrame({"Grp": ["Sample"] * n, "X": x.tolist(), "Y": y.tolist()})
+        ctx = {"factor_columns": ["Grp"], "dv_columns": ["Y"], "group_labels": ["Sample"],
+               "x_variable": "X", "inferred_test": "correlation", "mode": "single"}
+        kwargs = {"group_col": "Grp", "groups": ["Sample"], "value_cols": ["Y"],
+                  "dependent": False}
+
+    elif test_label == "regression":
+        n = int(rng.integers(10, 30))
+        x = rng.uniform(0, 10, size=n)
+        y = 2.0 * x + rng.normal(0, 2.0, size=n)
+        df = pd.DataFrame({"Grp": ["Sample"] * n, "X": x.tolist(), "Y": y.tolist()})
+        ctx = {"factor_columns": ["Grp"], "dv_columns": ["Y"], "group_labels": ["Sample"],
+               "x_variable": "X", "inferred_test": "linear_regression", "mode": "single"}
+        kwargs = {"group_col": "Grp", "groups": ["Sample"], "value_cols": ["Y"],
+                  "dependent": False}
+
+    elif test_label == "firth_logistic":
+        n_subj = int(rng.integers(10, 25))
+        group_names_2 = ["A", "B"]
+        n_half = n_subj // 2
+        grp = ["A"] * n_half + ["B"] * (n_subj - n_half)
+        # Near-separation: group A → mostly 1, group B → mostly 0
+        outcome = ([1] * (n_half - 1) + [0]) + ([0] * (n_subj - n_half - 1) + [1])
+        cov = rng.normal(0, 1, size=n_subj).tolist()
+        df = pd.DataFrame({"Grp": grp, "Cov": cov, "Outcome": outcome})
+        ctx = {"factor_columns": ["Grp"], "dv_columns": ["Outcome"], "group_labels": group_names_2,
+               "covariates": ["Cov"], "inferred_test": "logistic_regression", "mode": "single"}
+        kwargs = {"group_col": "Grp", "groups": group_names_2, "value_cols": ["Outcome"],
+                  "dependent": False, "covariates": ["Cov"]}
+
+    else:  # lmm
+        n_subj = int(rng.integers(6, 15))
+        within_levels = [f"T{i}" for i in range(int(rng.integers(2, 4)))]
+        between_grps = [f"B{i % 2}" for i in range(n_subj)]
+        for s in range(n_subj):
+            re = float(rng.normal(0, 1))
+            for lvl in within_levels:
+                rows.append({
+                    "Subject": f"S{s}", "Time": lvl, "Between": between_grps[s],
+                    "Val": float(rng.normal(0, 1) + re),
+                })
+        df = pd.DataFrame(rows)
+        ctx = {"factor_columns": ["Between"], "dv_columns": ["Val"],
+               "group_labels": list(dict.fromkeys(between_grps)),
+               "subject_column": "Subject", "between_factors": ["Between"],
+               "within_factors": ["Time"], "inferred_test": "lmm", "mode": "single"}
+        kwargs = {"group_col": "Between", "groups": list(dict.fromkeys(between_grps)),
+                  "value_cols": ["Val"], "dependent": True, "subject_column": "Subject"}
+
+    return df, ctx, kwargs, truth
+
+
+# Mutations that write numeric values into the DV column. Before any of them we
+# normalize the column to float so the mutation is order-independent (a prior
+# string-producing mutation like comma_decimals must not break a later one).
+_NUMERIC_MUTS = {
+    "nan_scatter", "nan_group", "inf", "zero_variance_group", "all_constant",
+    "huge_values", "outlier_10sigma", "heavy_skew", "mild_skew", "heteroscedastic",
+}
+
+
+def _apply_mutation(df: pd.DataFrame, mut: str, rng: np.random.Generator,
+                    dv_col: str = "Val") -> pd.DataFrame:
+    """Layer one mutation onto a clean design.
+
+    ``dv_col`` used to be hardcoded to "Val", which three of the ten designs do
+    not use -- correlation and regression call it "Y", the Firth logistic design
+    "Outcome". Every mutated seed landing on those raised KeyError inside the
+    generator, so the orchestrator recorded UNKNOWN_RC and the design was never
+    actually exercised under mutation. Half the seeds of a run were doing
+    nothing.
+    """
+    df = df.copy()
+    val = dv_col if dv_col in df.columns else df.columns[-1]
+    groups_col = df.columns[0]
+    if mut in _NUMERIC_MUTS:
+        df[val] = pd.to_numeric(df[val], errors="coerce").astype(float)
+    if mut == "nan_scatter":
+        idx = rng.choice(df.index, size=max(1, len(df) // 4), replace=False)
+        df.loc[idx, val] = np.nan
+    elif mut == "nan_group":
+        g = rng.choice(df[groups_col].unique())
+        df.loc[df[groups_col] == g, val] = np.nan
+    elif mut == "inf":
+        idx = rng.choice(df.index, size=max(1, len(df) // 8), replace=False)
+        df.loc[idx, val] = np.inf * rng.choice([1, -1])
+    elif mut == "zero_variance_group":
+        g = rng.choice(df[groups_col].unique())
+        df.loc[df[groups_col] == g, val] = 42.0
+    elif mut == "all_constant":
+        df[val] = 7.0
+    elif mut == "huge_values":
+        df[val] = pd.to_numeric(df[val], errors="coerce") * 1e160
+    elif mut == "outlier_10sigma":
+        idx = rng.choice(df.index, size=1)
+        col = pd.to_numeric(df[val], errors="coerce")
+        df.loc[idx, val] = float((col.std() if col.notna().any() else 1.0) * 50 + 1e6)
+    elif mut == "unicode_labels":
+        df[groups_col] = df[groups_col].astype(str) + rng.choice(["​", " ", "\U0001F9EA"])
+    elif mut == "control_chars":
+        df[groups_col] = df[groups_col].astype(str) + "\t\n"
+    elif mut == "comma_decimals":
+        df[val] = df[val].apply(lambda x: str(x).replace(".", ",") if pd.notna(x) else x)
+    elif mut == "tiny_groups":
+        # Keep only 1-2 rows per group.
+        #
+        # Not via groupby().apply(): pandas consumes the grouping key into the
+        # index there, and reset_index(drop=True) then throws the column away.
+        # So on a two-factor design this mutation deleted FacA outright --
+        # measured, ['FacA','FacB','Val'] came back as ['FacB','Val'] -- and
+        # what ran was not a tiny-group design but one whose context named a
+        # column the frame no longer had. Four seeds died in make_auto_group
+        # with KeyError: 'FacA', which is not a shape any window can produce:
+        # the factor list is built from self.df.columns and guarded again
+        # before use. The mutation was testing the harness, not the product.
+        pieces = [block.head(int(rng.integers(1, 3)))
+                  for _, block in df.groupby(groups_col, sort=False)]
+        df = pd.concat(pieces).reset_index(drop=True)
+    elif mut == "high_cardinality":
+        df[groups_col] = [f"u{i}" for i in range(len(df))]
+    elif mut == "collinear_covariate" and "Cov" in df.columns:
+        # TRUE rank deficiency: make the covariate constant within each factor
+        # level, i.e. perfectly collinear with the group dummies -> singular X^T X.
+        codes = {g: float(i) for i, g in enumerate(df[groups_col].unique())}
+        df["Cov"] = df[groups_col].map(codes).astype(float)
+    elif mut == "empty_factor_cell" and {"FacA", "FacB"}.issubset(df.columns):
+        # Drop an entire A×B cell -> unbalanced/rank-deficient two-way design.
+        a = rng.choice(df["FacA"].unique())
+        b = rng.choice(df["FacB"].unique())
+        df = df[~((df["FacA"] == a) & (df["FacB"] == b))].reset_index(drop=True)
+    elif mut == "cross_level_missing" and {"Subject", "Time"}.issubset(df.columns):
+        # Remove random subject×time observations -> unbalanced repeated measures.
+        drop = rng.choice(df.index, size=max(1, len(df) // 3), replace=False)
+        df = df.drop(index=drop).reset_index(drop=True)
+    elif mut == "heavy_skew":
+        df[val] = np.exp(pd.to_numeric(df[val], errors="coerce") * 3)
+    elif mut == "mild_skew":
+        # heavy_skew overshoots: exp(3v) stays non-normal even after log10, so
+        # the run gives up on transforming and falls to a rank test -- across
+        # 200 seeds not one heavy_skew case produced a transformed column, and
+        # the checks that read one had almost nothing to look at. exp(v) is
+        # skewed enough to fail the normality test and log-normal by
+        # construction, so the transformation branch is actually reached and
+        # its output can be judged. Strictly positive, so log10 needs no shift.
+        df[val] = np.exp(pd.to_numeric(df[val], errors="coerce"))
+    elif mut == "heteroscedastic":
+        col = pd.to_numeric(df[val], errors="coerce")
+        for gi, g in enumerate(df[groups_col].unique()):
+            mask = df[groups_col] == g
+            df.loc[mask, val] = col[mask] * (10 ** gi)
+    elif mut == "rank_ties":
+        col = pd.to_numeric(df[val], errors="coerce")
+        if not col.isna().all():
+            try:
+                df[val] = pd.qcut(col, q=4, labels=False, duplicates='drop')
+            except Exception:
+                # Fallback to constant if qcut fails
+                df[val] = 1.0
+    return df
+
+
+def build_case(seed: int) -> FuzzCase:
+    rng = _rng(seed)
+    test_label = _draw_design(rng)
+    df, ctx, kwargs, truth = _base_design(rng, test_label)
+
+    n_mut = int(rng.integers(0, 4))
+    muts = list(rng.choice(MUTATIONS, size=n_mut, replace=False)) if n_mut else ["none"]
+    dv_col = (ctx.get("dv_columns") or ["Val"])[0]
+    for m in muts:
+        df = _apply_mutation(df, m, rng, dv_col=dv_col)
+
+    # Comparing several measurements at once is a real workflow, and this is the
+    # shape the WINDOW has for it: "Multi-Dataset Analysis" takes several
+    # measurement COLUMNS -- several genes, several markers -- under one factor
+    # mapping, analyses each in turn and writes a combined overview across them.
+    #
+    # It used to be driven through `analyze(selected_datasets=[...])` instead,
+    # which loops over SHEETS of a workbook and has no button anywhere in the
+    # program. Same name, different feature: the fuzzer was pushing on a door the
+    # product does not have, and the live loop -- the one users reach -- had no
+    # coverage at all. The extra columns are the base measurement plus
+    # independent noise, so the datasets differ instead of being one frame
+    # counted several times, and they are built AFTER the mutations so they
+    # inherit whatever the mutation did to the base.
+    #
+    # Gated the way the window gates it (autopilot pipeline, `_build_analysis_
+    # context`): two columns minimum, and never for a design it refuses in multi
+    # mode.
+    datasets = 1
+    _multi_refuses = {"independent_ttest", "paired_ttest", "logistic_regression"}
+    if (kwargs.get("group_col") and not kwargs.get("dependent")
+            and ctx.get("inferred_test") not in _multi_refuses):
+        if int(rng.integers(0, 5)) == 0:
+            datasets = int(rng.integers(2, 4))
+            base = (ctx.get("dv_columns") or ["Val"])[0]
+            spread = float(np.nanstd(pd.to_numeric(df[base], errors="coerce"))) if base in df else 0.0
+            if not np.isfinite(spread) or spread == 0.0:
+                spread = 1.0
+            extra = []
+            for index in range(1, datasets):
+                name = f"{base}_m{index + 1}"
+                df[name] = pd.to_numeric(df[base], errors="coerce") + rng.normal(
+                    0.0, spread * 0.5, len(df))
+                extra.append(name)
+            ctx["dv_columns"] = [base] + extra
+            ctx["mode"] = "multi"
+
+    # A two-factor design is addressed by its CELLS in the product. The window
+    # builds group_labels as "FacA=A0, FacB=B0" and hands analyze() a group_col
+    # of "__AUTO_GROUP__" (autopilot pipeline, the `len(factor_columns) == 2`
+    # branch). The generator used to send the first factor's levels and that
+    # factor as the group column -- a shape no window can produce, and one the
+    # pipeline refuses: every clean two-way seed came back blocked with
+    # "Group 'A0' has no usable numeric values after removing missing data",
+    # and the run counted it ok because a blocked result is a legitimate
+    # outcome for bad data. Two-way ANOVA therefore had no coverage at all, and
+    # mixed was being exercised over a partition the product never builds.
+    #
+    # Rebuilt after the mutations, not before: the mutations are what change
+    # the labels, and the window reads them off the frame it was given.
+    _cell_factors = ctx.pop("_cell_factors", None)
+    if _cell_factors and all(column in df.columns for column in _cell_factors):
+        factor_a, factor_b = _cell_factors
+        cells = sorted({f"{factor_a}={row[factor_a]}, {factor_b}={row[factor_b]}"
+                        for _, row in df[[factor_a, factor_b]].dropna().iterrows()}, key=str)
+        if len(cells) >= 2:
+            ctx["group_labels"] = cells
+            ctx["display_group_col"] = "__AUTO_GROUP__"
+            kwargs["group_col"] = "__AUTO_GROUP__"
+            kwargs["groups"] = cells
+
+    ctx["injected_df"] = df
+    kwargs["analysis_context"] = ctx
+    # The matplotlib figure export these two kwargs used to drive was removed
+    # with the desktop plot layer; the figures the pipeline still produces are
+    # the Plotly ones inside the HTML report, which is what the report oracles
+    # read back. Kept only because analyze() still accepts them.
+    kwargs.setdefault("plot_type", "Bar")
+    return FuzzCase(seed=seed, test_label=test_label, df=df, mutations=[str(m) for m in muts],
+                    analyze_kwargs=kwargs, datasets=datasets, truth=truth)
+
+
+def case_to_analyze_kwargs(case: FuzzCase, file_path: str, output_base: str) -> Dict[str, Any]:
+    kw = dict(case.analyze_kwargs)
+    kw["file_path"] = file_path
+    kw["file_name"] = output_base
+    n = max(1, len(kw.get("groups") or []))
+    kw.setdefault("colors", [_PALETTE[i % len(_PALETTE)] for i in range(n)])
+    kw.setdefault("hatches", [_HATCHES[i % len(_HATCHES)] for i in range(n)])
+    return kw

@@ -2,7 +2,7 @@
 
 Extracted from ``html_exporter.py`` (Phase 3 of the god-file split). Each
 method maps an analysis ``results`` dict to the list of display rows for one
-test family (ANCOVA, LMM, correlation matrix, beta/logistic regression,
+test family (ANCOVA, LMM, correlation matrix, logistic regression,
 factorial ANOVA, generic, pairwise). Stateless ``@staticmethod`` helpers;
 ``HTMLExporter`` mixes them in so existing call sites keep working via MRO.
 
@@ -152,6 +152,20 @@ class _StatRowsMixin:
     def _build_lmm_statistical_rows(results: dict) -> list[dict]:
         rows = []
 
+        # Table 0: the headline omnibus. Named explicitly so the top-line
+        # p-value cannot be mistaken for one of the single contrasts below.
+        omnibus_df = results.get("omnibus_df")
+        if omnibus_df is not None:
+            rows.append({"label": "── Omnibus Test (primary factor) ──", "value": ""})
+            rows.append({
+                "label": "Wald test over the factor's parameters",
+                "value": (
+                    f"χ²({omnibus_df}) = "
+                    f"{_FormattingMixin._format_metric(results.get('statistic'))} | "
+                    f"{_FormattingMixin._format_p_value(results.get('p_value'))}"
+                ),
+            })
+
         # Table 1: Fixed Effects
         fe_table = results.get("fixed_effects_table") or []
         rows.append({"label": "── Fixed Effects ──", "value": ""})
@@ -211,15 +225,6 @@ class _StatRowsMixin:
         else:
             rows.append({"label": "Random slope LRT", "value": "Not performed"})
 
-        converged = results.get("converged")
-        if converged is None:
-            conv_str = "Not available"
-        elif converged:
-            conv_str = "Yes"
-        else:
-            conv_str = "No — results may be unreliable"
-        rows.append({"label": "Converged", "value": conv_str})
-
         return rows
 
     @staticmethod
@@ -229,7 +234,7 @@ class _StatRowsMixin:
         method_map = {
             "pearson": "Pearson",
             "spearman": "Spearman",
-            "auto": "Auto (Pearson or Spearman per pair based on normality)",
+            "auto": "Auto (Pearson or Spearman per pair by skewness/kurtosis tiers)",
         }
         method = str(results.get("method") or "").lower()
         rows.append({"label": "Method", "value": method_map.get(method, method or "—")})
@@ -269,6 +274,30 @@ class _StatRowsMixin:
         rows.append({"label": "N significant (uncorrected)", "value": str(n_sig_raw)})
         rows.append({"label": "N significant (FDR-corrected)", "value": str(n_sig_corr)})
 
+        # Per-pair method record (B5): for an 'auto' matrix, show which method
+        # actually ran per pair so a mixed matrix stays auditable. Counts always;
+        # the cell-by-cell breakdown when the matrix is small enough to list.
+        method_matrix = results.get("method_matrix") or {}
+        if method == "auto" and method_matrix:
+            pair_methods = []
+            for idx_i, var_i in enumerate(variables):
+                for idx_j, var_j in enumerate(variables):
+                    if idx_j <= idx_i:
+                        continue
+                    m_ij = (method_matrix.get(var_i) or {}).get(var_j)
+                    if m_ij:
+                        pair_methods.append((var_i, var_j, m_ij))
+            n_pearson = sum(1 for _, _, m in pair_methods if m == "pearson")
+            n_spearman = sum(1 for _, _, m in pair_methods if m == "spearman")
+            rows.append({"label": "Pairs run as Pearson", "value": str(n_pearson)})
+            rows.append({"label": "Pairs run as Spearman", "value": str(n_spearman)})
+            if pair_methods and len(pair_methods) <= 15:
+                for var_i, var_j, m_ij in pair_methods:
+                    rows.append({
+                        "label": f"  {var_i} × {var_j}",
+                        "value": m_ij.capitalize(),
+                    })
+
         if results.get("pairwise_deletion"):
             rows.append({"label": "Missing data handling", "value": "Pairwise deletion — n varies per pair"})
 
@@ -280,56 +309,6 @@ class _StatRowsMixin:
             rows.append({"label": "Status", "value": "No structured statistical summary available."})
         return rows
 
-    @staticmethod
-    def _build_beta_statistical_rows(results: dict) -> list[dict]:
-        """Dedicated statistical rows for Beta Regression.
-        The coefficient table is rendered separately as an HTML block via chart_blocks."""
-        rows = [{"label": "── Model Fit ──", "value": ""}]
-        for label, key in [
-            ("Test", "test"),
-            ("Model type", "model_type"),
-            ("p-value (primary predictor)", "p_value"),
-        ]:
-            value = results.get(key)
-            if key in results and _FormattingMixin._has_display_value(value):
-                display = _FormattingMixin._format_p_value(value) if key.startswith("p_value") else _FormattingMixin._format_metric(value)
-                rows.append({"label": label, "value": display})
-
-        pseudo_r2 = results.get("pseudo_r_squared")
-        if pseudo_r2 is not None:
-            rows.append({"label": "Pseudo-R² (McFadden)", "value": _FormattingMixin._format_metric(pseudo_r2)})
-
-        phi = results.get("phi")
-        if phi is not None:
-            phi_f = float(phi)
-            if phi_f < 1:
-                phi_interp = "High variance relative to mean"
-            elif phi_f <= 5:
-                phi_interp = "Moderate dispersion"
-            else:
-                phi_interp = "Low dispersion — precise estimates"
-            rows.append({"label": "Dispersion parameter (φ)", "value": f"{_FormattingMixin._format_metric(phi)} — {phi_interp}"})
-
-        for label, key in [
-            ("AIC", "aic"),
-            ("BIC", "bic"),
-            ("N observations", "n_observations"),
-        ]:
-            value = results.get(key)
-            if value is not None:
-                rows.append({"label": label, "value": _FormattingMixin._format_metric(value)})
-
-        bc = results.get("bias_corrected")
-        if bc is not None:
-            rows.append({"label": "Bias corrected", "value": "Yes" if bc else "No"})
-            if bc:
-                bc_method = results.get("bias_correction_method")
-                if bc_method:
-                    rows.append({"label": "Bias correction method", "value": str(bc_method)})
-
-        if len(rows) <= 1:
-            rows.append({"label": "Status", "value": "No structured statistical summary available."})
-        return rows
 
     @staticmethod
     def _build_logistic_statistical_rows(results: dict) -> list[dict]:
@@ -342,13 +321,23 @@ class _StatRowsMixin:
             ("Test", "test"),
             ("Model type", "model_type"),
             ("Model variant", "model_variant"),
-            ("p-value (primary predictor)", "p_value"),
+            ("p-value (primary predictor, omnibus)", "p_value"),
             ("Adjusted p-value", "p_value_fdr"),
         ]:
             value = results.get(key)
             if key in results and _FormattingMixin._has_display_value(value):
                 display = _FormattingMixin._format_p_value(value) if key.startswith("p_value") else _FormattingMixin._format_metric(value)
                 rows.append({"label": label, "value": display})
+
+        omnibus_df = results.get("omnibus_df")
+        if omnibus_df is not None:
+            rows.append({
+                "label": "Omnibus likelihood-ratio test",
+                "value": (
+                    f"χ²({omnibus_df}) = "
+                    f"{_FormattingMixin._format_metric(results.get('statistic'))}"
+                ),
+            })
 
         auc = results.get("effect_size")
         if auc is not None:
@@ -420,6 +409,31 @@ class _StatRowsMixin:
                 p = factor.get("p_value")
                 eta = factor.get("effect_size")
 
+                corr_suffix = ""
+                if ftype == "within":
+                    # RM ANOVA
+                    spher_corr = results.get("sphericity_corrections")
+                    if spher_corr and spher_corr.get("needed"):
+                        rec = spher_corr.get("recommended_correction")
+                        if rec and rec in spher_corr:
+                            c_data = spher_corr[rec]
+                            df1 = c_data.get("corrected_df1", df1)
+                            df2 = c_data.get("corrected_df2", df2)
+                            p = c_data.get("p_value", p)
+                            corr_suffix = " (GG)" if "greenhouse" in rec else " (HF)"
+                    
+                    # Mixed ANOVA
+                    within_corr = results.get("within_sphericity_corrections")
+                    if within_corr and within_corr.get("needed"):
+                        me = within_corr.get("main_effect", {})
+                        rec = me.get("recommended_correction")
+                        if rec and rec in me:
+                            c_data = me[rec]
+                            df1 = c_data.get("corrected_df1", df1)
+                            df2 = c_data.get("corrected_df2", df2)
+                            p = c_data.get("p_value", p)
+                            corr_suffix = " (GG)" if "greenhouse" in rec else " (HF)"
+
                 label = name
                 if ftype == "between":
                     label += " (between-subject)"
@@ -429,11 +443,13 @@ class _StatRowsMixin:
                 parts = []
                 if F is not None:
                     if df1 is not None and df2 is not None:
-                        parts.append(f"F({df1:.0f}, {df2:.0f}) = {F:.4f}")
+                        df1_str = f"{df1:.0f}" if isinstance(df1, int) or float(df1).is_integer() else f"{df1:.2f}"
+                        df2_str = f"{df2:.0f}" if isinstance(df2, int) or float(df2).is_integer() else f"{df2:.2f}"
+                        parts.append(f"F({df1_str}, {df2_str}) = {F:.4f}")
                     else:
                         parts.append(f"F = {F:.4f}")
                 if p is not None:
-                    parts.append(_FormattingMixin._format_p_value(p))
+                    parts.append(_FormattingMixin._format_p_value(p) + corr_suffix)
                 if eta is not None:
                     try:
                         parts.append(f"η²p = {float(eta):.4f}")
@@ -450,15 +466,32 @@ class _StatRowsMixin:
                 df2 = inter.get("df2")
                 p = inter.get("p_value")
                 eta = inter.get("effect_size")
+                
+                corr_suffix = ""
+                within_corr = results.get("within_sphericity_corrections")
+                if within_corr and within_corr.get("needed") and inter_factors:
+                    inters = within_corr.get("interactions", {})
+                    for k, v in inters.items():
+                        if all(str(f) in k for f in inter_factors):
+                            rec = v.get("recommended_correction")
+                            if rec and rec in v:
+                                c_data = v[rec]
+                                df1 = c_data.get("corrected_df1", df1)
+                                df2 = c_data.get("corrected_df2", df2)
+                                p = c_data.get("p_value", p)
+                                corr_suffix = " (GG)" if "greenhouse" in rec else " (HF)"
+                            break
 
                 parts = []
                 if F is not None:
                     if df1 is not None and df2 is not None:
-                        parts.append(f"F({df1:.0f}, {df2:.0f}) = {F:.4f}")
+                        df1_str = f"{df1:.0f}" if isinstance(df1, int) or float(df1).is_integer() else f"{df1:.2f}"
+                        df2_str = f"{df2:.0f}" if isinstance(df2, int) or float(df2).is_integer() else f"{df2:.2f}"
+                        parts.append(f"F({df1_str}, {df2_str}) = {F:.4f}")
                     else:
                         parts.append(f"F = {F:.4f}")
                 if p is not None:
-                    parts.append(_FormattingMixin._format_p_value(p))
+                    parts.append(_FormattingMixin._format_p_value(p) + corr_suffix)
                 if eta is not None:
                     try:
                         parts.append(f"η²p = {float(eta):.4f}")
@@ -466,22 +499,30 @@ class _StatRowsMixin:
                         pass
 
                 rows.append({"label": name + " (interaction)", "value": " | ".join(parts)})
+
         else:
             # Fallback: single primary effect summary (RM-ANOVA single factor)
             for label, key in [
                 ("Statistic", "statistic"),
                 ("p-value", "p_value"),
                 ("Effect size", "effect_size"),
-                ("Effect size type", "effect_size_type"),
                 ("Degrees of freedom 1", "df1"),
                 ("Degrees of freedom 2", "df2"),
             ]:
                 value = results.get(key)
                 if key in results and _FormattingMixin._has_display_value(value):
                     if key == "p_value":
-                        rows.append({"label": label, "value": _FormattingMixin._format_p_value(value)})
+                        display = _FormattingMixin._format_p_value(value)
+                    elif key == "effect_size":
+                        display = _FormattingMixin._format_metric(value)
+                        es_type = results.get("effect_size_type")
+                        if es_type:
+                            es_name = "partial η²" if "partial" in str(es_type).lower() and "eta" in str(es_type).lower() else \
+                                      "η²" if "eta" in str(es_type).lower() else str(es_type)
+                            display = f"{display} ({es_name})"
                     else:
-                        rows.append({"label": label, "value": _FormattingMixin._format_metric(value)})
+                        display = _FormattingMixin._format_metric(value)
+                    rows.append({"label": label, "value": display})
 
         # Primary effect summary line (e.g. "Main effect: Timepoint")
         primary_effect = results.get("primary_effect") or {}
@@ -532,9 +573,6 @@ class _StatRowsMixin:
         if model_type == "LogisticRegression":
             return _StatRowsMixin._build_logistic_statistical_rows(results)
 
-        if model_type == "BetaRegression":
-            return _StatRowsMixin._build_beta_statistical_rows(results)
-
         if model_type == "CorrelationMatrix":
             return _StatRowsMixin._build_corr_matrix_statistical_rows(results)
 
@@ -546,15 +584,22 @@ class _StatRowsMixin:
         else:
             stat_label = "Statistic"
 
+        ci_label = "Confidence interval"
+        test_name = str(results.get("test", "")).lower()
+        if "t-test" in test_name:
+            ci_label = "95% CI (mean difference)"
+        elif "mann-whitney" in test_name or "wilcoxon" in test_name:
+            ci_label = "95% CI (location shift)"
+
         for label, key in [
             ("Test", "test"),
             ("Model type", "model_type"),
             (stat_label, "statistic"),
+            ("Mean difference", "mean_difference"),
+            (ci_label, "confidence_interval"),
             ("p-value", "p_value"),
             ("Adjusted p-value", "p_value_fdr"),
             ("Effect size", "effect_size"),
-            ("Effect size type", "effect_size_type"),
-            ("Confidence interval", "confidence_interval"),
             ("Degrees of freedom 1", "df1"),
             ("Degrees of freedom 2", "df2"),
             ("Transformation", "transformation"),
@@ -566,9 +611,24 @@ class _StatRowsMixin:
                     display = _FormattingMixin._format_p_value(value)
                 elif key == "confidence_interval":
                     display = _FormattingMixin._format_confidence_interval(value)
+                elif key == "effect_size":
+                    display = _FormattingMixin._format_metric(value)
+                    es_type = results.get("effect_size_type")
+                    if es_type:
+                        es_name = "partial η²" if "partial" in str(es_type).lower() and "eta" in str(es_type).lower() else \
+                                  "η²" if "eta" in str(es_type).lower() else str(es_type)
+                        display = f"{display} ({es_name})"
                 else:
                     display = _FormattingMixin._format_metric(value)
                 rows.append({"label": label, "value": display})
+
+        # C6-1: Model-agnostic converged row
+        converged = results.get("converged")
+        if converged is not None:
+            rows.append({
+                "label": "Converged", 
+                "value": "Yes" if converged else "No — results may be unreliable"
+            })
 
         # For Logistic Regression: add Wald z-statistic from odds_ratios table
         if model_type == "LogisticRegression":
@@ -623,8 +683,16 @@ class _StatRowsMixin:
                 if rte_rows:
                     rows.append({"label": "Relative Treatment Effects (RTE)", "value": "RTE near 0.5 = no effect"})
                     for rte_row in rte_rows:
-                        between = rte_row.get("between_group", "")
-                        within = rte_row.get("within_level", "")
+                        between = rte_row.get("between_group")
+                        within = rte_row.get("within_level")
+                        if between is None or within is None:
+                            logger.warning(
+                                "RTE row missing expected key(s) (between_group=%r, "
+                                "within_level=%r); check Brunner-Langer/ATS engine "
+                                "output shape.", between, within,
+                            )
+                            between = between if between is not None else "?"
+                            within = within if within is not None else "?"
                         rte_val = rte_row.get("RTE")
                         n_cell = rte_row.get("n")
                         group_label = f"RTE: {between} / {within}"
@@ -690,7 +758,8 @@ class _StatRowsMixin:
                 "comparison": f"{comp.get('group1', 'Group 1')} vs {comp.get('group2', 'Group 2')}",
                 "test": str(comp.get("test") or results.get("posthoc_test") or "Pairwise comparison"),
                 "statistic": _FormattingMixin._format_metric(comp.get("statistic")),
-                "p_value": _FormattingMixin._format_p_value(p_val),
+                "p_value": _FormattingMixin._format_p_value(
+                    p_val, comp.get("p_value_resolution")),
                 "p_value_style": _FormattingMixin._p_heat_style(p_val),
                 "effect_size": _FormattingMixin._format_metric(comp.get("effect_size")),
                 "effect_size_type": str(es_type) if es_type else "",

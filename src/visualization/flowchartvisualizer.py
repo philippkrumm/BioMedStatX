@@ -23,17 +23,19 @@ FlowchartVisualizer.get_tree_json(results)  -> dict | None
 
 FlowchartVisualizer.visualize(results, output_path=None) -> str | None
     Saves a matplotlib PNG and returns the file path.
-    Delegates to generate_and_save_for_excel() entry point.
 
-FlowchartVisualizer.generate_and_save_for_excel(results) -> str | None
+FlowchartVisualizer.generate_and_save(results) -> str | None
     Thin wrapper that matches the DecisionTreeVisualizer API used by the
-    Excel/HTML export path.
+    HTML export path.
 """
 
 from __future__ import annotations
 
 import os
 import tempfile
+
+import logging
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +134,7 @@ class FlowchartVisualizer:
         except Exception as exc:
             import traceback
             traceback.print_exc()
-            print(f"WARNING FlowchartVisualizer.get_tree_json: {exc}")
+            logger.warning(f"WARNING FlowchartVisualizer.get_tree_json: {exc}")
             return None
 
     @staticmethod
@@ -281,18 +283,18 @@ class FlowchartVisualizer:
         except Exception as exc:
             import traceback
             traceback.print_exc()
-            print(f"FlowchartVisualizer.visualize error: {exc}")
+            logger.info(f"FlowchartVisualizer.visualize error: {exc}")
             return None
 
     @staticmethod
-    def generate_and_save_for_excel(results: dict) -> str | None:
-        """Thin wrapper matching the DecisionTreeVisualizer.generate_and_save_for_excel API."""
+    def generate_and_save(results: dict) -> str | None:
+        """Thin wrapper matching the DecisionTreeVisualizer.generate_and_save API."""
         try:
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
                 base_path = tmp.name.replace(".png", "")
             return FlowchartVisualizer.visualize(results, output_path=base_path)
         except Exception as exc:
-            print(f"FlowchartVisualizer.generate_and_save_for_excel error: {exc}")
+            logger.info(f"FlowchartVisualizer.generate_and_save error: {exc}")
             return None
 
     # ------------------------------------------------------------------
@@ -327,9 +329,7 @@ class FlowchartVisualizer:
         n_samples   = int(results.get("n", 0) or 0)
         sig         = (p_value is not None and p_value < alpha)
 
-        normality_check  = results.get("normality_check") or {}
         slope_hom        = results.get("slope_homogeneity") or {}
-        both_normal      = normality_check.get("both_normal", None)
         slopes_ok: bool | None
         if slope_hom:
             slopes_ok = all(
@@ -373,7 +373,12 @@ class FlowchartVisualizer:
             p_label = _fmt_p(p_value)
             sig_lbl = "Significant" if sig else "Not significant"
 
-            used_pearson = (method == "pearson") or (both_normal is True)
+            # The highlighted leaf must follow the method that actually ran.
+            # An earlier "or both_normal is True" here lit the Pearson leaf even
+            # when Spearman ran, whenever the (separate) normality flag disagreed
+            # with the method choice (F3). The method is the decision; normality
+            # is only its rationale.
+            used_pearson = (method == "pearson")
 
             nodes_info = {
                 "START":           {"label": "Start\nCorrelation Analysis",                        "pos": ( 0.0, 10.0), "isSquare": True},
@@ -381,8 +386,13 @@ class FlowchartVisualizer:
                 "TIER_CLINICAL":   {"label": "Medium sample\n(20 ≤ N < 100) — standard approach",               "pos": ( 0.0,  8.5), "isSquare": True},
                 "TIER_ASYMPTOTIC": {"label": "Large sample\n(N ≥ 100) — robust results expected",                "pos": ( 1.3,  8.5), "isSquare": True},
                 "SKEW_KURT_CHECK": {"label": "Check if data is roughly\nnormally distributed",           "pos": ( 0.0,  7.0), "isSquare": True},
-                "PEARSON":         {"label": "Normal data\n→ Pearson r",                                   "pos": (-1.3,  5.5), "isSquare": False},
-                "SPEARMAN":        {"label": "Skewed data\n→ Spearman ρ",                                  "pos": ( 1.3,  5.5), "isSquare": False},
+                # SPEARMAN sits on the left (under TIER_MICRO) and PEARSON on the
+                # right: the very-small-sample path highlights TIER_MICRO->SPEARMAN
+                # directly, and with SPEARMAN below TIER_MICRO that edge runs
+                # straight down the left column instead of cutting diagonally
+                # through the centred SKEW_KURT_CHECK node (they were collinear).
+                "PEARSON":         {"label": "Normal data\n→ Pearson r",                                   "pos": ( 1.3,  5.5), "isSquare": False},
+                "SPEARMAN":        {"label": "Skewed data\n→ Spearman ρ",                                  "pos": (-1.3,  5.5), "isSquare": False},
                 "RESULT":          {"label": f"Is there a significant relationship?\n{r_label}  {p_label}\n{sig_lbl}", "pos": ( 0.0,  4.0), "isSquare": False},
                 "CI":              {"label": "How precise is the estimate?\n(95% CI, Fisher z-transform)", "pos": (-1.3,  2.5), "isSquare": False},
                 "EFFECT":          {"label": "How strong is the relationship?\n(|r|: ≥.1 small  ≥.3 med  ≥.5 large)", "pos": ( 1.3,  2.5), "isSquare": False},
@@ -406,6 +416,11 @@ class FlowchartVisualizer:
                 highlighted.add(("START", "TIER_MICRO"))
                 alternatives.update([("START", "TIER_CLINICAL"), ("START", "TIER_ASYMPTOTIC")])
                 highlighted.add(("TIER_MICRO", "SPEARMAN"))
+                # Without this edge RESULT is unreachable, so the unconditional
+                # RESULT->CI/EFFECT below dangle as a second component. The other
+                # two tiers stay connected because they highlight
+                # PEARSON/SPEARMAN->RESULT; the micro branch has to as well.
+                highlighted.add(("SPEARMAN", "RESULT"))
             else:
                 tier_node  = "TIER_CLINICAL" if n_samples < 100 else "TIER_ASYMPTOTIC"
                 other_tier = "TIER_ASYMPTOTIC" if n_samples < 100 else "TIER_CLINICAL"
@@ -429,9 +444,12 @@ class FlowchartVisualizer:
             cov_type = str(results.get("cov_type", "") or "").lower()
             is_hc3   = "hc3" in cov_type or cov_type == "robust"
 
+            start_lbl = "Start\nLinear Regression"
+            fit_lbl = "Fit a straight line\nthrough the data"
+
             nodes_info = {
-                "START":         {"label": "Start\nLinear Regression",                               "pos": ( 0.0, 10.0), "isSquare": True},
-                "OLS_FIT":       {"label": "Fit a straight line\nthrough the data",                  "pos": ( 0.0,  8.5), "isSquare": True},
+                "START":         {"label": start_lbl,                                                "pos": ( 0.0, 10.0), "isSquare": True},
+                "OLS_FIT":       {"label": fit_lbl,                                                  "pos": ( 0.0,  8.5), "isSquare": True},
                 "DIAGNOSTICS":   {"label": "Check if the model\nassumptions are met",                "pos": ( 0.0,  7.0), "isSquare": True},
                 "ROBUST_BRANCH": {"label": "Are the prediction errors\nevenly spread?",               "pos": ( 0.0,  5.5), "isSquare": True},
                 "COV_HC3":       {"label": "Uneven spread detected\n→ adjusted estimation",          "pos": (-1.3,  4.0), "isSquare": False},

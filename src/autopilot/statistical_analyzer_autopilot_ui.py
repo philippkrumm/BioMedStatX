@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 from PyQt5.QtCore import (
     QEasingCurve,
+    QElapsedTimer,
     QMimeData,
     QPoint,
     QPropertyAnimation,
@@ -23,6 +24,7 @@ from PyQt5.QtCore import (
 from PyQt5.QtGui import QColor, QDesktopServices, QDrag, QPixmap, QPen
 from PyQt5.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -59,6 +61,18 @@ except ImportError:
 
 AUTO_PILOT_STEP_ORDER = ["load", "map", "analyze", "results"]
 
+
+def _prompt_text(parent, title, label, text=""):
+    """QInputDialog.getText replacement without the useless title-bar '?' button."""
+    dlg = QInputDialog(parent)
+    dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+    dlg.setWindowTitle(title)
+    dlg.setLabelText(label)
+    dlg.setTextValue(text)
+    ok = dlg.exec_() == QDialog.Accepted
+    return dlg.textValue(), ok
+
+
 def _safe_file_slug(text):
     cleaned = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in str(text))
     cleaned = "_".join(part for part in cleaned.split("_") if part)
@@ -73,13 +87,30 @@ def _infer_column_kind(series):
     return "categorical"
 
 
+# Every keyword but one is long enough that no ordinary column name contains it
+# by accident, so those stay substring matches and keep working for run-together
+# spellings like "patientnummer". "id" is two characters and hides inside a long
+# list of perfectly normal measurement names -- lipid, peptid, humidity, acidity,
+# oxidation, rigidity, solid, fluid -- so it alone is matched as a word.
+_SUBJECT_STRONG_KEYWORDS = ("subject", "subjekt", "patient", "participant", "animal", "mouse")
+_SUBJECT_WEAK_KEYWORDS = ("sample",)
+_ID_WORD = re.compile(r"\bid\b")
+
+
+def _name_words(column_name):
+    """Lowercased name with camelCase humps and separators turned into word
+    breaks, so "PatientID", "Subject_Id" and "Tier-ID" all expose "id" as a word
+    while "Lipid" does not."""
+    spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", str(column_name).strip())
+    return re.sub(r"[^A-Za-z0-9]+", " ", spaced).lower()
+
+
 def _looks_like_subject(column_name, series=None):
     lowered = str(column_name).strip().lower()
-    strong_keywords = ("subject", "subjekt", "patient", "participant", "animal", "mouse", "id")
-    weak_keywords = ("sample",)
 
-    strong_hit = any(keyword in lowered for keyword in strong_keywords)
-    weak_hit = any(keyword in lowered for keyword in weak_keywords)
+    strong_hit = (any(keyword in lowered for keyword in _SUBJECT_STRONG_KEYWORDS)
+                  or bool(_ID_WORD.search(_name_words(column_name))))
+    weak_hit = any(keyword in lowered for keyword in _SUBJECT_WEAK_KEYWORDS)
     if not (strong_hit or weak_hit):
         return False
 
@@ -112,6 +143,26 @@ def _looks_like_subject(column_name, series=None):
     return unique_ratio >= 0.60 or unique_count >= 8 or id_like_ratio >= 0.40
 
 
+def _reject_missing_subject_ids(df, subject_col):
+    """
+    Raises ValueError if subject_col contains any NaN. Every row needs a
+    subject ID before repeated-measures structure (wide-format detection,
+    balance detection, RM-ANOVA vs LMM routing) can be determined correctly
+    — pandas silently drops NaN keys in groupby/nunique, which would
+    otherwise let incomplete subjects vanish from those checks without any
+    warning, biasing decisions that depend on them.
+    """
+    if subject_col is None:
+        return
+    n_missing = int(df[subject_col].isna().sum())
+    if n_missing > 0:
+        raise ValueError(
+            f"Subject ID column '{subject_col}' has {n_missing} missing "
+            f"value(s). Every row needs a subject ID before repeated-measures "
+            f"analysis can run — fix the data and reload."
+        )
+
+
 def _detect_wide_format(df):
     """
     Returns {"subject_col": str, "value_cols": list[str]} if df looks like
@@ -139,9 +190,13 @@ def _detect_wide_format(df):
         return None
 
     subject_col = subject_candidates[0]
+    _reject_missing_subject_ids(df, subject_col)
 
-    # Value columns = all numeric columns that are not the subject column
-    value_cols = [c for c in numeric_cols if c != subject_col]
+    # Value columns = all numeric columns that are not the subject column and
+    # have at least one real observation (an all-NaN column has no data to
+    # pivot/analyze and would otherwise silently reach analysis_core.py as an
+    # empty group, producing a cryptic error far from the real cause).
+    value_cols = [c for c in numeric_cols if c != subject_col and df[c].notna().any()]
     if not (2 <= len(value_cols) <= 8):
         return None
 
@@ -318,6 +373,74 @@ def extract_from_coordinates(df_raw, selection_map, replicate_type="biological",
     return result.dropna(subset=[value_col]), nan_report
 
 
+def extract_paired_from_coordinates(df_raw, condition_map):
+    """
+    Each block row = one Subject/sample measurement.
+    Multiple columns within a row are averaged (treated as technical replicates of that row).
+    Subject ID = 1-indexed row offset across all ranges in order.
+    NA-preserving: rows with missing values are kept with NaN (not dropped), so
+    downstream listwise deletion preserves correct pairing.
+    All conditions must have the same total row count (validated by the dialog).
+    Returns (result_df, nan_report).
+    result_df columns: Group, Value, Subject
+    """
+    frames = []
+    nan_report = {}
+
+    for condition_name, ranges in condition_map.items():
+        nan_report[condition_name] = 0
+        subject_idx = 1
+        for rng in ranges:
+            r1, r2 = rng["rows"]
+            c1, c2 = rng["cols"]
+            block = df_raw.iloc[r1:r2 + 1, c1:c2 + 1]
+            for row_offset in range(r2 - r1 + 1):
+                row_vals = []
+                for col_offset in range(c2 - c1 + 1):
+                    raw = block.iloc[row_offset, col_offset]
+                    if pd.isna(raw) or str(raw).strip() == "":
+                        nan_report[condition_name] += 1
+                    else:
+                        try:
+                            row_vals.append(float(str(raw).strip()))
+                        except ValueError:
+                            nan_report[condition_name] += 1
+                val = float(np.nanmean(row_vals)) if row_vals else np.nan
+                frames.append({"Group": condition_name, "Value": val, "Subject": subject_idx})
+                subject_idx += 1
+
+    if not frames:
+        return pd.DataFrame(columns=["Group", "Value", "Subject"]), nan_report
+    return pd.DataFrame(frames), nan_report
+
+
+def extract_bivariate_from_coordinates(df_raw, xy_map):
+    """
+    xy_map must have "X-axis value" and "Y-axis value" keys.
+    Returns DataFrame with X, Y columns (NaN-preserving).
+    Equal length is validated by the dialog before this is called.
+    """
+    def _extract_vals(ranges):
+        vals = []
+        for rng in ranges:
+            r1, r2 = rng["rows"]
+            c1, c2 = rng["cols"]
+            block = df_raw.iloc[r1:r2 + 1, c1:c2 + 1]
+            for v in block.values.flatten():
+                if pd.isna(v) or str(v).strip() == "":
+                    vals.append(np.nan)
+                else:
+                    try:
+                        vals.append(float(str(v).strip()))
+                    except ValueError:
+                        vals.append(np.nan)
+        return vals
+
+    x_vals = _extract_vals(xy_map.get("X-axis value", []))
+    y_vals = _extract_vals(xy_map.get("Y-axis value", []))
+    return pd.DataFrame({"X": x_vals, "Y": y_vals})
+
+
 def _sorted_unique(values):
     unique_values = []
     for value in values:
@@ -377,7 +500,7 @@ class PipelineTrackerWidget(QWidget):
             self.steps[step_key] = chip
             layout.addWidget(chip, 1)
             if index < len(step_specs) - 1:
-                connector = QLabel("···")
+                connector = QLabel("›")
                 connector.setAlignment(Qt.AlignCenter)
                 connector.setObjectName("pipelineConnector")
                 layout.addWidget(connector)
@@ -497,8 +620,8 @@ class MappingBucketWidget(QFrame):
         self.help_recipe_id = help_recipe_id
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(8)
+        layout.setContentsMargins(10, 9, 10, 9)
+        layout.setSpacing(6)
 
         self.title_label = QLabel(title)
         self.title_label.setObjectName("mappingBucketTitle")
@@ -613,6 +736,15 @@ class MappingBucketWidget(QFrame):
     def assign_column(self, column_name, column_kind):
         if not self._can_accept_kind(column_kind):
             return False
+
+        # Prevent double-assignment in other buckets
+        win = self.window()
+        if win:
+            for bucket in win.findChildren(MappingBucketWidget):
+                if bucket is not self:
+                    if column_name in bucket.get_assigned_columns():
+                        bucket.remove_column(column_name)
+
         if not self.allow_multiple:
             self.clear_assignments()
         elif any(existing_name == column_name for existing_name, _, _ in self._assignments):
@@ -654,103 +786,6 @@ class MappingBucketWidget(QFrame):
 
     def _refresh_placeholder(self):
         self.placeholder_label.setVisible(len(self._assignments) == 0)
-
-
-class FilterBucketWidget(MappingBucketWidget):
-    """Bucket that accepts any column and shows a value-picker dropdown after drop.
-
-    Lets the user restrict the analysis to a subset of rows before running any
-    statistical model (e.g. 'OP-Group = 1' → only On-Pump patients).
-
-    Usage:
-        bucket = FilterBucketWidget(get_df=lambda: self.df)
-        bucket.get_filter()  # → ('OP-Group ...', 1)  or  None
-    """
-
-    def __init__(self, get_df, parent=None):
-        super().__init__(
-            title="Filter (optional)",
-            placeholder="Drop any column here to restrict the analysis to a subset of rows.",
-            accepted_kinds={"numeric", "categorical", "datetime"},
-            allow_multiple=False,
-            info_text=(
-                "Restricts the analysis to a subset of rows. Drop a categorical column here, "
-                "then select a value from the dropdown — the analysis will run only on the "
-                "filtered rows. Useful for subgroup analyses (e.g. only On-Pump patients). "
-                "The row count (n) is shown after selection."
-            ),
-            parent=parent,
-        )
-        self._get_df = get_df
-        self._filter_col = None
-        self._filter_val = None
-
-        # Value picker — hidden until a column is dropped
-        self._value_combo = QComboBox()
-        self._value_combo.setVisible(False)
-        self._value_combo.currentIndexChanged.connect(self._on_value_changed)
-        self.layout().addWidget(self._value_combo)
-
-        self._filter_label = QLabel("")
-        self._filter_label.setObjectName("panelDescription")
-        self._filter_label.setWordWrap(True)
-        self.layout().addWidget(self._filter_label)
-
-    def assign_column(self, column_name, column_kind):
-        accepted = super().assign_column(column_name, column_kind)
-        if accepted:
-            self._filter_col = column_name
-            self._populate_values(column_name)
-        return accepted
-
-    def remove_column(self, column_name):
-        super().remove_column(column_name)
-        self._filter_col = None
-        self._filter_val = None
-        self._value_combo.setVisible(False)
-        self._value_combo.clear()
-        self._filter_label.setText("")
-
-    def clear_assignments(self):
-        super().clear_assignments()
-        self._filter_col = None
-        self._filter_val = None
-        self._value_combo.setVisible(False)
-        self._value_combo.clear()
-        self._filter_label.setText("")
-
-    def _populate_values(self, column_name):
-        df = self._get_df()
-        if df is None or column_name not in df.columns:
-            return
-        unique_vals = sorted(df[column_name].dropna().unique(), key=lambda v: str(v))
-        self._value_combo.blockSignals(True)
-        self._value_combo.clear()
-        for v in unique_vals:
-            self._value_combo.addItem(str(v), userData=v)
-        self._value_combo.blockSignals(False)
-        self._value_combo.setVisible(True)
-        # Set default
-        if unique_vals:
-            self._filter_val = unique_vals[0]
-            n = (df[column_name] == unique_vals[0]).sum()
-            self._filter_label.setText(f"Analysis restricted to n={n} rows.")
-        self.changed.emit()
-
-    def _on_value_changed(self, index):
-        val = self._value_combo.itemData(index)
-        self._filter_val = val
-        df = self._get_df()
-        if df is not None and self._filter_col in df.columns and val is not None:
-            n = (df[self._filter_col] == val).sum()
-            self._filter_label.setText(f"Analysis restricted to n={n} rows.")
-        self.changed.emit()
-
-    def get_filter(self):
-        """Return (col, val) tuple or None if no filter is set."""
-        if self._filter_col and self._filter_val is not None:
-            return (self._filter_col, self._filter_val)
-        return None
 
 
 class DecisionTreeOverlayWidget(QFrame):
@@ -852,14 +887,17 @@ class DecisionTreePanel(QFrame):
         title_row.addWidget(self.maximize_button)
         layout.addLayout(title_row)
 
-        self.status_label = QLabel("The statistical decision path will appear here after the analysis.")
+        self.status_label = QLabel("Pan and zoom · Decision path renders after analysis.")
         self.status_label.setObjectName("panelDescription")
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
 
         self.tree_view = InteractiveDecisionTreeWidget()
         self.tree_view.setObjectName("decisionTreeView")
-        self.tree_view.setMinimumHeight(320)
+        # Modest minimum so the whole panel fits short/scaled screens (1366x768,
+        # 1080p@150%); the box grows with available space (stretch=1) and has a
+        # Maximize button for a full-size view.
+        self.tree_view.setMinimumHeight(200)
         self.tree_view.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         layout.addWidget(self.tree_view, 1)
 
@@ -867,7 +905,7 @@ class DecisionTreePanel(QFrame):
         self.overlay = None
 
     def show_placeholder(self, text):
-        self.status_label.setText(text)
+        self.status_label.setText("Pan and zoom · Decision path renders after analysis.")
         self.last_tree_data = None
         self.tree_view.show_placeholder(text)
         self.maximize_button.setEnabled(False)
@@ -969,7 +1007,7 @@ class GlowFrame(QFrame):
 
 
 class ConfettiOverlay(QWidget):
-    """Full-window confetti burst overlay. Self-destructs after ~2 s."""
+    """Full-window confetti burst overlay. Self-destructs after ~2.8 s."""
 
     _COLORS = ["#0f766e", "#1f7a5a", "#b7791f", "#9f3a38", "#1d4ed8", "#7c3aed", "#2dd4bf"]
 
@@ -982,37 +1020,54 @@ class ConfettiOverlay(QWidget):
         self.show()
 
         import random
+        # Velocities are per SECOND (integrated against real elapsed time in
+        # ``_update``), not per frame, so the burst keeps a constant wall-clock
+        # duration and a steady fall speed even when the main thread is busy (e.g.
+        # right after the first analysis) and the timer cannot keep 60 fps. The
+        # fall is a gentle constant drift (no gravity) so the pieces stay on
+        # screen for the whole burst rather than accelerating off the bottom.
         self._particles = []
         for _ in range(90):
             self._particles.append({
                 "x": random.uniform(0.05, 0.95),
                 "y": random.uniform(-0.25, 0.0),
-                "vx": random.uniform(-0.0025, 0.0025),
-                "vy": random.uniform(0.004, 0.010),
+                "vx": random.uniform(-0.10, 0.10),
+                "vy": random.uniform(0.20, 0.42),
                 "size": random.randint(6, 13),
                 "color": QColor(random.choice(self._COLORS)),
                 "angle": random.uniform(0, 360),
-                "spin": random.uniform(-5, 5),
+                "spin": random.uniform(-180, 180),
             })
 
+        self._duration = 2.8          # seconds, wall-clock
         self._opacity = 1.0
-        self._tick = 0
-        self._total_ticks = 120  # ~2 s at 60 fps
+        self._clock = QElapsedTimer()
+        self._clock.start()
+        self._last_ms = 0
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._update)
         self._timer.start(16)
 
     def _update(self):
-        self._tick += 1
+        now_ms = self._clock.elapsed()
+        t = now_ms / 1000.0
+        # Clamp the per-frame step so a single stalled frame (a busy main thread
+        # under cold start) advances the pieces by a bounded amount instead of
+        # teleporting them across the screen -- motion degrades to "a bit slower"
+        # rather than "jumpy". Duration/fade still track real wall-clock time.
+        dt = min((now_ms - self._last_ms) / 1000.0, 0.033)
+        self._last_ms = now_ms
+        if dt <= 0:
+            return
         for p in self._particles:
-            p["x"] += p["vx"]
-            p["y"] += p["vy"]
-            p["angle"] += p["spin"]
-        fade_start = self._total_ticks * 0.6
-        if self._tick > fade_start:
-            self._opacity = max(0.0, 1.0 - (self._tick - fade_start) / (self._total_ticks * 0.4))
-        if self._tick >= self._total_ticks:
+            p["x"] += p["vx"] * dt
+            p["y"] += p["vy"] * dt
+            p["angle"] += p["spin"] * dt
+        fade_start = self._duration * 0.6
+        if t > fade_start:
+            self._opacity = max(0.0, 1.0 - (t - fade_start) / (self._duration * 0.4))
+        if t >= self._duration:
             self._timer.stop()
             self.setParent(None)
             self.deleteLater()
@@ -1081,7 +1136,6 @@ class ResultCardWidget(QFrame):
 
 
 class ResultCockpitWidget(QFrame):
-    configure_plot_requested = pyqtSignal()
     open_output_requested = pyqtSignal()
 
     def __init__(self, parent=None):
@@ -1097,7 +1151,7 @@ class ResultCockpitWidget(QFrame):
         title.setObjectName("panelTitle")
         layout.addWidget(title)
 
-        self.subtitle = QLabel("Run an analysis to populate the cockpit.")
+        self.subtitle = QLabel("Run an analysis to see your results here.")
         self.subtitle.setObjectName("panelDescription")
         self.subtitle.setWordWrap(True)
         layout.addWidget(self.subtitle)
@@ -1121,7 +1175,7 @@ class ResultCockpitWidget(QFrame):
                 "Variance Homogeneity",
                 info_text=(
                     "Tests whether groups have equal variance (homoscedasticity).\n\n"
-                    "Levene's test is robust to non-normality.\n"
+                    "Brown-Forsythe (median-centered Levene) is robust to non-normality.\n"
                     "p > 0.05 → equal variances → standard ANOVA / t-test.\n"
                     "p ≤ 0.05 → unequal variances → Welch's correction or "
                     "non-parametric test."
@@ -1240,14 +1294,8 @@ class ResultCockpitWidget(QFrame):
         layout.addWidget(self.context_grid_widget)
 
         buttons_row = QHBoxLayout()
-        # Configure Plot button disabled — plot config lives in HTML report (plot designer)
-        # self.configure_plot_button = QPushButton("Configure Plot...")
-        # self.configure_plot_button.clicked.connect(self.configure_plot_requested.emit)
-        # self.configure_plot_button.setEnabled(False)
-        # buttons_row.addWidget(self.configure_plot_button)
-        self.configure_plot_button = QPushButton()  # stub — keeps signal wiring intact
-        self.configure_plot_button.setVisible(False)
-
+        # Plot configuration lives in the HTML report (the figure builder);
+        # the old "Configure Plot..." button and its matplotlib path are gone.
         self.open_output_button = QPushButton("Open Output Folder")
         self.open_output_button.clicked.connect(self.open_output_requested.emit)
         self.open_output_button.setEnabled(False)
@@ -1258,7 +1306,7 @@ class ResultCockpitWidget(QFrame):
 
 
     def clear(self):
-        self.subtitle.setText("Run an analysis to populate the cockpit.")
+        self.subtitle.setText("Run an analysis to see your results here.")
         metric_defaults = {
             "metric_normality": "Will be calculated after analysis.",
             "metric_variance": "Will be calculated after analysis.",
@@ -1278,32 +1326,61 @@ class ResultCockpitWidget(QFrame):
             self.inference_cards[key].set_value(text)
         for key, text in context_defaults.items():
             self.context_cards[key].set_value(text)
-        self.configure_plot_button.setEnabled(False)
         self.open_output_button.setEnabled(False)
 
-    def set_summary(self, summary, enable_plot=False, enable_output=False):
+    def set_summary(self, summary, enable_output=False):
         self.subtitle.setText(summary.get("subtitle", "Analysis complete."))
         for key, card in self.metric_cards.items():
             card.set_value(summary.get(key, "N/A"))
-        self.inference_cards["inference_main_test"].set_value(
-            summary.get("inference_main_test", summary.get("metric_main_test", "N/A"))
-        )
-        self.inference_cards["inference_effect_size"].set_value(
-            summary.get("inference_effect_size", summary.get("metric_effect_size", "N/A"))
-        )
-        self.context_cards["context_design"].set_value(
-            summary.get("context_design", summary.get("detected_test", "N/A"))
-        )
-        self.context_cards["context_sample_overview"].set_value(
-            summary.get("context_sample_overview", summary.get("rationale", "N/A"))
-        )
-        self.context_cards["context_analysis_scope"].set_value(
-            summary.get("context_analysis_scope", summary.get("posthoc", "N/A"))
-        )
+        # One key per card. Each of these used to carry a second, older key as a
+        # fallback -- "metric_main_test", "detected_test", "rationale",
+        # "posthoc" -- and `_build_result_summary` is the only thing that ever
+        # calls this, producing none of them. A fallback nothing can reach still
+        # reads as a supported input: the "rationale" one named a formatter that
+        # was still being maintained for a card it could never fill.
+        for key, card in self.inference_cards.items():
+            card.set_value(summary.get(key, "N/A"))
+        for key, card in self.context_cards.items():
+            card.set_value(summary.get(key, "N/A"))
 
-        self.configure_plot_button.setEnabled(enable_plot)
         self.open_output_button.setEnabled(enable_output)
         self._animate_cards()
+
+    def show_block(self, reason, warnings=None):
+        """Render a data-quality BLOCK instead of result cards. Used when the
+        analysis was refused (zero variance, NaN, too-few-groups, ...). Shows the
+        reason prominently and blanks every metric card so no misleading numbers
+        are displayed."""
+        headline = "⚠ Analysis blocked — data quality"
+        detail = str(reason)
+        if warnings:
+            detail += "\n\nNotes:\n" + "\n".join(f"• {w}" for w in warnings)
+        self.subtitle.setText(f"{headline}\n\n{detail}")
+        blank = "—"
+        for card in self.metric_cards.values():
+            card.set_value(blank)
+        for card in self.inference_cards.values():
+            card.set_value(blank)
+        for card in self.context_cards.values():
+            card.set_value(blank)
+        self.open_output_button.setEnabled(False)
+        self._clear_card_effects()
+
+    def show_cancelled(self, reason):
+        """Render a user-cancelled state. Distinct from show_block: nothing went
+        wrong with the data -- the user backed out of a mid-analysis dialog -- so
+        the headline must NOT claim a data-quality problem. Blanks the cards so no
+        stale/partial numbers linger."""
+        self.subtitle.setText(f"Analysis cancelled\n\n{reason}")
+        blank = "—"
+        for card in self.metric_cards.values():
+            card.set_value(blank)
+        for card in self.inference_cards.values():
+            card.set_value(blank)
+        for card in self.context_cards.values():
+            card.set_value(blank)
+        self.open_output_button.setEnabled(False)
+        self._clear_card_effects()
 
     def _animate_cards(self):
         # Animation disabled: QSequentialAnimationGroup crashes on macOS 26 Tahoe
@@ -1382,7 +1459,8 @@ class RangeSelectionDelegate(QStyledItemDelegate):
 class SheetSelectionDialog(QDialog):
     def __init__(self, df_raw, initial_sheet=None, available_sheets=None,
                  source_path=None, parent=None,
-                 initial_selection_map=None, initial_replicate_type=None):
+                 initial_selection_map=None, initial_replicate_type=None,
+                 initial_design_mode=None):
         super().__init__(parent)
         self.setObjectName("rangeSelectionDialog")
         self.setWindowTitle("Select Data Ranges")
@@ -1391,6 +1469,7 @@ class SheetSelectionDialog(QDialog):
         # Restore previous selection if provided
         self._initial_selection_map = initial_selection_map or None
         self._initial_replicate_type = initial_replicate_type or None
+        self._design_mode = initial_design_mode or "between"
         # Size dynamically based on screen (80% of available area, capped sensibly)
         try:
             screen = QApplication.primaryScreen().availableGeometry()
@@ -1414,13 +1493,33 @@ class SheetSelectionDialog(QDialog):
         self._colored_cells = set()  # cache of (r,c) cells currently colored — incremental recolor
 
         self._build_ui()
+
+        # Set design radio without triggering the change handler
+        if self._design_mode == "paired":
+            self._paired_radio.blockSignals(True)
+            self._paired_radio.setChecked(True)
+            self._paired_radio.blockSignals(False)
+        elif self._design_mode == "bivariate":
+            self._bivariate_radio.blockSignals(True)
+            self._bivariate_radio.setChecked(True)
+            self._bivariate_radio.blockSignals(False)
+        self._sync_mode_ui()
+
         if self._initial_selection_map:
             # Restore prior groups in original order
             for g in self._initial_selection_map.keys():
                 self._add_group_internal(g)
         else:
-            self._add_group_internal("Group_A")
-            self._add_group_internal("Group_B")
+            if self._design_mode == "between":
+                self._add_group_internal("Group A")
+                self._add_group_internal("Group B")
+            elif self._design_mode == "paired":
+                self._add_group_internal("Condition 1")
+                self._add_group_internal("Condition 2")
+            else:
+                self._add_group_internal("X-axis value")
+                self._add_group_internal("Y-axis value")
+
         self._populate_table(df_raw)
         if self._initial_selection_map:
             # Restore range assignments + replicate type
@@ -1460,7 +1559,6 @@ class SheetSelectionDialog(QDialog):
             if self._current_sheet and self._current_sheet in self._available_sheets:
                 self._sheet_combo.setCurrentText(self._current_sheet)
             self._sheet_combo.currentTextChanged.connect(self._on_sheet_changed)
-            self._apply_combo_arrow_style(self._sheet_combo)
             sheet_row.addWidget(self._sheet_combo, 1)
             sheet_row.addStretch()
             main_layout.addLayout(sheet_row)
@@ -1488,38 +1586,103 @@ class SheetSelectionDialog(QDialog):
         right_layout.setContentsMargins(12, 12, 12, 12)
         right_layout.setSpacing(8)
 
-        groups_title = QLabel("Groups")
-        groups_title.setObjectName("columnCardTitle")
-        right_layout.addWidget(groups_title)
+        # ── Design selector ────────────────────────────────────────────
+        design_title = QLabel("How are your data structured?")
+        design_title.setObjectName("columnCardTitle")
+        right_layout.addWidget(design_title)
+
+        self._design_btn_group = QButtonGroup(self)
+
+        self._between_radio = QRadioButton("Separate groups")
+        self._between_radio.setChecked(True)
+        self._design_btn_group.addButton(self._between_radio)
+        right_layout.addWidget(self._between_radio)
+
+        between_desc = QLabel(
+            "Each group is a separate set of samples\n"
+            "(e.g. control vs. treated, WT vs. KO).\n"
+            "→ Welch's t-test or ANOVA (rank-based if non-normal)"
+        )
+        between_desc.setObjectName("columnCardMeta")
+        between_desc.setContentsMargins(20, 0, 0, 4)
+        right_layout.addWidget(between_desc)
+
+        self._paired_radio = QRadioButton("Same samples, measured repeatedly")
+        self._design_btn_group.addButton(self._paired_radio)
+        right_layout.addWidget(self._paired_radio)
+
+        paired_desc = QLabel(
+            "Each row is one sample measured several times\n"
+            "(e.g. before vs. after). Keep rows aligned —\n"
+            "row 1 must be the same sample in every group.\n"
+            "→ paired t-test or RM-ANOVA (non-parametric if non-normal)"
+        )
+        paired_desc.setObjectName("columnCardMeta")
+        paired_desc.setContentsMargins(20, 0, 0, 4)
+        right_layout.addWidget(paired_desc)
+
+        self._bivariate_radio = QRadioButton("Two measurements, related")
+        self._design_btn_group.addButton(self._bivariate_radio)
+        right_layout.addWidget(self._bivariate_radio)
+
+        bivariate_desc = QLabel(
+            "Two related values per sample\n"
+            "(e.g. dose vs. response; shown as scatter).\n"
+            "→ correlation or linear regression"
+        )
+        bivariate_desc.setObjectName("columnCardMeta")
+        bivariate_desc.setContentsMargins(20, 0, 0, 4)
+        right_layout.addWidget(bivariate_desc)
+
+        self._design_btn_group.buttonClicked.connect(self._on_design_mode_changed)
+
+        sep_design = QFrame()
+        sep_design.setFrameShape(QFrame.HLine)
+        right_layout.addWidget(sep_design)
+
+        # ── Block / condition list ──────────────────────────────────────
+        self._groups_title_label = QLabel("Groups")
+        self._groups_title_label.setObjectName("columnCardTitle")
+        right_layout.addWidget(self._groups_title_label)
+
+        groups_cta = QLabel(
+            "1. Select the matching cells in the sheet\n"
+            "2. Click a group below to target it\n"
+            "3. Hit “Assign to” (or right-click → Assign)"
+        )
+        groups_cta.setObjectName("columnCardMeta")
+        groups_cta.setContentsMargins(0, 0, 0, 4)
+        right_layout.addWidget(groups_cta)
 
         self._groups_container = QVBoxLayout()
         self._groups_container.setSpacing(4)
         right_layout.addLayout(self._groups_container)
 
-        add_group_btn = QPushButton("+ Add Group")
-        add_group_btn.setObjectName("secondaryButton")
-        add_group_btn.clicked.connect(self._on_add_group)
-        right_layout.addWidget(add_group_btn)
+        self._add_group_btn = QPushButton("+ Add Group")
+        self._add_group_btn.setObjectName("secondaryButton")
+        self._add_group_btn.clicked.connect(self._on_add_group)
+        right_layout.addWidget(self._add_group_btn)
 
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
         right_layout.addWidget(sep)
 
-        rep_title = QLabel("Replicate type")
-        rep_title.setObjectName("columnCardTitle")
-        right_layout.addWidget(rep_title)
+        # ── Replicate type (between-subjects only) ─────────────────────
+        self._rep_section_title = QLabel("Replicates")
+        self._rep_section_title.setObjectName("columnCardTitle")
+        right_layout.addWidget(self._rep_section_title)
 
-        self._bio_radio = QRadioButton("Biological  (each cell = 1 N)")
+        self._bio_radio = QRadioButton("Biological — each value is its own sample (1 n per cell)")
         self._bio_radio.setChecked(True)
         self._bio_radio.toggled.connect(self._on_replicate_changed)
         right_layout.addWidget(self._bio_radio)
 
-        self._tech_radio = QRadioButton("Technical  (mean per block)")
+        self._tech_radio = QRadioButton("Technical — repeated readings of one sample (averaged to 1 n per group)")
         right_layout.addWidget(self._tech_radio)
 
-        sep2 = QFrame()
-        sep2.setFrameShape(QFrame.HLine)
-        right_layout.addWidget(sep2)
+        self._rep_section_sep = QFrame()
+        self._rep_section_sep.setFrameShape(QFrame.HLine)
+        right_layout.addWidget(self._rep_section_sep)
 
         self._status_label = QLabel("No cells selected")
         self._status_label.setObjectName("columnCardMeta")
@@ -1531,10 +1694,16 @@ class SheetSelectionDialog(QDialog):
         self._assign_btn.setObjectName("secondaryButton")
         self._assign_btn.clicked.connect(self._on_assign_clicked)
         self._assign_combo = QComboBox()
-        self._apply_combo_arrow_style(self._assign_combo)
         assign_row.addWidget(self._assign_btn)
         assign_row.addWidget(self._assign_combo, 1)
         right_layout.addLayout(assign_row)
+
+        self._bivariate_helper_label = QLabel(
+            "X = what you varied (e.g. dose)\nY = what you measured (e.g. response)"
+        )
+        self._bivariate_helper_label.setObjectName("columnCardMeta")
+        self._bivariate_helper_label.setVisible(False)
+        right_layout.addWidget(self._bivariate_helper_label)
 
         right_layout.addStretch()
 
@@ -1558,19 +1727,86 @@ class SheetSelectionDialog(QDialog):
         btn_box.rejected.connect(self.reject)
         main_layout.addWidget(btn_box)
 
-    def _apply_combo_arrow_style(self, combo):
-        try:
-            base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            arrow = os.path.join(base, "assets", "icons", "chevron-down.png").replace("\\", "/")
-            # Quotes around the path are required for paths containing spaces
-            combo.setStyleSheet(
-                f'QComboBox::drop-down {{ border-left: 1px solid #c4daea; width: 22px; '
-                f'background: #eef8f6; border-top-right-radius: 7px; '
-                f'border-bottom-right-radius: 7px; }}'
-                f'QComboBox::down-arrow {{ image: url("{arrow}"); width: 10px; height: 6px; }}'
+    # ------------------------------------------------------------------
+    # Design mode
+    # ------------------------------------------------------------------
+
+    def _sync_mode_ui(self):
+        """Sync right-panel visibility to current _design_mode (no selection reset)."""
+        mode = self._design_mode
+        titles = {"between": "Groups", "paired": "Conditions", "bivariate": "Measurements"}
+        self._groups_title_label.setText(titles[mode])
+        show_rep = (mode == "between")
+        self._rep_section_title.setVisible(show_rep)
+        self._bio_radio.setVisible(show_rep)
+        self._tech_radio.setVisible(show_rep)
+        self._rep_section_sep.setVisible(show_rep)
+        self._add_group_btn.setVisible(mode != "bivariate")
+        self._bivariate_helper_label.setVisible(mode == "bivariate")
+
+    def _on_design_mode_changed(self, _button=None):
+        if self._between_radio.isChecked():
+            new_mode = "between"
+        elif self._paired_radio.isChecked():
+            new_mode = "paired"
+        else:
+            new_mode = "bivariate"
+
+        if new_mode == self._design_mode:
+            return
+
+        has_assignments = any(len(v) > 0 for v in self._selection_map.values())
+        if has_assignments:
+            reply = QMessageBox.question(
+                self, "Change Design Type",
+                "Changing the design type will clear all current selections. Continue?",
+                QMessageBox.Yes | QMessageBox.No,
             )
-        except Exception:
-            pass
+            if reply != QMessageBox.Yes:
+                # Revert radio to current mode without triggering this handler again
+                for radio in (self._between_radio, self._paired_radio, self._bivariate_radio):
+                    radio.blockSignals(True)
+                if self._design_mode == "between":
+                    self._between_radio.setChecked(True)
+                elif self._design_mode == "paired":
+                    self._paired_radio.setChecked(True)
+                else:
+                    self._bivariate_radio.setChecked(True)
+                for radio in (self._between_radio, self._paired_radio, self._bivariate_radio):
+                    radio.blockSignals(False)
+                return
+
+        self._design_mode = new_mode
+
+        # Reset all selection state
+        self._selection_map.clear()
+        self._group_colors.clear()
+        self._color_index = 0
+        self._focused_group = None
+        self._colored_cells.clear()
+        self._last_selected_ranges = []
+        self._last_indexes = []
+        self._assign_combo.clear()
+        self._replicate_type = "biological"
+        self._bio_radio.blockSignals(True)
+        self._bio_radio.setChecked(True)
+        self._bio_radio.blockSignals(False)
+
+        # Add defaults for new mode
+        if new_mode == "between":
+            self._add_group_internal("Group A")
+            self._add_group_internal("Group B")
+        elif new_mode == "paired":
+            self._add_group_internal("Condition 1")
+            self._add_group_internal("Condition 2")
+        else:
+            self._add_group_internal("X-axis value")
+            self._add_group_internal("Y-axis value")
+
+        self._sync_mode_ui()
+        self._rebuild_group_list()
+        self._recolor_table()
+        self._update_preview()
 
     # ------------------------------------------------------------------
     # Table population
@@ -1723,24 +1959,44 @@ class SheetSelectionDialog(QDialog):
             name_lbl.setObjectName("columnCardMeta")
             row_layout.addWidget(name_lbl, 1)
 
-            n_ranges = len(self._selection_map.get(group_name, []))
-            count_lbl = QLabel(f"({n_ranges})")
+            n_values = self._group_value_count(group_name)
+            count_lbl = QLabel("(0 values)" if n_values == 0 else f"(n={n_values})")
             count_lbl.setObjectName("columnCardMeta")
             row_layout.addWidget(count_lbl)
 
-            rm_btn = QToolButton()
-            rm_btn.setText("×")
-            rm_btn.setObjectName("hintDismiss")
-            rm_btn.clicked.connect(lambda _checked, g=group_name: self._on_remove_group(g))
-            row_layout.addWidget(rm_btn)
+            if self._design_mode != "bivariate":
+                rm_btn = QToolButton()
+                rm_btn.setText("×")
+                rm_btn.setObjectName("hintDismiss")
+                rm_btn.clicked.connect(lambda _checked, g=group_name: self._on_remove_group(g))
+                row_layout.addWidget(rm_btn)
 
             self._groups_container.addWidget(row_w)
 
+    def _group_value_count(self, group_name):
+        """True sample size n for a group.
+
+        Biological mode: every non-empty cell is its own sample.
+        Technical mode: each assigned block is averaged to a single replicate,
+        so n equals the number of blocks, not the raw cell count.
+        """
+        ranges = self._selection_map.get(group_name, [])
+        if getattr(self, "_replicate_type", "biological") == "technical":
+            return len(ranges)
+        total = 0
+        for rng in ranges:
+            top, bottom = rng["rows"]
+            left, right = rng["cols"]
+            for row in range(top, bottom + 1):
+                for col in range(left, right + 1):
+                    item = self._table.item(row, col)
+                    if item is not None and item.text().strip():
+                        total += 1
+        return total
+
     def _on_group_rename(self, group_name):
         """Prompt user for a new name; rename group across all internal maps."""
-        new_name, ok = QInputDialog.getText(
-            self, "Rename Group", "New name:", text=group_name
-        )
+        new_name, ok = _prompt_text(self, "Rename Group", "New name:", group_name)
         if not ok:
             return
         new_name = new_name.strip()
@@ -1802,7 +2058,7 @@ class SheetSelectionDialog(QDialog):
             self._table.scrollToItem(item)
 
     def _on_add_group(self):
-        name, ok = QInputDialog.getText(self, "Add Group", "Group name:")
+        name, ok = _prompt_text(self, "Add Group", "Group name:")
         if ok and name.strip():
             name = name.strip()
             if name in self._group_colors:
@@ -1886,29 +2142,50 @@ class SheetSelectionDialog(QDialog):
                 return
             self._remove_cells_from_groups(overlaps)
 
-        # Assign to group_name and merge with touching ranges (same group)
-        for nr in new_ranges:
-            touching_ranges = []
-            non_touching_ranges = []
-            for r in self._selection_map[group_name]:
-                touch = not (nr["rows"][1] < r["rows"][0] - 1 or nr["rows"][0] > r["rows"][1] + 1 or
-                             nr["cols"][1] < r["cols"][0] - 1 or nr["cols"][0] > r["cols"][1] + 1)
-                if touch:
-                    touching_ranges.append(r)
-                else:
-                    non_touching_ranges.append(r)
-            
-            if touching_ranges:
-                combined_cells = _cells_in_ranges(touching_ranges + [nr])
-                fake_indexes = [_FakeIdx(r, c) for r, c in combined_cells]
-                merged = _selected_indexes_to_ranges(fake_indexes)
-                self._selection_map[group_name] = non_touching_ranges + merged
-            else:
+        # Assign to group_name. In technical mode each range is averaged into one
+        # value, so ranges must stay SEPARATE (one block = one replicate mean) —
+        # merging touching blocks would collapse N biological replicates into one.
+        # In biological mode adjacent blocks are merged into a single pool.
+        if self._replicate_type == "technical":
+            for nr in new_ranges:
                 self._selection_map[group_name].append(nr)
+        else:
+            for nr in new_ranges:
+                touching_ranges = []
+                non_touching_ranges = []
+                for r in self._selection_map[group_name]:
+                    touch = not (nr["rows"][1] < r["rows"][0] - 1 or nr["rows"][0] > r["rows"][1] + 1 or
+                                 nr["cols"][1] < r["cols"][0] - 1 or nr["cols"][0] > r["cols"][1] + 1)
+                    if touch:
+                        touching_ranges.append(r)
+                    else:
+                        non_touching_ranges.append(r)
+
+                if touching_ranges:
+                    combined_cells = _cells_in_ranges(touching_ranges + [nr])
+                    fake_indexes = [_FakeIdx(r, c) for r, c in combined_cells]
+                    merged = _selected_indexes_to_ranges(fake_indexes)
+                    self._selection_map[group_name] = non_touching_ranges + merged
+                else:
+                    self._selection_map[group_name].append(nr)
 
         self._rebuild_group_list()
         self._recolor_table()
         self._update_preview()
+        self._advance_assign_combo(group_name)
+
+    def _advance_assign_combo(self, after_group):
+        """After assigning to a group, preselect the next group in the combo so
+        the user can keep clicking 'Assign to:' for consecutive groups. Stops at
+        the last group (no wrap); the user can still pick any group manually.
+
+        Skipped in technical mode: there the user assigns several replicate blocks
+        to the SAME group in a row, so the combo should stay put."""
+        if self._replicate_type == "technical":
+            return
+        idx = self._assign_combo.findText(after_group)
+        if idx >= 0 and idx + 1 < self._assign_combo.count():
+            self._assign_combo.setCurrentIndex(idx + 1)
 
     def _remove_cells_from_groups(self, conflicts):
         """
@@ -2014,6 +2291,8 @@ class SheetSelectionDialog(QDialog):
 
     def _on_replicate_changed(self, _checked):
         self._replicate_type = "biological" if self._bio_radio.isChecked() else "technical"
+        # n semantics differ per mode (cells vs. blocks) — refresh the counts.
+        self._rebuild_group_list()
 
     def _update_preview(self):
         parts = []
@@ -2069,7 +2348,48 @@ class SheetSelectionDialog(QDialog):
                 self, "No Selection", "Assign at least one group before applying."
             )
             return
+
+        if self._design_mode == "paired":
+            def _row_count(ranges):
+                return sum(r["rows"][1] - r["rows"][0] + 1 for r in ranges)
+            row_counts = {cond: _row_count(ranges) for cond, ranges in self._selection_map.items()
+                          if ranges}
+            if len(set(row_counts.values())) > 1:
+                detail = ", ".join(f"{c} = {n} rows" for c, n in row_counts.items())
+                QMessageBox.warning(
+                    self, "Block Height Mismatch",
+                    "For 'same samples measured repeatedly', every condition needs one "
+                    "row per sample — so all blocks must be the same height.\n\n"
+                    f"You selected: {detail}."
+                )
+                return
+
+        elif self._design_mode == "bivariate":
+            groups = [g for g, r in self._selection_map.items() if r]
+            if len(groups) != 2:
+                QMessageBox.warning(
+                    self, "Two blocks required",
+                    "For 'two measurements, related', mark one X block and one Y block.\n"
+                    f"You currently have {len(groups)}."
+                )
+                return
+            def _cell_count(ranges):
+                return sum(
+                    (r["rows"][1] - r["rows"][0] + 1) * (r["cols"][1] - r["cols"][0] + 1)
+                    for r in ranges
+                )
+            counts = {g: _cell_count(self._selection_map[g]) for g in groups}
+            vals = list(counts.values())
+            if vals[0] != vals[1]:
+                names = list(counts.keys())
+                QMessageBox.warning(
+                    self, "Count Mismatch",
+                    "X and Y need the same number of values so every point has both "
+                    f"coordinates. {names[0]} = {vals[0]}, {names[1]} = {vals[1]}."
+                )
+                return
+
         self.accept()
 
     def get_result(self):
-        return self._selection_map, self._replicate_type, self._current_sheet
+        return self._selection_map, self._replicate_type, self._current_sheet, self._design_mode

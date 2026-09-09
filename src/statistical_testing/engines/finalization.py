@@ -4,7 +4,7 @@ from ..models import StatisticalResult
 
 
 class FinalizationEngine:
-    """Applies final advanced-result labels and optional Excel export."""
+    """Applies final advanced-result labels (final_test_label, tested_against)."""
 
     def execute(self, data: Mapping[str, Any]) -> StatisticalResult:
         payload = dict(data or {})
@@ -19,12 +19,6 @@ class FinalizationEngine:
             )
 
         res = dict(payload.get("res") or {})
-        # Optional HTML generation logic was previously here, but it is now fully handled
-        # by the caller (like AdvancedStatisticalPipeline._execute_single_analysis)
-        # to properly handle both Single and Multi-dataset HTML reports uniformly.
-        
-        # No more Excel export within the engine.
-
         updates: dict[str, Any] = {}
 
         if res.get("test") and not res.get("final_test_label"):

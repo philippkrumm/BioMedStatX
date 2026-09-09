@@ -39,6 +39,31 @@ _CORR_R_INTERPRETATION = (
     " medium ≥ 0.3, large ≥ 0.5 (|ρ| or |r|)."
 )
 
+def _get_effect_size_interpretation(es_type: str) -> str | None:
+    """Dynamically generate the effect size interpretation text."""
+    from analysis.effect_sizes import EffectSizeKind, _THRESHOLDS
+    
+    es_type_lower = str(es_type).lower().strip()
+    kind = None
+    if any(k in es_type_lower for k in ("rho", "pearson", "spearman", "correlation")) or es_type_lower in ("r", "ρ"):
+        kind = EffectSizeKind.CORRELATION_R
+    elif "eta" in es_type_lower or "η" in es_type_lower:
+        kind = EffectSizeKind.ETA_SQUARED
+    elif "cohen's f" in es_type_lower or "cohen_f" in es_type_lower or es_type_lower == "f":
+        kind = EffectSizeKind.COHEN_F
+    elif "cohen" in es_type_lower or "hedge" in es_type_lower or es_type_lower in ("d", "g"):
+        kind = EffectSizeKind.COHEN_D
+    elif "cramer" in es_type_lower:
+        kind = EffectSizeKind.CRAMER_V
+    elif "rank" in es_type_lower and "biserial" in es_type_lower:
+        kind = EffectSizeKind.RANK_BISERIAL
+
+    if kind and kind in _THRESHOLDS:
+        small, medium, large = _THRESHOLDS[kind]
+        source = "Cohen (1988)"
+        return f"Effect sizes were interpreted using the thresholds proposed by {source} where values ≥ {small} indicate a small effect, ≥ {medium} a medium effect, and ≥ {large} a large effect."
+    return None
+
 
 def build_decision_path_model(
     results: dict,
@@ -144,33 +169,19 @@ def build_methods_text(
     if results.get("posthoc_test"):
         lines.append(f"Post-hoc procedure: {results.get('posthoc_test')}")
     if results.get("effect_size_type"):
-        lines.append(f"Effect size metric: {results.get('effect_size_type')}")
+        es_type = results.get("effect_size_type")
+        lines.append(f"Effect size metric: {es_type}")
+        
+        interpretation = _get_effect_size_interpretation(es_type)
+        if interpretation:
+            lines.append(interpretation)
 
-    # Correlation: append Cohen-r conventions + transformation shift note.
     if results.get("model_type") == "Correlation":
-        es_type = str(results.get("effect_size_type") or "").lower().strip()
-        if (
-            any(k in es_type for k in ("rho", "pearson", "spearman", "correlation"))
-            or es_type in ("r", "ρ")
-        ):
-            lines.append(_CORR_R_INTERPRETATION)
-
-        x_shift = results.get("x_transform_shift") or 0.0
-        y_shift = results.get("y_transform_shift") or 0.0
-        x_tr = results.get("x_transform") or "none"
-        y_tr = results.get("y_transform") or "none"
-        for axis, tr_name, shift in (("X", x_tr, x_shift), ("Y", y_tr, y_shift)):
-            if tr_name != "none" and shift != 0.0:
-                # Reconstruct the raw minimum that triggered the shift, so a
-                # peer reviewer can reproduce y = f(x + c) exactly:
-                #   log10 / boxcox: shift = -min + 1.0 → min = 1.0 - shift
-                #   sqrt:           shift = -min       → min = -shift
-                min_raw = (1.0 - shift) if tr_name in ("log10", "boxcox") else (-shift)
-                lines.append(
-                    f"Note ({axis}-axis): a constant c={shift:.4f} was automatically added "
-                    f"to all {axis.lower()}-values prior to {tr_name} transformation to satisfy "
-                    f"the positivity requirement (minimum raw value was {min_raw:.4f}). "
-                    f"This constant was determined from the data, not set by the researcher."
-                )
+        # No transform-shift note here: correlation/regression apply their
+        # transforms with c=0.0 always (_apply_transform never shifts; non-positive
+        # values are dropped, not shifted), so the positivity-shift reconstruction
+        # the ANOVA path needs can never fire for a Correlation result.
+        # (Wave-4 CHECK 5: removed dead `if shift != 0.0` branch.)
+        pass
 
     return "\n".join(lines) + ats_note
