@@ -17,16 +17,26 @@ BioMedStatX is designed for experimental and biomedical research workflows:
   Load data, select groups and variables, and trigger analyses without writing code.
 
 - **Automated statistical pipeline**  
-  - Outlier detection  
   - Assumption checks (normality, variance homogeneity, etc.)  
   - Guided data transformations where appropriate  
   - Automatic selection of parametric vs. nonparametric tests for supported designs  
   - Guided post-hoc analyses when needed
 
-  - **Rich output**  
-  - Publication-ready plots  
+- **Rich output**  
+  - Publication-ready plots, exportable as PNG or SVG from the interactive figure builder  
   - Self-contained HTML report with all intermediate steps, assumptions, test decisions, and an interactive decision tree  
   - Clear documentation of which test was selected and why
+
+- **Multi-Dataset Analysis**  
+  - Run several measurement columns (for example several genes or markers) through the same factor mapping in one go  
+  - One summary card per column in a combined report, with Benjamini-Hochberg FDR correction applied across the family of p-values  
+  - Columns that could not be analysed are listed with their reason instead of quietly disappearing  
+  - Restricted to ANOVA-capable designs
+
+- **Outlier detection** (a separate step, run from **Analysis -> Detect Outliers**)  
+  - Grubbs' test (selected by default) and/or a modified Z-score, iterative by default  
+  - Works on a copy and writes its findings to an output file of your choosing: the loaded data is never edited and no rows are dropped  
+  - Deliberately not part of the automatic analysis run, so removing a flagged value stays your decision
 
 - **Excel/CSV support**  
   - Direct import of `.xlsx` and `.csv` files
@@ -48,13 +58,25 @@ BioMedStatX is distributed as a standalone application for end users and as sour
 
 ### Option 1: Download from Releases (recommended for most users)
 
-1. Go to the GitHub Releases page:  
-   -> https://github.com/philippkrumm/BioMedStatX/releases
-2. Download the latest release (e.g. a `.zip` file containing `BioMedStatX.exe`).
-3. Extract the archive to a folder of your choice. **The app uses one-folder packaging. Keep BioMedStatX.exe and the _internal folder together.**
-4. Start the application by double-clicking `BioMedStatX.exe`.
+Go to the GitHub Releases page and download the archive for your platform:  
+-> https://github.com/philippkrumm/BioMedStatX/releases
 
-No Python installation or command-line usage is required.
+**Windows**
+
+1. Download `BioMedStatX_windows.zip`.
+2. Extract it to a folder of your choice. **The app uses one-folder packaging: keep `BioMedStatX.exe` and the `_internal` folder together.**
+3. Start the application by double-clicking `BioMedStatX.exe`.
+
+**macOS**
+
+1. Download `BioMedStatX_macOS.zip`.
+2. Extract it and move `BioMedStatX.app` where you want to keep it.
+3. The app is not signed with an Apple Developer certificate, so macOS will refuse to open it on the first attempt. **Right-click the app and choose "Open"**, then confirm.
+4. If that is not enough, macOS has flagged the download as quarantined. The release notes for your version give the exact `xattr` command to clear it.
+
+Both builds are self-contained. No Python installation or command-line usage is required.
+
+The app checks GitHub for a newer release a few seconds after it starts, and again on demand via **Help -> Check for Updates...**. It only reads the public releases page and never uploads anything; if the machine is offline, the check fails quietly.
 
 For a step-by-step walkthrough of the GUI (with screenshots), see:  
 -> [How to use BioMedStatX (User Guide with screenshots)](./docs/HowTo.md)
@@ -141,6 +163,8 @@ Additional documentation can be added to the [`docs/`](./docs) folder.
 - Linear Mixed Models (LMM) and Logistic Regression are available for longitudinal and binary outcome designs via the Auto-pilot.
 - Correlation (Pearson/Spearman) and linear regression (OLS) are supported via the Auto-pilot when a continuous variable is assigned to the Factor 1 bucket.
 - Exploratory correlation matrices are available via **Analysis -> Exploratory Correlation Matrix**.
+- Multi-Dataset Analysis takes two or more measurement columns under one factor mapping and analyses them in sequence. Because that is a family of simultaneous tests, Benjamini-Hochberg FDR correction is applied across the p-values and both the adjusted values and the family size are shown in the combined report. The family covers the columns that produced a p-value; with fewer than two, no correction is applied and none is claimed.
+- For two independent groups the pipeline always uses Welch's t-test rather than Student's, and for one-way designs Welch's ANOVA. This is deliberate: Welch is valid whether or not variances are equal, so the choice does not depend on a variance pre-test that is itself unreliable at small n.
 - For Windows and macOS end users, the recommended path is to use the packaged application from the GitHub Releases page. The repository launcher scripts are mainly intended for source-based usage.
 
 ---
