@@ -322,6 +322,9 @@ class AnalysisManager:
                 f"was missing or blank."
             )
 
+        if analysis_context and analysis_context.get("range_replicate_summary"):
+            preprocessing_notes.append(analysis_context["range_replicate_summary"])
+
         # Subject-aligned pairing for the standalone two-group dependent test.
         # The lists above are in row order; validate_paired_data / ttest_rel /
         # wilcoxon then zip the two groups positionally, so the pairing was only

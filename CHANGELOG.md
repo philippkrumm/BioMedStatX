@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Data Range Selector overhaul: Technical replicates are now averaged across sample
+  rows (or columns) automatically when a contiguous block is assigned to a group
+  (e.g., 5 rows x 3 columns yields n=5 with 3 replicates averaged per sample),
+  instead of collapsing the entire block into a single n=1 value. Live sample
+  sizes and replicate counts update dynamically in the group list and preview,
+  an n < 2 safety guard warns before running unworkable analyses, and replicate
+  provenance is reported in the HTML output.
 - Multi-dataset runs now correct across the datasets they compare. Analysing
   several measurement columns at once is a multiple-testing family, and both the
   report and `docs/HowTo.md` have said so since 2026-05-26 -- the HowTo states

@@ -26,11 +26,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from PyQt5.QtWidgets import QApplication, QMessageBox
+
 from autopilot.statistical_analyzer_autopilot_ui import (
     _FakeIdx,
     _selected_indexes_to_ranges,
     _cells_in_ranges,
     extract_from_coordinates,
+    SheetSelectionDialog,
 )
 
 
@@ -119,14 +122,28 @@ def test_biological_extraction_values_and_nan_report():
     assert df["n_replicates"].isna().all()  # biological rows carry NaN reps
 
 
-def test_technical_extraction_is_block_mean():
+def test_technical_extraction_is_row_mean():
     sel = {"A": [{"rows": (0, 3), "cols": (1, 2)}]}
-    df, nan_report = extract_from_coordinates(_grid(), sel, replicate_type="technical")
+    df, nan_report = extract_from_coordinates(_grid(), sel, replicate_type="technical", replicate_axis="row")
     assert nan_report == {"A": 2}
-    assert len(df) == 1
-    # nanmean of the 6 valid values = 21/6 = 3.5, over n_valid = 6 replicates.
-    assert df["Value"].iloc[0] == pytest.approx(3.5)
-    assert df["n_replicates"].iloc[0] == 6.0
+    assert len(df) == 4
+    # row 0: (1.0+2.0)/2 = 1.5 (2 reps)
+    # row 1: 3.0 (1 rep, 1 blank)
+    # row 2: 4.0 (1 rep, 1 invalid)
+    # row 3: (5.0+6.0)/2 = 5.5 (2 reps)
+    assert df["Value"].tolist() == [1.5, 3.0, 4.0, 5.5]
+    assert df["n_replicates"].tolist() == [2.0, 1.0, 1.0, 2.0]
+
+
+def test_technical_extraction_column_axis():
+    sel = {"A": [{"rows": (0, 3), "cols": (1, 2)}]}
+    df, nan_report = extract_from_coordinates(_grid(), sel, replicate_type="technical", replicate_axis="col")
+    assert nan_report == {"A": 2}
+    assert len(df) == 2
+    # col 1: (1+3+4+5)/4 = 3.25 (4 reps)
+    # col 2: (2+6)/2 = 4.0 (2 reps, 2 dropped)
+    assert df["Value"].tolist() == [pytest.approx(3.25), pytest.approx(4.0)]
+    assert df["n_replicates"].tolist() == [4.0, 2.0]
 
 
 def test_disconnected_selection_round_trips_into_two_group_ranges():
@@ -138,3 +155,71 @@ def test_disconnected_selection_round_trips_into_two_group_ranges():
                                               replicate_type="biological")
     assert sorted(df["Value"].tolist()) == [1.0, 5.0]  # (0,1)="1.0", (3,1)="5.0"
     assert nan_report == {"A": 0}
+
+
+def test_sheet_selection_dialog_replicates_live_count_and_guard(monkeypatch):
+    """Test SheetSelectionDialog replicate orientation, live counts, n<2 guard, and return values."""
+    _app = QApplication.instance() or QApplication([])
+
+    # 5 rows x 3 cols grid of valid numbers
+    df_raw = pd.DataFrame([
+        ["1.0", "1.1", "1.2"],
+        ["2.0", "2.1", "2.2"],
+        ["3.0", "3.1", "3.2"],
+        ["4.0", "4.1", "4.2"],
+        ["5.0", "5.1", "5.2"],
+    ], dtype=str)
+
+    dlg = SheetSelectionDialog(df_raw)
+    dlg.show()
+
+    # Initial state
+    assert dlg._replicate_type == "biological"
+    assert dlg._replicate_axis == "row"
+    assert not dlg._tech_axis_widget.isVisible()
+
+    # Assign all 5x3 cells to Group A
+    dlg._selection_map["Group A"] = [{"rows": (0, 4), "cols": (0, 2)}]
+
+    # In biological mode: 15 cells -> n=15
+    assert dlg._group_value_count("Group A") == 15
+
+    # Switch to Technical replicates mode
+    dlg._tech_radio.setChecked(True)
+    assert dlg._replicate_type == "technical"
+    assert dlg._tech_axis_widget.isVisible()
+
+    # Default orientation: in rows (replicates across columns) -> 5 rows = n=5
+    assert dlg._group_value_count("Group A") == 5
+
+    # Switch orientation: in columns (replicates across rows) -> 3 columns = n=3
+    dlg._tech_axis_col_radio.setChecked(True)
+    assert dlg._replicate_axis == "col"
+    assert dlg._group_value_count("Group A") == 3
+
+    # Switch back to rows
+    dlg._tech_axis_row_radio.setChecked(True)
+    assert dlg._replicate_axis == "row"
+    assert dlg._group_value_count("Group A") == 5
+
+    # Test n < 2 safety guard on _on_apply
+    # Assign only 1 row to Group B
+    dlg._selection_map["Group B"] = [{"rows": (0, 0), "cols": (0, 2)}]
+    assert dlg._group_value_count("Group B") == 1
+
+    warning_shown = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: warning_shown.append(args))
+    dlg._on_apply()
+    # Apply must be aborted because Group B has n=1
+    assert len(warning_shown) == 1
+    assert "Sample Size Too Small" in warning_shown[0][1]
+
+    # Give Group B 2 rows -> apply succeeds
+    dlg._selection_map["Group B"] = [{"rows": (0, 1), "cols": (0, 2)}]
+    assert dlg._group_value_count("Group B") == 2
+    dlg._on_apply()
+
+    sel_map, rep_type, sheet, mode, rep_axis = dlg.get_result()
+    assert rep_type == "technical"
+    assert rep_axis == "row"
+    assert "Group A" in sel_map and "Group B" in sel_map

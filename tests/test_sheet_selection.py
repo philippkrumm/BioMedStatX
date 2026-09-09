@@ -181,6 +181,47 @@ def test_extract_from_coordinates_skips_empty_and_text_typos():
     assert all(result_df["Group"] == "Group_A")
 
 
+def test_extract_technical_replicates_two_groups_triplicates():
+    """Verify standard lab pattern: WT and KO, each n=5 biological samples, measured in triplicates."""
+    import numpy as np
+    import pandas as pd
+
+    # 5 rows x 6 cols: cols 0-2 = WT triplicates, cols 3-5 = KO triplicates
+    grid = [
+        ["1.0", "1.2", "1.4",  "2.0", "2.1", "2.2"],  # animal 1
+        ["1.1", "1.3", "1.5",  "2.3", "2.2", "2.4"],  # animal 2
+        ["1.0", "1.0", "1.0",  "3.0", "3.0", "3.0"],  # animal 3
+        ["1.2", "1.4", "1.6",  "2.5", "2.5", "2.5"],  # animal 4
+        ["1.5", "1.5", "1.5",  "2.8", "2.9", "3.0"],  # animal 5
+    ]
+    df_raw = pd.DataFrame(grid, dtype=str)
+    selection_map = {
+        "WT": [{"rows": (0, 4), "cols": (0, 2)}],
+        "KO": [{"rows": (0, 4), "cols": (3, 5)}],
+    }
+
+    result_df, nan_report = extract_from_coordinates(
+        df_raw, selection_map, replicate_type="technical", replicate_axis="row"
+    )
+
+    assert nan_report == {"WT": 0, "KO": 0}
+    assert len(result_df) == 10
+    wt_df = result_df[result_df["Group"] == "WT"]
+    ko_df = result_df[result_df["Group"] == "KO"]
+
+    assert len(wt_df) == 5
+    assert len(ko_df) == 5
+    assert (wt_df["n_replicates"] == 3.0).all()
+    assert (ko_df["n_replicates"] == 3.0).all()
+
+    # Animal 1 WT mean: (1.0 + 1.2 + 1.4) / 3 = 1.2
+    assert wt_df["Value"].iloc[0] == pytest.approx(1.2)
+    # Animal 3 WT mean: 1.0
+    assert wt_df["Value"].iloc[2] == pytest.approx(1.0)
+    # Animal 1 KO mean: (2.0 + 2.1 + 2.2) / 3 = 2.1
+    assert ko_df["Value"].iloc[0] == pytest.approx(2.1)
+
+
 def test_touching_range_merging_simulation():
     # Emulate the touching-range merging logic in _assign_selection
     existing_ranges = [{"rows": (0, 1), "cols": (0, 1)}]

@@ -877,9 +877,10 @@ def _ap_on_mapping_changed(self):
         selections = range_meta.get('selections', [])
         group_labels = ', '.join(f'"{s["group"]}"' for s in selections)
         n_groups = len(selections)
+        rep_note = f" [{range_meta.get('replicate_summary')}]" if range_meta.get('replicate_summary') else ""
         self.mapping_feedback_label.setText(
             f"Range selection \u2192 {n_groups} group{'s' if n_groups != 1 else ''} "
-            f"({group_labels}). Ready to analyze."
+            f"({group_labels}){rep_note}. Ready to analyze."
         )
         self.start_analysis_button.setEnabled(True)
         return
@@ -1022,6 +1023,7 @@ def _ap_load_file(self):
         self.combine_columns = False
         self.analysis_selected_groups = []
         self._range_selection_metadata = None
+        self._range_replicate_summary = None
         self._hint_dismissed = False
         self._maybe_pivot()
         self.numeric_columns = [
@@ -1520,6 +1522,8 @@ def _ap_execute_single_analysis(self, context, dv_column, output_dir, skip_plots
     single_context = dict(context)
     single_context["dv_columns"] = [dv_column]
     single_context["current_dv"] = dv_column
+    if getattr(self, "_range_replicate_summary", None):
+        single_context["range_replicate_summary"] = self._range_replicate_summary
     # Single source of truth: always inject the in-memory df. UI may have
     # applied pivot, range-selection, or outlier removal — re-reading the
     # file would silently diverge from what the user sees on screen.
@@ -2102,6 +2106,7 @@ def _ap_reset_application_state(self):
     self.temp_plot_appearance_settings = None
     self._wide_format_info = None
     self._range_selection_metadata = None
+    self._range_replicate_summary = None
     self._hint_dismissed = False
     if hasattr(self, "_range_groups_label"):
         self._range_groups_label.setVisible(False)
@@ -2182,6 +2187,9 @@ def _ap_open_range_selector(self):
         if sels:
             prior_selection_map = {s["group"]: s.get("ranges", []) for s in sels}
             prior_replicate_type = sels[0].get("replicate_type")
+            prior_replicate_axis = sels[0].get("replicate_axis", "row")
+        else:
+            prior_replicate_axis = "row"
         prior_design_mode = prior.get("design_mode")
         # If prior selection was made on a different sheet, reopen that sheet
         prior_sheet = prior.get("sheet")
@@ -2199,16 +2207,20 @@ def _ap_open_range_selector(self):
         initial_selection_map=prior_selection_map,
         initial_replicate_type=prior_replicate_type,
         initial_design_mode=prior_design_mode,
+        initial_replicate_axis=prior_replicate_axis if prior else None,
     )
     if dlg.exec_() != QDialog.Accepted:
         return
-    selection_map, replicate_type, sheet_name, design_mode = dlg.get_result()
+    res = dlg.get_result()
+    selection_map, replicate_type, sheet_name, design_mode = res[:4]
+    replicate_axis = res[4] if len(res) >= 5 else getattr(dlg, "_replicate_axis", "row")
     if not selection_map:
         return
 
     if sheet_name and sheet_name != initial_sheet and not path.lower().endswith(".csv"):
         df_raw = pd.read_excel(path, sheet_name=sheet_name, header=None, dtype=str)
 
+    replicate_summary = None
     # Route to correct extractor based on design mode
     if design_mode == "paired":
         result_df, nan_report = extract_paired_from_coordinates(df_raw, selection_map)
@@ -2218,17 +2230,35 @@ def _ap_open_range_selector(self):
         nan_report = {}
     else:
         result_df, nan_report = extract_from_coordinates(
-            df_raw, selection_map, replicate_type=replicate_type
+            df_raw, selection_map, replicate_type=replicate_type, replicate_axis=replicate_axis
         )
+        if replicate_type == "technical" and "n_replicates" in result_df.columns:
+            valid_reps = result_df["n_replicates"].dropna()
+            if not valid_reps.empty:
+                mean_reps = float(valid_reps.mean())
+                reps_str = f"{mean_reps:.1f}".rstrip("0").rstrip(".")
+                axis_desc = "row-wise" if replicate_axis == "row" else "column-wise"
+                replicate_summary = (
+                    f"Values averaged from {reps_str} technical replicates per sample ({axis_desc})"
+                )
         self.df = result_df.drop(columns=["Source_Range", "n_replicates"], errors="ignore")
 
+    self._range_replicate_summary = replicate_summary
     self._range_design_mode = design_mode
     self._range_selection_metadata = {
         "source_file": path,
         "sheet": sheet_name,
         "design_mode": design_mode,
+        "replicate_type": replicate_type,
+        "replicate_axis": replicate_axis,
+        "replicate_summary": replicate_summary,
         "selections": [
-            {"group": g, "ranges": r, "replicate_type": replicate_type}
+            {
+                "group": g,
+                "ranges": r,
+                "replicate_type": replicate_type,
+                "replicate_axis": replicate_axis,
+            }
             for g, r in selection_map.items()
         ],
     }
@@ -2259,8 +2289,9 @@ def _ap_open_range_selector(self):
             for g in selection_map:
                 n = int((self.df["Group"] == g).sum()) if "Group" in self.df.columns else 0
                 group_counts.append(f"{g}: n={n}")
+            suffix = f"  ({replicate_summary})" if replicate_summary else ""
             self._range_groups_label.setText(
-                "Imported groups — " + "  |  ".join(group_counts)
+                "Imported groups — " + "  |  ".join(group_counts) + suffix
             )
         self._range_groups_label.setVisible(True)
 

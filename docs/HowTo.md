@@ -64,7 +64,22 @@ Every row needs a subject ID. If the subject column has a blank cell the file is
 
 ### Select Data Ranges
 
-For raw Excel sheets not structured as a table, click **Select Data Ranges…** to open a spreadsheet viewer. Select cell ranges and assign them directly to groups. This workflow is limited to single-factor designs.
+For raw Excel sheets that are not organized in tidy tabular format (such as custom plate exports, side-by-side matrices, or replicate blocks), click **Select Data Ranges…** to open the interactive spreadsheet selector.
+
+#### 1. Choose your experimental design
+The dialog offers three design modes depending on how your experiment was structured:
+- **Separate groups** *(Between-subjects)*: Each group consists of independent samples (e.g., Control vs. Treated, WT vs. KO). Routes to Welch's/Student's $t$-test or One-Way ANOVA.
+- **Same samples, measured repeatedly** *(Paired)*: Each row corresponds to the same sample or animal measured across different conditions (e.g., Pre vs. Post). Enforces equal row height and preserves subject alignment, routing to a paired $t$-test or Repeated-Measures ANOVA.
+- **Two measurements, related** *(Bivariate)*: Mark an $X$-block (e.g., dose or predictor) and a $Y$-block (response). Aligns data pairs for Linear Regression and Correlation.
+
+#### 2. Biological vs. Technical Replicates (Between-subjects)
+- **Biological — each cell is an independent sample**: Every selected numeric cell counts as $1\,n$.
+- **Technical — multiple readings per sample (averaged)**: Used when samples were measured in duplicates or triplicates:
+  - **Samples in rows (replicates across columns)** *(Default)*: Standard laboratory layout where each row is an individual sample/animal and columns are the technical replicates. Selecting a block of 5 rows $\times$ 3 columns yields $n=5$ biological samples, with each value being the mean of its 3 technical readings.
+  - **Samples in columns (replicates across rows)**: For transposed layouts where columns represent samples and rows represent replicates.
+- **Live-$n$ display**: The group list and bottom status bar immediately show the true sample size (e.g., `WT (n=5)` and `(3 reps)`).
+- **Safety check**: Attempting to apply a group with $n < 2$ displays a clear warning, preventing accidental analysis of single-sample groups.
+- **Reporting & Provenance**: The technical replicate summary (e.g., *"Values averaged from 3 technical replicates per sample"*) is carried through to the HTML report's *Data quality check (pre-analysis)* table and saved in the report metadata.
 
 ---
 

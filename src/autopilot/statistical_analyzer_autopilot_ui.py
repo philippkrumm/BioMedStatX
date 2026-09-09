@@ -307,6 +307,7 @@ class _FakeIdx:
 
 
 def extract_from_coordinates(df_raw, selection_map, replicate_type="biological",
+                              replicate_axis="row",
                               value_col="Value", group_col="Group"):
     """
     df_raw: raw DataFrame loaded with header=None, dtype=str.
@@ -315,7 +316,9 @@ def extract_from_coordinates(df_raw, selection_map, replicate_type="biological",
         "Group_A": [{"rows": (3, 10), "cols": (1, 3)}],
         "Group_B": [{"rows": (3, 10), "cols": (5, 7)}],
     }
-    replicate_type: "biological" → each cell = 1 N; "technical" → mean per block.
+    replicate_type: "biological" → each cell = 1 N; "technical" → mean across replicates per sample.
+    replicate_axis: "row" (default) → each row in range is 1 sample, columns are replicates;
+                    "col" → each column in range is 1 sample, rows are replicates.
     Returns (result_df, nan_report).
     nan_report: {group_name: total NaN count across all its ranges}.
     n_replicates column is float64 throughout (NaN for biological rows).
@@ -329,34 +332,80 @@ def extract_from_coordinates(df_raw, selection_map, replicate_type="biological",
             r1, r2 = rng["rows"]
             c1, c2 = rng["cols"]
             block = df_raw.iloc[r1 : r2 + 1, c1 : c2 + 1]
-            vals_raw = block.values.flatten()
-            
-            vals = []
-            for val in vals_raw:
-                if pd.isna(val) or str(val).strip() == "":
-                    nan_report[group_name] += 1
-                    vals.append(np.nan)
-                else:
-                    try:
-                        f_val = float(str(val).strip())
-                        vals.append(f_val)
-                    except ValueError:
-                        nan_report[group_name] += 1
-                        vals.append(np.nan)
-            
-            vals = np.array(vals)
-            range_label = f"r{r1}:{r2}|c{c1}:{c2}"
-            n_valid = int(np.sum(~np.isnan(vals)))
 
             if replicate_type == "technical":
-                mean_val = float(np.nanmean(vals)) if n_valid > 0 else np.nan
-                frames.append(pd.DataFrame({
-                    group_col: [group_name],
-                    value_col: [mean_val],
-                    "Source_Range": [range_label],
-                    "n_replicates": [float(n_valid)],
-                }))
+                if replicate_axis == "col":
+                    # Each column is one biological sample; rows in that column are replicates
+                    for col_offset in range(c2 - c1 + 1):
+                        col_idx = c1 + col_offset
+                        col_raw = block.iloc[:, col_offset].values
+                        vals = []
+                        for val in col_raw:
+                            if pd.isna(val) or str(val).strip() == "":
+                                nan_report[group_name] += 1
+                                vals.append(np.nan)
+                            else:
+                                try:
+                                    f_val = float(str(val).strip())
+                                    vals.append(f_val)
+                                except ValueError:
+                                    nan_report[group_name] += 1
+                                    vals.append(np.nan)
+                        vals = np.array(vals)
+                        n_valid = int(np.sum(~np.isnan(vals)))
+                        mean_val = float(np.nanmean(vals)) if n_valid > 0 else np.nan
+                        range_label = f"r{r1}:{r2}|c{col_idx}"
+                        frames.append(pd.DataFrame({
+                            group_col: [group_name],
+                            value_col: [mean_val],
+                            "Source_Range": [range_label],
+                            "n_replicates": [float(n_valid) if n_valid > 0 else np.nan],
+                        }))
+                else:
+                    # Default "row": Each row is one biological sample; columns in that row are replicates
+                    for row_offset in range(r2 - r1 + 1):
+                        row_idx = r1 + row_offset
+                        row_raw = block.iloc[row_offset, :].values
+                        vals = []
+                        for val in row_raw:
+                            if pd.isna(val) or str(val).strip() == "":
+                                nan_report[group_name] += 1
+                                vals.append(np.nan)
+                            else:
+                                try:
+                                    f_val = float(str(val).strip())
+                                    vals.append(f_val)
+                                except ValueError:
+                                    nan_report[group_name] += 1
+                                    vals.append(np.nan)
+                        vals = np.array(vals)
+                        n_valid = int(np.sum(~np.isnan(vals)))
+                        mean_val = float(np.nanmean(vals)) if n_valid > 0 else np.nan
+                        range_label = f"r{row_idx}|c{c1}:{c2}"
+                        frames.append(pd.DataFrame({
+                            group_col: [group_name],
+                            value_col: [mean_val],
+                            "Source_Range": [range_label],
+                            "n_replicates": [float(n_valid) if n_valid > 0 else np.nan],
+                        }))
             else:
+                # Biological: each cell is 1 independent sample
+                vals_raw = block.values.flatten()
+                vals = []
+                for val in vals_raw:
+                    if pd.isna(val) or str(val).strip() == "":
+                        nan_report[group_name] += 1
+                        vals.append(np.nan)
+                    else:
+                        try:
+                            f_val = float(str(val).strip())
+                            vals.append(f_val)
+                        except ValueError:
+                            nan_report[group_name] += 1
+                            vals.append(np.nan)
+
+                vals = np.array(vals)
+                range_label = f"r{r1}:{r2}|c{c1}:{c2}"
                 n = len(vals)
                 frames.append(pd.DataFrame({
                     group_col: [group_name] * n,
@@ -1460,7 +1509,7 @@ class SheetSelectionDialog(QDialog):
     def __init__(self, df_raw, initial_sheet=None, available_sheets=None,
                  source_path=None, parent=None,
                  initial_selection_map=None, initial_replicate_type=None,
-                 initial_design_mode=None):
+                 initial_design_mode=None, initial_replicate_axis=None):
         super().__init__(parent)
         self.setObjectName("rangeSelectionDialog")
         self.setWindowTitle("Select Data Ranges")
@@ -1469,6 +1518,7 @@ class SheetSelectionDialog(QDialog):
         # Restore previous selection if provided
         self._initial_selection_map = initial_selection_map or None
         self._initial_replicate_type = initial_replicate_type or None
+        self._initial_replicate_axis = initial_replicate_axis or "row"
         self._design_mode = initial_design_mode or "between"
         # Size dynamically based on screen (80% of available area, capped sensibly)
         try:
@@ -1487,6 +1537,7 @@ class SheetSelectionDialog(QDialog):
         self._group_colors = {}    # {group_name: color_hex}
         self._color_index = 0
         self._replicate_type = "biological"
+        self._replicate_axis = "row"
         self._last_indexes = []    # cached table selection (survives focus loss on button click)
         self._last_selected_ranges = []
         self._focused_group = None # currently focused group (None = no focus)
@@ -1529,6 +1580,13 @@ class SheetSelectionDialog(QDialog):
             if self._initial_replicate_type == "technical":
                 self._tech_radio.setChecked(True)
                 self._replicate_type = "technical"
+                if self._initial_replicate_axis == "col":
+                    self._tech_axis_col_radio.setChecked(True)
+                    self._replicate_axis = "col"
+                else:
+                    self._tech_axis_row_radio.setChecked(True)
+                    self._replicate_axis = "row"
+                self._tech_axis_widget.setVisible(self._design_mode == "between")
             self._rebuild_group_list()
             self._recolor_table()
             self._update_preview()
@@ -1672,13 +1730,43 @@ class SheetSelectionDialog(QDialog):
         self._rep_section_title.setObjectName("columnCardTitle")
         right_layout.addWidget(self._rep_section_title)
 
-        self._bio_radio = QRadioButton("Biological — each value is its own sample (1 n per cell)")
+        self._rep_btn_group = QButtonGroup(self)
+
+        self._bio_radio = QRadioButton("Biological — each cell is an independent sample (1 n per cell)")
         self._bio_radio.setChecked(True)
         self._bio_radio.toggled.connect(self._on_replicate_changed)
+        self._rep_btn_group.addButton(self._bio_radio)
         right_layout.addWidget(self._bio_radio)
 
-        self._tech_radio = QRadioButton("Technical — repeated readings of one sample (averaged to 1 n per group)")
+        self._tech_radio = QRadioButton("Technical — multiple readings per sample (averaged to 1 n per sample)")
+        self._rep_btn_group.addButton(self._tech_radio)
+        self._tech_radio.toggled.connect(self._on_replicate_changed)
         right_layout.addWidget(self._tech_radio)
+
+        # Sub-options for technical replicates: axis / layout orientation
+        self._tech_axis_widget = QWidget()
+        tech_axis_layout = QVBoxLayout(self._tech_axis_widget)
+        tech_axis_layout.setContentsMargins(20, 2, 0, 4)
+        tech_axis_layout.setSpacing(2)
+
+        axis_header = QLabel("Samples run:")
+        axis_header.setObjectName("columnCardMeta")
+        tech_axis_layout.addWidget(axis_header)
+
+        self._tech_axis_btn_group = QButtonGroup(self)
+        self._tech_axis_row_radio = QRadioButton("In rows (replicates across columns)")
+        self._tech_axis_row_radio.setChecked(True)
+        self._tech_axis_btn_group.addButton(self._tech_axis_row_radio)
+        self._tech_axis_row_radio.toggled.connect(self._on_replicate_axis_changed)
+        tech_axis_layout.addWidget(self._tech_axis_row_radio)
+
+        self._tech_axis_col_radio = QRadioButton("In columns (replicates across rows)")
+        self._tech_axis_btn_group.addButton(self._tech_axis_col_radio)
+        self._tech_axis_col_radio.toggled.connect(self._on_replicate_axis_changed)
+        tech_axis_layout.addWidget(self._tech_axis_col_radio)
+
+        self._tech_axis_widget.setVisible(False)
+        right_layout.addWidget(self._tech_axis_widget)
 
         self._rep_section_sep = QFrame()
         self._rep_section_sep.setFrameShape(QFrame.HLine)
@@ -1740,6 +1828,7 @@ class SheetSelectionDialog(QDialog):
         self._rep_section_title.setVisible(show_rep)
         self._bio_radio.setVisible(show_rep)
         self._tech_radio.setVisible(show_rep)
+        self._tech_axis_widget.setVisible(show_rep and self._tech_radio.isChecked())
         self._rep_section_sep.setVisible(show_rep)
         self._add_group_btn.setVisible(mode != "bivariate")
         self._bivariate_helper_label.setVisible(mode == "bivariate")
@@ -1788,9 +1877,14 @@ class SheetSelectionDialog(QDialog):
         self._last_indexes = []
         self._assign_combo.clear()
         self._replicate_type = "biological"
+        self._replicate_axis = "row"
         self._bio_radio.blockSignals(True)
         self._bio_radio.setChecked(True)
         self._bio_radio.blockSignals(False)
+        self._tech_axis_row_radio.blockSignals(True)
+        self._tech_axis_row_radio.setChecked(True)
+        self._tech_axis_row_radio.blockSignals(False)
+        self._tech_axis_widget.setVisible(False)
 
         # Add defaults for new mode
         if new_mode == "between":
@@ -1976,13 +2070,52 @@ class SheetSelectionDialog(QDialog):
     def _group_value_count(self, group_name):
         """True sample size n for a group.
 
-        Biological mode: every non-empty cell is its own sample.
-        Technical mode: each assigned block is averaged to a single replicate,
-        so n equals the number of blocks, not the raw cell count.
+        Biological mode: every non-empty numeric cell is its own sample.
+        Technical mode: each row (or column) in the assigned range(s) represents
+        one biological sample (replicates averaged across the other dimension).
         """
         ranges = self._selection_map.get(group_name, [])
+        if not ranges:
+            return 0
         if getattr(self, "_replicate_type", "biological") == "technical":
-            return len(ranges)
+            axis = getattr(self, "_replicate_axis", "row")
+            valid_samples = 0
+            if axis == "col":
+                for rng in ranges:
+                    r1, r2 = rng["rows"]
+                    c1, c2 = rng["cols"]
+                    for c in range(c1, c2 + 1):
+                        has_num = False
+                        for r in range(r1, r2 + 1):
+                            item = self._table.item(r, c)
+                            if item is not None and item.text().strip():
+                                try:
+                                    float(item.text().strip())
+                                    has_num = True
+                                    break
+                                except ValueError:
+                                    pass
+                        if has_num:
+                            valid_samples += 1
+            else:
+                for rng in ranges:
+                    r1, r2 = rng["rows"]
+                    c1, c2 = rng["cols"]
+                    for r in range(r1, r2 + 1):
+                        has_num = False
+                        for c in range(c1, c2 + 1):
+                            item = self._table.item(r, c)
+                            if item is not None and item.text().strip():
+                                try:
+                                    float(item.text().strip())
+                                    has_num = True
+                                    break
+                                except ValueError:
+                                    pass
+                        if has_num:
+                            valid_samples += 1
+            return valid_samples
+
         total = 0
         for rng in ranges:
             top, bottom = rng["rows"]
@@ -2177,12 +2310,7 @@ class SheetSelectionDialog(QDialog):
     def _advance_assign_combo(self, after_group):
         """After assigning to a group, preselect the next group in the combo so
         the user can keep clicking 'Assign to:' for consecutive groups. Stops at
-        the last group (no wrap); the user can still pick any group manually.
-
-        Skipped in technical mode: there the user assigns several replicate blocks
-        to the SAME group in a row, so the combo should stay put."""
-        if self._replicate_type == "technical":
-            return
+        the last group (no wrap); the user can still pick any group manually."""
         idx = self._assign_combo.findText(after_group)
         if idx >= 0 and idx + 1 < self._assign_combo.count():
             self._assign_combo.setCurrentIndex(idx + 1)
@@ -2289,10 +2417,17 @@ class SheetSelectionDialog(QDialog):
     # Misc
     # ------------------------------------------------------------------
 
-    def _on_replicate_changed(self, _checked):
+    def _on_replicate_changed(self, _checked=None):
         self._replicate_type = "biological" if self._bio_radio.isChecked() else "technical"
-        # n semantics differ per mode (cells vs. blocks) — refresh the counts.
+        show_axis = (self._replicate_type == "technical" and self._design_mode == "between")
+        self._tech_axis_widget.setVisible(show_axis)
         self._rebuild_group_list()
+        self._update_preview()
+
+    def _on_replicate_axis_changed(self, _checked=None):
+        self._replicate_axis = "col" if self._tech_axis_col_radio.isChecked() else "row"
+        self._rebuild_group_list()
+        self._update_preview()
 
     def _update_preview(self):
         parts = []
@@ -2301,12 +2436,23 @@ class SheetSelectionDialog(QDialog):
         non_numeric_cells = 0
 
         for group_name, ranges in self._selection_map.items():
-            n = sum(
+            cell_count = sum(
                 (r["rows"][1] - r["rows"][0] + 1) * (r["cols"][1] - r["cols"][0] + 1)
                 for r in ranges
             )
-            total_cells += n
-            parts.append(f"{group_name}: ~{n}")
+            total_cells += cell_count
+
+            if self._replicate_type == "technical":
+                n_samples = self._group_value_count(group_name)
+                axis = getattr(self, "_replicate_axis", "row")
+                if axis == "col":
+                    reps_list = [r["rows"][1] - r["rows"][0] + 1 for r in ranges]
+                else:
+                    reps_list = [r["cols"][1] - r["cols"][0] + 1 for r in ranges]
+                reps = (sum(reps_list) // max(1, len(reps_list))) if reps_list else 0
+                parts.append(f"{group_name}: n={n_samples} ({reps} reps)")
+            else:
+                parts.append(f"{group_name}: ~{cell_count}")
 
             for rng in ranges:
                 r1, r2 = rng["rows"]
@@ -2323,7 +2469,10 @@ class SheetSelectionDialog(QDialog):
                                 non_numeric_cells += 1
 
         if total_cells:
-            self._preview_label.setText("→ ~" + str(total_cells) + " cells | " + ", ".join(parts))
+            if self._replicate_type == "technical":
+                self._preview_label.setText("→ " + " | ".join(parts) + f"  ({total_cells} cells total)")
+            else:
+                self._preview_label.setText("→ ~" + str(total_cells) + " cells | " + ", ".join(parts))
         else:
             self._preview_label.setText("")
 
@@ -2348,6 +2497,23 @@ class SheetSelectionDialog(QDialog):
                 self, "No Selection", "Assign at least one group before applying."
             )
             return
+
+        if self._design_mode == "between":
+            for g, ranges in self._selection_map.items():
+                if ranges:
+                    n_samples = self._group_value_count(g)
+                    if n_samples < 2:
+                        tech_hint = (
+                            "\n\nIn Technical mode, each row represents one sample (replicates averaged across columns).\n"
+                            "Please select multiple sample rows, or switch to Biological mode if each cell is an independent sample."
+                            if self._replicate_type == "technical" else ""
+                        )
+                        QMessageBox.warning(
+                            self, "Sample Size Too Small",
+                            f"Group '{g}' has only n={n_samples} valid sample(s).\n"
+                            f"Statistical tests require at least n=2 per group.{tech_hint}"
+                        )
+                        return
 
         if self._design_mode == "paired":
             def _row_count(ranges):
@@ -2392,4 +2558,10 @@ class SheetSelectionDialog(QDialog):
         self.accept()
 
     def get_result(self):
-        return self._selection_map, self._replicate_type, self._current_sheet, self._design_mode
+        return (
+            self._selection_map,
+            self._replicate_type,
+            self._current_sheet,
+            self._design_mode,
+            getattr(self, "_replicate_axis", "row"),
+        )
