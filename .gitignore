@@ -60,6 +60,22 @@ pyrefly.toml
 # AI assistant instruction files (personal workflow)
 AGENTS.md
 CLAUDE.md
+.mcp.json
+
+# Search-tool leftovers
+.ignore
+
+# Frozen-import smoke output, the same class as build_log.txt above
+smoke-report.txt
+
+# Internal working notes: audit rounds, plans, design specs, findings lists.
+# They stay on disk and are worth keeping -- they are simply not user-facing
+# documentation, and docs/ is what a visitor opens expecting guides. A public
+# findings list also goes stale silently: the one removed here still reported an
+# open issue in DataVisualizer, a class that no longer exists.
+docs/superpowers/
+docs/audit/
+docs/PLOT_STYLE_AUDIT.md
 
 # One-off dev scripts
 refactor_imports.py
