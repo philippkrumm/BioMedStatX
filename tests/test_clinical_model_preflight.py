@@ -4,7 +4,11 @@ missing structural field (empty between_factors/covariates/fixed_effects/
 predictors, or a missing subject column) either crashed later inside
 as_results_dict() with an incidental IndexError/KeyError, or (for LMM fixed
 effects) silently degraded to a meaningless intercept-only model instead of
-being rejected outright. See docs/superpowers/specs/2026-07-03-clinical-model-preflight-validation-design.md.
+being rejected outright.
+
+The rule the checks enforce: a model that cannot be identified from the fields
+it was handed refuses at the door, with a message naming the field, rather than
+failing somewhere downstream where the cause is no longer visible.
 """
 import pandas as pd
 import pytest

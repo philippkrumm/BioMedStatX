@@ -181,7 +181,11 @@ BioMedStatX/
 ├─ CODE_OF_CONDUCT.md             # Contributor Covenant Code of Conduct
 ├─ start.sh                       # Launcher for Linux/macOS source/binary startup
 ├─ run.bat                        # Launcher for Windows source/binary startup
-├─ src/                   # Main application source code
+├─ src/                           # Main application source code
+├─ tests/                         # Unit and regression tests
+├─ validation/                    # Numerical validation against R and published results
+├─ fuzzing/                       # Fuzzers that drive the real pipeline and check its output
+├─ tools/                         # Consistency validator and maintenance scripts
 ├─ docs/                          # User-facing documentation
 │  ├─ HowTo.md                           # Screenshot-based user guide (GUI)
 │  ├─ ADVANCED_ANOVA_GUIDE.md            # Advanced ANOVA explanations
