@@ -31,6 +31,14 @@ build/
 dist/
 *.egg-info/
 
+# The packaged release archives, staged in the repo root before being uploaded
+# to a GitHub release. dist/ and build/ are ignored above; these are the zips
+# cut from them, and at ~117 MB each a stray `git add .` would bloat the history
+# permanently and be rejected outright by GitHub's 100 MB per-file limit.
+BioMedStatX_macOS.zip
+BioMedStatX_windows.zip
+BioMedStatX*.app.zip
+
 # Test & coverage
 .coverage
 htmlcov/
