@@ -157,6 +157,9 @@ a = Analysis(
         #     weight. (If either isn't installed this is a harmless no-op.)
         "torch", "torchvision", "torchaudio",
         "jax", "jaxlib",
+        # Optional dataframe/Arrow packages are not used by the application.
+        # Exclude them even if they happen to be installed in the build venv.
+        "polars", "pyarrow",
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
