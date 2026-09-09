@@ -63,13 +63,13 @@ Go to the GitHub Releases page and download the archive for your platform:
 
 **Windows**
 
-1. Download `BioMedStatX_windows.zip`.
+1. Download the Windows archive.
 2. Extract it to a folder of your choice. **The app uses one-folder packaging: keep `BioMedStatX.exe` and the `_internal` folder together.**
 3. Start the application by double-clicking `BioMedStatX.exe`.
 
-**macOS**
+**macOS** (Apple Silicon)
 
-1. Download `BioMedStatX_macOS.zip`.
+1. Download the macOS archive.
 2. Extract it and move `BioMedStatX.app` where you want to keep it.
 3. The app is not signed with an Apple Developer certificate, so macOS will refuse to open it on the first attempt. **Right-click the app and choose "Open"**, then confirm.
 4. If that is not enough, macOS has flagged the download as quarantined. The release notes for your version give the exact `xattr` command to clear it.
